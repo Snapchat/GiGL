@@ -44,8 +44,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
-        default_node_id: Node ID to use when fewer than max_ppr_nodes are found.
-        default_weight: Weight to assign to padding nodes.
         num_nbrs_per_hop: Maximum number of neighbors to fetch per hop.
     """
 
@@ -55,8 +53,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         alpha: float = 0.5,
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
-        default_node_id: int = -1,
-        default_weight: float = 0.0,
         num_nbrs_per_hop: int = 100000,
         **kwargs,
     ):
@@ -64,8 +60,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self._alpha = alpha
         self._eps = eps
         self._max_ppr_nodes = max_ppr_nodes
-        self._default_node_id = default_node_id
-        self._default_weight = default_weight
         self._alpha_eps = alpha * eps
         self._num_nbrs_per_hop = num_nbrs_per_hop
 
@@ -208,6 +202,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     ) -> tuple[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
     ]:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
@@ -234,9 +229,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             seed_node_type: Node type of seed nodes. Should be None for homogeneous graphs.
 
         Returns:
-            tuple of (neighbor_ids_by_type, ppr_weights_by_type) where:
-                - neighbor_ids_by_type: Union[torch.Tensor, dict mapping node type -> [batch_size, max_ppr_nodes]]
-                - ppr_weights_by_type: Union[torch.Tensor, dict mapping node type -> [batch_size, max_ppr_nodes]]
+            tuple of (flat_neighbor_ids, flat_weights, valid_counts) where each is either
+            a 1-D tensor (homogeneous) or a dict mapping NodeType to a 1-D tensor
+            (heterogeneous):
+                - flat_neighbor_ids: global neighbor IDs in top-k order, concatenated
+                  across all seeds. Length equals sum(valid_counts).
+                - flat_weights: corresponding PPR scores, same length as flat_neighbor_ids.
+                - valid_counts: number of PPR neighbors found per seed [batch_size].
         """
         if seed_node_type is None:
             seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
@@ -367,31 +366,24 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                 q[i].add(key_v)
                                 num_nodes_in_queue += 1
 
-        # Extract top-k nodes by PPR score, grouped by node type
+        # Extract top-k nodes by PPR score, grouped by node type.
+        # Build flat tensors directly (no padding) — valid_counts[i] records how many
+        # neighbors seed i actually has, so callers can recover per-seed slices.
         all_node_types: set[NodeType] = set()
         for i in range(batch_size):
-            for node_id, node_type in p[i].keys():
+            for _node_id, node_type in p[i].keys():
                 all_node_types.add(node_type)
 
-        out_neighbor_ids_dict: dict[NodeType, torch.Tensor] = {}
-        out_weights_dict: dict[NodeType, torch.Tensor] = {}
+        out_flat_ids_dict: dict[NodeType, torch.Tensor] = {}
+        out_flat_weights_dict: dict[NodeType, torch.Tensor] = {}
+        out_valid_counts_dict: dict[NodeType, torch.Tensor] = {}
 
         for ntype in all_node_types:
-            ntype_neighbor_ids = torch.full(
-                (batch_size, self._max_ppr_nodes),
-                self._default_node_id,
-                dtype=torch.long,
-                device=device,
-            )
-            ntype_weights = torch.full(
-                (batch_size, self._max_ppr_nodes),
-                self._default_weight,
-                dtype=torch.float,
-                device=device,
-            )
+            flat_ids: list[int] = []
+            flat_weights: list[float] = []
+            valid_counts: list[int] = []
 
             for i in range(batch_size):
-                # Filter to nodes of this type
                 type_scores = {
                     node_id: score
                     for (node_id, node_type), score in p[i].items()
@@ -400,28 +392,38 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 top_k = heapq.nlargest(
                     self._max_ppr_nodes, type_scores.items(), key=lambda x: x[1]
                 )
+                for node_id, weight in top_k:
+                    flat_ids.append(node_id)
+                    flat_weights.append(weight)
+                valid_counts.append(len(top_k))
 
-                for j, (node_id, weight) in enumerate(top_k):
-                    ntype_neighbor_ids[i, j] = node_id
-                    ntype_weights[i, j] = weight
+            out_flat_ids_dict[ntype] = torch.tensor(
+                flat_ids, dtype=torch.long, device=device
+            )
+            out_flat_weights_dict[ntype] = torch.tensor(
+                flat_weights, dtype=torch.float, device=device
+            )
+            out_valid_counts_dict[ntype] = torch.tensor(
+                valid_counts, dtype=torch.long, device=device
+            )
 
-            out_neighbor_ids_dict[ntype] = ntype_neighbor_ids
-            out_weights_dict[ntype] = ntype_weights
-
-        out_neighbor_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-        out_weights: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        out_flat_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        out_flat_weights: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        out_valid_counts: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         if self._is_homogeneous:
             assert (
                 len(all_node_types) == 1
                 and _PPR_HOMOGENEOUS_NODE_TYPE in all_node_types
             )
-            out_neighbor_ids = out_neighbor_ids_dict[_PPR_HOMOGENEOUS_NODE_TYPE]
-            out_weights = out_weights_dict[_PPR_HOMOGENEOUS_NODE_TYPE]
+            out_flat_ids = out_flat_ids_dict[_PPR_HOMOGENEOUS_NODE_TYPE]
+            out_flat_weights = out_flat_weights_dict[_PPR_HOMOGENEOUS_NODE_TYPE]
+            out_valid_counts = out_valid_counts_dict[_PPR_HOMOGENEOUS_NODE_TYPE]
         else:
-            out_neighbor_ids = out_neighbor_ids_dict
-            out_weights = out_weights_dict
+            out_flat_ids = out_flat_ids_dict
+            out_flat_weights = out_flat_weights_dict
+            out_valid_counts = out_valid_counts_dict
 
-        return out_neighbor_ids, out_weights
+        return out_flat_ids, out_flat_weights, out_valid_counts
 
     async def _sample_from_nodes(
         self,
@@ -435,17 +437,51 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         subgraph includes neighbors relevant to all seed types.
 
         For heterogeneous graphs, PPR traverses across all edge types, switching
-        edge types based on the current node type. PPR weights are stored in
-        metadata keyed as ``ppr_weights_{seed_type}_{neighbor_type}`` and
-        ``ppr_neighbor_ids_{seed_type}_{neighbor_type}``.
+        edge types based on the current node type.
 
-        The ``ppr_neighbor_ids`` tensors are locally indexed — each value is a
-        0-based index into ``data[ntype].node`` (the global-ID array produced by
-        GLT's collate step), so downstream models can directly index into
-        ``data[ntype].x`` without a separate global→local remapping step.
+        Output format (PyG edge-index style, no padding):
 
-        The inducer is used to perform deduplication and local-index assignment
-        in-place during sampling, avoiding a post-hoc lookup pass.
+        - ``ppr_neighbor_ids`` (homo) / ``ppr_neighbor_ids_{seed_type}_{ntype}`` (hetero):
+          shape ``[2, num_edges]`` — row 0 is local seed indices, row 1 is local
+          neighbor indices.  Both index into ``data[ntype].node``.
+        - ``ppr_weights`` (homo) / ``ppr_weights_{seed_type}_{ntype}`` (hetero):
+          shape ``[num_edges]`` — PPR score for each edge, aligned with the columns
+          of ``ppr_neighbor_ids``.
+
+        Local indices are produced by the inducer (see below), so row 1 of
+        ``ppr_neighbor_ids`` directly indexes into ``data[ntype].x`` without any
+        additional global→local remapping.
+
+        **Why the inducer is used for local-index assignment:**
+
+        The inducer is GLT's C++ data structure (backed by a per-node-type hash map)
+        that maintains a single global-ID → local-index mapping for the entire
+        subgraph being built.  We use it here instead of a Python dict for two reasons:
+
+        1. **Consistency across seed types.** For heterogeneous ABLP inputs,
+           ``_compute_ppr_scores`` is called once per seed type (anchors, supervision
+           nodes, …).  A node reachable from multiple seed types must receive the
+           *same* local index in ``node_dict[ntype]`` regardless of which seed type
+           discovered it.  The inducer is shared across all those calls, so it
+           guarantees this automatically.
+
+        2. **Performance.** The inducer's C++ hash map is faster than a Python dict
+           for per-node lookups on large graphs, and its lifecycle is already managed
+           by GLT's inducer pool (``_acquire_inducer`` / ``inducer_pool.put``).
+
+        The API used here mirrors GLT's own ``DistNeighborSampler._sample_from_nodes``:
+
+        - ``inducer.init_node(seeds)`` registers seed nodes and returns their global
+          IDs (local indices 0, 1, … are assigned internally).
+        - ``inducer.induce_next(srcs, flat_nbrs, counts)`` (homo) or
+          ``inducer.induce_next(nbr_dict)`` (hetero) deduplicates neighbors against
+          all previously seen nodes and returns:
+
+            - ``new_nodes``: global IDs of nodes not yet registered.
+            - ``cols``: flat local destination indices for *every* neighbor edge,
+              in the same order as the input ``flat_nbrs``.  Combined with
+              ``repeat_interleave``-expanded seed indices, this forms the
+              ``[2, num_edges]`` edge-index tensor directly.
         """
         sample_loop_inputs = self._prepare_sample_loop_inputs(inputs)
         input_seeds = inputs.node.to(self.device)
@@ -454,52 +490,63 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         metadata = sample_loop_inputs.metadata
         nodes_to_sample = sample_loop_inputs.nodes_to_sample
 
+        # Acquired once per sample; returned to the pool at the end.  The inducer
+        # maintains the shared global→local index map for this entire subgraph.
         inducer = self._acquire_inducer()
 
         if is_hetero:
             assert isinstance(nodes_to_sample, dict)
             assert input_type is not None
 
-            # Register all seeds with the inducer; src_dict maps NodeType -> global IDs
+            # Register all seeds (anchors + supervision nodes for ABLP) with the
+            # inducer first, so they occupy the lowest local indices.  src_dict maps
+            # NodeType -> global IDs (same values as nodes_to_sample).
             src_dict = inducer.init_node(nodes_to_sample)
 
-            # Compute PPR for each seed type; build nbr_dict for a single inducer.induce_next
-            # call using virtual edge types (seed_type, 'ppr', ntype).
+            # Compute PPR for each seed type, collecting flat global neighbor IDs,
+            # weights, and per-seed counts.  Build nbr_dict for a single
+            # inducer.induce_next call using virtual edge types (seed_type, 'ppr', ntype)
+            # — the inducer only cares about etype[0] and etype[-1] as source/dest
+            # node types, so the relation name is arbitrary.
             nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
-            valid_counts_per_pair: dict[tuple[NodeType, NodeType], torch.Tensor] = {}
-            all_ppr_neighbor_ids: dict[tuple[NodeType, NodeType], torch.Tensor] = {}
+            all_flat_weights: dict[tuple[NodeType, NodeType], torch.Tensor] = {}
+            all_valid_counts: dict[tuple[NodeType, NodeType], torch.Tensor] = {}
 
             for seed_type, seed_nodes in nodes_to_sample.items():
-                nbr_ids_by_type, nbr_weights_by_type = await self._compute_ppr_scores(
-                    seed_nodes, seed_type
-                )
-                assert isinstance(nbr_ids_by_type, dict)
-                assert isinstance(nbr_weights_by_type, dict)
+                (
+                    flat_ids_by_type,
+                    flat_weights_by_type,
+                    valid_counts_by_type,
+                ) = await self._compute_ppr_scores(seed_nodes, seed_type)
+                assert isinstance(flat_ids_by_type, dict)
+                assert isinstance(flat_weights_by_type, dict)
+                assert isinstance(valid_counts_by_type, dict)
 
-                for ntype, neighbor_ids in nbr_ids_by_type.items():
-                    valid_mask = neighbor_ids != self._default_node_id
-                    valid_counts = valid_mask.sum(dim=1)
-                    flat_valid_nbrs = neighbor_ids[valid_mask]
+                for ntype, flat_ids in flat_ids_by_type.items():
+                    valid_counts = valid_counts_by_type[ntype]
+                    all_flat_weights[(seed_type, ntype)] = flat_weights_by_type[ntype]
+                    all_valid_counts[(seed_type, ntype)] = valid_counts
 
-                    valid_counts_per_pair[(seed_type, ntype)] = valid_counts
-                    all_ppr_neighbor_ids[(seed_type, ntype)] = neighbor_ids
-                    metadata[f"ppr_weights_{seed_type}_{ntype}"] = nbr_weights_by_type[
-                        ntype
-                    ]
-
-                    # Only add to nbr_dict if there are actual neighbors; induce_next
-                    # will deduplicate across seed types automatically.
-                    if flat_valid_nbrs.numel() > 0:
+                    # Skip empty pairs; induce_next handles deduplication across
+                    # seed types so a neighbor reachable from multiple seed types
+                    # gets one consistent local index in node_dict[ntype].
+                    if flat_ids.numel() > 0:
                         virtual_etype: EdgeType = (seed_type, "ppr", ntype)
                         nbr_dict[virtual_etype] = [
                             src_dict[seed_type],
-                            flat_valid_nbrs,
+                            flat_ids,
                             valid_counts,
                         ]
 
+            # induce_next assigns local indices to all neighbors not yet registered,
+            # deduplicating across all virtual edge types in one pass.
+            # new_nodes_dict: newly discovered global IDs per node type.
+            # cols_dict: flat local destination indices per virtual edge type,
+            #            in the same order the flat neighbors were provided.
             new_nodes_dict, _rows_dict, cols_dict = inducer.induce_next(nbr_dict)
 
-            # node_dict = seeds + newly discovered PPR neighbors (no duplicates)
+            # node_dict = seeds (already in src_dict) + newly discovered PPR
+            # neighbors.  merge_dict appends tensors into lists; cat collapses them.
             out_nodes_hetero: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
             merge_dict(src_dict, out_nodes_hetero)
             merge_dict(new_nodes_dict, out_nodes_hetero)
@@ -509,24 +556,27 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 if nodes
             }
 
-            # Reconstruct locally-indexed ppr_neighbor_ids from inducer cols.
-            # cols_dict[(seed_type, 'ppr', ntype)] holds local destination indices
-            # for all edges, in the same flat order as flat_valid_nbrs was built.
-            for (
-                seed_type,
-                ntype,
-            ), original_neighbor_ids in all_ppr_neighbor_ids.items():
-                valid_counts = valid_counts_per_pair[(seed_type, ntype)]
-                ppr_ids_local = torch.full_like(original_neighbor_ids, -1)
+            # Build PyG-style edge-index output per (seed_type, ntype) pair.
+            # cols_dict[(seed_type, 'ppr', ntype)] gives flat local dst indices in
+            # the same order as the flat neighbors passed to induce_next.
+            # repeat_interleave expands seed local indices to match.
+            for (seed_type, ntype), flat_weights in all_flat_weights.items():
+                valid_counts = all_valid_counts[(seed_type, ntype)]
                 virtual_etype = (seed_type, "ppr", ntype)
                 cols = cols_dict.get(virtual_etype)
                 if cols is not None:
-                    offset = 0
-                    for i, count in enumerate(valid_counts.tolist()):
-                        count = int(count)
-                        ppr_ids_local[i, :count] = cols[offset : offset + count]
-                        offset += count
-                metadata[f"ppr_neighbor_ids_{seed_type}_{ntype}"] = ppr_ids_local
+                    seed_batch_size = nodes_to_sample[seed_type].size(0)
+                    src_indices = torch.repeat_interleave(
+                        torch.arange(seed_batch_size, device=self.device), valid_counts
+                    )
+                    ppr_edge_index = torch.stack([src_indices, cols])
+                else:
+                    ppr_edge_index = torch.zeros(
+                        2, 0, dtype=torch.long, device=self.device
+                    )
+                    flat_weights = torch.zeros(0, dtype=torch.float, device=self.device)
+                metadata[f"ppr_neighbor_ids_{seed_type}_{ntype}"] = ppr_edge_index
+                metadata[f"ppr_weights_{seed_type}_{ntype}"] = flat_weights
 
             sample_output = HeteroSamplerOutput(
                 node=node_dict,
@@ -545,38 +595,38 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         else:
             assert isinstance(nodes_to_sample, torch.Tensor)
 
-            # Register seeds; srcs holds their global IDs (local indices 0..N-1 assigned internally)
+            # Register seeds; local indices 0..N-1 are assigned internally.
+            # srcs holds their global IDs (same values as nodes_to_sample).
             srcs = inducer.init_node(nodes_to_sample)
 
-            homo_neighbor_ids, homo_weights = await self._compute_ppr_scores(
-                nodes_to_sample, None
-            )
-            assert isinstance(homo_neighbor_ids, torch.Tensor)
-            assert isinstance(homo_weights, torch.Tensor)
+            homo_ppr_result = await self._compute_ppr_scores(nodes_to_sample, None)
+            assert isinstance(homo_ppr_result[0], torch.Tensor)
+            assert isinstance(homo_ppr_result[1], torch.Tensor)
+            assert isinstance(homo_ppr_result[2], torch.Tensor)
+            homo_flat_ids: torch.Tensor = homo_ppr_result[0]
+            homo_flat_weights: torch.Tensor = homo_ppr_result[1]
+            homo_valid_counts: torch.Tensor = homo_ppr_result[2]
 
-            valid_mask = homo_neighbor_ids != self._default_node_id
-            valid_counts = valid_mask.sum(dim=1)
-            flat_valid_nbrs = homo_neighbor_ids[valid_mask]
-
-            # induce_next deduplicates flat_valid_nbrs against already-seen nodes
-            # and returns local destination indices (cols) for each neighbor edge.
+            # induce_next deduplicates homo_flat_ids against already-seen nodes
+            # (the seeds registered above) and returns:
+            #   new_nodes: global IDs of nodes not yet registered.
+            #   cols: flat local destination indices for every neighbor, in the
+            #         same order as homo_flat_ids.
             new_nodes, _rows, cols = inducer.induce_next(
-                srcs, flat_valid_nbrs, valid_counts
+                srcs, homo_flat_ids, homo_valid_counts
             )
             all_nodes = torch.cat([srcs, new_nodes])
 
-            # Reconstruct ppr_neighbor_ids_local with shape [batch_size, max_ppr_nodes].
-            # cols is flat; we slice it per seed using valid_counts to get each seed's
-            # local neighbor indices.
-            ppr_neighbor_ids_local = torch.full_like(homo_neighbor_ids, -1)
-            offset = 0
-            for i, count in enumerate(valid_counts.tolist()):
-                count = int(count)
-                ppr_neighbor_ids_local[i, :count] = cols[offset : offset + count]
-                offset += count
+            # Build PyG-style edge-index: row 0 = local seed indices (expanded via
+            # repeat_interleave), row 1 = local neighbor indices from inducer cols.
+            src_indices = torch.repeat_interleave(
+                torch.arange(nodes_to_sample.size(0), device=self.device),
+                homo_valid_counts,
+            )
+            ppr_edge_index = torch.stack([src_indices, cols])
 
-            metadata["ppr_weights"] = homo_weights
-            metadata["ppr_neighbor_ids"] = ppr_neighbor_ids_local
+            metadata["ppr_neighbor_ids"] = ppr_edge_index
+            metadata["ppr_weights"] = homo_flat_weights
 
             sample_output = SamplerOutput(
                 node=all_nodes,

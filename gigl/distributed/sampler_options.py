@@ -44,9 +44,6 @@ class PPRSamplerOptions:
             Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR
             scores.
-        default_node_id: Node ID used to pad results when fewer than
-            max_ppr_nodes are found.
-        default_weight: PPR weight assigned to padding nodes.
         num_nbrs_per_hop: Maximum number of neighbors fetched per node per edge
             type during PPR traversal. Set large to approximate fetching all
             neighbors.
@@ -55,8 +52,6 @@ class PPRSamplerOptions:
     alpha: float = 0.5
     eps: float = 1e-4
     max_ppr_nodes: int = 50
-    default_node_id: int = -1
-    default_weight: float = 0.0
     num_nbrs_per_hop: int = 100000
 
 

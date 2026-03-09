@@ -104,8 +104,6 @@ def _sampling_worker_loop(
                 "alpha": sampler_options.alpha,
                 "eps": sampler_options.eps,
                 "max_ppr_nodes": sampler_options.max_ppr_nodes,
-                "default_node_id": sampler_options.default_node_id,
-                "default_weight": sampler_options.default_weight,
                 "num_nbrs_per_hop": sampler_options.num_nbrs_per_hop,
             }
         else:
