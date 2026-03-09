@@ -208,7 +208,7 @@ class BaseDistLoader(DistLoader):
         device: torch.device,
         runtime: DistributedRuntimeInfo,
         producer: Union[DistSamplingProducer, Callable[..., int]],
-        sampler_options: Optional[SamplerOptions] = None,
+        sampler_options: SamplerOptions,
         process_start_gap_seconds: float = 60.0,
     ):
         # Set right away so __del__ can clean up if we throw during init.

@@ -11,6 +11,10 @@ from typing import Optional, Union
 
 from graphlearn_torch.typing import EdgeType
 
+from gigl.common.logger import Logger
+
+logger = Logger()
+
 
 @dataclass(frozen=True)
 class KHopNeighborSamplerOptions:
@@ -56,5 +60,6 @@ def resolve_sampler_options(
             f"num_neighbors ({num_neighbors}) does not match "
             f"sampler_options.num_neighbors ({sampler_options.num_neighbors})."
         )
+    logger.info(f"Using sampler options: {sampler_options}")
 
     return sampler_options
