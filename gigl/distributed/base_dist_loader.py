@@ -425,6 +425,9 @@ class BaseDistLoader(DistLoader):
         group to dispatch RPCs that create sampling producers on storage nodes,
         then distributes the resulting producer IDs to all ranks in the group via
         ``all_gather_object``.
+        The `worker_key` is set-upstream (and are passed in as part of `RemoteDistSamplingWorkerOptions`)
+        to group producers together, so that different processes in the compute cluster (e.g. different GPUs)
+        can share the same producer.
 
         Only the leader rank (minimum rank sharing a given ``worker_key``) sends
         the ``create_producer_fn`` RPCs.  This avoids redundant RPCs and
@@ -442,7 +445,7 @@ class BaseDistLoader(DistLoader):
 
         See below for a connection setup.
         ╔═══════════════════════════════════════════════════════════════════════════════════════╗
-        ║                         COMPUTE TO STORAGE NODE CONNECTIONS                            ║
+        ║                         COMPUTE TO STORAGE NODE CONNECTIONS                           ║
         ╚═══════════════════════════════════════════════════════════════════════════════════════╝
 
              COMPUTE NODES                                              STORAGE NODES

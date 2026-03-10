@@ -16,7 +16,7 @@ from typing import Any, Callable, Literal, Optional, TypeVar, Union
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
-from graphlearn_torch.channel import QueueTimeoutError, ShmChannel
+from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
     barrier,
@@ -448,9 +448,11 @@ class DistServer:
         Returns:
           int: A unique id of created sampling producer on this server.
         """
+
+        request_start_time = time.monotonic()
         if isinstance(sampler_input, RemoteSamplerInput):
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
-        request_start_time = time.time()
+
         with self._lock:
             producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
             if producer_id is None:
@@ -479,11 +481,10 @@ class DistServer:
                 producer = DistSamplingProducer(
                     self.dataset, sampler_input, sampling_config, worker_options, buffer
                 )
-                producer_start_time = time.time()
+                producer_start_time = time.monotonic()
                 producer.init()
-                producer_init_time = time.time()
                 logger.info(
-                    f"Producer {producer_id} initialized in {producer_init_time - producer_start_time:.2f}s"
+                    f"Producer {producer_id} initialized in {time.monotonic() - producer_start_time:.2f}s"
                 )
                 self._producer_pool[producer_id] = producer
                 self._msg_buffer_pool[producer_id] = buffer
@@ -492,7 +493,7 @@ class DistServer:
                 logger.info(
                     f"Reusing producer pool entry for producer id {producer_id}"
                 )
-        request_end_time = time.time()
+        request_end_time = time.monotonic()
         logger.info(
             f"Request to create producer for worker key {worker_options.worker_key} took {request_end_time - request_start_time:.2f}s"
         )
@@ -524,7 +525,7 @@ class DistServer:
 
     def fetch_one_sampled_message(
         self, producer_id: int
-    ) -> tuple[Optional[bytes], bool]:
+    ) -> tuple[Optional[SampleMessage], bool]:
         r"""Fetch a sampled message from the buffer of a specific sampling
         producer with its producer id.
         """
