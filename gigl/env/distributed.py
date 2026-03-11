@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Final
 
+from gigl.common import Uri
+
 COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: Final[
     str
 ] = "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"
@@ -61,6 +63,10 @@ class GraphStoreInfo:
     # Port of the master node for the RPC wait communication.
     # NOTE: This should be on the *storage* master node, not the compute master node.
     rpc_wait_port: int
+
+    # URI of the readiness sentinel file that storage nodes write after dataset loading
+    # is complete. Compute nodes poll for this file before initiating RPC connections.
+    readiness_uri: Uri
 
     @property
     def num_cluster_nodes(self) -> int:

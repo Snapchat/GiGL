@@ -26,6 +26,7 @@ from gigl.distributed.graph_store.dist_server import (
     init_server,
     wait_and_shutdown_server,
 )
+from gigl.distributed.utils import write_readiness_signal
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -208,6 +209,8 @@ def run_storage_server(
             then this parameter should be increased to avoid timeout errors.
     """
     mp_context = torch.multiprocessing.get_context("spawn")
+    if storage_rank == 0:
+        write_readiness_signal(cluster_info.readiness_uri)
     for i in range(num_server_sessions):
         logger.info(
             f"Starting storage node rank {storage_rank} / "
