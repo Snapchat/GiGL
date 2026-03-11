@@ -8,6 +8,7 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
+import math
 import sys
 import time
 from collections import Counter, defaultdict
@@ -103,6 +104,14 @@ class BaseDistLoader(DistLoader):
             or a callable to dispatch on the ``DistServer`` (graph store mode).
         sampler_options: Controls which sampler class is instantiated.
         process_start_gap_seconds: Delay between each process for staggered colocated init.
+            In graph store mode, this is the delay between each batch of concurrent
+            producer initializations.
+        max_concurrent_producer_inits: Maximum number of leader ranks that may
+            dispatch ``create_producer_fn`` RPCs concurrently in graph store mode.
+            Leaders are grouped into batches of this size; each batch sleeps
+            ``batch_index * process_start_gap_seconds`` before dispatching.
+            Only applies to graph store mode. Defaults to ``None``
+            (no staggering).
     """
 
     @staticmethod
@@ -209,7 +218,11 @@ class BaseDistLoader(DistLoader):
         producer: Union[DistSamplingProducer, Callable[..., int]],
         sampler_options: SamplerOptions,
         process_start_gap_seconds: float = 60.0,
+        max_concurrent_producer_inits: Optional[int] = None,
     ):
+        if max_concurrent_producer_inits is None:
+            max_concurrent_producer_inits = sys.maxsize
+
         # Set right away so __del__ can clean up if we throw during init.
         # Will be set to False once connections are initialized.
         self._shutdowned = True
@@ -307,6 +320,8 @@ class BaseDistLoader(DistLoader):
                 dataset=dataset,
                 create_producer_fn=producer,
                 runtime=runtime,
+                process_start_gap_seconds=process_start_gap_seconds,
+                max_concurrent_producer_inits=max_concurrent_producer_inits,
             )
 
     @staticmethod
@@ -423,6 +438,8 @@ class BaseDistLoader(DistLoader):
         dataset: RemoteDistDataset,
         create_producer_fn: Callable[..., int],
         runtime: DistributedRuntimeInfo,
+        process_start_gap_seconds: float = 60.0,
+        max_concurrent_producer_inits: int = sys.maxsize,  # Already resolved from None by __init__
     ) -> None:
         """Initialize Graph Store mode connections.
 
@@ -438,6 +455,11 @@ class BaseDistLoader(DistLoader):
         the ``create_producer_fn`` RPCs.  This avoids redundant RPCs and
         server-side lock contention, since the server deduplicates producers by
         ``worker_key`` anyway.
+
+        Leaders are further staggered into batches of size
+        ``max_concurrent_producer_inits``.  Each batch sleeps
+        ``batch_index * process_start_gap_seconds`` before dispatching RPCs,
+        limiting the number of leaders that hit storage nodes concurrently.
 
         All DistLoader attributes are already set by ``__init__`` before this is called.
 
@@ -486,6 +508,11 @@ class BaseDistLoader(DistLoader):
                 storage server (e.g. ``DistServer.create_sampling_producer``).
             runtime: Resolved distributed runtime information (provides rank and
                 world_size for the all_gather collectives).
+            process_start_gap_seconds: Delay in seconds between each batch of
+                concurrent producer initializations.
+            max_concurrent_producer_inits: Maximum number of leader ranks that
+                may dispatch RPCs concurrently. Leaders are grouped into batches
+                of this size.
         """
         # Validate distributed context
         ctx = get_context()
@@ -525,16 +552,38 @@ class BaseDistLoader(DistLoader):
         leader_rank = min(key_to_ranks[my_worker_key])
         is_leader = runtime.rank == leader_rank
 
+        # --- Stagger leaders into batches ---
+        # Deterministically assign each unique worker_key an index, then group
+        # leaders into batches of max_concurrent_producer_inits.  Each batch
+        # sleeps batch_index * process_start_gap_seconds before dispatching.
+        unique_keys = sorted(key_to_ranks.keys())
+        my_key_index = unique_keys.index(my_worker_key)
+        num_unique_keys = len(unique_keys)
+        num_batches = math.ceil(num_unique_keys / max_concurrent_producer_inits)
+        my_batch = my_key_index // max_concurrent_producer_inits
+        stagger_sleep_seconds = my_batch * process_start_gap_seconds
+
         logger.info(
             f"rank={runtime.rank} worker_key={my_worker_key} "
             f"is_leader={is_leader} leader_rank={leader_rank} "
-            f"group_size={len(key_to_ranks[my_worker_key])}"
+            f"group_size={len(key_to_ranks[my_worker_key])} "
+            f"key_index={my_key_index}/{num_unique_keys} "
+            f"batch={my_batch}/{num_batches} "
+            f"stagger_sleep={stagger_sleep_seconds:.1f}s"
         )
         _flush()
 
         # --- Leader dispatches RPCs, followers skip ---
         producer_id_list: list[int] = []
         if is_leader:
+            if stagger_sleep_seconds > 0:
+                logger.info(
+                    f"rank={runtime.rank} sleeping {stagger_sleep_seconds:.1f}s "
+                    f"(batch {my_batch}/{num_batches}) before RPC dispatch"
+                )
+                _flush()
+                time.sleep(stagger_sleep_seconds)
+
             rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
             logger.info(
                 f"node_rank={node_rank} rank={runtime.rank} dispatching "
@@ -564,7 +613,7 @@ class BaseDistLoader(DistLoader):
 
             for server_rank, fut in rpc_futures:
                 t_wait = time.time()
-                producer_id: int = fut.wait()
+                producer_id = fut.wait()
                 logger.info(
                     f"node_rank={node_rank} rank={runtime.rank} "
                     f"create_sampling_producer"

@@ -80,6 +80,7 @@ class DistABLPLoader(BaseDistLoader):
         prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
+        max_concurrent_producer_inits: Optional[int] = None,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -184,9 +185,16 @@ class DistABLPLoader(BaseDistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
-                it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
-                attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
+            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader.
+                In colocated mode, each process sleeps ``local_rank * process_start_gap_seconds``
+                before initializing. In graph store mode, leader ranks are grouped into batches
+                of ``max_concurrent_producer_inits`` and each batch sleeps
+                ``batch_index * process_start_gap_seconds`` before dispatching RPCs.
+            max_concurrent_producer_inits (int): Maximum number of leader ranks that may
+                dispatch create-producer RPCs concurrently in graph store mode. Leaders are
+                grouped into batches of this size; each batch is staggered by
+                ``process_start_gap_seconds``. Only applies to graph store mode.
+                Defaults to ``None`` (no staggering).
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
@@ -232,6 +240,10 @@ class DistABLPLoader(BaseDistLoader):
             if prefetch_size is not None:
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
+            if max_concurrent_producer_inits is not None:
+                raise ValueError(
+                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
                 )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
@@ -363,6 +375,7 @@ class DistABLPLoader(BaseDistLoader):
             producer=producer,
             sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
+            max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
 
     def _setup_for_colocated(

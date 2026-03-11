@@ -676,6 +676,14 @@ class DistributedNeighborLoaderTest(TestCase):
                 num_neighbors=[2, 2],
                 input_nodes={-1: torch.tensor([10]), 0: torch.tensor([20])},
             ),
+            param(
+                "max_concurrent_producer_inits is not None (colocated mode)",
+                expected_error=ValueError,
+                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
+                num_neighbors=[2, 2],
+                input_nodes=torch.tensor([10]),
+                max_concurrent_producer_inits=1,
+            ),
         ]
     )
     def test_distributed_neighbor_loader_invalid_inputs_colocated(
