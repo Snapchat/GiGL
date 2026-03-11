@@ -925,6 +925,10 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        # _get_labels strips ALL #META. keys from the message to work around a
+        # GLT bug in to_hetero_data.  Collect non-label metadata beforehand so
+        # we can re-apply it to the output data after conversion.
+        non_label_metadata = self._extract_non_label_metadata(msg)
         msg, positive_labels, negative_labels = self._get_labels(msg)
         data = super()._collate_fn(msg)
         data = set_missing_features(
@@ -941,5 +945,34 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
+        for key, value in non_label_metadata.items():
+            data[key] = value
         data = self._set_labels(data, positive_labels, negative_labels)
         return data
+
+    def _extract_non_label_metadata(
+        self, msg: SampleMessage
+    ) -> dict[str, torch.Tensor]:
+        """Extract non-label metadata from a SampleMessage before _get_labels strips it.
+
+        _get_labels removes ALL ``#META.`` keys from the message to avoid a GLT
+        bug in ``to_hetero_data``.  This method reads non-label metadata (e.g.
+        PPR scores) so it can be re-applied to the output Data/HeteroData after
+        conversion.
+
+        Args:
+            msg: The SampleMessage to scan (not modified).
+
+        Returns:
+            Dict mapping metadata key (without ``#META.`` prefix) to tensor.
+        """
+        meta_prefix = "#META."
+        label_prefixes = (
+            metadata_key_with_prefix(POSITIVE_LABEL_METADATA_KEY),
+            metadata_key_with_prefix(NEGATIVE_LABEL_METADATA_KEY),
+        )
+        result: dict[str, torch.Tensor] = {}
+        for k in msg.keys():
+            if k.startswith(meta_prefix) and not k.startswith(label_prefixes):
+                result[k[len(meta_prefix) :]] = msg[k].to(self.to_device)
+        return result
