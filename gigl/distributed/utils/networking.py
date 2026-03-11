@@ -232,7 +232,7 @@ def write_readiness_signal(readiness_uri: Uri) -> None:
 def wait_for_readiness_signal(
     readiness_uri: Uri,
     timeout: float = 3600.0,
-    poll_interval: float = 10.0,
+    poll_interval: float = 60.0,
     log_every_n_attempts: int = 10,
 ) -> None:
     """Poll for a readiness sentinel file before initiating RPC connections.
@@ -243,7 +243,7 @@ def wait_for_readiness_signal(
         readiness_uri: The URI to poll for the sentinel file.
             Supports both GcsUri (production) and LocalUri (testing).
         timeout: Maximum time in seconds to wait for the signal. Defaults to 3600.
-        poll_interval: Time in seconds between poll attempts. Defaults to 10.
+        poll_interval: Time in seconds between poll attempts. Defaults to 60.
 
     Raises:
         TimeoutError: If the readiness signal is not found within the timeout.
