@@ -245,6 +245,8 @@ def wait_for_readiness_signal(
         timeout: Maximum time in seconds to wait for the signal. Defaults to 3600.
         poll_interval_s: Time in seconds between poll attempts. Defaults to 10.
         log_every_n_attempts: Number of attempts between log messages. Defaults to 30.
+        e.g. with poll_interval set to 10, and log_every_n_attempts set to 30, we will log every 300 seconds (5 minutes).
+
 
     Raises:
         TimeoutError: If the readiness signal is not found within the timeout.
