@@ -233,6 +233,10 @@ class DistABLPLoader(BaseDistLoader):
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
                 )
+            if max_concurrent_producer_inits is not None:
+                raise ValueError(
+                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
+                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
