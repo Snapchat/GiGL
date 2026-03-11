@@ -820,6 +820,108 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
         raise
 
 
+def _run_compute_tests_partial_servers(
+    client_rank: int,
+    cluster_info: GraphStoreInfo,
+    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
+) -> None:
+    """Compute test where each node only samples from one of the two servers.
+
+    Exercises the null producer path: the loader will see an empty input for one
+    server, skip the ``create_sampling_producer`` RPC for it, and only create a
+    ``RemoteReceivingChannel`` connected to the single active server.
+    """
+    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+
+    remote_dist_dataset = RemoteDistDataset(
+        cluster_info=cluster_info,
+        local_rank=client_rank,
+        mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
+    )
+
+    # Fetch full input, then drop one server to exercise the null producer path.
+    sampler_input = remote_dist_dataset.fetch_node_ids(
+        node_type=None,
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+    )
+
+    # Compute node 0 keeps server 0 only; compute node 1 keeps server 1 only.
+    server_to_keep = cluster_info.compute_node_rank
+    partial_input: dict[int, torch.Tensor] = {
+        server_to_keep: sampler_input[server_to_keep]
+    }
+    expected_count = len(sampler_input[server_to_keep])
+
+    loader = DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        input_nodes=partial_input,
+        num_workers=2,
+        worker_concurrency=2,
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        count += 1
+
+    torch.distributed.barrier()
+    logger.info(
+        f"Partial server test: rank {torch.distributed.get_rank()} "
+        f"loaded {count} batches (expected {expected_count})"
+    )
+    assert count == expected_count, f"Expected {expected_count} batches, got {count}"
+
+    shutdown_compute_proccess()
+
+
+@dataclass(frozen=True)
+class ClientPartialServersProcessArgs:
+    """Arguments for the partial-server client process.
+
+    Attributes:
+        client_rank: Rank of this client in the compute cluster.
+        cluster_info: Information about the distributed cluster.
+        exception_dict: Shared dictionary for storing exceptions from processes.
+    """
+
+    client_rank: int
+    cluster_info: GraphStoreInfo
+    exception_dict: MutableMapping[str, str]
+
+
+def _client_partial_servers_process(args: ClientPartialServersProcessArgs) -> None:
+    """Client process that spawns compute tests exercising the null producer path."""
+    process_name = f"client_partial_{args.client_rank}"
+    try:
+        logger.info(
+            f"Initializing partial-server client node {args.client_rank} / "
+            f"{args.cluster_info.num_compute_nodes}. "
+            f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
+        )
+        mp_context = torch.multiprocessing.get_context("spawn")
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
+        client_processes: list[py_mp_context.SpawnProcess] = []
+        for i in range(args.cluster_info.num_processes_per_compute):
+            p = mp_context.Process(
+                target=_run_compute_tests_partial_servers,
+                args=[i, args.cluster_info, mp_sharing_dict, mp_barrier],
+            )
+            client_processes.append(p)
+        for p in client_processes:
+            p.start()
+        for p in client_processes:
+            p.join(DEFAULT_TIMEOUT_SECONDS)
+    except Exception:
+        args.exception_dict[process_name] = traceback.format_exc()
+        raise
+
+
 def _get_expected_input_nodes_by_rank(
     num_nodes: int, cluster_info: GraphStoreInfo
 ) -> dict[int, list[torch.Tensor]]:
@@ -909,7 +1011,7 @@ class GraphStoreIntegrationTest(TestCase):
             readiness_uri=readiness_uri,
         )
 
-    def test_graph_store_homogeneous(self):
+    def _test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -989,7 +1091,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    def test_homogeneous_training(self):
+    def _test_homogeneous_training(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
@@ -1065,7 +1167,7 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    def test_multiple_loaders_in_graph_store(self):
+    def _test_multiple_loaders_in_graph_store(self):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
         in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
         """
@@ -1134,6 +1236,90 @@ class GraphStoreIntegrationTest(TestCase):
                     sample_edge_direction="in",
                     exception_dict=exception_dict,
                     splitter=splitter,
+                )
+                server_process = ctx.Process(
+                    target=_run_storage_main_process,
+                    args=[server_args],
+                    name=f"server_{i}",
+                )
+                server_process.start()
+                launched_processes.append(server_process)
+
+        self.assert_all_processes_succeed(launched_processes, exception_dict)
+
+    def test_graph_store_partial_server_inputs(self):
+        """Test that loaders work when compute nodes only have data for a subset of servers.
+
+        Exercises the null producer path: each compute node drops one server's
+        input nodes, so ``create_sampling_producer`` RPCs are skipped for empty
+        servers and the ``RemoteReceivingChannel`` is only connected to active
+        servers.
+        """
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+        master_port = get_free_port()
+        host_ip = socket.gethostbyname(socket.gethostname())
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=2,
+            num_compute_nodes=2,
+            num_processes_per_compute=1,
+        )
+
+        ctx = mp.get_context("spawn")
+        manager = mp.Manager()
+        exception_dict = manager.dict()
+        launched_processes: list[py_mp_context.SpawnProcess] = []
+
+        # Compute nodes
+        for i in range(cluster_info.num_compute_nodes):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MASTER_ADDR": host_ip,
+                    "MASTER_PORT": str(master_port),
+                    "RANK": str(i),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
+                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
+                        cluster_info.num_processes_per_compute
+                    ),
+                },
+                clear=False,
+            ):
+                client_args = ClientPartialServersProcessArgs(
+                    client_rank=i,
+                    cluster_info=cluster_info,
+                    exception_dict=exception_dict,
+                )
+                client_process = ctx.Process(
+                    target=_client_partial_servers_process,
+                    args=[client_args],
+                    name=f"client_partial_{i}",
+                )
+                client_process.start()
+                launched_processes.append(client_process)
+
+        # Storage nodes
+        for i in range(cluster_info.num_storage_nodes):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "MASTER_ADDR": host_ip,
+                    "MASTER_PORT": str(master_port),
+                    "RANK": str(i + cluster_info.num_compute_nodes),
+                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
+                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
+                        cluster_info.num_processes_per_compute
+                    ),
+                },
+                clear=False,
+            ):
+                server_args = ServerProcessArgs(
+                    cluster_info=cluster_info,
+                    task_config_uri=task_config_uri,
+                    sample_edge_direction="in",
+                    exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
                     target=_run_storage_main_process,

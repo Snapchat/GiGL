@@ -12,7 +12,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Callable, Final, Optional, Union
 
 import torch
 from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
@@ -49,6 +49,9 @@ from gigl.distributed.utils.neighborloader import (
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
+
+_NULL_PRODUCER_ID: Final[int] = -1
+"""Sentinel value for servers where no sampling producer was created (empty input)."""
 
 
 # We don't see logs for graph store mode for whatever reason.
@@ -533,9 +536,13 @@ class BaseDistLoader(DistLoader):
         _flush()
 
         # --- Leader dispatches RPCs, followers skip ---
+        # The leader skips RPCs for servers with empty input data, using
+        # _NULL_PRODUCER_ID as a sentinel.  The full-length producer_id_list
+        # (one entry per server) is preserved so the all_gather below works
+        # identically for all ranks.
         producer_id_list: list[int] = []
         if is_leader:
-            rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
+            rpc_futures: dict[int, torch.futures.Future[int]] = {}
             logger.info(
                 f"node_rank={node_rank} rank={runtime.rank} dispatching "
                 f"create_sampling_producer to "
@@ -546,7 +553,15 @@ class BaseDistLoader(DistLoader):
             for server_rank, inp_data in zip(
                 self._server_rank_list, self._input_data_list
             ):
-                fut = async_request_server(
+                if not isinstance(inp_data, RemoteSamplerInput) and len(inp_data) == 0:
+                    logger.info(
+                        f"node_rank={node_rank} rank={runtime.rank} skipping "
+                        f"create_sampling_producer for server_rank={server_rank} "
+                        f"(empty input)"
+                    )
+                    _flush()
+                    continue
+                rpc_futures[server_rank] = async_request_server(
                     server_rank,
                     create_producer_fn,
                     inp_data,
@@ -554,17 +569,19 @@ class BaseDistLoader(DistLoader):
                     self.worker_options,
                     self._sampler_options,
                 )
-                rpc_futures.append((server_rank, fut))
             logger.info(
-                f"node_rank={node_rank} rank={runtime.rank} all "
+                f"node_rank={node_rank} rank={runtime.rank} "
                 f"{len(rpc_futures)} RPCs dispatched in "
                 f"{time.time() - t_dispatch:.3f}s, waiting for responses"
             )
             _flush()
 
-            for server_rank, fut in rpc_futures:
+            for server_rank in self._server_rank_list:
+                if server_rank not in rpc_futures:
+                    producer_id_list.append(_NULL_PRODUCER_ID)
+                    continue
                 t_wait = time.time()
-                producer_id: int = fut.wait()
+                producer_id: int = rpc_futures[server_rank].wait()
                 logger.info(
                     f"node_rank={node_rank} rank={runtime.rank} "
                     f"create_sampling_producer"
@@ -595,12 +612,49 @@ class BaseDistLoader(DistLoader):
         )
         _flush()
 
-        # Create remote receiving channel for cross-machine message passing
-        self._channel = RemoteReceivingChannel(
-            self._server_rank_list,
-            self._producer_id_list,
-            self.worker_options.prefetch_size,
+        # Filter out null producers — servers where the leader had no input data.
+        # All ranks in the same worker_key group compute identical filtered lists
+        # because _producer_id_list comes from the shared leader (via all_gather)
+        # and _server_rank_list is identical (from worker_options.server_rank).
+        active_server_rank_list: list[int] = []
+        active_producer_id_list: list[int] = []
+        for srv, pid in zip(self._server_rank_list, self._producer_id_list):
+            if pid != _NULL_PRODUCER_ID:
+                active_server_rank_list.append(srv)
+                active_producer_id_list.append(pid)
+
+        num_skipped = len(self._server_rank_list) - len(active_server_rank_list)
+        if num_skipped > 0:
+            logger.info(
+                f"rank={runtime.rank} filtered out {num_skipped} null producers, "
+                f"active servers: {active_server_rank_list}"
+            )
+            _flush()
+
+        self._server_rank_list = active_server_rank_list
+        self._producer_id_list = active_producer_id_list
+
+        # Invariant: lists must match in length and contain no sentinels.
+        assert len(self._server_rank_list) == len(self._producer_id_list), (
+            f"rank={runtime.rank} server_rank_list length "
+            f"({len(self._server_rank_list)}) != producer_id_list length "
+            f"({len(self._producer_id_list)}) after null-producer filtering"
         )
+        assert all(pid != _NULL_PRODUCER_ID for pid in self._producer_id_list), (
+            f"rank={runtime.rank} found null producer IDs after filtering: "
+            f"{self._producer_id_list}"
+        )
+
+        # Create remote receiving channel for cross-machine message passing
+        if self._server_rank_list:
+            self._channel = RemoteReceivingChannel(
+                self._server_rank_list,
+                self._producer_id_list,
+                self.worker_options.prefetch_size,
+            )
+        else:
+            self._channel = None
+            self._num_expected = 0
 
         logger.info(
             f"node_rank {node_rank} rank={runtime.rank} initialized "
@@ -625,7 +679,8 @@ class BaseDistLoader(DistLoader):
                     server_rank, DistServer.destroy_sampling_producer, producer_id
                 )
                 rpc_futures.append(fut)
-            torch.futures.wait_all(rpc_futures)
+            if rpc_futures:
+                torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
@@ -647,7 +702,9 @@ class BaseDistLoader(DistLoader):
                     self._epoch,
                 )
                 rpc_futures.append(fut)
-            torch.futures.wait_all(rpc_futures)
-            self._channel.reset()
+            if rpc_futures:
+                torch.futures.wait_all(rpc_futures)
+            if self._channel is not None:
+                self._channel.reset()
         self._epoch += 1
         return self
