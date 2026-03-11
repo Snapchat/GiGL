@@ -27,6 +27,7 @@ from gigl.distributed.sampler import (
     ABLPNodeSamplerInput,
     metadata_key_with_prefix,
 )
+from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
@@ -83,6 +84,7 @@ class DistABLPLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        sampler_options: Optional[SamplerOptions] = None,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
@@ -142,6 +144,7 @@ class DistABLPLoader(BaseDistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
+                If ``KHopNeighborSamplerOptions`` is also provided, they must match.
             input_nodes: Indices of seed nodes to start sampling from.
                 For Colocated mode: `torch.Tensor` or `tuple[NodeType, torch.Tensor]`.
                     If set to `None` for homogeneous settings, all nodes will be considered.
@@ -197,6 +200,9 @@ class DistABLPLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            sampler_options (Optional[SamplerOptions]): Controls which sampler class is
+                instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument
+                to instantiate the sampler.
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
@@ -205,6 +211,8 @@ class DistABLPLoader(BaseDistLoader):
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
+
+        sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
         # Determine sampling cluster setup based on dataset type
         if isinstance(dataset, RemoteDistDataset):
@@ -344,11 +352,12 @@ class DistABLPLoader(BaseDistLoader):
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
             ] = DistSamplingProducer(
-                dataset,
-                sampler_input,
-                sampling_config,
-                worker_options,
-                channel,
+                data=dataset,
+                sampler_input=sampler_input,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                channel=channel,
+                sampler_options=sampler_options,
             )
         else:
             producer = DistServer.create_sampling_producer
@@ -364,6 +373,7 @@ class DistABLPLoader(BaseDistLoader):
             device=device,
             runtime=runtime,
             producer=producer,
+            sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
