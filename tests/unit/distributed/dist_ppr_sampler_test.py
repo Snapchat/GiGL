@@ -3,20 +3,42 @@
 Verifies that the PPR scores produced by the distributed sampler match
 NetworkX's ``pagerank`` with personalization — a well-tested, independent
 PPR implementation.
+
+Note on compatability with NetworkX:
+
+Both our forward push algorithm (Andersen et al., 2006) and NetworkX's
+``pagerank`` (power iteration) compute Personalized PageRank — they are
+different solvers for the same quantity.  With a small residual tolerance
+(eps=1e-6), forward push converges close enough that per-node scores match
+NetworkX within atol=1e-3.
+
+Another note is that our ``alpha`` is the *restart* (teleport) probability — the probability of
+jumping back to the seed at each step.  NetworkX's ``alpha`` is the *damping
+factor* — the probability of following an edge.  These are complements::
+
+    nx_alpha = 1 - our_alpha
+
+Finally, with ``edge_dir="in"``, the PPR walk from node v follows *incoming* edges —
+it moves to nodes u where edge (u, v) exists in the graph.  NetworkX's
+``pagerank`` follows *outgoing* edges.  To make NetworkX traverse the same
+neighbors as the sampler, we reverse the edges when building the reference
+graph (add dst→src instead of src→dst).  When ``edge_dir="out"``, no
+reversal is needed since both follow the original edge direction.
 """
 
 import heapq
 from collections import defaultdict
+from typing import Literal
 
 import networkx as nx
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
+from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
-from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from tests.test_assets.distributed.test_dataset import (
@@ -73,20 +95,23 @@ _TEST_NUM_NBRS_PER_HOP = 100000
 # ---------------------------------------------------------------------------
 # Reference PPR implementations (NetworkX-based)
 # ---------------------------------------------------------------------------
-def _build_reference_graph() -> nx.DiGraph:
-    """Build a NetworkX DiGraph matching the homogeneous test edge_index with edge_dir="in".
+def _build_reference_graph(edge_dir: Literal["in", "out"] = "in") -> nx.DiGraph:
+    """Build a NetworkX DiGraph matching the homogeneous test edge_index.
 
-    With edge_dir="in", the PPR walk from node v follows incoming edges —
-    i.e., it moves to nodes u where (u, v) exists.  NetworkX follows outgoing
-    edges, so we add edges dst->src so that nx.pagerank traverses the same
-    neighbors as the sampler.
+    With ``edge_dir="in"``, edges are reversed (dst→src) so that NetworkX's
+    outgoing-edge traversal matches GLT's incoming-edge PPR walk.  With
+    ``edge_dir="out"``, edges keep their original direction (src→dst).
+
+    See the module docstring for a full explanation of why reversal is needed.
     """
     graph = nx.DiGraph()
     graph.add_nodes_from(range(_NUM_TEST_NODES))
     src = _TEST_EDGE_INDEX[0].tolist()
     dst = _TEST_EDGE_INDEX[1].tolist()
-    # Reverse direction: dst->src so outgoing edges in nx match incoming in GLT
-    graph.add_edges_from(zip(dst, src))
+    if edge_dir == "in":
+        graph.add_edges_from(zip(dst, src))
+    else:
+        graph.add_edges_from(zip(src, dst))
     return graph
 
 
@@ -98,13 +123,12 @@ def _reference_ppr(
 ) -> dict[int, float]:
     """Compute reference PPR scores for a homogeneous graph using NetworkX.
 
+    See the module docstring for the alpha mapping rationale.
+
     Args:
         graph: NetworkX DiGraph with edges oriented for the sampling direction.
         seed: Seed node ID.
-        alpha: Restart probability (our convention). Mapped to NetworkX's
-            damping factor as ``nx_alpha = 1 - alpha``, since NetworkX's alpha
-            is the follow-edge probability while ours is the teleport
-            probability.
+        alpha: Restart probability (our convention).
         max_ppr_nodes: Maximum number of top-scoring nodes to return.
 
     Returns:
@@ -113,7 +137,6 @@ def _reference_ppr(
     personalization = {n: 0.0 for n in graph.nodes()}
     personalization[seed] = 1.0
 
-    # NetworkX alpha = follow probability = 1 - our restart probability
     scores = nx.pagerank(
         graph, alpha=1 - alpha, personalization=personalization, tol=1e-12
     )
@@ -121,13 +144,12 @@ def _reference_ppr(
     return dict(top_k)
 
 
-def _build_hetero_reference_graph(edge_dir: str = "in") -> nx.DiGraph:
+def _build_hetero_reference_graph(edge_dir: Literal["in", "out"] = "in") -> nx.DiGraph:
     """Build a NetworkX DiGraph for the heterogeneous test graph.
 
-    Nodes are ``(type_str, id)`` tuples.  For edge_dir="in", edges are reversed
-    (dst->src) so that NetworkX's outgoing-edge traversal matches GLT's
-    incoming-edge PPR walk.  For edge_dir="out", edges keep their original
-    direction (src->dst).
+    Nodes are ``(type_str, id)`` tuples.  Edge direction is handled the same
+    way as :func:`_build_reference_graph` — see the module docstring for the
+    full explanation of why reversal is needed for ``edge_dir="in"``.
     """
     graph = nx.DiGraph()
     for i in range(_NUM_TEST_USERS):
@@ -157,6 +179,8 @@ def _reference_ppr_hetero(
     max_ppr_nodes: int,
 ) -> dict[str, dict[int, float]]:
     """Compute reference PPR scores for a heterogeneous graph using NetworkX.
+
+    See the module docstring for the alpha mapping rationale.
 
     Args:
         graph: NetworkX DiGraph with ``(type_str, id)`` tuple nodes.
@@ -188,16 +212,108 @@ def _reference_ppr_hetero(
 
 
 # ---------------------------------------------------------------------------
+# Shared verification helpers
+# ---------------------------------------------------------------------------
+def _extract_hetero_ppr_scores(
+    datum: HeteroData,
+    seed_type: str,
+    node_types: list[str],
+) -> dict[str, dict[int, float]]:
+    """Extract and validate PPR metadata from a HeteroData batch.
+
+    Verifies tensor shapes and invariants (positive weights, valid indices),
+    maps local indices to global IDs, and returns scores grouped by node type.
+
+    Args:
+        datum: A single HeteroData batch (batch_size=1).
+        seed_type: The seed node type used to key PPR metadata attributes.
+        node_types: Node types to extract PPR scores for.
+
+    Returns:
+        Dict mapping node_type_str -> {global_node_id: ppr_score}.
+    """
+    sampler_ppr_by_type: dict[str, dict[int, float]] = {}
+    for ntype in node_types:
+        key_ids = f"ppr_neighbor_ids_{seed_type}_{ntype}"
+        key_weights = f"ppr_weights_{seed_type}_{ntype}"
+
+        assert hasattr(datum, key_ids), f"Missing {key_ids}"
+        assert hasattr(datum, key_weights), f"Missing {key_weights}"
+
+        ppr_edge_index = getattr(datum, key_ids)
+        ppr_weights = getattr(datum, key_weights)
+
+        assert (
+            ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
+        ), f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        assert ppr_weights.dim() == 1
+        assert ppr_edge_index.size(1) == ppr_weights.size(0)
+        assert (ppr_weights > 0).all(), f"PPR weights for {ntype} must be positive"
+        assert (
+            ppr_edge_index[0] == 0
+        ).all(), "All src indices must be 0 for batch_size=1"
+
+        global_node_ids = datum[ntype].node
+        type_ppr: dict[int, float] = {}
+        for j in range(ppr_edge_index.size(1)):
+            local_dst = ppr_edge_index[1, j].item()
+            global_dst = global_node_ids[local_dst].item()
+            type_ppr[global_dst] = ppr_weights[j].item()
+        sampler_ppr_by_type[str(ntype)] = type_ppr
+
+    return sampler_ppr_by_type
+
+
+def _assert_ppr_scores_match_reference(
+    sampler_ppr_by_type: dict[str, dict[int, float]],
+    reference_ppr: dict[str, dict[int, float]],
+    seed_id: int,
+    context_label: str = "",
+) -> None:
+    """Assert sampler PPR scores match reference scores per node type.
+
+    Checks that top-k node sets are identical and that per-node scores
+    are within atol=1e-3.  The forward push error per node is bounded by
+    O(alpha * eps * degree), so atol=1e-3 is generous for eps=1e-6.
+
+    Args:
+        sampler_ppr_by_type: Sampler output from :func:`_extract_hetero_ppr_scores`.
+        reference_ppr: Reference output from :func:`_reference_ppr_hetero`.
+        seed_id: Global seed node ID (for error messages).
+        context_label: Optional prefix for error messages (e.g. "ABLP").
+    """
+    prefix = f"{context_label} seed" if context_label else f"Seed"
+    for ntype_str in reference_ppr:
+        assert set(sampler_ppr_by_type[ntype_str].keys()) == set(
+            reference_ppr[ntype_str].keys()
+        ), (
+            f"{prefix} {seed_id}, type {ntype_str}: top-k node sets differ.\n"
+            f"  Sampler:   {sorted(sampler_ppr_by_type[ntype_str].keys())}\n"
+            f"  Reference: {sorted(reference_ppr[ntype_str].keys())}"
+        )
+
+        for node_id in reference_ppr[ntype_str]:
+            ref_score = reference_ppr[ntype_str][node_id]
+            sam_score = sampler_ppr_by_type[ntype_str][node_id]
+            assert abs(sam_score - ref_score) < 1e-3, (
+                f"{prefix} {seed_id}, type {ntype_str}, node {node_id}: "
+                f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Spawned process functions
 # ---------------------------------------------------------------------------
 def _run_ppr_loader_correctness_check(
     _: int,
-    dataset: DistDataset,
     alpha: float,
     max_ppr_nodes: int,
+    edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate homogeneous PPR loader and verify each batch against NetworkX PPR."""
     create_test_process_group()
+
+    dataset = create_homogeneous_dataset(edge_index=_TEST_EDGE_INDEX, edge_dir=edge_dir)
 
     loader = DistNeighborLoader(
         dataset=dataset,
@@ -212,7 +328,7 @@ def _run_ppr_loader_correctness_check(
         batch_size=1,
     )
 
-    reference_graph = _build_reference_graph()
+    reference_graph = _build_reference_graph(edge_dir)
 
     batches_checked = 0
     for datum in loader:
@@ -283,12 +399,16 @@ def _run_ppr_loader_correctness_check(
 
 def _run_ppr_hetero_loader_correctness_check(
     _: int,
-    dataset: DistDataset,
     alpha: float,
     max_ppr_nodes: int,
+    edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate heterogeneous PPR loader and verify each batch against NetworkX PPR."""
     create_test_process_group()
+
+    dataset = create_heterogeneous_dataset(
+        edge_indices=_TEST_HETERO_EDGE_INDICES, edge_dir=edge_dir
+    )
 
     node_ids = dataset.node_ids
     assert isinstance(node_ids, dict)
@@ -307,7 +427,7 @@ def _run_ppr_hetero_loader_correctness_check(
         batch_size=1,
     )
 
-    reference_graph = _build_hetero_reference_graph()
+    reference_graph = _build_hetero_reference_graph(edge_dir)
 
     batches_checked = 0
     for datum in loader:
@@ -315,37 +435,10 @@ def _run_ppr_hetero_loader_correctness_check(
 
         seed_global_id = datum[USER].batch[0].item()
 
-        # Collect sampler PPR scores per node type
-        sampler_ppr_by_type: dict[str, dict[int, float]] = {}
-        for ntype in [USER, STORY]:
-            key_ids = f"ppr_neighbor_ids_{USER}_{ntype}"
-            key_weights = f"ppr_weights_{USER}_{ntype}"
+        sampler_ppr_by_type = _extract_hetero_ppr_scores(
+            datum, str(USER), [USER, STORY]
+        )
 
-            assert hasattr(datum, key_ids), f"Missing {key_ids}"
-            assert hasattr(datum, key_weights), f"Missing {key_weights}"
-
-            ppr_edge_index = getattr(datum, key_ids)
-            ppr_weights = getattr(datum, key_weights)
-
-            assert (
-                ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
-            ), f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
-            assert ppr_weights.dim() == 1
-            assert ppr_edge_index.size(1) == ppr_weights.size(0)
-            assert (ppr_weights > 0).all(), f"PPR weights for {ntype} must be positive"
-            assert (
-                ppr_edge_index[0] == 0
-            ).all(), "All src indices must be 0 for batch_size=1"
-
-            global_node_ids = datum[ntype].node
-            type_ppr: dict[int, float] = {}
-            for j in range(ppr_edge_index.size(1)):
-                local_dst = ppr_edge_index[1, j].item()
-                global_dst = global_node_ids[local_dst].item()
-                type_ppr[global_dst] = ppr_weights[j].item()
-            sampler_ppr_by_type[str(ntype)] = type_ppr
-
-        # Compute reference PPR
         reference_ppr = _reference_ppr_hetero(
             graph=reference_graph,
             seed=seed_global_id,
@@ -354,23 +447,9 @@ def _run_ppr_hetero_loader_correctness_check(
             max_ppr_nodes=max_ppr_nodes,
         )
 
-        # Verify per node type
-        for ntype_str in [str(USER), str(STORY)]:
-            assert set(sampler_ppr_by_type[ntype_str].keys()) == set(
-                reference_ppr[ntype_str].keys()
-            ), (
-                f"Seed {seed_global_id}, type {ntype_str}: top-k node sets differ.\n"
-                f"  Sampler:   {sorted(sampler_ppr_by_type[ntype_str].keys())}\n"
-                f"  Reference: {sorted(reference_ppr[ntype_str].keys())}"
-            )
-
-            for node_id in reference_ppr[ntype_str]:
-                ref_score = reference_ppr[ntype_str][node_id]
-                sam_score = sampler_ppr_by_type[ntype_str][node_id]
-                assert abs(sam_score - ref_score) < 1e-3, (
-                    f"Seed {seed_global_id}, type {ntype_str}, node {node_id}: "
-                    f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
-                )
+        _assert_ppr_scores_match_reference(
+            sampler_ppr_by_type, reference_ppr, seed_global_id
+        )
 
         batches_checked += 1
 
@@ -384,6 +463,7 @@ def _run_ppr_ablp_loader_correctness_check(
     _: int,
     alpha: float,
     max_ppr_nodes: int,
+    edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate ABLP PPR loader and verify anchor-seed PPR against NetworkX reference.
 
@@ -403,7 +483,7 @@ def _run_ppr_ablp_loader_correctness_check(
         val_node_ids=[2],
         test_node_ids=[],
         edge_indices=_TEST_HETERO_EDGE_INDICES,
-        edge_dir="out",
+        edge_dir=edge_dir,
     )
 
     train_node_ids = dataset.train_node_ids
@@ -424,7 +504,7 @@ def _run_ppr_ablp_loader_correctness_check(
         batch_size=1,
     )
 
-    reference_graph = _build_hetero_reference_graph(edge_dir="out")
+    reference_graph = _build_hetero_reference_graph(edge_dir=edge_dir)
 
     batches_checked = 0
     for datum in loader:
@@ -436,30 +516,9 @@ def _run_ppr_ablp_loader_correctness_check(
         seed_global_id = datum[USER].batch[0].item()
 
         # --- Verify anchor (USER) seed PPR correctness against NetworkX ---
-        sampler_ppr_by_type: dict[str, dict[int, float]] = {}
-        for ntype in [USER, STORY]:
-            key_ids = f"ppr_neighbor_ids_{USER}_{ntype}"
-            key_weights = f"ppr_weights_{USER}_{ntype}"
-
-            assert hasattr(datum, key_ids), f"Missing {key_ids}"
-            assert hasattr(datum, key_weights), f"Missing {key_weights}"
-
-            ppr_edge_index = getattr(datum, key_ids)
-            ppr_weights = getattr(datum, key_weights)
-
-            assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
-            assert ppr_weights.dim() == 1
-            assert ppr_edge_index.size(1) == ppr_weights.size(0)
-            assert (ppr_weights > 0).all()
-            assert (ppr_edge_index[0] == 0).all()  # batch_size=1
-
-            global_node_ids = datum[ntype].node
-            type_ppr: dict[int, float] = {}
-            for j in range(ppr_edge_index.size(1)):
-                local_dst = ppr_edge_index[1, j].item()
-                global_dst = global_node_ids[local_dst].item()
-                type_ppr[global_dst] = ppr_weights[j].item()
-            sampler_ppr_by_type[str(ntype)] = type_ppr
+        sampler_ppr_by_type = _extract_hetero_ppr_scores(
+            datum, str(USER), [USER, STORY]
+        )
 
         reference_ppr = _reference_ppr_hetero(
             graph=reference_graph,
@@ -469,22 +528,9 @@ def _run_ppr_ablp_loader_correctness_check(
             max_ppr_nodes=max_ppr_nodes,
         )
 
-        for ntype_str in [str(USER), str(STORY)]:
-            assert set(sampler_ppr_by_type[ntype_str].keys()) == set(
-                reference_ppr[ntype_str].keys()
-            ), (
-                f"ABLP seed {seed_global_id}, type {ntype_str}: top-k node sets differ.\n"
-                f"  Sampler:   {sorted(sampler_ppr_by_type[ntype_str].keys())}\n"
-                f"  Reference: {sorted(reference_ppr[ntype_str].keys())}"
-            )
-
-            for node_id in reference_ppr[ntype_str]:
-                ref_score = reference_ppr[ntype_str][node_id]
-                sam_score = sampler_ppr_by_type[ntype_str][node_id]
-                assert abs(sam_score - ref_score) < 1e-3, (
-                    f"ABLP seed {seed_global_id}, type {ntype_str}, node {node_id}: "
-                    f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
-                )
+        _assert_ppr_scores_match_reference(
+            sampler_ppr_by_type, reference_ppr, seed_global_id, context_label="ABLP"
+        )
 
         # --- Verify supervision (STORY) seed PPR metadata ---
         # ABLP adds supervision nodes as additional seeds, producing PPR metadata
@@ -525,29 +571,33 @@ class DistPPRSamplerTest(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def test_ppr_sampler_correctness_homogeneous(self) -> None:
+    @parameterized.expand([param("in"), param("out")])
+    def test_ppr_sampler_correctness_homogeneous(self, edge_dir: str) -> None:
         """Verify PPR scores match NetworkX pagerank on a small homogeneous graph."""
-        dataset = create_homogeneous_dataset(edge_index=_TEST_EDGE_INDEX, edge_dir="in")
         mp.spawn(
             fn=_run_ppr_loader_correctness_check,
-            args=(dataset, _TEST_ALPHA, _TEST_MAX_PPR_NODES),
+            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
         )
 
-    def test_ppr_sampler_correctness_heterogeneous(self) -> None:
+    @parameterized.expand([param("in"), param("out")])
+    def test_ppr_sampler_correctness_heterogeneous(self, edge_dir: str) -> None:
         """Verify PPR scores match NetworkX pagerank on a heterogeneous bipartite graph."""
-        dataset = create_heterogeneous_dataset(
-            edge_indices=_TEST_HETERO_EDGE_INDICES, edge_dir="in"
-        )
         mp.spawn(
             fn=_run_ppr_hetero_loader_correctness_check,
-            args=(dataset, _TEST_ALPHA, _TEST_MAX_PPR_NODES),
+            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
         )
 
-    def test_ppr_sampler_ablp_correctness(self) -> None:
-        """Verify PPR scores through DistABLPLoader on a heterogeneous graph."""
+    @parameterized.expand([param("out")])
+    def test_ppr_sampler_ablp_correctness(self, edge_dir: str) -> None:
+        """Verify PPR scores through DistABLPLoader on a heterogeneous graph.
+
+        Only tests ``edge_dir="out"`` because ``DistNodeAnchorLinkSplitter``
+        with ``edge_dir="in"`` reverses the supervision edge type, requiring
+        a reversed labeled edge type that the test dataset does not include.
+        """
         mp.spawn(
             fn=_run_ppr_ablp_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES),
+            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
         )
 
 
