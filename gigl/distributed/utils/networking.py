@@ -14,6 +14,7 @@ from gigl.common.utils.vertex_ai_context import (
     get_vertex_ai_job_id,
     is_currently_running_in_vertex_ai_job,
 )
+from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
@@ -111,7 +112,8 @@ def get_free_ports_from_node(
         ports = [0] * num_ports
 
     # Broadcast from master from rank 0 to all other ranks
-    torch.distributed.broadcast_object_list(ports, src=node_rank)
+    device = get_device_from_process_group()
+    torch.distributed.broadcast_object_list(ports, src=node_rank, device=device)
     logger.info(f"Rank {rank} received ports: {ports}")
     return ports
 
@@ -174,7 +176,7 @@ def get_internal_ip_from_node(
         # Other nodes will receive the master's IP via broadcast
         ip_list = [None]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device_from_process_group()
     torch.distributed.broadcast_object_list(ip_list, src=node_rank, device=device)
     node_ip = ip_list[0]
     logger.info(
