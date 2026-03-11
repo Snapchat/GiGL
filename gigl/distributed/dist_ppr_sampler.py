@@ -215,14 +215,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         Algorithm Overview (each iteration of the main loop):
             1. Fetch neighbors: Drain all nodes from the queue, group by edge type,
                and perform a batched neighbor lookup to populate neighbor/degree caches.
-            2. Push residual: For each queued node, add its residual to its PPR score,
-               reset its residual to zero, then distribute (1-alpha) * residual to
-               all neighbors proportionally by degree.
-            3. Batch fetch degrees: Group all neighbors that received residual and
-               perform a batched lookup to get their degrees (needed for threshold check).
-            4. Re-queue high-residual nodes: For each neighbor that received residual,
-               check if residual >= alpha * eps * total_degree. If so, add to queue
-               for processing in the next iteration.
+            2. Push residual + re-queue (single pass): For each queued node, add its
+               residual to its PPR score, reset its residual to zero, then distribute
+               (1-alpha) * residual to all neighbors proportionally by degree. After
+               each push, immediately check if the neighbor's accumulated residual
+               exceeds alpha * eps * total_degree; if so, add it to the queue for
+               the next iteration. Total degree lookups are cached across the entire
+               PPR computation to avoid redundant summation.
 
         Args:
             seed_nodes: Tensor of seed node IDs [batch_size]
@@ -264,7 +263,28 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Cache keyed by (node_id, edge_type) since same node can have different neighbors per edge type
         neighbor_cache: dict[tuple[int, EdgeType], list[int]] = {}
 
+        # Cache for total degree (sum across all edge types for a node type).
+        # The per-edge-type degree is already O(1) via degree_tensors, but the
+        # *sum* across edge types is recomputed each time a node appears as a
+        # neighbor — which can be many times across seeds and iterations.
+        # Caching the sum avoids redundant _get_degree_from_tensor calls and
+        # the per-call Python overhead (method dispatch, isinstance, .item()).
+        total_degree_cache: dict[tuple[int, NodeType], int] = {}
+
+        def _get_total_degree(node_id: int, node_type: NodeType) -> int:
+            key = (node_id, node_type)
+            cached = total_degree_cache.get(key)
+            if cached is not None:
+                return cached
+            total = sum(
+                self._get_degree_from_tensor(node_id, et)
+                for et in self._node_type_to_edge_types.get(node_type, [])
+            )
+            total_degree_cache[key] = total
+            return total
+
         num_nodes_in_queue = batch_size
+        one_minus_alpha = 1 - self._alpha
 
         while num_nodes_in_queue > 0:
             # Drain all nodes from all queues and group by edge type for batched lookups
@@ -292,7 +312,20 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 nodes_by_edge_type, neighbor_cache, device
             )
 
-            # Process nodes and push residual
+            # Push residual to neighbors and re-queue in a single pass.
+            #
+            # Previously these were two separate loops over the same neighbor
+            # lists — one to push residual, one to check thresholds.  Merging
+            # them halves the total neighbor-list iteration.
+            #
+            # This is safe because each seed's state (p, r, q) is independent.
+            # If node v receives residual from multiple frontier nodes (u1, u2)
+            # of the same seed, v's threshold is checked after each push.  The
+            # last frontier node to push to v sees the same accumulated residual
+            # that the original two-pass version would see.  Since push values
+            # are always positive (residual monotonically increases), the merged
+            # version can never miss a re-queue that the two-pass version would
+            # catch.
             for i in range(batch_size):
                 for u_node, u_type in nodes_to_process[i]:
                     key_u = (u_node, u_type)
@@ -305,66 +338,38 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     # For each edge type from this node type, push residual to neighbors
                     edge_types_for_node = self._node_type_to_edge_types[u_type]
 
-                    # Calculate total degree across all edge types for proper probability distribution
-                    # Degrees are looked up directly from in-memory tensors
-                    total_degree = sum(
-                        self._get_degree_from_tensor(u_node, etype)
-                        for etype in edge_types_for_node
-                    )
+                    total_degree = _get_total_degree(u_node, u_type)
 
                     if total_degree == 0:
                         continue
 
-                    # Push residual proportionally based on degree per edge type
+                    push_value = one_minus_alpha * res_u / total_degree
+
+                    # Push residual proportionally based on degree per edge type.
+                    # Per-edge-type degree is retrieved from _get_total_degree's
+                    # cached sum path — the individual lookups are only needed
+                    # to detect zero-degree edge types.
                     for etype in edge_types_for_node:
                         cache_key = (u_node, etype)
                         neighbor_list = neighbor_cache[cache_key]
-                        neighbor_count = self._get_degree_from_tensor(u_node, etype)
-
-                        if neighbor_count == 0:
+                        if not neighbor_list:
                             continue
 
-                        # Determine the type of the neighbors
                         v_type = self._get_neighbor_type(etype)
-
-                        # Distribute residual to neighbors, weighted by edge type contribution
-                        push_value = (1 - self._alpha) * res_u / total_degree
 
                         for v_node in neighbor_list:
                             key_v = (v_node, v_type)
                             r[i][key_v] += push_value
 
-            # Add high-residual neighbors to queue
-            for i in range(batch_size):
-                for u_node, u_type in nodes_to_process[i]:
-                    edge_types_for_node = self._node_type_to_edge_types.get(u_type, [])
-                    for etype in edge_types_for_node:
-                        cache_key = (u_node, etype)
-                        neighbor_list = neighbor_cache[cache_key]
-                        v_type = self._get_neighbor_type(etype)
-
-                        for v_node in neighbor_list:
-                            key_v = (v_node, v_type)
-
-                            if key_v in q[i]:
-                                continue
-
-                            res_v = r[i].get(key_v, 0.0)
-                            if res_v == 0.0:
-                                continue
-
-                            # Sum degrees across all edge types from v_type for threshold check
-                            edge_types_for_v = self._node_type_to_edge_types.get(
-                                v_type, []
-                            )
-                            total_v_degree = sum(
-                                self._get_degree_from_tensor(v_node, v_etype)
-                                for v_etype in edge_types_for_v
-                            )
-
-                            if res_v >= self._alpha_eps * total_v_degree:
-                                q[i].add(key_v)
-                                num_nodes_in_queue += 1
+                            # Inline re-queue check: if v is not already queued
+                            # and its accumulated residual exceeds the threshold,
+                            # add it to the queue for the next iteration.
+                            if key_v not in q[i]:
+                                if r[i][key_v] >= self._alpha_eps * _get_total_degree(
+                                    v_node, v_type
+                                ):
+                                    q[i].add(key_v)
+                                    num_nodes_in_queue += 1
 
         # Extract top-k nodes by PPR score, grouped by node type.
         # Build flat tensors directly (no padding) — valid_counts[i] records how many
