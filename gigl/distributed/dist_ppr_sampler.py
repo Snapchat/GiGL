@@ -16,6 +16,9 @@ from graphlearn_torch.utils import merge_dict
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 
+# Sentinel type names for homogeneous graphs.  The PPR algorithm uses
+# dict[NodeType, ...] internally for both homo and hetero graphs; these
+# sentinels let the homogeneous path reuse the same dict-based code.
 _PPR_HOMOGENEOUS_NODE_TYPE = "ppr_homogeneous_node_type"
 _PPR_HOMOGENEOUS_EDGE_TYPE = (
     _PPR_HOMOGENEOUS_NODE_TYPE,
@@ -60,7 +63,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self._alpha = alpha
         self._eps = eps
         self._max_ppr_nodes = max_ppr_nodes
-        self._alpha_eps = alpha * eps
+        self._requeue_threshold_factor = alpha * eps
         self._num_nbrs_per_hop = num_nbrs_per_hop
 
         assert isinstance(
@@ -241,24 +244,19 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         device = seed_nodes.device
         batch_size = seed_nodes.size(0)
 
-        # PPR scores: p[i][(node_id, node_type)] = score
-        p: list[dict[tuple[int, NodeType], float]] = [
+        ppr_scores: list[dict[tuple[int, NodeType], float]] = [
             defaultdict(float) for _ in range(batch_size)
         ]
-        # Residuals: r[i][(node_id, node_type)] = residual
-        r: list[dict[tuple[int, NodeType], float]] = [
+        residuals: list[dict[tuple[int, NodeType], float]] = [
             defaultdict(float) for _ in range(batch_size)
         ]
-
-        # Queue stores (node_id, node_type) tuples
-        q: list[set[tuple[int, NodeType]]] = [set() for _ in range(batch_size)]
+        queue: list[set[tuple[int, NodeType]]] = [set() for _ in range(batch_size)]
 
         seed_list = seed_nodes.tolist()
 
-        # Initialize residuals: r[i][(seed, seed_type)] = alpha for each seed
         for i, seed in enumerate(seed_list):
-            r[i][(seed, seed_node_type)] = self._alpha
-            q[i].add((seed, seed_node_type))
+            residuals[i][(seed, seed_node_type)] = self._alpha
+            queue[i].add((seed, seed_node_type))
 
         # Cache keyed by (node_id, edge_type) since same node can have different neighbors per edge type
         neighbor_cache: dict[tuple[int, EdgeType], list[int]] = {}
@@ -294,12 +292,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             nodes_by_edge_type: dict[EdgeType, set[int]] = defaultdict(set)
 
             for i in range(batch_size):
-                if q[i]:
-                    nodes_to_process[i] = q[i]
-                    q[i] = set()
+                if queue[i]:
+                    nodes_to_process[i] = queue[i]
+                    queue[i] = set()
                     num_nodes_in_queue -= len(nodes_to_process[i])
 
-                    # Group nodes by edge type for batched lookups
                     for node_id, node_type in nodes_to_process[i]:
                         edge_types_for_node = self._node_type_to_edge_types[node_type]
                         for etype in edge_types_for_node:
@@ -307,35 +304,21 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             if cache_key not in neighbor_cache:
                                 nodes_by_edge_type[etype].add(node_id)
 
-            # Batch fetch neighbors per edge type
             await self._batch_fetch_neighbors(
                 nodes_by_edge_type, neighbor_cache, device
             )
 
-            # Push residual to neighbors and re-queue in a single pass.
-            #
-            # Previously these were two separate loops over the same neighbor
-            # lists — one to push residual, one to check thresholds.  Merging
-            # them halves the total neighbor-list iteration.
-            #
-            # This is safe because each seed's state (p, r, q) is independent.
-            # If node v receives residual from multiple frontier nodes (u1, u2)
-            # of the same seed, v's threshold is checked after each push.  The
-            # last frontier node to push to v sees the same accumulated residual
-            # that the original two-pass version would see.  Since push values
-            # are always positive (residual monotonically increases), the merged
-            # version can never miss a re-queue that the two-pass version would
-            # catch.
+            # Push residual to neighbors and re-queue in a single pass.  This
+            # is safe because each seed's state is independent, and residuals
+            # are always positive so the merged loop can never miss a re-queue.
             for i in range(batch_size):
                 for u_node, u_type in nodes_to_process[i]:
                     key_u = (u_node, u_type)
-                    res_u = r[i].get(key_u, 0.0)
+                    res_u = residuals[i].get(key_u, 0.0)
 
-                    # Push to PPR score and reset residual
-                    p[i][key_u] += res_u
-                    r[i][key_u] = 0.0
+                    ppr_scores[i][key_u] += res_u
+                    residuals[i][key_u] = 0.0
 
-                    # For each edge type from this node type, push residual to neighbors
                     edge_types_for_node = self._node_type_to_edge_types[u_type]
 
                     total_degree = _get_total_degree(u_node, u_type)
@@ -345,10 +328,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                     push_value = one_minus_alpha * res_u / total_degree
 
-                    # Push residual proportionally based on degree per edge type.
-                    # Per-edge-type degree is retrieved from _get_total_degree's
-                    # cached sum path — the individual lookups are only needed
-                    # to detect zero-degree edge types.
                     for etype in edge_types_for_node:
                         cache_key = (u_node, etype)
                         neighbor_list = neighbor_cache[cache_key]
@@ -359,16 +338,15 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                         for v_node in neighbor_list:
                             key_v = (v_node, v_type)
-                            r[i][key_v] += push_value
+                            residuals[i][key_v] += push_value
 
-                            # Inline re-queue check: if v is not already queued
-                            # and its accumulated residual exceeds the threshold,
-                            # add it to the queue for the next iteration.
-                            if key_v not in q[i]:
-                                if r[i][key_v] >= self._alpha_eps * _get_total_degree(
+                            if key_v not in queue[i]:
+                                if residuals[i][
+                                    key_v
+                                ] >= self._requeue_threshold_factor * _get_total_degree(
                                     v_node, v_type
                                 ):
-                                    q[i].add(key_v)
+                                    queue[i].add(key_v)
                                     num_nodes_in_queue += 1
 
         # Extract top-k nodes by PPR score, grouped by node type.
@@ -376,7 +354,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # neighbors seed i actually has, so callers can recover per-seed slices.
         all_node_types: set[NodeType] = set()
         for i in range(batch_size):
-            for _node_id, node_type in p[i].keys():
+            for _node_id, node_type in ppr_scores[i].keys():
                 all_node_types.add(node_type)
 
         out_flat_ids_dict: dict[NodeType, torch.Tensor] = {}
@@ -391,7 +369,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             for i in range(batch_size):
                 type_scores = {
                     node_id: score
-                    for (node_id, node_type), score in p[i].items()
+                    for (node_id, node_type), score in ppr_scores[i].items()
                     if node_type == ntype
                 }
                 top_k = heapq.nlargest(
@@ -604,13 +582,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # srcs holds their global IDs (same values as nodes_to_sample).
             srcs = inducer.init_node(nodes_to_sample)
 
-            homo_ppr_result = await self._compute_ppr_scores(nodes_to_sample, None)
-            assert isinstance(homo_ppr_result[0], torch.Tensor)
-            assert isinstance(homo_ppr_result[1], torch.Tensor)
-            assert isinstance(homo_ppr_result[2], torch.Tensor)
-            homo_flat_ids: torch.Tensor = homo_ppr_result[0]
-            homo_flat_weights: torch.Tensor = homo_ppr_result[1]
-            homo_valid_counts: torch.Tensor = homo_ppr_result[2]
+            (
+                homo_flat_ids,
+                homo_flat_weights,
+                homo_valid_counts,
+            ) = await self._compute_ppr_scores(nodes_to_sample, None)
+            assert isinstance(homo_flat_ids, torch.Tensor)
+            assert isinstance(homo_flat_weights, torch.Tensor)
+            assert isinstance(homo_valid_counts, torch.Tensor)
 
             # induce_next deduplicates homo_flat_ids against already-seen nodes
             # (the seeds registered above) and returns:

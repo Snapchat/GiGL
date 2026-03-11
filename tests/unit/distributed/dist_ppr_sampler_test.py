@@ -89,7 +89,6 @@ _NUM_TEST_STORIES = 3
 _TEST_ALPHA = 0.5
 _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
-_TEST_NUM_NBRS_PER_HOP = 100000
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +321,6 @@ def _run_ppr_loader_correctness_check(
             alpha=alpha,
             eps=_TEST_EPS,
             max_ppr_nodes=max_ppr_nodes,
-            num_nbrs_per_hop=_TEST_NUM_NBRS_PER_HOP,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -421,7 +419,6 @@ def _run_ppr_hetero_loader_correctness_check(
             alpha=alpha,
             eps=_TEST_EPS,
             max_ppr_nodes=max_ppr_nodes,
-            num_nbrs_per_hop=_TEST_NUM_NBRS_PER_HOP,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -498,7 +495,6 @@ def _run_ppr_ablp_loader_correctness_check(
             alpha=alpha,
             eps=_TEST_EPS,
             max_ppr_nodes=max_ppr_nodes,
-            num_nbrs_per_hop=_TEST_NUM_NBRS_PER_HOP,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -534,7 +530,9 @@ def _run_ppr_ablp_loader_correctness_check(
 
         # --- Verify supervision (STORY) seed PPR metadata ---
         # ABLP adds supervision nodes as additional seeds, producing PPR metadata
-        # keyed by the STORY seed type.
+        # keyed by the STORY seed type.  We only check shapes here (not correctness
+        # against NetworkX) because the supervision seeds vary per batch depending
+        # on the label edges, making deterministic reference computation complex.
         for ntype in [USER, STORY]:
             key_ids = f"ppr_neighbor_ids_{STORY}_{ntype}"
             key_weights = f"ppr_weights_{STORY}_{ntype}"
