@@ -552,11 +552,11 @@ class BaseDistLoader(DistLoader):
         # leaders into batches of max_concurrent_producer_inits.  Each batch
         # sleeps batch_index * process_start_gap_seconds before dispatching.
         unique_keys = sorted(key_to_ranks.keys())
-        my_key_index= unique_keys.index(my_worker_key)
-        num_unique_keys= len(unique_keys)
-        num_batches= math.ceil(num_unique_keys / max_concurrent_producer_inits)
-        my_batch= my_key_index // max_concurrent_producer_inits
-        stagger_sleep_seconds= my_batch * process_start_gap_seconds
+        my_key_index = unique_keys.index(my_worker_key)
+        num_unique_keys = len(unique_keys)
+        num_batches = math.ceil(num_unique_keys / max_concurrent_producer_inits)
+        my_batch = my_key_index // max_concurrent_producer_inits
+        stagger_sleep_seconds = my_batch * process_start_gap_seconds
 
         logger.info(
             f"rank={runtime.rank} worker_key={my_worker_key} "
@@ -607,7 +607,7 @@ class BaseDistLoader(DistLoader):
 
             for server_rank, fut in rpc_futures:
                 t_wait = time.time()
-                producer_id= fut.wait()
+                producer_id = fut.wait()
                 logger.info(
                     f"node_rank={node_rank} rank={runtime.rank} "
                     f"create_sampling_producer"
