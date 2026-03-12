@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
+from graphlearn_torch.channel import RemoteReceivingChannel, SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -676,6 +676,29 @@ class BaseDistLoader(DistLoader):
                 rpc_futures.append(fut)
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
+
+    def _extract_metadata(self, msg: SampleMessage) -> dict[str, torch.Tensor]:
+        """Extract and remove user-defined metadata from a SampleMessage.
+
+        GLT's ``to_hetero_data`` misinterprets ``#META.``-prefixed keys as
+        edge types, causing failures with ``edge_dir="out"`` (it tries to call
+        ``reverse_edge_type`` on metadata key strings).  This method strips
+        those keys so the conversion succeeds, returning them for re-application
+        onto the output Data/HeteroData.
+
+        Args:
+            msg: The SampleMessage to modify in-place.
+
+        Returns:
+            Dict mapping metadata key (without ``#META.`` prefix) to tensor.
+        """
+        meta_prefix = "#META."
+        result: dict[str, torch.Tensor] = {}
+        for k in list(msg.keys()):
+            if k.startswith(meta_prefix):
+                result[k[len(meta_prefix) :]] = msg[k].to(self.to_device)
+                del msg[k]
+        return result
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:

@@ -558,6 +558,12 @@ class DistNeighborLoader(BaseDistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        # Extract user-defined metadata (e.g. PPR scores) before
+        # super()._collate_fn, which calls GLT's to_hetero_data.
+        # to_hetero_data misinterprets #META. keys as edge types and
+        # fails when edge_dir="out" (tries to reverse_edge_type on them).
+        # We strip them here and re-apply after conversion.
+        non_edge_metadata = self._extract_metadata(msg)
         data = super()._collate_fn(msg)
         data = set_missing_features(
             data=data,
@@ -569,4 +575,6 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+        for key, value in non_edge_metadata.items():
+            data[key] = value
         return data
