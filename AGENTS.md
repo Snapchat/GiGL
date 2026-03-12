@@ -10,9 +10,9 @@ This file provides guidance to coding agents working in this repository.
 
 ## Project Overview
 
-GiGL (GIgantic Graph Learning) is an open-source library for billion-scale GNN training and inference.
-It supports node classification, link prediction, supervised learning, and unsupervised learning.
-Primary runtime stack: Python 3.11 with `uv` package management.
+GiGL (GIgantic Graph Learning) is an open-source library for billion-scale GNN training and inference. It supports node
+classification, link prediction, supervised learning, and unsupervised learning. Primary runtime stack: Python 3.11 with
+`uv` package management.
 
 ## High-Level Workflow
 
