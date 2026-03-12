@@ -20,7 +20,7 @@ from gigl.src.common.types.dataflow_job_options import CommonOptions
 
 logger = Logger()
 
-MAX_WORKFLOW_RUNTIME_WALLTIME_SECONDS = 24 * 60 * 60  # 24 hours
+MAX_WORKFLOW_RUNTIME_WALLTIME_SECONDS = 3 * 60 * 60  # 3 hours
 
 
 def get_sanitized_dataflow_job_name(name: str) -> str:
