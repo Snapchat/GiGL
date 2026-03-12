@@ -17,3 +17,20 @@ def get_available_device(local_process_rank: int) -> torch.device:
         else f"cuda:{local_process_rank % torch.cuda.device_count()}"
     )
     return device
+
+
+def get_device_from_process_group() -> torch.device:
+    """
+    Returns the device for the current process group.
+    Args:
+        None
+    Raises:
+        ValueError: If the distributed environment is not initialized.
+    Returns:
+        torch.device: The device to use.
+    """
+    if not torch.distributed.is_initialized():
+        raise ValueError(
+            "Distributed environment must be initialized to get device from process group"
+        )
+    return torch.device("cuda" if torch.distributed.get_backend() == "nccl" else "cpu")

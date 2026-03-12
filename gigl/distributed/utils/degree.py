@@ -30,6 +30,7 @@ from graphlearn_torch.data import Graph
 from torch_geometric.typing import EdgeType
 
 from gigl.common.logger import Logger
+from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
 
 logger = Logger()
@@ -185,8 +186,7 @@ def _all_reduce_degrees(
     local_world_size = Counter(all_ips)[my_ip]
 
     # NCCL backend requires CUDA tensors; Gloo works with CPU
-    backend = torch.distributed.get_backend()
-    device = torch.device("cuda" if backend == "nccl" else "cpu")
+    device = get_device_from_process_group()
 
     def reduce_tensor(tensor: torch.Tensor) -> torch.Tensor:
         """All-reduce a single tensor with size sync and over-counting correction."""
