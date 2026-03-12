@@ -10,14 +10,6 @@ POSITIVE_LABEL_METADATA_KEY: Final[str] = "gigl_positive_labels."
 NEGATIVE_LABEL_METADATA_KEY: Final[str] = "gigl_negative_labels."
 
 
-def metadata_key_with_prefix(key: str) -> str:
-    """Prefixes the key with "#META
-    Do this as GLT also does this.
-    https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L714
-    """
-    return f"#META.{key}"
-
-
 class ABLPNodeSamplerInput(NodeSamplerInput):
     """
     Sampler input specific for ABLP use case. Contains additional information about positive labels, negative labels, and the corresponding
