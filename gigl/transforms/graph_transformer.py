@@ -135,6 +135,7 @@ def heterodata_to_graph_transformer_input(
     batch_size: int,
     max_seq_len: int,
     anchor_node_type: NodeType,
+    anchor_node_ids: Optional[Tensor] = None,
     feature_dim: Optional[int] = None,
     hop_distance: int = 2,
     include_anchor_first: bool = True,
@@ -155,8 +156,11 @@ def heterodata_to_graph_transformer_input(
         data: HeteroData object containing node features and edge indices.
             Expected to have node features as `data[node_type].x`.
         batch_size: Number of anchor nodes (first batch_size nodes of anchor_node_type).
+            Ignored if anchor_node_ids is provided.
         max_seq_len: Maximum sequence length (neighbors beyond this are truncated).
         anchor_node_type: The node type of anchor nodes.
+        anchor_node_ids: Optional tensor of local node indices within anchor_node_type
+            to use as anchors. If None, uses first batch_size nodes. (default: None)
         feature_dim: Output feature dimension. If None, inferred from data.
             If provided and different from input, features are projected.
         hop_distance: Number of hops to consider for neighborhood (default: 2).
@@ -199,7 +203,7 @@ def heterodata_to_graph_transformer_input(
     # Get node type to index mapping (sorted alphabetically)
     sorted_node_types = sorted(data.node_types)
 
-    # Find anchor node indices in homogeneous graph
+    # Find offset for anchor_node_type in homogeneous graph
     # Nodes are ordered by node_type (alphabetically), then by original index
     offset = 0
     for nt in sorted_node_types:
@@ -207,8 +211,15 @@ def heterodata_to_graph_transformer_input(
             break
         offset += data[nt].num_nodes
 
-    # Anchor nodes are at positions [offset, offset + batch_size)
-    anchor_indices = torch.arange(offset, offset + batch_size, device=device)
+    # Determine anchor indices in homogeneous graph
+    if anchor_node_ids is not None:
+        # Use provided local indices, convert to homogeneous indices
+        anchor_indices = offset + anchor_node_ids.to(device)
+        actual_batch_size = anchor_node_ids.size(0)
+    else:
+        # Default: first batch_size nodes of anchor_node_type
+        anchor_indices = torch.arange(offset, offset + batch_size, device=device)
+        actual_batch_size = batch_size
 
     # Infer feature dimension
     if feature_dim is None:

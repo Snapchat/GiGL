@@ -19,15 +19,13 @@ import torch.nn.functional as F
 import torch_geometric.data.hetero_data
 from torch import Tensor
 
-from gigl.src.common.models.layers.normalization import l2_normalize_embeddings
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import heterodata_to_graph_transformer_input
 
 
 class FeedForwardNetwork(nn.Module):
-    """Two-layer feed-forward network with BatchNorm and GELU activation.
+    """Two-layer feed-forward network with LayerNorm and GELU activation.
 
-    Applies BatchNorm1d across the sequence dimension using permute.
     Adapted from RelGT's FeedForwardNetwork.
 
     Args:
@@ -43,8 +41,11 @@ class FeedForwardNetwork(nn.Module):
         dropout_rate: float = 0.0,
     ) -> None:
         super().__init__()
-        self._batch_norm_in = nn.BatchNorm1d(hidden_dim)
-        self._batch_norm_out = nn.BatchNorm1d(hidden_dim)
+        # Use LayerNorm instead of BatchNorm1d to avoid in-place updates
+        # to running statistics during training (which breaks autograd when
+        # model is called multiple times in the same forward-backward cycle)
+        self._norm_in = nn.LayerNorm(hidden_dim)
+        self._norm_out = nn.LayerNorm(hidden_dim)
         self._ffn = nn.Sequential(
             nn.Linear(hidden_dim, feedforward_dim),
             nn.GELU(),
@@ -55,8 +56,8 @@ class FeedForwardNetwork(nn.Module):
 
     def reset_parameters(self) -> None:
         """Reinitialize all learnable parameters."""
-        self._batch_norm_in.reset_parameters()
-        self._batch_norm_out.reset_parameters()
+        self._norm_in.reset_parameters()
+        self._norm_out.reset_parameters()
         for layer in self._ffn:
             if hasattr(layer, "reset_parameters"):
                 layer.reset_parameters()
@@ -70,17 +71,11 @@ class FeedForwardNetwork(nn.Module):
         Returns:
             Output tensor of shape ``(batch, seq, hidden_dim)``.
         """
-        # BatchNorm1d expects (batch, channels, seq), so permute
-        x = x.permute(0, 2, 1)
-        x = self._batch_norm_in(x)
-        x = x.permute(0, 2, 1)
-
+        # LayerNorm normalizes over the last dimension (hidden_dim)
+        # No permute needed unlike BatchNorm1d
+        x = self._norm_in(x)
         x = self._ffn(x)
-
-        x = x.permute(0, 2, 1)
-        x = self._batch_norm_out(x)
-        x = x.permute(0, 2, 1)
-
+        x = self._norm_out(x)
         return x
 
 
@@ -271,7 +266,7 @@ class GraphTransformerEncoder(nn.Module):
         ...     num_layers=2,
         ...     num_heads=4,
         ... )
-        >>> embeddings = encoder(data, output_node_types=[NodeType("user")], device=device)
+        >>> embeddings = encoder(data, anchor_node_type=NodeType("user"), device=device)
     """
 
     def __init__(
@@ -290,6 +285,7 @@ class GraphTransformerEncoder(nn.Module):
         pe_attr_names: Optional[list[str]] = None,
         anchor_based_pe_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
+        pe_dim: int = 0,
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -312,6 +308,14 @@ class GraphTransformerEncoder(nn.Module):
                 for node_type, feat_dim in node_type_to_feat_dim_map.items()
             }
         )
+
+        # Projection for sequences with PE concatenated (hid_dim + pe_dim -> hid_dim)
+        # pe_dim should be set to total dimension of all PE attributes
+        # e.g., for anchor_based_pe like hop_distance (dim=1 each), pe_dim = num_attrs
+        # e.g., for pe_attr_names like random_walk_pe (dim=walk_length), pe_dim = walk_length
+        self._pe_projection: Optional[nn.Linear] = None
+        if pe_dim > 0:
+            self._pe_projection = nn.Linear(hid_dim + pe_dim, hid_dim)
 
         # Transformer encoder layers
         feedforward_dim = 2 * hid_dim
@@ -339,93 +343,100 @@ class GraphTransformerEncoder(nn.Module):
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
-        output_node_types: Optional[list[NodeType]] = None,
+        anchor_node_type: Optional[NodeType] = None,
+        anchor_node_ids: Optional[Tensor] = None,
         device: Optional[torch.device] = None,
-    ) -> dict[NodeType, torch.Tensor]:
+    ) -> torch.Tensor:
         """Run the forward pass of the Graph Transformer encoder.
 
         Args:
             data: Input HeteroData object with node features (``x_dict``)
                 and edge indices (``edge_index_dict``).
-            output_node_types: List of node types for which to return output
-                embeddings. If None, uses all node types in data.
+            anchor_node_type: Node type for which to compute embeddings.
+                If None, uses the first node type in data.
+            anchor_node_ids: Optional tensor of local node indices within
+                anchor_node_type to use as anchors. If None, uses the first
+                batch_size nodes (seed nodes from neighbor sampling).
             device: Torch device for output tensors. If None, inferred from data.
 
         Returns:
-            Dictionary mapping each requested node type to its output
-            embeddings of shape ``(num_seed_nodes, out_dim)``. When
-            ``data`` comes from neighbor sampling, only seed/anchor node
-            embeddings are produced (not sampled neighbors).
+            Embeddings tensor of shape ``(num_anchor_nodes, out_dim)``.
         """
         # Infer device from data if not provided
         if device is None:
             device = next(iter(data.x_dict.values())).device
 
-        # Use all node types if not specified
-        if output_node_types is None:
-            output_node_types = list(data.node_types)
+        # Use first node type if not specified
+        if anchor_node_type is None:
+            anchor_node_type = list(data.node_types)[0]
 
-        # 0. Apply feature embedding if provided
-        if self._feature_embedding_layer_dict is not None:
-            for node_type, emb_layer in self._feature_embedding_layer_dict.items():
-                data[node_type].x = emb_layer(data[node_type].x)
-
+        # 0. Apply feature embedding if provided (without modifying original data)
         # 1. Project all node features to hid_dim
-        projected_x_dict = {
-            node_type: self._node_projection_dict[str(node_type)](x.to(device))
-            for node_type, x in data.x_dict.items()
-        }
+        # Build a new x_dict with processed features to avoid in-place modifications
+        projected_x_dict: dict[NodeType, torch.Tensor] = {}
+        for node_type, x in data.x_dict.items():
+            x_processed = x.to(device)
+            # Apply feature embedding if available for this node type
+            if self._feature_embedding_layer_dict is not None:
+                if node_type in self._feature_embedding_layer_dict:
+                    x_processed = self._feature_embedding_layer_dict[node_type](x_processed)
+            # Project to hid_dim
+            projected_x_dict[node_type] = self._node_projection_dict[str(node_type)](x_processed)
 
-        # 2. Build projected HeteroData, preserving batch_size metadata
-        # from neighbor sampling (first batch_size nodes are seed/anchor nodes).
-        init_dict: dict = {
-            edge_type: {"edge_index": data.edge_index_dict[edge_type]}
-            for edge_type in data.edge_index_dict.keys()
-        }
-        init_dict.update(
-            {node_type: {"x": x} for node_type, x in projected_x_dict.items()}
+        # Create a new HeteroData with projected features (avoiding in-place modification)
+        projected_data = torch_geometric.data.HeteroData()
+        for node_type in data.node_types:
+            projected_data[node_type].x = projected_x_dict[node_type]
+            # Copy batch_size if it exists
+            if hasattr(data[node_type], "batch_size"):
+                projected_data[node_type].batch_size = data[node_type].batch_size
+            # Copy node-level PE attributes (e.g., random_walk_pe, random_walk_se)
+            if self._pe_attr_names:
+                for pe_attr in self._pe_attr_names:
+                    if hasattr(data[node_type], pe_attr):
+                        setattr(projected_data[node_type], pe_attr, getattr(data[node_type], pe_attr))
+        for edge_type in data.edge_types:
+            projected_data[edge_type].edge_index = data[edge_type].edge_index
+        # Copy graph-level attributes (e.g., hop_distance PE stored as sparse matrix)
+        if self._anchor_based_pe_attr_names:
+            for attr_name in self._anchor_based_pe_attr_names:
+                if hasattr(data, attr_name):
+                    setattr(projected_data, attr_name, getattr(data, attr_name))
+
+        # 2. Build sequences and run transformer
+        # If anchor_node_ids provided, use those; otherwise use first batch_size nodes
+        if anchor_node_ids is not None:
+            num_anchor_nodes = anchor_node_ids.size(0)
+        else:
+            num_anchor_nodes = getattr(
+                projected_data[anchor_node_type], "batch_size", projected_data[anchor_node_type].num_nodes
+            )
+
+        sequences = heterodata_to_graph_transformer_input(
+            data=projected_data,
+            batch_size=num_anchor_nodes,
+            max_seq_len=self._max_seq_len,
+            anchor_node_type=anchor_node_type,
+            anchor_node_ids=anchor_node_ids,
+            hop_distance=self._hop_distance,
+            pe_attr_names=self._pe_attr_names,
+            anchor_based_pe_attr_names=self._anchor_based_pe_attr_names,
         )
-        projected_data = torch_geometric.data.hetero_data.HeteroData(init_dict)
 
-        # Preserve batch_size metadata so we only build sequences for seed nodes.
-        for nt in data.node_types:
-            if hasattr(data[nt], "batch_size"):
-                projected_data[nt].batch_size = data[nt].batch_size
+        # Free memory after sequences are built
+        del projected_data
 
-        # 3. For each output node type, run transform + transformer
-        node_typed_embeddings: dict[NodeType, torch.Tensor] = {}
+        # Project sequences back to hid_dim if PE was concatenated
+        if self._pe_projection is not None:
+            sequences = self._pe_projection(sequences)
 
-        for node_type in output_node_types:
-            if node_type not in projected_data.node_types:
-                node_typed_embeddings[node_type] = torch.FloatTensor([]).to(
-                    device=device
-                )
-                continue
-
-            # Use seed batch_size (from neighbor sampling) when available;
-            # fall back to num_nodes for non-sampled data (e.g., full-batch).
-            num_seed_nodes = getattr(
-                projected_data[node_type], "batch_size", projected_data[node_type].num_nodes
-            )
-            sequences = heterodata_to_graph_transformer_input(
-                data=projected_data,
-                batch_size=num_seed_nodes,
-                max_seq_len=self._max_seq_len,
-                anchor_node_type=node_type,
-                hop_distance=self._hop_distance,
-                pe_attr_names=self._pe_attr_names,
-                anchor_based_pe_attr_names=self._anchor_based_pe_attr_names,
-            )
-
-            embeddings = self._encode_and_readout(sequences)
-            node_typed_embeddings[node_type] = self._output_projection(embeddings)
+        embeddings = self._encode_and_readout(sequences)
+        embeddings = self._output_projection(embeddings)
 
         if self._should_l2_normalize_embedding_layer_output:
-            node_typed_embeddings = l2_normalize_embeddings(  # type: ignore[assignment]
-                node_typed_embeddings=node_typed_embeddings
-            )
+            embeddings = F.normalize(embeddings, p=2, dim=-1)
 
-        return node_typed_embeddings
+        return embeddings
 
     def _encode_and_readout(self, sequences: Tensor) -> Tensor:
         """Process sequences through transformer layers and attention readout.
