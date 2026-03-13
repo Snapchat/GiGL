@@ -7,6 +7,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.neighborloader import (
+    extract_metadata,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     set_missing_features,
@@ -488,6 +489,65 @@ class LoaderUtilsTest(TestCase):
             data[_I2U_EDGE_TYPE].edge_attr,
             torch.zeros((0, 8), device=self._device, dtype=torch.uint8),
         )
+
+
+class ExtractMetadataTest(TestCase):
+    def setUp(self):
+        self._device = torch.device("cpu")
+        super().setUp()
+
+    def test_separates_metadata_from_sampling_data(self):
+        msg = {
+            "#META.ppr_scores": torch.tensor([1.0, 2.0]),
+            "#META.custom_key": torch.tensor([3]),
+            "user.ids": torch.tensor([10, 20]),
+            "user__to__item.rows": torch.tensor([0, 1]),
+        }
+        metadata, stripped_msg = extract_metadata(msg, self._device)
+
+        self.assertEqual(set(metadata.keys()), {"ppr_scores", "custom_key"})
+        self.assert_tensor_equality(metadata["ppr_scores"], torch.tensor([1.0, 2.0]))
+        self.assert_tensor_equality(metadata["custom_key"], torch.tensor([3]))
+
+        self.assertEqual(set(stripped_msg.keys()), {"user.ids", "user__to__item.rows"})
+        self.assert_tensor_equality(stripped_msg["user.ids"], torch.tensor([10, 20]))
+
+    def test_no_metadata_keys(self):
+        msg = {
+            "user.ids": torch.tensor([10, 20]),
+            "#IS_HETERO": torch.tensor([1]),
+        }
+        metadata, stripped_msg = extract_metadata(msg, self._device)
+
+        self.assertEqual(metadata, {})
+        self.assertEqual(set(stripped_msg.keys()), {"user.ids", "#IS_HETERO"})
+
+    def test_only_metadata_keys(self):
+        msg = {
+            "#META.scores": torch.tensor([1.0]),
+        }
+        metadata, stripped_msg = extract_metadata(msg, self._device)
+
+        self.assertEqual(set(metadata.keys()), {"scores"})
+        self.assertEqual(stripped_msg, {})
+
+    def test_does_not_modify_original_message(self):
+        original_tensor = torch.tensor([1.0, 2.0])
+        msg = {
+            "#META.scores": original_tensor,
+            "user.ids": torch.tensor([10]),
+        }
+        original_keys = set(msg.keys())
+
+        extract_metadata(msg, self._device)
+
+        self.assertEqual(set(msg.keys()), original_keys)
+        self.assertIn("#META.scores", msg)
+
+    def test_empty_message(self):
+        metadata, stripped_msg = extract_metadata({}, self._device)
+        self.assertEqual(metadata, {})
+        self.assertEqual(stripped_msg, {})
 
 
 if __name__ == "__main__":

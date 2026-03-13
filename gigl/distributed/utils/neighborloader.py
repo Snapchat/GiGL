@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Literal, Optional, TypeVar, Union
 
 import torch
+from graphlearn_torch.channel import SampleMessage
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
@@ -264,3 +265,36 @@ def set_missing_features(
         )
 
     return data
+
+
+def extract_metadata(
+    msg: SampleMessage, device: torch.device
+) -> tuple[dict[str, torch.Tensor], SampleMessage]:
+    """Separate user-defined metadata from a SampleMessage.
+
+    GLT's ``to_hetero_data`` misinterprets ``#META.``-prefixed keys as
+    edge types, causing failures with ``edge_dir="out"`` (it tries to call
+    ``reverse_edge_type`` on metadata key strings).  This function separates
+    metadata from the sampling data so the stripped message can be passed to
+    GLT's ``_collate_fn`` without triggering the bug.
+
+    The original ``msg`` is not modified.
+
+    Args:
+        msg: The SampleMessage to extract metadata from.
+        device: The device to move metadata tensors to.
+
+    Returns:
+        A 2-tuple of:
+        - metadata: Dict mapping metadata key (without ``#META.`` prefix) to tensor.
+        - stripped_msg: A new SampleMessage with ``#META.``-prefixed keys removed.
+    """
+    meta_prefix = "#META."
+    metadata: dict[str, torch.Tensor] = {}
+    stripped_msg: SampleMessage = {}
+    for k, v in msg.items():
+        if k.startswith(meta_prefix):
+            metadata[k[len(meta_prefix) :]] = v.to(device)
+        else:
+            stripped_msg[k] = v
+    return metadata, stripped_msg

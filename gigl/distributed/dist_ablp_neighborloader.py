@@ -30,6 +30,7 @@ from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_opt
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
@@ -916,14 +917,14 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        # _extract_metadata strips ALL #META. keys from the message to work
+        # _extract_metadata separates #META. keys from the message to work
         # around a GLT bug in to_hetero_data.  _extract_labels then partitions
-        # the result into labels vs remaining non-label metadata.
-        all_metadata = self._extract_metadata(msg)
+        # the metadata into labels vs remaining non-label metadata.
+        all_metadata, stripped_msg = extract_metadata(msg, self.to_device)
         positive_labels, negative_labels, non_label_metadata = self._extract_labels(
             all_metadata
         )
-        data = super()._collate_fn(msg)
+        data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,

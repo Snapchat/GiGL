@@ -25,6 +25,7 @@ from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_opt
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
@@ -563,8 +564,8 @@ class DistNeighborLoader(BaseDistLoader):
         # to_hetero_data misinterprets #META. keys as edge types and
         # fails when edge_dir="out" (tries to reverse_edge_type on them).
         # We strip them here and re-apply after conversion.
-        non_edge_metadata = self._extract_metadata(msg)
-        data = super()._collate_fn(msg)
+        non_edge_metadata, stripped_msg = extract_metadata(msg, self.to_device)
+        data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
