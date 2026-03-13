@@ -16,11 +16,16 @@ make install_dev_deps              # Full dev setup (gcloud auth, uv, pre-commit
 
 # Testing
 make unit_test_py                                    # All Python unit tests (includes type_check)
+# NOTE: PY_TEST_FILES should *only* be the filename, *not* the full path.
+# e.g. if you want to test `tests/unit/common/foo_test.py` then you should run `make unit_test_py PY_TEST_FILES="foo_test.py"
 make unit_test_py PY_TEST_FILES="specific_test.py"   # Single test file
 make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one at a time, slow)
 
 # Formatting & Linting
 make format              # Auto-fix Python, Scala, Markdown
+make format_py           # Auto-fix Python only
+make format_scala        # Auto-fix Scala only
+make format_md           # Auto-fix Markdown only
 make check_format        # Check without fixing
 make type_check          # mypy static type checking
 
@@ -53,8 +58,8 @@ GiGL extends GraphLearn-for-PyTorch (GLT) for distributed GNN training. Key clas
   labels, split metadata, and feature info
 - **`DistNeighborLoader`** (extends GLT `DistLoader`) - Standard node-based sampling loader
 - **`DistABLPLoader`** (extends GLT `DistLoader`) - Anchor-Based Link Prediction sampling loader
-- **`DistABLPNeighborSampler`** (extends GLT `DistNeighborSampler`) - Custom sampler supporting ABLP with
-  positive/negative label injection
+- **`DistNeighborSampler`** (extends GLT `DistNeighborSampler`) - Unified sampler supporting both standard neighbor
+  sampling and ABLP with positive/negative label injection
 
 **Two deployment modes:**
 
@@ -205,6 +210,10 @@ class TestMyComponent(TestCase):
 Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
 `tests/test_assets/configs/`.
 
-## Pre-Submit Checklist & Formatting
+## Additional instructions
 
-See [.claude/formatting.md](.claude/formatting.md) for pre-submit checklist and formatting details.
+- For a pre-submit checklist and formatting see .claude/formatting.md
+
+- For general development and branch naming conventions see .claude/development.md
+
+- When migrating code, make sure to migrate any doc comments or diagrams over to the new code.

@@ -21,7 +21,7 @@ DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
-PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts testing
+PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -63,13 +63,13 @@ install_deps:
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
 # installation scripts
 precondition_tests:
-	uv run python testing/dep_vars_check.py
+	uv run python tests/config_tests/dep_vars_check.py
 
 run_api_test:
-	cd testing/api_test && make run_api_test
+	cd tests/api_test && make run_api_test
 
 assert_yaml_configs_parse:
-	uv run python testing/assert_yaml_configs_parse.py -d .
+	uv run python tests/config_tests/assert_yaml_configs_parse.py -d .
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
@@ -123,7 +123,7 @@ integration_test:
 
 
 notebooks_test:
-	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m testing.notebooks_test
+	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m tests.config_tests.notebooks_test
 
 mock_assets:
 	uv run python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test
@@ -189,73 +189,73 @@ push_dev_workbench_docker_image: compile_jars
 run_cora_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_nalp_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_nalp_test"
 
 run_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_snc_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_snc_test"
 
 run_cora_udl_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_udl_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_udl_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_udl_test"
 
 run_dblp_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_dblp_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_dblp_nalp_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="dblp_nalp_test"
 
 run_hom_cora_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_test"
 
 run_het_dblp_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_test"
 
 run_hom_cora_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_gs_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_gs_test"
 
 run_het_dblp_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_gs_e2e_test:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml" \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_gs_test"
 
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
-	uv run python testing/e2e_tests/e2e_test.py \
+	uv run python tests/e2e_tests/e2e_test.py \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="testing/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path

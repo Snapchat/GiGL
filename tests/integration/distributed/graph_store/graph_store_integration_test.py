@@ -2,6 +2,8 @@ import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
+import tempfile
+import threading
 import traceback
 import unittest
 from collections.abc import MutableMapping
@@ -13,7 +15,7 @@ import torch
 import torch.multiprocessing as mp
 from torch_geometric.data import Data, HeteroData
 
-from gigl.common import Uri
+from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -22,9 +24,12 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.graph_store.storage_main import storage_node_process
+from gigl.distributed.graph_store.storage_utils import (
+    build_storage_dataset,
+    run_storage_server,
+)
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
-from gigl.distributed.utils.networking import get_free_ports
+from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
@@ -35,10 +40,6 @@ from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-)
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.sampling import ABLPInputNodes
@@ -197,6 +198,7 @@ def _run_compute_train_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -208,21 +210,14 @@ def _run_compute_train_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
 
-    # Use default types for homogeneous graph
-    test_node_type = (
-        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
-    )
-    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-
-    # Test get_ablp_input for train split
-    ablp_result = remote_dist_dataset.get_ablp_input(
+    # Test fetch_ablp_input for train split
+    ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=test_node_type,
-        supervision_edge_type=supervision_edge_type,
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
@@ -236,9 +231,8 @@ def _run_compute_train_tests(
         worker_concurrency=2,
     )
 
-    random_negative_input = remote_dist_dataset.get_node_ids(
+    random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
-        node_type=test_node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
@@ -261,6 +255,12 @@ def _run_compute_train_tests(
         assert isinstance(
             ablp_batch.y_positive, dict
         ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        if node_type is not None:
+            assert isinstance(ablp_batch, HeteroData)
+            assert isinstance(random_negative_batch, HeteroData)
+        else:
+            assert isinstance(ablp_batch, Data)
+            assert isinstance(random_negative_batch, Data)
         count += 1
 
     torch.distributed.barrier()
@@ -294,6 +294,7 @@ def _run_compute_multiple_loaders_test(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -309,24 +310,17 @@ def _run_compute_multiple_loaders_test(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
 
-    test_node_type = (
-        node_type if node_type is not None else DEFAULT_HOMOGENEOUS_NODE_TYPE
-    )
-    supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-
-    ablp_result = remote_dist_dataset.get_ablp_input(
+    ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
-        anchor_node_type=test_node_type,
-        supervision_edge_type=supervision_edge_type,
     )
 
-    random_negative_input = remote_dist_dataset.get_node_ids(
+    random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
-        node_type=test_node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
     )
@@ -355,6 +349,11 @@ def _run_compute_multiple_loaders_test(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
     )
 
+    # Batch size is very critial to perf here
+    # If set to 1 (the default) we make one rpc call for each batch
+    # And the test takes upward of 30 minutes.
+    # With batch_size 128, the test takes < 10 minutes
+    batch_size = 128
     # ------------------------------------------------------------------
     # Phase 1: Two ABLP loaders + two DistNeighborLoaders in parallel
     # ------------------------------------------------------------------
@@ -369,6 +368,7 @@ def _run_compute_multiple_loaders_test(
         num_workers=2,
         worker_concurrency=2,
         prefetch_size=2,
+        batch_size=batch_size,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
@@ -381,6 +381,7 @@ def _run_compute_multiple_loaders_test(
         num_workers=2,
         worker_concurrency=2,
         prefetch_size=2,
+        batch_size=batch_size,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
@@ -392,6 +393,7 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
+        batch_size=batch_size,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
@@ -403,6 +405,7 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
+        batch_size=batch_size,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
@@ -411,7 +414,6 @@ def _run_compute_multiple_loaders_test(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
     )
     torch.distributed.barrier()
-    phase1_count = 0
     for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
         ablp_loader_1, ablp_loader_2, neighbor_loader_1, neighbor_loader_2
     ):
@@ -421,22 +423,12 @@ def _run_compute_multiple_loaders_test(
         assert hasattr(
             ablp_batch_2, "y_positive"
         ), "ABLP batch 2 should have y_positive"
-        phase1_count += 1
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loaded {phase1_count} batches from 4 parallel loaders"
-    )
     torch.distributed.barrier()
     logger.info("All ranks have loaded phase 1 batches")
 
-    phase1_count_tensor = torch.tensor(phase1_count, dtype=torch.int64)
-    torch.distributed.all_reduce(phase1_count_tensor, op=torch.distributed.ReduceOp.SUM)
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
     )
-
-    assert (
-        phase1_count_tensor.item() == expected_batches
-    ), f"Phase 1: Expected {expected_batches} total batches, got {phase1_count_tensor.item()}"
 
     # Shut down phase 1 loaders to free server-side producers and RPC resources
     # before creating new loaders. This mirrors GLT's DistLoader.shutdown() which
@@ -460,6 +452,7 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
+        batch_size=batch_size,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
@@ -471,11 +464,11 @@ def _run_compute_multiple_loaders_test(
         pin_memory_device=torch.device("cpu"),
         num_workers=2,
         worker_concurrency=2,
+        batch_size=batch_size,
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
     )
-    phase2_count = 0
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loading batches from 2 sequential loaders"
     )
@@ -483,21 +476,11 @@ def _run_compute_multiple_loaders_test(
         assert hasattr(
             ablp_batch_3, "y_positive"
         ), "ABLP batch 3 should have y_positive"
-        phase2_count += 1
 
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count} batches from 2 sequential loaders"
+        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded batches from 2 sequential loaders"
     )
     torch.distributed.barrier()
-
-    phase2_count_tensor = torch.tensor(phase2_count, dtype=torch.int64)
-    torch.distributed.all_reduce(phase2_count_tensor, op=torch.distributed.ReduceOp.SUM)
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded {phase2_count_tensor.item()} batches from 2 sequential loaders"
-    )
-    assert (
-        phase2_count_tensor.item() == expected_batches
-    ), f"Phase 2: Expected {expected_batches} total batches, got {phase2_count_tensor.item()}"
 
     shutdown_compute_proccess()
 
@@ -528,7 +511,9 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
     process_name = f"client_train_{args.client_rank}"
     try:
         mp_context = torch.multiprocessing.get_context("spawn")
-        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting train client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -538,6 +523,7 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
                     mp_sharing_dict,  # mp_sharing_dict
+                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                 ],
             )
@@ -560,7 +546,9 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
     process_name = f"client_multiple_loaders_{args.client_rank}"
     try:
         mp_context = torch.multiprocessing.get_context("spawn")
-        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting multiple loaders client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -570,6 +558,7 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
                     mp_sharing_dict,  # mp_sharing_dict
+                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                 ],
             )
@@ -587,6 +576,7 @@ def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
+    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
@@ -601,19 +591,20 @@ def _run_compute_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=mp_sharing_dict,
+        mp_barrier=mp_barrier,
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
     assert (
-        remote_dist_dataset.get_edge_dir() == "in"
-    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.get_edge_dir()}"
+        remote_dist_dataset.fetch_edge_dir() == "in"
+    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.fetch_edge_dir()}"
     assert (
-        remote_dist_dataset.get_edge_feature_info() is not None
+        remote_dist_dataset.fetch_edge_feature_info() is not None
     ), "Edge feature info must not be None for the test dataset"
     assert (
-        remote_dist_dataset.get_node_feature_info() is not None
+        remote_dist_dataset.fetch_node_feature_info() is not None
     ), "Node feature info must not be None for the test dataset"
-    ports = remote_dist_dataset.get_free_ports_on_storage_cluster(num_ports=2)
+    ports = remote_dist_dataset.fetch_free_ports_on_storage_cluster(num_ports=2)
     assert len(ports) == 2, "Expected 2 free ports"
     if rank == 0:
         all_ports = [None] * torch.distributed.get_world_size()
@@ -632,7 +623,7 @@ def _run_compute_tests(
     torch.distributed.barrier()
     logger.info("Verified that all ranks received the same free ports")
 
-    sampler_input = remote_dist_dataset.get_node_ids(
+    sampler_input = remote_dist_dataset.fetch_node_ids(
         node_type=node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -644,7 +635,7 @@ def _run_compute_tests(
         cluster_info=cluster_info,
         local_rank=client_rank,
         mp_sharing_dict=None,
-    ).get_node_ids(
+    ).fetch_node_ids(
         node_type=node_type,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
@@ -652,8 +643,8 @@ def _run_compute_tests(
     _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
     assert (
-        remote_dist_dataset.get_edge_types() == expected_edge_types
-    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.get_edge_types()}"
+        remote_dist_dataset.fetch_edge_types() == expected_edge_types
+    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.fetch_edge_types()}"
 
     torch.distributed.barrier()
     if node_type is not None:
@@ -723,7 +714,9 @@ def _client_process(args: ClientProcessArgs) -> None:
             f"Initializing client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {args.client_rank}"
         )
         mp_context = torch.multiprocessing.get_context("spawn")
-        mp_sharing_dict = torch.multiprocessing.Manager().dict()
+        manager = torch.multiprocessing.Manager()
+        mp_sharing_dict = manager.dict()
+        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -733,6 +726,7 @@ def _client_process(args: ClientProcessArgs) -> None:
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
                     mp_sharing_dict,  # mp_sharing_dict
+                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                     args.expected_sampler_input,  # expected_sampler_input
                     args.expected_edge_types,  # expected_edge_types
@@ -757,6 +751,8 @@ class ServerProcessArgs:
         task_config_uri: URI to the task configuration.
         sample_edge_direction: Direction for edge sampling ("in" or "out").
         exception_dict: Shared dictionary for storing exceptions from processes.
+        num_server_sessions: Number of sequential server sessions to run
+            (e.g. one per inference node type).
         splitter: Optional splitter for node anchor link or node splitting.
     """
 
@@ -764,23 +760,59 @@ class ServerProcessArgs:
     task_config_uri: Uri
     sample_edge_direction: Literal["in", "out"]
     exception_dict: MutableMapping[str, str]
+    num_server_sessions: int = 1
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
 
 
-def _run_server_processes(args: ServerProcessArgs) -> None:
+def _run_storage_main_process(args: ServerProcessArgs) -> None:
     process_name = f"server_{args.cluster_info.storage_node_rank}"
     try:
+        storage_rank = args.cluster_info.storage_node_rank
+        cluster_info = args.cluster_info
         logger.info(
-            f"Initializing server processes. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
+            f"Initializing server processes. OS rank: {os.environ['RANK']}, "
+            f"OS world size: {os.environ['WORLD_SIZE']}"
         )
-        storage_node_process(
-            storage_rank=args.cluster_info.storage_node_rank,
-            cluster_info=args.cluster_info,
+        # 1. Init process group for server comms
+        init_method = f"tcp://{cluster_info.storage_cluster_master_ip}:{cluster_info.storage_cluster_master_port}"
+        logger.info(
+            f"Initializing storage node {storage_rank} / "
+            f"{cluster_info.num_storage_nodes}. "
+            f"OS rank: {os.environ['RANK']}, "
+            f"OS world size: {os.environ['WORLD_SIZE']} "
+            f"init method: {init_method}"
+        )
+        torch.distributed.init_process_group(
+            backend="gloo",
+            world_size=cluster_info.num_storage_nodes,
+            rank=storage_rank,
+            init_method=init_method,
+            group_name="gigl_server_comms",
+        )
+        logger.info(
+            f"Storage node {storage_rank} / "
+            f"{cluster_info.num_storage_nodes} process group initialized"
+        )
+
+        # 2. Build the dataset
+        dataset = build_storage_dataset(
             task_config_uri=args.task_config_uri,
             sample_edge_direction=args.sample_edge_direction,
             splitter=args.splitter,
             tf_record_uri_pattern=".*tfrecord",
-            storage_world_backend="gloo",
+        )
+
+        # 3. Destroy the coordination process group before spawning server
+        # subprocesses. The subprocess will create its own process group on the
+        # same port, so we must release it here first.
+        torch.distributed.destroy_process_group()
+
+        # 4. Run the storage server sessions
+        run_storage_server(
+            storage_rank=storage_rank,
+            cluster_info=cluster_info,
+            dataset=dataset,
+            num_server_sessions=args.num_server_sessions,
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         )
     except Exception:
@@ -844,26 +876,28 @@ class GraphStoreIntegrationTest(TestCase):
     ERROR: build step 0 "docker-img/path:tag" failed: step exited with non-zero status: 2
     """
 
-    def test_graph_store_homogeneous(self):
-        # Simulating two server machine, two compute machines.
-        # Each machine has one process.
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+    def _create_cluster_info(
+        self,
+        num_storage_nodes: int = 2,
+        num_compute_nodes: int = 2,
+        num_processes_per_compute: int = 2,
+    ) -> GraphStoreInfo:
         (
             cluster_master_port,
             storage_cluster_master_port,
             compute_cluster_master_port,
-            master_port,
             rpc_master_port,
             rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
+        ) = get_free_ports(num_ports=5)
         host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
-            num_processes_per_compute=2,
+        tmp_file = tempfile.NamedTemporaryFile(delete=False)
+        tmp_file_path = tmp_file.name
+        self.addCleanup(tmp_file.close)
+        readiness_uri = UriFactory.create_uri(tmp_file_path)
+        return GraphStoreInfo(
+            num_storage_nodes=num_storage_nodes,
+            num_compute_nodes=num_compute_nodes,
+            num_processes_per_compute=num_processes_per_compute,
             cluster_master_ip=host_ip,
             storage_cluster_master_ip=host_ip,
             compute_cluster_master_ip=host_ip,
@@ -872,7 +906,19 @@ class GraphStoreIntegrationTest(TestCase):
             compute_cluster_master_port=compute_cluster_master_port,
             rpc_master_port=rpc_master_port,
             rpc_wait_port=rpc_wait_port,
+            readiness_uri=readiness_uri,
         )
+
+    def test_graph_store_homogeneous(self):
+        # Simulating two server machine, two compute machines.
+        # Each machine has one process.
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+        master_port = get_free_port()
+        host_ip = socket.gethostbyname(socket.gethostname())
+        cluster_info = self._create_cluster_info()
 
         num_cora_nodes = 2708
         expected_sampler_input = _get_expected_input_nodes_by_rank(
@@ -934,7 +980,7 @@ class GraphStoreIntegrationTest(TestCase):
                     exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
@@ -948,28 +994,11 @@ class GraphStoreIntegrationTest(TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = cora_supervised_info.frozen_gbml_config_uri
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-            rpc_master_port,
-            rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
-        host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
-            num_processes_per_compute=1,
-            cluster_master_ip=host_ip,
-            storage_cluster_master_ip=host_ip,
-            compute_cluster_master_ip=host_ip,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-            rpc_master_port=rpc_master_port,
-            rpc_wait_port=rpc_wait_port,
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=2, num_compute_nodes=2, num_processes_per_compute=1
         )
+        master_port = get_free_port()
+        host_ip = socket.gethostbyname(socket.gethostname())
 
         ctx = mp.get_context("spawn")
         launched_processes: list[py_mp_context.SpawnProcess] = []
@@ -1028,7 +1057,7 @@ class GraphStoreIntegrationTest(TestCase):
                     splitter=splitter,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                 )
                 server_process.start()
@@ -1036,7 +1065,6 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
-    @unittest.skip("Not supported yet - skipping for now")
     def test_multiple_loaders_in_graph_store(self):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
         in parallel, followed by another (ABLP, DistNeighborLoader) pair sequentially.
@@ -1045,28 +1073,10 @@ class GraphStoreIntegrationTest(TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = cora_supervised_info.frozen_gbml_config_uri
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-            rpc_master_port,
-            rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
+        master_port = get_free_port()
         host_ip = socket.gethostbyname(socket.gethostname())
-        # Very small cluster to avoid OOMing on CICD.
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=1,
-            num_compute_nodes=1,
-            num_processes_per_compute=1,
-            cluster_master_ip=host_ip,
-            storage_cluster_master_ip=host_ip,
-            compute_cluster_master_ip=host_ip,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-            rpc_master_port=rpc_master_port,
-            rpc_wait_port=rpc_wait_port,
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=1, num_compute_nodes=1, num_processes_per_compute=1
         )
 
         ctx = mp.get_context("spawn")
@@ -1126,7 +1136,7 @@ class GraphStoreIntegrationTest(TestCase):
                     splitter=splitter,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
@@ -1144,27 +1154,10 @@ class GraphStoreIntegrationTest(TestCase):
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         task_config_uri = dblp_supervised_info.frozen_gbml_config_uri
-        (
-            cluster_master_port,
-            storage_cluster_master_port,
-            compute_cluster_master_port,
-            master_port,
-            rpc_master_port,
-            rpc_wait_port,
-        ) = get_free_ports(num_ports=6)
+        master_port = get_free_port()
         host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = GraphStoreInfo(
-            num_storage_nodes=2,
-            num_compute_nodes=2,
-            num_processes_per_compute=2,
-            cluster_master_ip=host_ip,
-            storage_cluster_master_ip=host_ip,
-            compute_cluster_master_ip=host_ip,
-            cluster_master_port=cluster_master_port,
-            storage_cluster_master_port=storage_cluster_master_port,
-            compute_cluster_master_port=compute_cluster_master_port,
-            rpc_master_port=rpc_master_port,
-            rpc_wait_port=rpc_wait_port,
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=2, num_compute_nodes=2, num_processes_per_compute=2
         )
 
         num_dblp_nodes = 4057
@@ -1231,7 +1224,7 @@ class GraphStoreIntegrationTest(TestCase):
                     exception_dict=exception_dict,
                 )
                 server_process = ctx.Process(
-                    target=_run_server_processes,
+                    target=_run_storage_main_process,
                     args=[server_args],
                     name=f"server_{i}",
                 )
