@@ -1,13 +1,15 @@
 import asyncio
 import gc
+import threading
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.channel import ChannelBase, SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
 from graphlearn_torch.sampler import (
+    EdgeSamplerInput,
     HeteroSamplerOutput,
     NeighborOutput,
     NodeSamplerInput,
@@ -55,6 +57,122 @@ class DistNeighborSampler(GLTDistNeighborSampler):
     added to the sampling seeds, and label information is included in the output
     metadata.
     """
+
+    _DEFAULT_OUTPUT_KEY = "__default__"
+
+    def __init__(
+        self, *args: Any, channel: Optional[ChannelBase] = None, **kwargs: Any
+    ):
+        args_list = list(args)
+        if "channel" in kwargs:
+            kw_channel = kwargs.pop("channel")
+            if channel is not None and kw_channel is not channel:
+                raise ValueError("Conflicting channel arguments provided")
+            channel = kw_channel
+        if len(args_list) > 7:
+            pos_channel = args_list[7]
+            if channel is None:
+                channel = pos_channel
+            args_list[7] = None
+            # Keep GLT's `self.channel` disabled and route via keyed outputs.
+            super().__init__(*args_list, **kwargs)
+        else:
+            # Keep GLT's `self.channel` disabled and route via keyed outputs.
+            super().__init__(*args_list, channel=None, **kwargs)
+        self._output_lock = threading.Lock()
+        self._channel_map: dict[str, ChannelBase] = {}
+        self._default_output_key: Optional[str] = None
+        if channel is not None:
+            self._channel_map[self._DEFAULT_OUTPUT_KEY] = channel
+            self._default_output_key = self._DEFAULT_OUTPUT_KEY
+
+    def register_output(self, key: str, channel: ChannelBase) -> None:
+        with self._output_lock:
+            self._channel_map[key] = channel
+
+    def unregister_output(self, key: str) -> None:
+        with self._output_lock:
+            self._channel_map.pop(key, None)
+            if self._default_output_key == key:
+                self._default_output_key = None
+
+    def _resolve_output_target(self, key: Optional[str]) -> Optional[ChannelBase]:
+        with self._output_lock:
+            if key is not None:
+                target = self._channel_map.get(key)
+                if target is None:
+                    raise KeyError(f"Unknown sampler output key: {key}")
+                return target
+            if self._default_output_key is None:
+                return None
+            return self._channel_map.get(self._default_output_key)
+
+    def sample_from_nodes(
+        self,
+        inputs: NodeSamplerInput,
+        key: Optional[str] = None,
+        callback: Optional[Callable[[Optional[SampleMessage]], Any]] = None,
+    ) -> Optional[SampleMessage]:
+        inputs = NodeSamplerInput.cast(inputs)
+        target = self._resolve_output_target(key)
+        if target is None:
+            return self.run_task(
+                coro=self._send_adapter(self._sample_from_nodes, inputs)
+            )
+        self.add_task(
+            coro=self._send_adapter(self._sample_from_nodes, inputs, key=key),
+            callback=callback,
+        )
+        return None
+
+    def sample_from_edges(
+        self,
+        inputs: EdgeSamplerInput,
+        key: Optional[str] = None,
+        callback: Optional[Callable[[Optional[SampleMessage]], Any]] = None,
+    ) -> Optional[SampleMessage]:
+        inputs = EdgeSamplerInput.cast(inputs)
+        target = self._resolve_output_target(key)
+        if target is None:
+            return self.run_task(
+                coro=self._send_adapter(self._sample_from_edges, inputs)
+            )
+        self.add_task(
+            coro=self._send_adapter(self._sample_from_edges, inputs, key=key),
+            callback=callback,
+        )
+        return None
+
+    def subgraph(
+        self,
+        inputs: NodeSamplerInput,
+        key: Optional[str] = None,
+        callback: Optional[Callable[[Optional[SampleMessage]], Any]] = None,
+    ) -> Optional[SampleMessage]:
+        inputs = NodeSamplerInput.cast(inputs)
+        target = self._resolve_output_target(key)
+        if target is None:
+            return self.run_task(coro=self._send_adapter(self._subgraph, inputs))
+        self.add_task(
+            coro=self._send_adapter(self._subgraph, inputs, key=key),
+            callback=callback,
+        )
+        return None
+
+    async def _send_adapter(
+        self,
+        async_func: Callable[..., Any],
+        *args: Any,
+        key: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[SampleMessage]:
+        sampler_output = await async_func(*args, **kwargs)
+        res = await self._colloate_fn(sampler_output)
+        target = self._resolve_output_target(key)
+        if target is None:
+            return res
+        target.send(res)
+        return None
 
     def _prepare_sample_loop_inputs(
         self,
