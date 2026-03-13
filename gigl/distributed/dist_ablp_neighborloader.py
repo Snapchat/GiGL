@@ -780,9 +780,13 @@ class DistABLPLoader(BaseDistLoader):
     ]:
         """Partition pre-extracted metadata into labels and remaining metadata.
 
+        # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
+
         Takes the metadata dict already extracted by ``_extract_metadata`` (keys
         without the ``#META.`` prefix) and separates label entries from
-        non-label entries.
+        non-label entries. We need to remove the labels from GLT's metadata since the `to_hetero_data` function
+        strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
+        building the HeteroData object.
 
         Label keys use ``POSITIVE_LABEL_METADATA_KEY`` / ``NEGATIVE_LABEL_METADATA_KEY``
         prefixes followed by a string-encoded edge type tuple.  If ``edge_dir``
@@ -794,10 +798,12 @@ class DistABLPLoader(BaseDistLoader):
                 as returned by ``_extract_metadata``.
 
         Returns:
-            A 3-tuple of:
-            - positive_labels: Dict[label edge type, label ID tensor]
-            - negative_labels: Dict[label edge type, label ID tensor] (may be empty)
-            - remaining_metadata: Non-label metadata entries
+            dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
+                where the ith row  of the tensor corresponds to the ith anchor node ID.
+            dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
+                where the ith row  of the tensor corresponds to the ith anchor node ID.
+                May be empty if no negative labels are present.
+            dict[str, torch.Tensor]: Non-label metadata entries
         """
         positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
