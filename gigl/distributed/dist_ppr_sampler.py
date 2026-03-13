@@ -95,18 +95,15 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             self._is_homogeneous = True
 
     def _get_degree_from_tensor(self, node_id: int, edge_type: EdgeType) -> int:
-        """
-        Look up the TRUE degree of a node for a specific edge type from in-memory tensors.
-
-        This returns the actual node degree (not capped), which is mathematically correct
-        for PPR algorithm calculations.
+        """Look up the degree of a node for a specific edge type from in-memory tensors.
 
         Args:
             node_id: The ID of the node to look up.
             edge_type: The edge type to get the degree for.
 
         Returns:
-            The true degree of the node for the given edge type.
+            The degree of the node for the given edge type, or 0 if the node
+            or edge type is not found.
         """
         if self._is_homogeneous:
             # For homogeneous graphs, degree_tensors is a single tensor
@@ -124,8 +121,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 return 0
             return int(degree_tensor[node_id].item())
 
-    def _get_neighbor_type(self, edge_type: EdgeType) -> NodeType:
-        """Get the node type of neighbors reached via an edge type."""
+    def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
+        """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
     async def _get_neighbors_for_nodes(
@@ -145,7 +142,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         output: NeighborOutput = await self._sample_one_hop(
             srcs=nodes,
             num_nbr=self._num_nbrs_per_hop,
-            etype=edge_type if edge_type is not _PPR_HOMOGENEOUS_EDGE_TYPE else None,
+            etype=edge_type if edge_type != _PPR_HOMOGENEOUS_EDGE_TYPE else None,
         )
         return output.nbr, output.nbr_num
 
@@ -154,7 +151,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         nodes_by_edge_type: dict[EdgeType, set[int]],
         neighbor_target: dict[tuple[int, EdgeType], list[int]],
         device: torch.device,
-    ) -> int:
+    ) -> None:
         """
         Batch fetch neighbors for nodes grouped by edge type.
 
@@ -166,11 +163,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             nodes_by_edge_type: Dict mapping edge type to set of node IDs to fetch
             neighbor_target: Dict to populate with (node_id, edge_type) -> neighbor list
             device: Torch device for tensor creation
-
-        Returns:
-            Number of neighbor lookup calls made
         """
-        num_lookups = 0
         for etype, node_ids in nodes_by_edge_type.items():
             if not node_ids:
                 continue
@@ -181,7 +174,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 lookup_tensor,
                 etype,
             )
-            num_lookups += 1
 
             neighbors_list = neighbors.tolist()
             counts_list = neighbor_counts.tolist()
@@ -195,8 +187,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 cache_key = (node_id, etype)
                 neighbor_target[cache_key] = neighbors_list[offset : offset + count]
                 offset += count
-
-        return num_lookups
 
     async def _compute_ppr_scores(
         self,
@@ -336,20 +326,23 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         if not neighbor_list:
                             continue
 
-                        neighbor_type = self._get_neighbor_type(etype)
+                        neighbor_type = self._get_destination_type(etype)
 
                         for neighbor_node in neighbor_list:
                             neighbor_key = (neighbor_node, neighbor_type)
                             residuals[i][neighbor_key] += residual_per_neighbor
 
-                            if neighbor_key not in queue[i]:
-                                if residuals[i][
-                                    neighbor_key
-                                ] >= self._requeue_threshold_factor * _get_total_degree(
-                                    neighbor_node, neighbor_type
-                                ):
-                                    queue[i].add(neighbor_key)
-                                    num_nodes_in_queue += 1
+                            requeue_threshold = (
+                                self._requeue_threshold_factor
+                                * _get_total_degree(neighbor_node, neighbor_type)
+                            )
+                            should_requeue = (
+                                neighbor_key not in queue[i]
+                                and residuals[i][neighbor_key] >= requeue_threshold
+                            )
+                            if should_requeue:
+                                queue[i].add(neighbor_key)
+                                num_nodes_in_queue += 1
 
         # Extract top-k nodes by PPR score, grouped by node type.
         # Build flat tensors directly (no padding) — valid_counts[i] records how many
