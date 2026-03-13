@@ -28,7 +28,7 @@ from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
+from gigl.distributed.utils.neighborloader import ShardStrategy, shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
@@ -287,6 +287,44 @@ def _run_compute_train_tests(
         count_tensor.item() == expected_batches
     ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
 
+    # --- CONTIGUOUS shard strategy tests ---
+    # With 2 servers and 2 compute nodes, rank R should get all of server R's
+    # nodes and an empty tensor for server (1-R).
+    contiguous_node_ids = remote_dist_dataset.fetch_node_ids(
+        split="train",
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+        shard_strategy=ShardStrategy.CONTIGUOUS,
+    )
+
+    # Assert structure: each rank owns exactly one server in the 2S/2C case
+    rank = cluster_info.compute_node_rank
+    other_rank = 1 - rank
+    assert (
+        contiguous_node_ids[rank].numel() > 0
+    ), f"Rank {rank} should have non-empty tensor for its own server"
+    assert (
+        contiguous_node_ids[other_rank].numel() == 0
+    ), f"Rank {rank} should have empty tensor for server {other_rank}"
+
+    # Assert total node parity: CONTIGUOUS and ROUND_ROBIN should cover the same nodes
+    local_contiguous_count = sum(t.numel() for t in contiguous_node_ids.values())
+    local_round_robin_count = sum(t.numel() for t in random_negative_input.values())
+    contiguous_total = torch.tensor(local_contiguous_count, dtype=torch.int64)
+    round_robin_total = torch.tensor(local_round_robin_count, dtype=torch.int64)
+    torch.distributed.all_reduce(contiguous_total, op=torch.distributed.ReduceOp.SUM)
+    torch.distributed.all_reduce(round_robin_total, op=torch.distributed.ReduceOp.SUM)
+    assert contiguous_total.item() == round_robin_total.item(), (
+        f"CONTIGUOUS total ({contiguous_total.item()}) must equal "
+        f"ROUND_ROBIN total ({round_robin_total.item()})"
+    )
+
+    torch.distributed.barrier()
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} CONTIGUOUS: "
+        f"{local_contiguous_count} nodes from assigned server"
+    )
+
     shutdown_compute_proccess()
 
 
@@ -370,9 +408,6 @@ def _run_compute_multiple_loaders_test(
         prefetch_size=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
-    )
     ablp_loader_2 = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -383,9 +418,6 @@ def _run_compute_multiple_loaders_test(
         prefetch_size=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
-    )
     neighbor_loader_1 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -395,9 +427,6 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
-    )
     neighbor_loader_2 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -406,12 +435,6 @@ def _run_compute_multiple_loaders_test(
         num_workers=2,
         worker_concurrency=2,
         batch_size=batch_size,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
     )
     torch.distributed.barrier()
     for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
