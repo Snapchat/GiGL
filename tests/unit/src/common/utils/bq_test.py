@@ -75,10 +75,17 @@ class GetLatestTableTest(TestCase):
         )
 
     def test_returns_latest_table(self, mock_client_cls: MagicMock) -> None:
+        """Happy path: picks lexicographic max while ignoring non-prefix and wrong-length tables."""
         bq_utils = self._make_bq_utils(mock_client_cls)
         self._set_mock_tables(
             mock_client_cls,
-            ["events_20250101", "events_20250103", "events_20250102"],
+            [
+                "events_20250101",
+                "events_20250103",
+                "events_20250102",
+                "events_backup_20250101",  # wrong suffix length → skipped
+                "old_events_20250104",  # wrong prefix → skipped
+            ],
         )
         result = bq_utils.get_latest_table(bq_table_path_prefix=self.PREFIX)
         self.assertEqual(result, "myproject.mydataset.events_20250103")
@@ -94,21 +101,32 @@ class GetLatestTableTest(TestCase):
         )
         self.assertEqual(result, "myproject.mydataset.events_20250102")
 
-    def test_no_matching_tables_raises(self, mock_client_cls: MagicMock) -> None:
+    @parameterized.expand(
+        [
+            param(
+                "empty_table_list",
+                table_ids=[],
+                cap_date=None,
+            ),
+            param(
+                "cap_date_filters_all",
+                table_ids=["events_20250201", "events_20250202"],
+                cap_date="20250101",
+            ),
+        ]
+    )
+    def test_raises_when_no_matching_tables(
+        self,
+        mock_client_cls: MagicMock,
+        _name: str,
+        table_ids: list[str],
+        cap_date: str,
+    ) -> None:
         bq_utils = self._make_bq_utils(mock_client_cls)
-        self._set_mock_tables(mock_client_cls, [])
-        with self.assertRaises(ValueError):
-            bq_utils.get_latest_table(bq_table_path_prefix=self.PREFIX)
-
-    def test_cap_date_filters_all_raises(self, mock_client_cls: MagicMock) -> None:
-        bq_utils = self._make_bq_utils(mock_client_cls)
-        self._set_mock_tables(
-            mock_client_cls,
-            ["events_20250201", "events_20250202"],
-        )
+        self._set_mock_tables(mock_client_cls, table_ids)
         with self.assertRaises(ValueError):
             bq_utils.get_latest_table(
-                bq_table_path_prefix=self.PREFIX, cap_date="20250101"
+                bq_table_path_prefix=self.PREFIX, cap_date=cap_date
             )
 
     def test_returns_latest_table_with_hourly_suffix(
@@ -123,23 +141,3 @@ class GetLatestTableTest(TestCase):
             bq_table_path_prefix=self.PREFIX, table_partition_suffix="YYYYMMDDHH"
         )
         self.assertEqual(result, "myproject.mydataset.events_2025010112")
-
-    def test_skips_tables_with_wrong_suffix_length(
-        self, mock_client_cls: MagicMock
-    ) -> None:
-        bq_utils = self._make_bq_utils(mock_client_cls)
-        self._set_mock_tables(
-            mock_client_cls,
-            ["events_20250101", "events_backup_20250101"],
-        )
-        result = bq_utils.get_latest_table(bq_table_path_prefix=self.PREFIX)
-        self.assertEqual(result, "myproject.mydataset.events_20250101")
-
-    def test_skips_substring_matches(self, mock_client_cls: MagicMock) -> None:
-        bq_utils = self._make_bq_utils(mock_client_cls)
-        self._set_mock_tables(
-            mock_client_cls,
-            ["events_20250101", "old_events_20250102", "events_20250103"],
-        )
-        result = bq_utils.get_latest_table(bq_table_path_prefix=self.PREFIX)
-        self.assertEqual(result, "myproject.mydataset.events_20250103")

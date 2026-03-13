@@ -295,6 +295,7 @@ class BqUtils:
         ``YYYYMM``, ``YYYYMMDD``, ``YYYYMMDDHH``, integer ranges) are
         lexicographically sortable, so the latest table is the
         lexicographic maximum.
+        See: https://docs.cloud.google.com/bigquery/docs/partitioned-tables#date_timestamp_partitioned_tables
 
 
         If *cap_date* is given, only tables with suffix <= cap_date are
@@ -322,7 +323,7 @@ class BqUtils:
 
         suffix_len = len(table_partition_suffix)
         expected_table_path_len = len(bq_table_path_prefix) + suffix_len
-        latest_table_path: Optional[str] = None
+        latest_table_path: str
         curr_latest_candidate_suffix: Optional[str] = None
         for table_list_item in tables:
             if not table_list_item.table_id.startswith(table_prefix):
