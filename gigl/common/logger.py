@@ -1,22 +1,88 @@
+import json
 import logging
 import os
 import pathlib
-from datetime import datetime
+import sys
+from datetime import datetime, timezone
 from typing import Any, MutableMapping, Optional
-
-from google.cloud import logging as google_cloud_logging
 
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 
+_PYTHON_LEVEL_TO_GCP_SEVERITY: dict[str, str] = {
+    "DEBUG": "DEBUG",
+    "INFO": "INFO",
+    "WARNING": "WARNING",
+    "ERROR": "ERROR",
+    "CRITICAL": "CRITICAL",
+}
+
+# Key used by Logger.process() to pass user-supplied extras to the formatter
+# without mixing them into the LogRecord's built-in attributes.
+_GCP_LABELS_RECORD_ATTR: str = "_gcp_labels"
+
+
+class _GcpJsonFormatter(logging.Formatter):
+    """A ``logging.Formatter`` that outputs one JSON object per line with
+    `GCP-recognized structured logging fields
+    <https://cloud.google.com/logging/docs/structured-logging>`_.
+
+    Fields emitted:
+
+    - ``severity`` -- mapped from the Python log level.
+    - ``message`` -- the formatted log message (with traceback appended when present).
+    - ``time`` -- ISO 8601 UTC timestamp.
+    - ``logging.googleapis.com/sourceLocation`` -- ``{file, line, function}``.
+    - ``logging.googleapis.com/labels`` -- any extra fields supplied via the
+      ``extra`` dict on the ``Logger`` adapter.  Omitted when there are no extras.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format *record* as a single-line JSON string.
+
+        Args:
+            record: The ``LogRecord`` to format.
+
+        Returns:
+            A JSON string (no trailing newline) suitable for writing to
+            ``sys.stderr`` on GCP-managed environments.
+        """
+        message = record.getMessage()
+
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
+        if record.exc_text:
+            message = f"{message}\n{record.exc_text}"
+        if record.stack_info:
+            message = f"{message}\n{record.stack_info}"
+
+        payload: dict[str, object] = {
+            "severity": _PYTHON_LEVEL_TO_GCP_SEVERITY.get(
+                record.levelname, record.levelname
+            ),
+            "message": message,
+            "time": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "logging.googleapis.com/sourceLocation": {
+                "file": record.pathname,
+                "line": record.lineno,
+                "function": record.funcName,
+            },
+        }
+
+        labels: dict[str, object] = getattr(record, _GCP_LABELS_RECORD_ATTR, {})
+        if labels:
+            payload["logging.googleapis.com/labels"] = labels
+
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
 
 class Logger(logging.LoggerAdapter):
-    """
-    GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.)
+    """GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.).
+
     Args:
-        logger (Optional[logging.Logger]): A custom logger to use. If not provided, the default logger will be created.
-        name (Optional[str]): The name to be used for the logger. By default uses "root".
-        log_to_file (bool): If True, logs will be written to a file. If False, logs will be written to the console.
-        extra (Optional[dict[str, Any]]): Extra information to be added to the log message.
+        logger: A custom logger to use. If not provided, the default logger will be created.
+        name: The name to be used for the logger. By default uses "root".
+        log_to_file: If True, logs will be written to a file. If False, logs will be written to the console.
+        extra: Extra information to be added to the log message.
     """
 
     def __init__(
@@ -37,12 +103,11 @@ class Logger(logging.LoggerAdapter):
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
-            if os.getenv("GAE_APPLICATION") or os.environ.get(
-                "KUBERNETES_SERVICE_HOST"
-            ):
-                # Google Cloud Logging
-                client = google_cloud_logging.Client()
-                client.setup_logging(log_level=logging.INFO)
+            # Check if running on GCP.
+            if os.getenv("GAE_APPLICATION") or os.getenv("KUBERNETES_SERVICE_HOST"):
+                handler = logging.StreamHandler(stream=sys.stderr)
+                handler.setFormatter(_GcpJsonFormatter())
+                logger.addHandler(handler)
             else:
                 # Logging locally. Set up logging to console or file
                 if log_to_file:
@@ -64,10 +129,10 @@ class Logger(logging.LoggerAdapter):
             logger.setLevel(logging.INFO)
 
     def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> Any:
+        merged: dict[str, Any] = dict(self.extra if self.extra else {})
         if "extra" in kwargs:
-            kwargs["extra"].update(self.extra)
-        else:
-            kwargs["extra"] = self.extra
+            merged.update(kwargs["extra"])
+        kwargs["extra"] = {**merged, _GCP_LABELS_RECORD_ATTR: merged}
         return msg, kwargs
 
     def __getattr__(self, name: str):
