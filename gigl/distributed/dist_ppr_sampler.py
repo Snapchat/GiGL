@@ -240,7 +240,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         #
         # queue[i][node_type] = set of node IDs whose residual exceeds the
         #   convergence threshold (alpha * eps * total_degree).  The algorithm
-        #   terminates when all queues are empty.
+        #   terminates when all queues are empty.  A set is used because multiple
+        #   neighbors can push residual to the same node in one iteration —
+        #   deduplication avoids redundant processing, and the O(1) membership
+        #   check matters since it runs in the innermost loop.
         ppr_scores: list[dict[NodeType, dict[int, float]]] = [
             defaultdict(lambda: defaultdict(float)) for _ in range(batch_size)
         ]
