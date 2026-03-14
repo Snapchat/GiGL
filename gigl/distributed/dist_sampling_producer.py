@@ -34,8 +34,17 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
+from gigl.common.logger import Logger
+from gigl.distributed.dist_dataset import DistDataset as GiglDistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-from gigl.distributed.sampler_options import KHopNeighborSamplerOptions, SamplerOptions
+from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
+from gigl.distributed.sampler_options import (
+    KHopNeighborSamplerOptions,
+    PPRSamplerOptions,
+    SamplerOptions,
+)
+
+logger = Logger()
 
 
 def _sampling_worker_loop(
@@ -89,9 +98,19 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Resolve sampler class from options
+        # Resolve sampler class and any extra kwargs from options
+        extra_sampler_kwargs: dict[str, object] = {}
         if isinstance(sampler_options, KHopNeighborSamplerOptions):
             sampler_cls = DistNeighborSampler
+        elif isinstance(sampler_options, PPRSamplerOptions):
+            sampler_cls = DistPPRNeighborSampler
+            extra_sampler_kwargs = {
+                "alpha": sampler_options.alpha,
+                "eps": sampler_options.eps,
+                "max_ppr_nodes": sampler_options.max_ppr_nodes,
+                "num_nbrs_per_hop": sampler_options.num_nbrs_per_hop,
+                "total_degree_dtype": sampler_options.total_degree_dtype,
+            }
         else:
             raise NotImplementedError(
                 f"Unsupported sampler options type: {type(sampler_options)}"
@@ -110,6 +129,7 @@ def _sampling_worker_loop(
             worker_options.worker_concurrency,
             current_device,
             seed=sampling_config.seed,
+            **extra_sampler_kwargs,
         )
         dist_sampler.start_loop()
 
@@ -193,6 +213,23 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # PPR sampling requires degree tensors in the sampler __init__.
+        # Worker subprocesses only initialize RPC (not torch.distributed),
+        # so the lazy degree computation would fail there.  Eagerly compute
+        # here — where torch.distributed IS initialized — so the cached
+        # tensor is shared to workers via IPC.
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            assert isinstance(self.data, GiglDistDataset)
+            degree_tensor = self.data.degree_tensor
+            if isinstance(degree_tensor, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensor)} edge types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with {degree_tensor.size(0)} nodes."
+                )
+
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
