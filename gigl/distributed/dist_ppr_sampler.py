@@ -479,8 +479,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         ``ppr_neighbor_ids`` directly indexes into ``data[ntype].x`` without any
         additional global→local remapping.
 
-        **Why the inducer is used for local-index assignment:**
-
         The inducer is GLT's C++ data structure (backed by a per-node-type hash map)
         that maintains a single global-ID → local-index mapping for the entire
         subgraph being built.  We use it here instead of a Python dict for two reasons:
