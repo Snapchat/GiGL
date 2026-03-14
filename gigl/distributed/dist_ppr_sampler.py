@@ -102,6 +102,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # edge types traversable from that node type.  This is a graph-level
         # property used on every PPR iteration, so computing it once at init
         # avoids per-node summation and cache lookups in the hot loop.
+        # TODO (mkolodner-sc): This trades memory for throughput — we
+        # materialize a tensor per node type to avoid recomputing total degree
+        # on every neighbor during sampling.  Computing it here (rather than in
+        # the dataset) also keeps the door open for edge-specific degree
+        # strategies.  If memory becomes a bottleneck, revisit this.
         self._total_degree_by_node_type: dict[
             NodeType, torch.Tensor
         ] = self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
