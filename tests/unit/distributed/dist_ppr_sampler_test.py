@@ -569,24 +569,38 @@ class DistPPRSamplerTest(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    @parameterized.expand([param("in"), param("out")])
-    def test_ppr_sampler_correctness_homogeneous(self, edge_dir: str) -> None:
+    @parameterized.expand(
+        [
+            param("edge_dir_in", edge_dir="in"),
+            param("edge_dir_out", edge_dir="out"),
+        ]
+    )
+    def test_ppr_sampler_correctness_homogeneous(self, _, edge_dir: str) -> None:
         """Verify PPR scores match NetworkX pagerank on a small homogeneous graph."""
         mp.spawn(
             fn=_run_ppr_loader_correctness_check,
             args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
         )
 
-    @parameterized.expand([param("in"), param("out")])
-    def test_ppr_sampler_correctness_heterogeneous(self, edge_dir: str) -> None:
+    @parameterized.expand(
+        [
+            param("edge_dir_in", edge_dir="in"),
+            param("edge_dir_out", edge_dir="out"),
+        ]
+    )
+    def test_ppr_sampler_correctness_heterogeneous(self, _, edge_dir: str) -> None:
         """Verify PPR scores match NetworkX pagerank on a heterogeneous bipartite graph."""
         mp.spawn(
             fn=_run_ppr_hetero_loader_correctness_check,
             args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
         )
 
-    @parameterized.expand([param("out")])
-    def test_ppr_sampler_ablp_correctness(self, edge_dir: str) -> None:
+    @parameterized.expand(
+        [
+            param("edge_dir_out", edge_dir="out"),
+        ]
+    )
+    def test_ppr_sampler_ablp_correctness(self, _, edge_dir: str) -> None:
         """Verify PPR scores through DistABLPLoader on a heterogeneous graph.
 
         Only tests ``edge_dir="out"`` because ``DistNodeAnchorLinkSplitter``
