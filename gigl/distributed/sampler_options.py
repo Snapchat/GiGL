@@ -10,6 +10,7 @@ Frozen dataclasses so they are safe to pickle across RPC boundaries
 from dataclasses import dataclass
 from typing import Optional, Union
 
+import torch
 from graphlearn_torch.typing import EdgeType
 
 from gigl.common.logger import Logger
@@ -47,12 +48,16 @@ class PPRSamplerOptions:
         num_nbrs_per_hop: Maximum number of neighbors fetched per node per edge
             type during PPR traversal. Set large to approximate fetching all
             neighbors.
+        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
+            to ``torch.int32``, which supports total degrees up to ~2 billion.
+            Use a larger dtype if nodes have exceptionally high aggregate degrees.
     """
 
     alpha: float = 0.5
     eps: float = 1e-4
     max_ppr_nodes: int = 50
     num_nbrs_per_hop: int = 100000
+    total_degree_dtype: torch.dtype = torch.int32
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

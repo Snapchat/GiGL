@@ -387,8 +387,27 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                     num_nodes_in_queue += 1
 
         # Extract top-k nodes by PPR score, grouped by node type.
-        # Build flat tensors directly (no padding) — valid_counts[i] records how many
-        # neighbors seed i actually has, so callers can recover per-seed slices.
+        # Results are three flat tensors per node type (no padding):
+        #   - flat_ids:      [id_seed0_0, id_seed0_1, ..., id_seed1_0, ...]
+        #   - flat_weights:  [wt_seed0_0, wt_seed0_1, ..., wt_seed1_0, ...]
+        #   - valid_counts:  [count_seed0, count_seed1, ...]
+        #
+        # valid_counts[i] records how many top-k neighbors seed i contributed.
+        # Callers use it to slice flat_ids/flat_weights back into per-seed
+        # groups and to build PyG edge-index tensors via repeat_interleave:
+        #
+        #   Example: 3 seeds, valid_counts = [2, 3, 1]
+        #   flat_dst = [dst_0a, dst_0b, dst_1a, dst_1b, dst_1c, dst_2a]
+        #
+        #   src_indices = repeat_interleave(arange(3), valid_counts)
+        #               = [0, 0, 1, 1, 1, 2]
+        #
+        #   edge_index  = stack([src_indices, flat_dst])
+        #               = [[0, 0, 1, 1, 1, 2],
+        #                  [dst_0a, dst_0b, dst_1a, dst_1b, dst_1c, dst_2a]]
+        #
+        # Column j means "edge from seed src_indices[j] to neighbor flat_dst[j]"
+        # with PPR weight flat_weights[j].
         all_node_types = self._node_type_to_edge_types.keys()
 
         flat_ids_by_ntype: dict[NodeType, torch.Tensor] = {}
@@ -498,8 +517,21 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         metadata = sample_loop_inputs.metadata
         nodes_to_sample = sample_loop_inputs.nodes_to_sample
 
-        # Acquired once per sample; returned to the pool at the end.  The inducer
-        # maintains the shared global→local index map for this entire subgraph.
+        # The inducer is GLT's C++ data structure that maintains a global-ID →
+        # local-index mapping for the subgraph being built.  It serves two roles:
+        #
+        # 1. Deduplication: when the same global node ID appears from multiple
+        #    seeds or seed types, induce_next assigns it a single local index.
+        #    This ensures node_dict[ntype] has no duplicates.
+        #
+        # 2. Local index assignment: init_node registers seeds at local indices
+        #    0..N-1.  induce_next then assigns the next available indices to
+        #    newly discovered neighbors.  The returned "cols" tensor contains
+        #    the local destination index for every neighbor (including those
+        #    that were already registered), which we use directly as row 1 of
+        #    the PyG edge-index tensor.
+        #
+        # Acquired once per sample call; returned to the pool at the end.
         inducer = self._acquire_inducer()
 
         if is_hetero:
