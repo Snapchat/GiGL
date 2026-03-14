@@ -48,6 +48,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         num_nbrs_per_hop: Maximum number of neighbors to fetch per hop.
+        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults to
+            ``torch.int32``, which supports total degrees up to ~2 billion. Use a
+            larger dtype if nodes have exceptionally high aggregate degrees.
     """
 
     def __init__(
@@ -57,6 +60,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         num_nbrs_per_hop: int = 100000,
+        total_degree_dtype: torch.dtype = torch.int32,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -69,7 +73,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         assert isinstance(
             self.data, DistDataset
         ), "DistPPRNeighborSampler requires a GiGL DistDataset to access degree tensors."
-        self._degree_tensors = self.data.degree_tensor
+        degree_tensors = self.data.degree_tensor
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -94,43 +98,78 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-    def _get_degree_from_tensor(self, node_id: int, edge_type: EdgeType) -> int:
-        """Look up the degree of a node for a specific edge type from in-memory tensors.
+        # Precompute total degree per node type: the sum of degrees across all
+        # edge types traversable from that node type.  This is a graph-level
+        # property used on every PPR iteration, so computing it once at init
+        # avoids per-node summation and cache lookups in the hot loop.
+        self._total_degree_by_node_type: dict[
+            NodeType, torch.Tensor
+        ] = self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
+
+    def _build_total_degree_tensors(
+        self,
+        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        dtype: torch.dtype,
+    ) -> dict[NodeType, torch.Tensor]:
+        """Build total-degree tensors by summing per-edge-type degrees for each node type.
+
+        For homogeneous graphs, the total degree is just the single degree tensor.
+        For heterogeneous graphs, it sums degree tensors across all edge types
+        traversable from each node type, padding shorter tensors with zeros.
+
+        Args:
+            degree_tensors: Per-edge-type degree tensors from the dataset.
+            dtype: Dtype for the output tensors.
+
+        Returns:
+            Dict mapping node type to a 1-D tensor of total degrees.
+        """
+        result: dict[NodeType, torch.Tensor] = {}
+
+        if self._is_homogeneous:
+            assert isinstance(degree_tensors, torch.Tensor)
+            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(dtype)
+        else:
+            assert isinstance(degree_tensors, dict)
+            for node_type, edge_types in self._node_type_to_edge_types.items():
+                max_len = 0
+                for et in edge_types:
+                    if et not in degree_tensors:
+                        raise ValueError(
+                            f"Edge type {et} not found in degree tensors. "
+                            f"Available: {list(degree_tensors.keys())}"
+                        )
+                    max_len = max(max_len, len(degree_tensors[et]))
+
+                summed = torch.zeros(max_len, dtype=dtype)
+                for et in edge_types:
+                    et_degrees = degree_tensors[et]
+                    summed[: len(et_degrees)] += et_degrees.to(dtype)
+                result[node_type] = summed
+
+        return result
+
+    def _get_total_degree(self, node_id: int, node_type: NodeType) -> int:
+        """Look up the precomputed total degree of a node.
 
         Args:
             node_id: The ID of the node to look up.
-            edge_type: The edge type to get the degree for.
+            node_type: The node type.
 
         Returns:
-            The degree of the node for the given edge type.
+            The total degree (sum across all edge types) for the node.
 
         Raises:
-            ValueError: If the edge type is missing from the degree tensors or
-                the node ID is out of range. Both indicate corrupted graph data
-                or a sampler bug.
+            ValueError: If the node ID is out of range, indicating corrupted
+                graph data or a sampler bug.
         """
-        if self._is_homogeneous:
-            assert isinstance(self._degree_tensors, torch.Tensor)
-            if node_id >= len(self._degree_tensors):
-                raise ValueError(
-                    f"Node ID {node_id} exceeds degree tensor length "
-                    f"({len(self._degree_tensors)})."
-                )
-            return int(self._degree_tensors[node_id].item())
-        else:
-            assert isinstance(self._degree_tensors, dict)
-            if edge_type not in self._degree_tensors:
-                raise ValueError(
-                    f"Edge type {edge_type} not found in degree tensors. "
-                    f"Available: {list(self._degree_tensors.keys())}"
-                )
-            degree_tensor = self._degree_tensors[edge_type]
-            if node_id >= len(degree_tensor):
-                raise ValueError(
-                    f"Node ID {node_id} exceeds degree tensor length "
-                    f"({len(degree_tensor)}) for edge type {edge_type}."
-                )
-            return int(degree_tensor[node_id].item())
+        degree_tensor = self._total_degree_by_node_type[node_type]
+        if node_id >= len(degree_tensor):
+            raise ValueError(
+                f"Node ID {node_id} exceeds total degree tensor length "
+                f"({len(degree_tensor)}) for node type {node_type}."
+            )
+        return int(degree_tensor[node_id].item())
 
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""
@@ -263,26 +302,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Cache keyed by (node_id, edge_type) since same node can have different neighbors per edge type
         neighbor_cache: dict[tuple[int, EdgeType], list[int]] = {}
 
-        # Cache for total degree (sum across all edge types for a node type).
-        # The per-edge-type degree is already O(1) via degree_tensors, but the
-        # *sum* across edge types is recomputed each time a node appears as a
-        # neighbor — which can be many times across seeds and iterations.
-        # Caching the sum avoids redundant _get_degree_from_tensor calls and
-        # the per-call Python overhead (method dispatch, isinstance, .item()).
-        total_degree_cache: dict[tuple[int, NodeType], int] = {}
-
-        def _get_total_degree(node_id: int, node_type: NodeType) -> int:
-            key = (node_id, node_type)
-            cached = total_degree_cache.get(key)
-            if cached is not None:
-                return cached
-            total = sum(
-                self._get_degree_from_tensor(node_id, et)
-                for et in self._node_type_to_edge_types.get(node_type, [])
-            )
-            total_degree_cache[key] = total
-            return total
-
         num_nodes_in_queue = batch_size
         one_minus_alpha = 1 - self._alpha
 
@@ -325,7 +344,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                         edge_types_for_node = self._node_type_to_edge_types[source_type]
 
-                        total_degree = _get_total_degree(source_node, source_type)
+                        total_degree = self._get_total_degree(source_node, source_type)
 
                         if total_degree == 0:
                             continue
@@ -349,7 +368,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                                 requeue_threshold = (
                                     self._requeue_threshold_factor
-                                    * _get_total_degree(neighbor_node, neighbor_type)
+                                    * self._get_total_degree(
+                                        neighbor_node, neighbor_type
+                                    )
                                 )
                                 should_requeue = (
                                     neighbor_node not in queue[i][neighbor_type]
