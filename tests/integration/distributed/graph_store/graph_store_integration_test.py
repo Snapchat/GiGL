@@ -370,9 +370,6 @@ def _run_compute_multiple_loaders_test(
         prefetch_size=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
-    )
     ablp_loader_2 = DistABLPLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -383,9 +380,6 @@ def _run_compute_multiple_loaders_test(
         prefetch_size=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
-    )
     neighbor_loader_1 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -395,9 +389,6 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
-    )
     neighbor_loader_2 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -406,9 +397,6 @@ def _run_compute_multiple_loaders_test(
         num_workers=2,
         worker_concurrency=2,
         batch_size=batch_size,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
@@ -454,9 +442,6 @@ def _run_compute_multiple_loaders_test(
         worker_concurrency=2,
         batch_size=batch_size,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
-    )
     neighbor_loader_3 = DistNeighborLoader(
         dataset=remote_dist_dataset,
         num_neighbors=[2, 2],
@@ -465,9 +450,6 @@ def _run_compute_multiple_loaders_test(
         num_workers=2,
         worker_concurrency=2,
         batch_size=batch_size,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
     )
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loading batches from 2 sequential loaders"
