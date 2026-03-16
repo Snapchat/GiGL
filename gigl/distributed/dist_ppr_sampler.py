@@ -5,6 +5,14 @@
 # (e.g. pybind11) would eliminate per-operation Python overhead and enable
 # cache-friendly memory access patterns.
 
+# TODO (mkolodner-sc): In graph store mode, _sample_one_hop is an RPC call
+# and we could dispatch all edge types concurrently via asyncio.gather to
+# overlap network round-trips.  In colocated mode the calls are synchronous
+# C++ under the GIL, so concurrency wouldn't help.  Investigate whether
+# concurrent dispatch is worthwhile for graph store deployments.  The same
+# applies to _compute_ppr_scores calls in _sample_from_nodes to investigate parallelism
+# opportunities.
+
 import heapq
 from collections import defaultdict
 from typing import Optional, Union
@@ -223,14 +231,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
-    # TODO (mkolodner-sc): In graph store mode, _sample_one_hop is an RPC call
-    # and we could dispatch all edge types concurrently via asyncio.gather to
-    # overlap network round-trips.  In colocated mode the calls are synchronous
-    # C++ under the GIL, so concurrency wouldn't help.  Investigate whether
-    # concurrent dispatch is worthwhile for graph store deployments.  The same
-    # applies to _compute_ppr_scores calls in _sample_from_nodes — for hetero
-    # ABLP inputs, each seed type's PPR computation is independent and could
-    # run concurrently to overlap their internal RPC calls across seeds.
     async def _batch_fetch_neighbors(
         self,
         nodes_to_lookup: dict[EdgeType, set[int]],
