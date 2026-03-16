@@ -186,8 +186,8 @@ def _setup_dataloaders(
     #     query_node_type = supervision_edge_type.src_node_type
     #     labeled_node_type = supervision_edge_type.dst_node_type
     #     anchor_node_type = query_node_type
-    query_node_type = supervision_edge_type.src_node_type
-    labeled_node_type = supervision_edge_type.dst_node_type
+    query_node_type = supervision_edge_type.dst_node_type
+    labeled_node_type = supervision_edge_type.src_node_type
     anchor_node_type = query_node_type
 
     print(
@@ -287,8 +287,8 @@ def _compute_loss(
     # else:
     #     query_node_type = supervision_edge_type.dst_node_type
     #     labeled_node_type = supervision_edge_type.src_node_type
-    query_node_type = supervision_edge_type.src_node_type
-    labeled_node_type = supervision_edge_type.dst_node_type
+    query_node_type = supervision_edge_type.dst_node_type
+    labeled_node_type = supervision_edge_type.src_node_type
 
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
