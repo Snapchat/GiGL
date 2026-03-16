@@ -83,6 +83,7 @@ def build_storage_dataset(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
+    logger.info(f"supervision edge types: {gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()=}")
     return build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,

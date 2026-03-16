@@ -414,6 +414,9 @@ class DistServer:
         Raises:
             ValueError: If the split is invalid.
         """
+        logger.info(f"get_ablp_input: {supervision_edge_type=}, {node_type=}, {split=}, {rank=}, {world_size=}")
+        logger.info(f"get_ablp_input: {self.dataset.get_edge_types()=}")
+        logger.info(f"get_ablp_input: {self.dataset.get_node_types()=}")
         anchors = self.get_node_ids(
             split=split, rank=rank, world_size=world_size, node_type=node_type
         )
