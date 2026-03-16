@@ -31,15 +31,31 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     """
     Personalized PageRank (PPR) based neighbor sampler that inherits from GLT DistNeighborSampler.
 
-    Instead of uniform random sampling, this sampler uses PPR scores to select the most
-    relevant neighbors for each seed node. The PPR algorithm approximates the stationary
-    distribution of a random walk with restart probability alpha.
+    Instead of uniform random sampling, this sampler uses Personalized PageRank
+    (PPR) scores to select the most relevant neighbors for each seed node. PPR
+    scores are approximated here using the Forward Push algorithm (Andersen et
+    al., 2006).
 
     This sampler supports both homogeneous and heterogeneous graphs. For heterogeneous graphs,
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
 
     Degree tensors are sourced automatically from the dataset at initialization time.
+
+    The following fields are added to the output Data/HeteroData objects:
+
+    **Homogeneous:**
+        - ``ppr_neighbor_ids``: ``[2, N]`` int64 — PyG-style edge-index tensor
+          representing seed-to-neighbor PPR relationships (not edges in the
+          original graph). Row 0 is local seed indices, row 1 is local neighbor
+          indices. ``N`` is the total number of (seed, neighbor) pairs across
+          all seeds in the batch.
+        - ``ppr_weights``: ``[N]`` float — PPR score for each (seed, neighbor)
+          pair, aligned with the columns of ``ppr_neighbor_ids``.
+
+    **Heterogeneous** (one pair per ``(seed_type, neighbor_type)``):
+        - ``ppr_neighbor_ids_{seed_type}_{ntype}``: same format as above.
+        - ``ppr_weights_{seed_type}_{ntype}``: same format as above.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -80,7 +96,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             list
         )
 
-        if hasattr(self, "edge_types") and self.edge_types is not None:
+        # GLT's DistNeighborSampler only sets self.edge_types for heterogeneous
+        # graphs (when dist_graph.data_cls == 'hetero'), so we use that as the
+        # heterogeneity check.
+        if self.dist_graph.data_cls == "hetero":
             self._is_homogeneous = False
             # Heterogeneous case: map each node type to its outgoing/incoming edge types
             for etype in self.edge_types:
@@ -107,7 +126,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # on every neighbor during sampling.  Computing it here (rather than in
         # the dataset) also keeps the door open for edge-specific degree
         # strategies.  If memory becomes a bottleneck, revisit this.
-        self._total_degree_by_node_type: dict[
+        self._node_type_to_total_degree: dict[
             NodeType, torch.Tensor
         ] = self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
 
@@ -130,10 +149,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             Dict mapping node type to a 1-D tensor of total degrees.
         """
         result: dict[NodeType, torch.Tensor] = {}
+        dtype_max = torch.iinfo(dtype).max
 
         if self._is_homogeneous:
             assert isinstance(degree_tensors, torch.Tensor)
-            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(dtype)
+            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.clamp(max=dtype_max).to(
+                dtype
+            )
         else:
             assert isinstance(degree_tensors, dict)
             for node_type, edge_types in self._node_type_to_edge_types.items():
@@ -146,11 +168,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         )
                     max_len = max(max_len, len(degree_tensors[et]))
 
-                summed = torch.zeros(max_len, dtype=dtype)
+                # Sum in int64 to avoid overflow during accumulation, then
+                # clamp to the target dtype.
+                summed = torch.zeros(max_len, dtype=torch.int64)
                 for et in edge_types:
                     et_degrees = degree_tensors[et]
-                    summed[: len(et_degrees)] += et_degrees.to(dtype)
-                result[node_type] = summed
+                    summed[: len(et_degrees)] += et_degrees.to(torch.int64)
+                result[node_type] = summed.clamp(max=dtype_max).to(dtype)
 
         return result
 
@@ -168,7 +192,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ValueError: If the node ID is out of range, indicating corrupted
                 graph data or a sampler bug.
         """
-        degree_tensor = self._total_degree_by_node_type[node_type]
+        degree_tensor = self._node_type_to_total_degree[node_type]
         if node_id >= len(degree_tensor):
             raise ValueError(
                 f"Node ID {node_id} exceeds total degree tensor length "
@@ -180,25 +204,30 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
+    # TODO (mkolodner-sc): In graph store mode, _sample_one_hop is an RPC call
+    # and we could dispatch all edge types concurrently via asyncio.gather to
+    # overlap network round-trips.  In colocated mode the calls are synchronous
+    # C++ under the GIL, so concurrency wouldn't help.  Investigate whether
+    # concurrent dispatch is worthwhile for graph store deployments.
     async def _batch_fetch_neighbors(
         self,
-        nodes_by_edge_type: dict[EdgeType, set[int]],
+        edge_type_to_node_ids: dict[EdgeType, set[int]],
         neighbor_target: dict[tuple[int, EdgeType], list[int]],
         device: torch.device,
     ) -> None:
         """
         Batch fetch neighbors for nodes grouped by edge type.
 
-        Fetches neighbors for all nodes in nodes_by_edge_type, populating
+        Fetches neighbors for all nodes in edge_type_to_node_ids, populating
         neighbor_target with neighbor lists. Degrees are looked up separately
         from the in-memory degree_tensors.
 
         Args:
-            nodes_by_edge_type: Dict mapping edge type to set of node IDs to fetch
+            edge_type_to_node_ids: Dict mapping edge type to set of node IDs to fetch
             neighbor_target: Dict to populate with (node_id, edge_type) -> neighbor list
             device: Torch device for tensor creation
         """
-        for etype, node_ids in nodes_by_edge_type.items():
+        for etype, node_ids in edge_type_to_node_ids.items():
             if not node_ids:
                 continue
             nodes_list = list(node_ids)
@@ -315,7 +344,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             queued_nodes: list[dict[NodeType, set[int]]] = [
                 defaultdict(set) for _ in range(batch_size)
             ]
-            nodes_by_edge_type: dict[EdgeType, set[int]] = defaultdict(set)
+            edge_type_to_node_ids: dict[EdgeType, set[int]] = defaultdict(set)
 
             for i in range(batch_size):
                 if queue[i]:
@@ -328,10 +357,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             for etype in edge_types_for_node:
                                 cache_key = (node_id, etype)
                                 if cache_key not in neighbor_cache:
-                                    nodes_by_edge_type[etype].add(node_id)
+                                    edge_type_to_node_ids[etype].add(node_id)
 
             await self._batch_fetch_neighbors(
-                nodes_by_edge_type, neighbor_cache, device
+                edge_type_to_node_ids, neighbor_cache, device
             )
 
             # Push residual to neighbors and re-queue in a single pass.  This
@@ -410,9 +439,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # with PPR weight flat_weights[j].
         all_node_types = self._node_type_to_edge_types.keys()
 
-        flat_ids_by_ntype: dict[NodeType, torch.Tensor] = {}
-        flat_weights_by_ntype: dict[NodeType, torch.Tensor] = {}
-        valid_counts_by_ntype: dict[NodeType, torch.Tensor] = {}
+        ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
 
         for ntype in all_node_types:
             flat_ids: list[int] = []
@@ -429,28 +458,28 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     flat_weights.append(weight)
                 valid_counts.append(len(top_k))
 
-            flat_ids_by_ntype[ntype] = torch.tensor(
+            ntype_to_flat_ids[ntype] = torch.tensor(
                 flat_ids, dtype=torch.long, device=device
             )
-            flat_weights_by_ntype[ntype] = torch.tensor(
+            ntype_to_flat_weights[ntype] = torch.tensor(
                 flat_weights, dtype=torch.float, device=device
             )
-            valid_counts_by_ntype[ntype] = torch.tensor(
+            ntype_to_valid_counts[ntype] = torch.tensor(
                 valid_counts, dtype=torch.long, device=device
             )
 
         if self._is_homogeneous:
             assert (
-                len(flat_ids_by_ntype) == 1
-                and _PPR_HOMOGENEOUS_NODE_TYPE in flat_ids_by_ntype
+                len(ntype_to_flat_ids) == 1
+                and _PPR_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
             )
             return (
-                flat_ids_by_ntype[_PPR_HOMOGENEOUS_NODE_TYPE],
-                flat_weights_by_ntype[_PPR_HOMOGENEOUS_NODE_TYPE],
-                valid_counts_by_ntype[_PPR_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_ids[_PPR_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_weights[_PPR_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_valid_counts[_PPR_HOMOGENEOUS_NODE_TYPE],
             )
         else:
-            return flat_ids_by_ntype, flat_weights_by_ntype, valid_counts_by_ntype
+            return ntype_to_flat_ids, ntype_to_flat_weights, ntype_to_valid_counts
 
     async def _sample_from_nodes(
         self,
@@ -547,23 +576,29 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # — the inducer only cares about etype[0] and etype[-1] as source/dest
             # node types, so the relation name is arbitrary.
             nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
-            all_flat_weights: dict[tuple[NodeType, NodeType], torch.Tensor] = {}
-            all_valid_counts: dict[tuple[NodeType, NodeType], torch.Tensor] = {}
+            seed_ntype_to_flat_weights: dict[
+                tuple[NodeType, NodeType], torch.Tensor
+            ] = {}
+            seed_ntype_to_valid_counts: dict[
+                tuple[NodeType, NodeType], torch.Tensor
+            ] = {}
 
             for seed_type, seed_nodes in nodes_to_sample.items():
                 (
-                    flat_ids_by_type,
-                    flat_weights_by_type,
-                    valid_counts_by_type,
+                    ntype_to_flat_ids,
+                    ntype_to_flat_weights,
+                    ntype_to_valid_counts,
                 ) = await self._compute_ppr_scores(seed_nodes, seed_type)
-                assert isinstance(flat_ids_by_type, dict)
-                assert isinstance(flat_weights_by_type, dict)
-                assert isinstance(valid_counts_by_type, dict)
+                assert isinstance(ntype_to_flat_ids, dict)
+                assert isinstance(ntype_to_flat_weights, dict)
+                assert isinstance(ntype_to_valid_counts, dict)
 
-                for ntype, flat_ids in flat_ids_by_type.items():
-                    valid_counts = valid_counts_by_type[ntype]
-                    all_flat_weights[(seed_type, ntype)] = flat_weights_by_type[ntype]
-                    all_valid_counts[(seed_type, ntype)] = valid_counts
+                for ntype, flat_ids in ntype_to_flat_ids.items():
+                    valid_counts = ntype_to_valid_counts[ntype]
+                    seed_ntype_to_flat_weights[
+                        (seed_type, ntype)
+                    ] = ntype_to_flat_weights[ntype]
+                    seed_ntype_to_valid_counts[(seed_type, ntype)] = valid_counts
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
@@ -598,8 +633,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # cols_dict[(seed_type, 'ppr', ntype)] gives flat local dst indices in
             # the same order as the flat neighbors passed to induce_next.
             # repeat_interleave expands seed local indices to match.
-            for (seed_type, ntype), flat_weights in all_flat_weights.items():
-                valid_counts = all_valid_counts[(seed_type, ntype)]
+            for (seed_type, ntype), flat_weights in seed_ntype_to_flat_weights.items():
+                valid_counts = seed_ntype_to_valid_counts[(seed_type, ntype)]
                 virtual_etype = (seed_type, "ppr", ntype)
                 cols = cols_dict.get(virtual_etype)
                 if cols is not None:
