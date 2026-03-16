@@ -178,17 +178,20 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    if dataset.fetch_edge_dir() == "in":
-        query_node_type = supervision_edge_type.dst_node_type
-        labeled_node_type = supervision_edge_type.src_node_type
-        anchor_node_type = query_node_type
-    else:
-        query_node_type = supervision_edge_type.src_node_type
-        labeled_node_type = supervision_edge_type.dst_node_type
-        anchor_node_type = query_node_type
+    # if dataset.fetch_edge_dir() == "in":
+    #     query_node_type = supervision_edge_type.dst_node_type
+    #     labeled_node_type = supervision_edge_type.src_node_type
+    #     anchor_node_type = query_node_type
+    # else:
+    #     query_node_type = supervision_edge_type.src_node_type
+    #     labeled_node_type = supervision_edge_type.dst_node_type
+    #     anchor_node_type = query_node_type
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
+    anchor_node_type = query_node_type
 
     print(
-        f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type} due to edge direction {dataset.fetch_edge_dir()}"
+        f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type}"
     )
 
     shuffle = split == "train"
@@ -278,23 +281,21 @@ def _compute_loss(
         torch.Tensor: Final loss for the current batch on the current process
     """
     # Extract relevant node types from the supervision edge
-    if edge_dir == "out":
-        query_node_type = supervision_edge_type.src_node_type
-        labeled_node_type = supervision_edge_type.dst_node_type
-    else:
-        query_node_type = supervision_edge_type.dst_node_type
-        labeled_node_type = supervision_edge_type.src_node_type
+    # if edge_dir == "out":
+    #     query_node_type = supervision_edge_type.src_node_type
+    #     labeled_node_type = supervision_edge_type.dst_node_type
+    # else:
+    #     query_node_type = supervision_edge_type.dst_node_type
+    #     labeled_node_type = supervision_edge_type.src_node_type
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
 
-    # print(f"---Rank {torch.distributed.get_rank()} query node type: {query_node_type}, labeled node type: {labeled_node_type} due to edge direction {edge_dir}")
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
     else:
         inference_node_types = [query_node_type, labeled_node_type]
 
     # Forward pass through encoder
-    # print(f"Computing loss for main data: {main_data}")
-    # print(f"Computing loss for random negative data: {random_negative_data}")
-    # print(f"Using model: {model}")
     flush()
     main_embeddings = model(
         data=main_data, output_node_types=inference_node_types, device=device
