@@ -363,6 +363,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     queue[i] = defaultdict(set)
                     for node_type, node_ids in queued_nodes[i].items():
                         num_nodes_in_queue -= len(node_ids)
+                        # We fetch neighbors for ALL edge types originating
+                        # from this node type, not just the edge type that
+                        # caused the node to be queued.  This is required for
+                        # correctness: forward push distributes residual to
+                        # all neighbors proportionally by total degree, so
+                        # every edge type must be considered.
                         edge_types_for_node = self._node_type_to_edge_types[node_type]
                         for node_id in node_ids:
                             for etype in edge_types_for_node:
