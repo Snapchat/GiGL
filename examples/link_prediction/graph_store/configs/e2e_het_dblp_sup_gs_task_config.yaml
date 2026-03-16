@@ -62,7 +62,7 @@ trainerConfig:
           "should_convert_labels_to_edges": True,
           "num_val": 0.3,
           "num_test": 0.3,
-          "supervision_edge_types": [("paper", "to", "author")]
+          "supervision_edge_types": [("author", "to", "paper")]
         }
       ssl_positive_label_percentage: "0.15"
       # We only do one session for training.
