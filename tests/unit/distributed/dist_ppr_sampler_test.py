@@ -231,7 +231,7 @@ def _extract_hetero_ppr_scores(
     Returns:
         Dict mapping node_type_str -> {global_node_id: ppr_score}.
     """
-    sampler_ppr_by_type: dict[str, dict[int, float]] = {}
+    ntype_to_sampler_ppr: dict[str, dict[int, float]] = {}
     for ntype in node_types:
         key_ids = f"ppr_neighbor_ids_{seed_type}_{ntype}"
         key_weights = f"ppr_weights_{seed_type}_{ntype}"
@@ -258,13 +258,13 @@ def _extract_hetero_ppr_scores(
             local_dst = ppr_edge_index[1, j].item()
             global_dst = global_node_ids[local_dst].item()
             type_ppr[global_dst] = ppr_weights[j].item()
-        sampler_ppr_by_type[str(ntype)] = type_ppr
+        ntype_to_sampler_ppr[str(ntype)] = type_ppr
 
-    return sampler_ppr_by_type
+    return ntype_to_sampler_ppr
 
 
 def _assert_ppr_scores_match_reference(
-    sampler_ppr_by_type: dict[str, dict[int, float]],
+    ntype_to_sampler_ppr: dict[str, dict[int, float]],
     reference_ppr: dict[str, dict[int, float]],
     seed_id: int,
 ) -> None:
@@ -275,22 +275,22 @@ def _assert_ppr_scores_match_reference(
     O(alpha * eps * degree), so atol=1e-3 is generous for eps=1e-6.
 
     Args:
-        sampler_ppr_by_type: Sampler output from :func:`_extract_hetero_ppr_scores`.
+        ntype_to_sampler_ppr: Sampler output from :func:`_extract_hetero_ppr_scores`.
         reference_ppr: Reference output from :func:`_reference_ppr_hetero`.
         seed_id: Global seed node ID (for error messages).
     """
     for ntype_str in reference_ppr:
-        assert set(sampler_ppr_by_type[ntype_str].keys()) == set(
+        assert set(ntype_to_sampler_ppr[ntype_str].keys()) == set(
             reference_ppr[ntype_str].keys()
         ), (
             f"{seed_id}, type {ntype_str}: top-k node sets differ.\n"
-            f"  Sampler:   {sorted(sampler_ppr_by_type[ntype_str].keys())}\n"
+            f"  Sampler:   {sorted(ntype_to_sampler_ppr[ntype_str].keys())}\n"
             f"  Reference: {sorted(reference_ppr[ntype_str].keys())}"
         )
 
         for node_id in reference_ppr[ntype_str]:
             ref_score = reference_ppr[ntype_str][node_id]
-            sam_score = sampler_ppr_by_type[ntype_str][node_id]
+            sam_score = ntype_to_sampler_ppr[ntype_str][node_id]
             assert abs(sam_score - ref_score) < 1e-3, (
                 f"{seed_id}, type {ntype_str}, node {node_id}: "
                 f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
@@ -429,7 +429,7 @@ def _run_ppr_hetero_loader_correctness_check(
 
         seed_global_id = datum[USER].batch[0].item()
 
-        sampler_ppr_by_type = _extract_hetero_ppr_scores(
+        ntype_to_sampler_ppr = _extract_hetero_ppr_scores(
             datum, str(USER), [USER, STORY]
         )
 
@@ -442,7 +442,7 @@ def _run_ppr_hetero_loader_correctness_check(
         )
 
         _assert_ppr_scores_match_reference(
-            sampler_ppr_by_type, reference_ppr, seed_global_id
+            ntype_to_sampler_ppr, reference_ppr, seed_global_id
         )
 
         batches_checked += 1
@@ -509,7 +509,7 @@ def _run_ppr_ablp_loader_correctness_check(
         seed_global_id = datum[USER].batch[0].item()
 
         # --- Verify anchor (USER) seed PPR correctness against NetworkX ---
-        sampler_ppr_by_type = _extract_hetero_ppr_scores(
+        ntype_to_sampler_ppr = _extract_hetero_ppr_scores(
             datum, str(USER), [USER, STORY]
         )
 
@@ -522,7 +522,7 @@ def _run_ppr_ablp_loader_correctness_check(
         )
 
         _assert_ppr_scores_match_reference(
-            sampler_ppr_by_type, reference_ppr, seed_global_id
+            ntype_to_sampler_ppr, reference_ppr, seed_global_id
         )
 
         # --- Verify supervision (STORY) seed PPR metadata ---
