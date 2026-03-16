@@ -1,4 +1,4 @@
-"""Unit tests for DistPPRNeighborSampler correctness via DistNeighborLoader.
+"""Unit tests for DistPPRNeighborSampler correctness via DistNeighborLoader and DistABLPLoader.
 
 Verifies that the PPR scores produced by the distributed sampler match
 NetworkX's ``pagerank`` with personalization — a well-tested, independent
@@ -267,7 +267,6 @@ def _assert_ppr_scores_match_reference(
     sampler_ppr_by_type: dict[str, dict[int, float]],
     reference_ppr: dict[str, dict[int, float]],
     seed_id: int,
-    context_label: str = "",
 ) -> None:
     """Assert sampler PPR scores match reference scores per node type.
 
@@ -279,14 +278,12 @@ def _assert_ppr_scores_match_reference(
         sampler_ppr_by_type: Sampler output from :func:`_extract_hetero_ppr_scores`.
         reference_ppr: Reference output from :func:`_reference_ppr_hetero`.
         seed_id: Global seed node ID (for error messages).
-        context_label: Optional prefix for error messages (e.g. "ABLP").
     """
-    prefix = f"{context_label} seed" if context_label else f"Seed"
     for ntype_str in reference_ppr:
         assert set(sampler_ppr_by_type[ntype_str].keys()) == set(
             reference_ppr[ntype_str].keys()
         ), (
-            f"{prefix} {seed_id}, type {ntype_str}: top-k node sets differ.\n"
+            f"{seed_id}, type {ntype_str}: top-k node sets differ.\n"
             f"  Sampler:   {sorted(sampler_ppr_by_type[ntype_str].keys())}\n"
             f"  Reference: {sorted(reference_ppr[ntype_str].keys())}"
         )
@@ -295,7 +292,7 @@ def _assert_ppr_scores_match_reference(
             ref_score = reference_ppr[ntype_str][node_id]
             sam_score = sampler_ppr_by_type[ntype_str][node_id]
             assert abs(sam_score - ref_score) < 1e-3, (
-                f"{prefix} {seed_id}, type {ntype_str}, node {node_id}: "
+                f"{seed_id}, type {ntype_str}, node {node_id}: "
                 f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
             )
 
@@ -525,7 +522,7 @@ def _run_ppr_ablp_loader_correctness_check(
         )
 
         _assert_ppr_scores_match_reference(
-            sampler_ppr_by_type, reference_ppr, seed_global_id, context_label="ABLP"
+            sampler_ppr_by_type, reference_ppr, seed_global_id
         )
 
         # --- Verify supervision (STORY) seed PPR metadata ---
