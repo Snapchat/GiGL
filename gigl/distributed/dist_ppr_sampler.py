@@ -39,6 +39,13 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
 )
 
 
+# TODO (mkolodner-sc): Consider introducing a BaseGiGLSampler that owns
+# shared utilities like _prepare_sample_loop_inputs, with KHopSampler and
+# PPRSampler as siblings.  Currently DistPPRNeighborSampler inherits from
+# DistNeighborSampler (the k-hop sampler), which bundles generic utilities
+# with k-hop-specific sampling logic.
+
+
 class DistPPRNeighborSampler(DistNeighborSampler):
     """
     Personalized PageRank (PPR) based neighbor sampler that inherits from GLT DistNeighborSampler.
@@ -220,7 +227,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     # and we could dispatch all edge types concurrently via asyncio.gather to
     # overlap network round-trips.  In colocated mode the calls are synchronous
     # C++ under the GIL, so concurrency wouldn't help.  Investigate whether
-    # concurrent dispatch is worthwhile for graph store deployments.
+    # concurrent dispatch is worthwhile for graph store deployments.  The same
+    # applies to _compute_ppr_scores calls in _sample_from_nodes — for hetero
+    # ABLP inputs, each seed type's PPR computation is independent and could
+    # run concurrently to overlap their internal RPC calls across seeds.
     async def _batch_fetch_neighbors(
         self,
         nodes_to_lookup: dict[EdgeType, set[int]],
@@ -517,12 +527,18 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         Output format (PyG edge-index style, no padding):
 
-        - ``ppr_neighbor_ids`` (homo) / ``ppr_neighbor_ids_{seed_type}_{ntype}`` (hetero):
-          shape ``[2, num_edges]`` — row 0 is local seed indices, row 1 is local
-          neighbor indices.  Both index into ``data[ntype].node``.
-        - ``ppr_weights`` (homo) / ``ppr_weights_{seed_type}_{ntype}`` (hetero):
-          shape ``[num_edges]`` — PPR score for each edge, aligned with the columns
-          of ``ppr_neighbor_ids``.
+        **Homogeneous:**
+            - ``ppr_neighbor_ids``: ``[2, N]`` int64 — PyG-style edge-index tensor
+            representing seed-to-neighbor PPR relationships (not edges in the
+            original graph). Row 0 is local seed indices, row 1 is local neighbor
+            indices. ``N`` is the total number of (seed, neighbor) pairs across
+            all seeds in the batch.
+            - ``ppr_weights``: ``[N]`` float — PPR score for each (seed, neighbor)
+            pair, aligned with the columns of ``ppr_neighbor_ids``.
+
+        **Heterogeneous** (one pair per ``(seed_type, neighbor_type)``):
+            - ``ppr_neighbor_ids_{seed_type}_{ntype}``: same format as above.
+            - ``ppr_weights_{seed_type}_{ntype}``: same format as above.
 
         Local indices are produced by the inducer (see below), so row 1 of
         ``ppr_neighbor_ids`` directly indexes into ``data[ntype].x`` without any
