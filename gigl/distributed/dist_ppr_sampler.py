@@ -1,3 +1,10 @@
+# TODO (mkolodner-sc): The forward push loop in _compute_ppr_scores is the
+# main throughput bottleneck — both the queue drain (preparing batched node
+# lookups by edge type) and the residual push/requeue pass are pure Python
+# dict/set operations in tight nested loops.  Moving these to a C++ extension
+# (e.g. pybind11) would eliminate per-operation Python overhead and enable
+# cache-friendly memory access patterns.
+
 import heapq
 from collections import defaultdict
 from typing import Optional, Union
@@ -216,23 +223,21 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     # concurrent dispatch is worthwhile for graph store deployments.
     async def _batch_fetch_neighbors(
         self,
-        edge_type_to_node_ids: dict[EdgeType, set[int]],
-        neighbor_target: dict[tuple[int, EdgeType], list[int]],
+        nodes_to_lookup: dict[EdgeType, set[int]],
         device: torch.device,
-    ) -> None:
+    ) -> dict[tuple[int, EdgeType], list[int]]:
         """
         Batch fetch neighbors for nodes grouped by edge type.
 
-        Fetches neighbors for all nodes in edge_type_to_node_ids, populating
-        neighbor_target with neighbor lists. Degrees are looked up separately
-        from the in-memory degree_tensors.
-
         Args:
-            edge_type_to_node_ids: Dict mapping edge type to set of node IDs to fetch
-            neighbor_target: Dict to populate with (node_id, edge_type) -> neighbor list
-            device: Torch device for tensor creation
+            nodes_to_lookup: Dict mapping edge type to set of node IDs to fetch.
+            device: Torch device for tensor creation.
+
+        Returns:
+            Dict mapping (node_id, edge_type) to list of neighbor node IDs.
         """
-        for etype, node_ids in edge_type_to_node_ids.items():
+        result: dict[tuple[int, EdgeType], list[int]] = {}
+        for etype, node_ids in nodes_to_lookup.items():
             if not node_ids:
                 continue
             nodes_list = list(node_ids)
@@ -256,9 +261,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # neighbors_list[offset : offset + count], then we advance offset by count.
             offset = 0
             for node_id, count in zip(nodes_list, counts_list):
-                cache_key = (node_id, etype)
-                neighbor_target[cache_key] = neighbors_list[offset : offset + count]
+                result[(node_id, etype)] = neighbors_list[offset : offset + count]
                 offset += count
+
+        return result
 
     async def _compute_ppr_scores(
         self,
@@ -349,7 +355,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             queued_nodes: list[dict[NodeType, set[int]]] = [
                 defaultdict(set) for _ in range(batch_size)
             ]
-            edge_type_to_node_ids: dict[EdgeType, set[int]] = defaultdict(set)
+            nodes_to_lookup: dict[EdgeType, set[int]] = defaultdict(set)
 
             for i in range(batch_size):
                 if queue[i]:
@@ -362,11 +368,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             for etype in edge_types_for_node:
                                 cache_key = (node_id, etype)
                                 if cache_key not in neighbor_cache:
-                                    edge_type_to_node_ids[etype].add(node_id)
+                                    nodes_to_lookup[etype].add(node_id)
 
-            await self._batch_fetch_neighbors(
-                edge_type_to_node_ids, neighbor_cache, device
+            fetched_neighbors = await self._batch_fetch_neighbors(
+                nodes_to_lookup=nodes_to_lookup,
+                device=device,
             )
+            neighbor_cache.update(fetched_neighbors)
 
             # Push residual to neighbors and re-queue in a single pass.  This
             # is safe because each seed's state is independent, and residuals
