@@ -444,15 +444,15 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # Callers use it to slice flat_ids/flat_weights back into per-seed
         # groups and to build PyG edge-index tensors via repeat_interleave:
         #
-        #   Example: 3 seeds, valid_counts = [2, 3, 1]
-        #   flat_dst = [dst_0a, dst_0b, dst_1a, dst_1b, dst_1c, dst_2a]
+        #   Example: 4 seeds, valid_counts = [1, 6, 2, 1]  (10 total pairs)
+        #   flat_dst = [d0a, d1a, d1b, d1c, d1d, d1e, d1f, d2a, d2b, d3a]
         #
-        #   src_indices = repeat_interleave(arange(3), valid_counts)
-        #               = [0, 0, 1, 1, 1, 2]
+        #   src_indices = repeat_interleave(arange(4), valid_counts)
+        #               = [0, 1, 1, 1, 1, 1, 1, 2, 2, 3]
         #
         #   edge_index  = stack([src_indices, flat_dst])
-        #               = [[0, 0, 1, 1, 1, 2],
-        #                  [dst_0a, dst_0b, dst_1a, dst_1b, dst_1c, dst_2a]]
+        #               = [[0, 1, 1, 1, 1, 1, 1, 2, 2, 3],
+        #                  [d0a, d1a, d1b, d1c, d1d, d1e, d1f, d2a, d2b, d3a]]
         #
         # Column j means "edge from seed src_indices[j] to neighbor flat_dst[j]"
         # with PPR weight flat_weights[j].
