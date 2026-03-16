@@ -35,6 +35,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
+from gigl.distributed.sampler_options import KHopNeighborSamplerOptions, SamplerOptions
 
 
 def _sampling_worker_loop(
@@ -48,6 +49,7 @@ def _sampling_worker_loop(
     task_queue: mp.Queue,
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
+    sampler_options: SamplerOptions,
 ):
     dist_sampler = None
     try:
@@ -86,7 +88,16 @@ def _sampling_worker_loop(
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
-        dist_sampler = DistNeighborSampler(
+
+        # Resolve sampler class from options
+        if isinstance(sampler_options, KHopNeighborSamplerOptions):
+            sampler_cls = DistNeighborSampler
+        else:
+            raise NotImplementedError(
+                f"Unsupported sampler options type: {type(sampler_options)}"
+            )
+
+        dist_sampler = sampler_cls(
             data,
             sampling_config.num_neighbors,
             sampling_config.with_edge,
@@ -168,6 +179,18 @@ def _sampling_worker_loop(
 
 
 class DistSamplingProducer(DistMpSamplingProducer):
+    def __init__(
+        self,
+        data: DistDataset,
+        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+        channel: ChannelBase,
+        sampler_options: SamplerOptions,
+    ):
+        super().__init__(data, sampler_input, sampling_config, worker_options, channel)
+        self._sampler_options = sampler_options
+
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
         if self.sampling_config.seed is not None:
@@ -197,6 +220,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     task_queue,
                     self.sampling_completed_worker_count,
                     barrier,
+                    self._sampler_options,
                 ),
             )
             w.daemon = True

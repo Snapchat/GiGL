@@ -25,11 +25,12 @@ from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
-    metadata_key_with_prefix,
 )
+from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
@@ -79,9 +80,11 @@ class DistABLPLoader(BaseDistLoader):
         prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
+        max_concurrent_producer_inits: Optional[int] = None,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        sampler_options: Optional[SamplerOptions] = None,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
@@ -141,6 +144,7 @@ class DistABLPLoader(BaseDistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
+                If ``KHopNeighborSamplerOptions`` is also provided, they must match.
             input_nodes: Indices of seed nodes to start sampling from.
                 For Colocated mode: `torch.Tensor` or `tuple[NodeType, torch.Tensor]`.
                     If set to `None` for homogeneous settings, all nodes will be considered.
@@ -181,14 +185,24 @@ class DistABLPLoader(BaseDistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
-                it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
-                attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
+            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader.
+                In colocated mode, each process sleeps ``local_rank * process_start_gap_seconds``
+                before initializing. In graph store mode, leader ranks are grouped into batches
+                of ``max_concurrent_producer_inits`` and each batch sleeps
+                ``batch_index * process_start_gap_seconds`` before dispatching RPCs.
+            max_concurrent_producer_inits (int): Maximum number of leader ranks that may
+                dispatch create-producer RPCs concurrently in graph store mode. Leaders are
+                grouped into batches of this size; each batch is staggered by
+                ``process_start_gap_seconds``. Only applies to graph store mode.
+                Defaults to ``None`` (no staggering).
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            sampler_options (Optional[SamplerOptions]): Controls which sampler class is
+                instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument
+                to instantiate the sampler.
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
@@ -197,6 +211,8 @@ class DistABLPLoader(BaseDistLoader):
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
+
+        sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
         # Determine sampling cluster setup based on dataset type
         if isinstance(dataset, RemoteDistDataset):
@@ -224,6 +240,10 @@ class DistABLPLoader(BaseDistLoader):
             if prefetch_size is not None:
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
+            if max_concurrent_producer_inits is not None:
+                raise ValueError(
+                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
                 )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
@@ -332,11 +352,12 @@ class DistABLPLoader(BaseDistLoader):
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
             ] = DistSamplingProducer(
-                dataset,
-                sampler_input,
-                sampling_config,
-                worker_options,
-                channel,
+                data=dataset,
+                sampler_input=sampler_input,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                channel=channel,
+                sampler_options=sampler_options,
             )
         else:
             producer = DistServer.create_sampling_producer
@@ -352,7 +373,9 @@ class DistABLPLoader(BaseDistLoader):
             device=device,
             runtime=runtime,
             producer=producer,
+            sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
+            max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
 
     def _setup_for_colocated(
@@ -749,72 +772,64 @@ class DistABLPLoader(BaseDistLoader):
             ),
         )
 
-    def _get_labels(
-        self, msg: SampleMessage
+    def _extract_labels(
+        self, metadata: dict[str, torch.Tensor]
     ) -> tuple[
-        SampleMessage,
         dict[EdgeType, torch.Tensor],
         dict[EdgeType, torch.Tensor],
+        dict[str, torch.Tensor],
     ]:
+        """Partition pre-extracted metadata into labels and remaining metadata.
+
         # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
-        f"""
-        Gets the labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
-        `to_hetero_data` function strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
+
+        Takes the metadata dict already extracted by ``_extract_metadata`` (keys
+        without the ``#META.`` prefix) and separates label entries from
+        non-label entries. We need to remove the labels from GLT's metadata since the `to_hetero_data` function
+        strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
         building the HeteroData object.
 
+        Label keys use ``POSITIVE_LABEL_METADATA_KEY`` / ``NEGATIVE_LABEL_METADATA_KEY``
+        prefixes followed by a string-encoded edge type tuple.  If ``edge_dir``
+        is ``"in"``, the edge type is reversed because GLT swaps src/dst
+        internally.
+
         Args:
-            msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
+            metadata: Dict of metadata keys (without ``#META.`` prefix) to tensors,
+                as returned by ``_extract_metadata``.
+
         Returns:
-            SampleMessage: Updated sample messsage with the label fields removed
             dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
                 where the ith row  of the tensor corresponds to the ith anchor node ID.
             dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
                 where the ith row  of the tensor corresponds to the ith anchor node ID.
                 May be empty if no negative labels are present.
+            dict[str, torch.Tensor]: Non-label metadata entries
         """
-        metadata: dict[str, torch.Tensor] = {}
         positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
         negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        # We update metadata with sepcial POSITIVE_LABEL_METADATA_KEY and NEGATIVE_LABEL_METADATA_KEY keys
-        # in gigl/distributed/dist_neighbor_sampler.py.
-        # We need to encode the tuples as strings because GLT requires the keys to be strings.
-        # As such, we decode the strings back into tuples,
-        # And then pop those keys out of the metadata as they are not needed otherwise.
-        # If edge_dir is "in", we need to reverse the edge type because GLT swaps src/dst for edge_dir = "out".
-        # NOTE: GLT *prepends* the keys with "#META."
-        positive_label_metadata_key_prefix = metadata_key_with_prefix(
-            POSITIVE_LABEL_METADATA_KEY
-        )
-        negative_label_metadata_key_prefix = metadata_key_with_prefix(
-            NEGATIVE_LABEL_METADATA_KEY
-        )
-        for k in list(msg.keys()):
-            if k.startswith(positive_label_metadata_key_prefix):
-                edge_type_str = k[len(positive_label_metadata_key_prefix) :]
+        remaining_metadata: dict[str, torch.Tensor] = {}
+
+        for key, value in metadata.items():
+            if key.startswith(POSITIVE_LABEL_METADATA_KEY):
+                edge_type_str = key[len(POSITIVE_LABEL_METADATA_KEY) :]
                 edge_type = ast.literal_eval(edge_type_str)
                 if self.edge_dir == "in":
                     edge_type = reverse_edge_type(edge_type)
-                positive_labels_by_label_edge_type[edge_type] = msg[k].to(
-                    self.to_device
-                )
-                del msg[k]
-            elif k.startswith(negative_label_metadata_key_prefix):
-                edge_type_str = k[len(negative_label_metadata_key_prefix) :]
+                positive_labels_by_label_edge_type[edge_type] = value
+            elif key.startswith(NEGATIVE_LABEL_METADATA_KEY):
+                edge_type_str = key[len(NEGATIVE_LABEL_METADATA_KEY) :]
                 edge_type = ast.literal_eval(edge_type_str)
                 if self.edge_dir == "in":
                     edge_type = reverse_edge_type(edge_type)
-                negative_labels_by_label_edge_type[edge_type] = msg[k].to(
-                    self.to_device
-                )
-                del msg[k]
-            elif k.startswith("#META."):
-                meta_key = str(k[len("#META.") :])
-                metadata[meta_key] = msg[k].to(self.to_device)
-                del msg[k]
+                negative_labels_by_label_edge_type[edge_type] = value
+            else:
+                remaining_metadata[key] = value
+
         return (
-            msg,
             positive_labels_by_label_edge_type,
             negative_labels_by_label_edge_type,
+            remaining_metadata,
         )
 
     def _set_labels(
@@ -902,8 +917,14 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        msg, positive_labels, negative_labels = self._get_labels(msg)
-        data = super()._collate_fn(msg)
+        # _extract_metadata separates #META. keys from the message to work
+        # around a GLT bug in to_hetero_data.  _extract_labels then partitions
+        # the metadata into labels vs remaining non-label metadata.
+        all_metadata, stripped_msg = extract_metadata(msg, self.to_device)
+        positive_labels, negative_labels, non_label_metadata = self._extract_labels(
+            all_metadata
+        )
+        data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
@@ -918,5 +939,7 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
+        for key, value in non_label_metadata.items():
+            data[key] = value
         data = self._set_labels(data, positive_labels, negative_labels)
         return data
