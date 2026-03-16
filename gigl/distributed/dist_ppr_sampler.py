@@ -19,6 +19,11 @@ from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 # Sentinel type names for homogeneous graphs.  The PPR algorithm uses
 # dict[NodeType, ...] internally for both homo and hetero graphs; these
 # sentinels let the homogeneous path reuse the same dict-based code.
+# TODO (mkolodner-sc): The sentinel approach adds an extra dict lookup on
+# every operation in the hot loop for homogeneous graphs (always resolving
+# the same single key).  Profile whether this overhead is meaningful
+# compared to the neighbor fetch and residual update costs, and consider
+# splitting into separate homo/hetero loop implementations if so.
 _PPR_HOMOGENEOUS_NODE_TYPE = "ppr_homogeneous_node_type"
 _PPR_HOMOGENEOUS_EDGE_TYPE = (
     _PPR_HOMOGENEOUS_NODE_TYPE,
@@ -302,27 +307,27 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         batch_size = seed_nodes.size(0)
 
         # Per-seed PPR state, nested by node type for efficient type-grouped access.
-        #
+
         # ppr_scores[i][node_type][node_id] = accumulated PPR score for node_id
-        #   of type node_type, relative to seed i.  Updated each iteration by
-        #   absorbing the node's residual.
-        #
-        # residuals[i][node_type][node_id] = unconverged probability mass at node_id
-        #   of type node_type for seed i.  Each iteration, a node's residual is
-        #   absorbed into its PPR score and then distributed to its neighbors.
-        #
-        # queue[i][node_type] = set of node IDs whose residual exceeds the
-        #   convergence threshold (alpha * eps * total_degree).  The algorithm
-        #   terminates when all queues are empty.  A set is used because multiple
-        #   neighbors can push residual to the same node in one iteration —
-        #   deduplication avoids redundant processing, and the O(1) membership
-        #   check matters since it runs in the innermost loop.
+        # of type node_type, relative to seed i.  Updated each iteration by
+        # absorbing the node's residual.
         ppr_scores: list[dict[NodeType, dict[int, float]]] = [
             defaultdict(lambda: defaultdict(float)) for _ in range(batch_size)
         ]
+
+        # residuals[i][node_type][node_id] = unconverged probability mass at node_id
+        # of type node_type for seed i.  Each iteration, a node's residual is
+        # absorbed into its PPR score and then distributed to its neighbors.
         residuals: list[dict[NodeType, dict[int, float]]] = [
             defaultdict(lambda: defaultdict(float)) for _ in range(batch_size)
         ]
+
+        # queue[i][node_type] = set of node IDs whose residual exceeds the
+        # convergence threshold (alpha * eps * total_degree).  The algorithm
+        # terminates when all queues are empty.  A set is used because multiple
+        # neighbors can push residual to the same node in one iteration —
+        # deduplication avoids redundant processing, and the O(1) membership
+        # check matters since it runs in the innermost loop.
         queue: list[dict[NodeType, set[int]]] = [
             defaultdict(set) for _ in range(batch_size)
         ]
