@@ -472,9 +472,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 top_k = heapq.nlargest(
                     self._max_ppr_nodes, type_scores.items(), key=lambda x: x[1]
                 )
-                for node_id, weight in top_k:
-                    flat_ids.append(node_id)
-                    flat_weights.append(weight)
+                if top_k:
+                    ids, weights = zip(*top_k)
+                    flat_ids.extend(ids)
+                    flat_weights.extend(weights)
                 valid_counts.append(len(top_k))
 
             ntype_to_flat_ids[ntype] = torch.tensor(
