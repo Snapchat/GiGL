@@ -863,6 +863,15 @@ class DistABLPLoader(BaseDistLoader):
         # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
 
+        data = super()._collate_fn(stripped_msg)
+
+        data = set_missing_features(
+            data=data,
+            node_feature_info=self._node_feature_info,
+            edge_feature_info=self._edge_feature_info,
+            device=self.to_device,
+        )
+
         positive_labels, metadata = extract_edge_type_metadata(
             metadata, POSITIVE_LABEL_METADATA_KEY
         )
@@ -880,13 +889,7 @@ class DistABLPLoader(BaseDistLoader):
             negative_labels = {
                 reverse_edge_type(et): v for et, v in negative_labels.items()
             }
-        data = super()._collate_fn(stripped_msg)
-        data = set_missing_features(
-            data=data,
-            node_feature_info=self._node_feature_info,
-            edge_feature_info=self._edge_feature_info,
-            device=self.to_device,
-        )
+
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
@@ -895,7 +898,8 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
+        data = self._set_labels(data, positive_labels, negative_labels)
+
         for key, value in metadata.items():
             data[key] = value
-        data = self._set_labels(data, positive_labels, negative_labels)
         return data
