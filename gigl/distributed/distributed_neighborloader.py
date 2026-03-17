@@ -581,6 +581,7 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+
         ppr_edge_indices, metadata = extract_edge_type_metadata(
             metadata, PPR_EDGE_INDEX_METADATA_KEY
         )
@@ -594,6 +595,7 @@ class DistNeighborLoader(BaseDistLoader):
         for edge_type, edge_index in ppr_edge_indices.items():
             data[edge_type].edge_index = edge_index
             data[edge_type].weight = ppr_weights[edge_type]
+
         # Any remaining metadata (including homo PPR plain "edge_index"/"weight" keys) is set directly.
         for key, value in metadata.items():
             data[key] = value

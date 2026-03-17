@@ -902,6 +902,9 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
+
+        data = self._set_labels(data, positive_labels, negative_labels)
+
         ppr_edge_indices, metadata = extract_edge_type_metadata(
             metadata, PPR_EDGE_INDEX_METADATA_KEY
         )
@@ -915,8 +918,9 @@ class DistABLPLoader(BaseDistLoader):
         for edge_type, edge_index in ppr_edge_indices.items():
             data[edge_type].edge_index = edge_index
             data[edge_type].weight = ppr_weights[edge_type]
+
         # Any remaining metadata (including homo PPR plain "edge_index"/"weight" keys) is set directly.
         for key, value in metadata.items():
             data[key] = value
-        data = self._set_labels(data, positive_labels, negative_labels)
+
         return data
