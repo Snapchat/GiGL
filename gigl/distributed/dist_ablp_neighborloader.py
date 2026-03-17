@@ -16,6 +16,10 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.graph_store.dist_server import DistServer
@@ -861,11 +865,6 @@ class DistABLPLoader(BaseDistLoader):
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
         # pulls out labels (and PPR edges if present) by prefix.
         # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
-        from gigl.distributed.dist_ppr_sampler import (
-            PPR_EDGE_INDEX_METADATA_KEY,
-            PPR_WEIGHT_METADATA_KEY,
-        )
-
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
 
         positive_labels, metadata = extract_edge_type_metadata(
@@ -906,10 +905,13 @@ class DistABLPLoader(BaseDistLoader):
         ppr_weights, metadata = extract_edge_type_metadata(
             metadata, PPR_WEIGHT_METADATA_KEY
         )
+        assert ppr_edge_indices.keys() == ppr_weights.keys(), (
+            f"PPR edge index and weight edge types must match, "
+            f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
+        )
         for edge_type, edge_index in ppr_edge_indices.items():
             data[edge_type].edge_index = edge_index
-        for edge_type, weight in ppr_weights.items():
-            data[edge_type].weight = weight
+            data[edge_type].weight = ppr_weights[edge_type]
         # Any remaining metadata (including homo PPR plain "edge_index"/"weight" keys) is set directly.
         for key, value in metadata.items():
             data[key] = value

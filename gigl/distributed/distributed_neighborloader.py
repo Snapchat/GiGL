@@ -18,6 +18,10 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -565,11 +569,6 @@ class DistNeighborLoader(BaseDistLoader):
         # to_hetero_data misinterprets #META. keys as edge types and
         # fails when edge_dir="out" (tries to reverse_edge_type on them).
         # We strip them here and re-apply after conversion.
-        from gigl.distributed.dist_ppr_sampler import (
-            PPR_EDGE_INDEX_METADATA_KEY,
-            PPR_WEIGHT_METADATA_KEY,
-        )
-
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
         data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
@@ -588,10 +587,13 @@ class DistNeighborLoader(BaseDistLoader):
         ppr_weights, metadata = extract_edge_type_metadata(
             metadata, PPR_WEIGHT_METADATA_KEY
         )
+        assert ppr_edge_indices.keys() == ppr_weights.keys(), (
+            f"PPR edge index and weight edge types must match, "
+            f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
+        )
         for edge_type, edge_index in ppr_edge_indices.items():
             data[edge_type].edge_index = edge_index
-        for edge_type, weight in ppr_weights.items():
-            data[edge_type].weight = weight
+            data[edge_type].weight = ppr_weights[edge_type]
         # Any remaining metadata (including homo PPR plain "edge_index"/"weight" keys) is set directly.
         for key, value in metadata.items():
             data[key] = value
