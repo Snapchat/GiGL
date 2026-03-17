@@ -303,40 +303,51 @@ def extract_metadata(
 
 def extract_edge_type_metadata(
     metadata: dict[str, torch.Tensor],
-    prefix: str,
-) -> tuple[dict[EdgeType, torch.Tensor], dict[str, torch.Tensor]]:
-    """Extract entries with a given prefix from metadata, parsing the suffix as an EdgeType.
+    prefixes: list[str],
+) -> tuple[dict[str, dict[EdgeType, torch.Tensor]], dict[str, torch.Tensor]]:
+    """Extract entries matching any of the given prefixes from metadata, grouped by prefix.
 
-    Scans ``metadata`` for keys that start with ``prefix``.  For each match,
-    the suffix (everything after ``prefix``) is parsed via ``ast.literal_eval``
-    as an ``EdgeType`` tuple and the tensor is added to the matched dict.
-    All other keys are placed in the remaining dict.
+    Scans ``metadata`` for keys that start with any of the provided ``prefixes``.
+    For each match, the suffix (everything after the matched prefix) is parsed via
+    ``ast.literal_eval`` as an ``EdgeType`` tuple and added to that prefix's sub-dict.
+    All unmatched keys are placed in the remaining dict.
+
+    Each prefix gets its own sub-dict in the result, so distinct categories (e.g.
+    positive labels, negative labels) can never collide even when extracted in one call.
 
     The original ``metadata`` is not modified.
 
-    Typical usage threads ``remaining`` through successive calls, one per prefix:
+    Example:
 
     .. code-block:: python
 
-        edge_indices, metadata = extract_edge_type_metadata(metadata, EDGE_INDEX_KEY)
-        weights, metadata = extract_edge_type_metadata(metadata, WEIGHT_KEY)
+        matched, remaining = extract_edge_type_metadata(
+            metadata,
+            [POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
+        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
 
     Args:
         metadata: Dict of string keys to tensors.
-        prefix: The prefix to match against.
+        prefixes: List of prefixes to match against.
 
     Returns:
         A 2-tuple of:
-        - matched: Dict mapping parsed ``EdgeType`` to tensor for keys that
-          started with ``prefix``.
-        - remaining: Dict of all other key/value pairs.
+        - matched: Dict mapping each prefix to a sub-dict of
+          ``{EdgeType: tensor}`` for all keys that started with that prefix.
+          Every prefix in ``prefixes`` is guaranteed to be present as a key
+          (with an empty dict if nothing matched).
+        - remaining: Dict of all key/value pairs that matched no prefix.
     """
-    matched: dict[EdgeType, torch.Tensor] = {}
+    matched: dict[str, dict[EdgeType, torch.Tensor]] = {p: {} for p in prefixes}
     remaining: dict[str, torch.Tensor] = {}
     for key, value in metadata.items():
-        if key.startswith(prefix):
-            edge_type: EdgeType = ast.literal_eval(key[len(prefix) :])
-            matched[edge_type] = value
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                edge_type: EdgeType = ast.literal_eval(key[len(prefix) :])
+                matched[prefix][edge_type] = value
+                break
         else:
             remaining[key] = value
     return matched, remaining
