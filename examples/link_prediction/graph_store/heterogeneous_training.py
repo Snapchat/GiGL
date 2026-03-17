@@ -44,7 +44,7 @@ trainerConfig:
     storageArgs:
       sample_edge_direction: "in"
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-      # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
+      # Note this gets parsed with ast.literal_eval.
       # We do this so that the tuples for edge types get parsed as such.
       spillter_kwargs: >-
         {
@@ -121,6 +121,7 @@ logger = Logger()
 
 
 # We don't see logs for graph store mode for whatever reason.
+# Using `print` instead of `logger.info` helps ameliorate the issue.
 # TODO(#442): Revert this once the GCP issues are resolved.
 def flush():
     sys.stdout.write("\n")
