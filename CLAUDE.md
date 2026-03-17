@@ -4,9 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Coordination With AGENTS.md
 
-- Read [AGENTS.md](AGENTS.md) together with this file before making repository changes.
-- If there are any differences between `CLAUDE.md` and `AGENTS.md`, reconcile them before continuing.
-- Keep both files synchronized when adding or changing guidance.
+- CLAUDE.md is the cannonical source of truth for this repo.
+- AGENTS.md should only say to load CLAUDE.md.
 
 ## Project Overview
 
