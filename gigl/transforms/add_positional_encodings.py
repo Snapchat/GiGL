@@ -1,7 +1,6 @@
 from typing import Optional
 
 import torch
-
 from torch_geometric.data import HeteroData
 from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
@@ -59,7 +58,7 @@ Example Usage:
 """
 
 
-@functional_transform('add_hetero_random_walk_pe')
+@functional_transform("add_hetero_random_walk_pe")
 class AddHeteroRandomWalkPE(BaseTransform):
     r"""Adds the random walk positional encoding to the given heterogeneous graph
     (functional name: :obj:`add_hetero_random_walk_pe`).
@@ -86,10 +85,11 @@ class AddHeteroRandomWalkPE(BaseTransform):
             concatenated directly to :obj:`data[node_type].x` for each node type
             instead of being stored as a separate attribute. (default: :obj:`False`)
     """
+
     def __init__(
         self,
         walk_length: int,
-        attr_name: Optional[str] = 'random_walk_pe',
+        attr_name: Optional[str] = "random_walk_pe",
         is_undirected: bool = False,
         attach_to_x: bool = False,
     ) -> None:
@@ -144,7 +144,9 @@ class AddHeteroRandomWalkPE(BaseTransform):
 
         # Compute random walk positional encoding using sparse operations
         # PE[j, k] = sum of column j excluding diagonal = Σ_{i≠j} (P^k)[i, j]
-        pe = torch.zeros((num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device)
+        pe = torch.zeros(
+            (num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device
+        )
 
         # Start with identity matrix (sparse)
         identity_indices = torch.arange(num_nodes, device=edge_index.device)
@@ -163,7 +165,9 @@ class AddHeteroRandomWalkPE(BaseTransform):
             diag = torch.zeros(num_nodes, device=edge_index.device)
             diag_mask = current.indices()[0] == current.indices()[1]
             if diag_mask.any():
-                diag.scatter_add_(0, current.indices()[0][diag_mask], current.values()[diag_mask])
+                diag.scatter_add_(
+                    0, current.indices()[0][diag_mask], current.values()[diag_mask]
+                )
             pe[:, k] = col_sum - diag
 
         # Map back to HeteroData node types
@@ -175,12 +179,12 @@ class AddHeteroRandomWalkPE(BaseTransform):
 
     def __repr__(self) -> str:
         return (
-            f'{self.__class__.__name__}(walk_length={self.walk_length}, '
-            f'attach_to_x={self.attach_to_x})'
+            f"{self.__class__.__name__}(walk_length={self.walk_length}, "
+            f"attach_to_x={self.attach_to_x})"
         )
 
 
-@functional_transform('add_hetero_random_walk_se')
+@functional_transform("add_hetero_random_walk_se")
 class AddHeteroRandomWalkSE(BaseTransform):
     r"""Adds the random walk structural encoding from the
     `"Graph Neural Networks with Learnable Structural and Positional
@@ -207,10 +211,11 @@ class AddHeteroRandomWalkSE(BaseTransform):
             concatenated directly to :obj:`data[node_type].x` for each node type
             instead of being stored as a separate attribute. (default: :obj:`False`)
     """
+
     def __init__(
         self,
         walk_length: int,
-        attr_name: Optional[str] = 'random_walk_se',
+        attr_name: Optional[str] = "random_walk_se",
         is_undirected: bool = False,
         attach_to_x: bool = False,
     ) -> None:
@@ -264,7 +269,9 @@ class AddHeteroRandomWalkSE(BaseTransform):
         ).coalesce()
 
         # Compute random walk return probabilities (diagonal elements) using sparse operations
-        se = torch.zeros((num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device)
+        se = torch.zeros(
+            (num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device
+        )
 
         # Start with identity matrix (sparse)
         identity_indices = torch.arange(num_nodes, device=edge_index.device)
@@ -279,7 +286,9 @@ class AddHeteroRandomWalkSE(BaseTransform):
             # Extract diagonal elements: probability of returning to the same node
             diag_mask = current.indices()[0] == current.indices()[1]
             if diag_mask.any():
-                se[:, k].scatter_add_(0, current.indices()[0][diag_mask], current.values()[diag_mask])
+                se[:, k].scatter_add_(
+                    0, current.indices()[0][diag_mask], current.values()[diag_mask]
+                )
 
         # Map back to HeteroData node types
         # If attach_to_x is True, pass None as attr_name to concatenate to x directly
@@ -290,13 +299,12 @@ class AddHeteroRandomWalkSE(BaseTransform):
 
     def __repr__(self) -> str:
         return (
-            f'{self.__class__.__name__}(walk_length={self.walk_length}, '
-            f'attach_to_x={self.attach_to_x})'
+            f"{self.__class__.__name__}(walk_length={self.walk_length}, "
+            f"attach_to_x={self.attach_to_x})"
         )
 
 
-
-@functional_transform('add_hetero_hop_distance_encoding')
+@functional_transform("add_hetero_hop_distance_encoding")
 class AddHeteroHopDistanceEncoding(BaseTransform):
     r"""Adds hop distance positional encoding as relative encoding (sparse CSR).
 
@@ -327,10 +335,11 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             assumed to be undirected for distance computation.
             (default: :obj:`False`)
     """
+
     def __init__(
         self,
         h_max: int,
-        attr_name: Optional[str] = 'hop_distance',
+        attr_name: Optional[str] = "hop_distance",
         is_undirected: bool = False,
     ) -> None:
         self.h_max = h_max
@@ -402,7 +411,9 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         if USE_BITMAP:
             # Dense bitmap: O(n^2 / 8) bytes, O(1) lookup
             # For n=10000, this is ~12.5 MB
-            visited_bitmap = torch.zeros(num_nodes, num_nodes, dtype=torch.bool, device=device)
+            visited_bitmap = torch.zeros(
+                num_nodes, num_nodes, dtype=torch.bool, device=device
+            )
             visited_bitmap.fill_diagonal_(True)  # Mark diagonal as visited
         else:
             # Sorted linear indices: O(visited pairs) memory, O(log n) lookup
@@ -423,7 +434,9 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                 # CSR @ CSR is most efficient
                 frontier_csr = frontier.to_sparse_csr()
                 del frontier
-                frontier = torch.sparse.mm(frontier_csr, adj_csr).to_sparse_coo().coalesce()
+                frontier = (
+                    torch.sparse.mm(frontier_csr, adj_csr).to_sparse_coo().coalesce()
+                )
                 del frontier_csr
 
             frontier_indices = frontier.indices()
@@ -443,7 +456,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                 frontier_linear = reach_i.long() * num_nodes + reach_j.long()
                 insert_pos = torch.searchsorted(visited_linear, frontier_linear)
                 insert_pos_clamped = insert_pos.clamp(max=visited_linear.size(0) - 1)
-                is_visited = (visited_linear[insert_pos_clamped] == frontier_linear)
+                is_visited = visited_linear[insert_pos_clamped] == frontier_linear
                 is_new = ~is_visited
                 del frontier_linear, insert_pos, insert_pos_clamped, is_visited
 
@@ -510,4 +523,4 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         return data
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}(h_max={self.h_max})'
+        return f"{self.__class__.__name__}(h_max={self.h_max})"

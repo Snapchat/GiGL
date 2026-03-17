@@ -5,13 +5,12 @@ Tests for HeteroToGraphTransformerInput transform.
 import torch
 import torch.nn as nn
 from absl.testing import absltest
-
 from torch_geometric.data import HeteroData
 
 from gigl.transforms.graph_transformer import (
     HeteroToGraphTransformerInput,
-    heterodata_to_graph_transformer_input,
     _get_k_hop_neighbors_sparse,
+    heterodata_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -29,20 +28,24 @@ def create_simple_hetero_data() -> HeteroData:
     data = HeteroData()
 
     # Node features
-    data['user'].x = torch.randn(3, 16)  # 3 users with 16-dim features
-    data['item'].x = torch.randn(2, 16)  # 2 items with 16-dim features
+    data["user"].x = torch.randn(3, 16)  # 3 users with 16-dim features
+    data["item"].x = torch.randn(2, 16)  # 2 items with 16-dim features
 
     # Edges: user -> item
-    data['user', 'buys', 'item'].edge_index = torch.tensor([
-        [0, 1, 1, 2],  # source (user)
-        [0, 0, 1, 1],  # target (item)
-    ])
+    data["user", "buys", "item"].edge_index = torch.tensor(
+        [
+            [0, 1, 1, 2],  # source (user)
+            [0, 0, 1, 1],  # target (item)
+        ]
+    )
 
     # Reverse edges: item -> user
-    data['item', 'bought_by', 'user'].edge_index = torch.tensor([
-        [0, 0, 1, 1],  # source (item)
-        [0, 1, 1, 2],  # target (user)
-    ])
+    data["item", "bought_by", "user"].edge_index = torch.tensor(
+        [
+            [0, 0, 1, 1],  # source (item)
+            [0, 1, 1, 2],  # target (user)
+        ]
+    )
 
     return data
 
@@ -52,16 +55,16 @@ def create_larger_hetero_data(num_users: int = 10, num_items: int = 5) -> Hetero
     data = HeteroData()
 
     # Node features
-    data['user'].x = torch.randn(num_users, 32)
-    data['item'].x = torch.randn(num_items, 32)
+    data["user"].x = torch.randn(num_users, 32)
+    data["item"].x = torch.randn(num_items, 32)
 
     # Create random edges (each user connects to ~2 items on average)
     num_edges = num_users * 2
     src = torch.randint(0, num_users, (num_edges,))
     dst = torch.randint(0, num_items, (num_edges,))
 
-    data['user', 'buys', 'item'].edge_index = torch.stack([src, dst])
-    data['item', 'bought_by', 'user'].edge_index = torch.stack([dst, src])
+    data["user", "buys", "item"].edge_index = torch.stack([src, dst])
+    data["item", "bought_by", "user"].edge_index = torch.stack([dst, src])
 
     return data
 
@@ -72,10 +75,12 @@ class TestGetKHopNeighborsSparse(TestCase):
     def test_one_hop(self):
         """Test 1-hop neighbor extraction with sparse implementation."""
         # Simple chain: 0 -> 1 -> 2 -> 3
-        edge_index = torch.tensor([
-            [0, 1, 2],
-            [1, 2, 3],
-        ])
+        edge_index = torch.tensor(
+            [
+                [0, 1, 2],
+                [1, 2, 3],
+            ]
+        )
         anchor_indices = torch.tensor([0])
 
         neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
@@ -83,7 +88,7 @@ class TestGetKHopNeighborsSparse(TestCase):
             edge_index=edge_index,
             num_nodes=4,
             k=1,
-            device=torch.device('cpu'),
+            device=torch.device("cpu"),
         )
 
         # Should include anchor (0) and 1-hop neighbor (1)
@@ -95,10 +100,12 @@ class TestGetKHopNeighborsSparse(TestCase):
     def test_two_hop(self):
         """Test 2-hop neighbor extraction with sparse implementation."""
         # Simple chain: 0 -> 1 -> 2 -> 3
-        edge_index = torch.tensor([
-            [0, 1, 2],
-            [1, 2, 3],
-        ])
+        edge_index = torch.tensor(
+            [
+                [0, 1, 2],
+                [1, 2, 3],
+            ]
+        )
         anchor_indices = torch.tensor([0])
 
         neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
@@ -106,7 +113,7 @@ class TestGetKHopNeighborsSparse(TestCase):
             edge_index=edge_index,
             num_nodes=4,
             k=2,
-            device=torch.device('cpu'),
+            device=torch.device("cpu"),
         )
 
         # Should include anchor (0), 1-hop (1), and 2-hop (2)
@@ -120,10 +127,12 @@ class TestGetKHopNeighborsSparse(TestCase):
     def test_batched_anchors(self):
         """Test sparse k-hop with multiple anchors."""
         # Star graph: center (0) connects to 1, 2, 3, 4
-        edge_index = torch.tensor([
-            [0, 0, 0, 0, 1, 2, 3, 4],
-            [1, 2, 3, 4, 0, 0, 0, 0],
-        ])
+        edge_index = torch.tensor(
+            [
+                [0, 0, 0, 0, 1, 2, 3, 4],
+                [1, 2, 3, 4, 0, 0, 0, 0],
+            ]
+        )
         anchor_indices = torch.tensor([1, 2])  # Two anchors
 
         neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
@@ -131,7 +140,7 @@ class TestGetKHopNeighborsSparse(TestCase):
             edge_index=edge_index,
             num_nodes=5,
             k=2,
-            device=torch.device('cpu'),
+            device=torch.device("cpu"),
         )
 
         # Both anchors should reach center (0) in 1 hop
@@ -140,10 +149,12 @@ class TestGetKHopNeighborsSparse(TestCase):
 
     def test_disconnected_node(self):
         """Test neighbor extraction for disconnected node."""
-        edge_index = torch.tensor([
-            [1],
-            [2],
-        ])
+        edge_index = torch.tensor(
+            [
+                [1],
+                [2],
+            ]
+        )
         anchor_indices = torch.tensor([0])  # Node 0 is disconnected
 
         neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
@@ -151,7 +162,7 @@ class TestGetKHopNeighborsSparse(TestCase):
             edge_index=edge_index,
             num_nodes=3,
             k=2,
-            device=torch.device('cpu'),
+            device=torch.device("cpu"),
         )
 
         # Only anchor itself should be reachable
@@ -167,11 +178,15 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test basic transformation with simple data."""
         data = create_simple_hetero_data()
 
-        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            attention_mask,
+            neighbor_counts,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=2,
             max_seq_len=10,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -181,17 +196,23 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertEqual(sequences.shape[2], 16)  # feature_dim (inferred)
 
         self.assertEqual(attention_mask.shape, (2, 10))
-        self.assertEqual(neighbor_counts.shape, (1,) if neighbor_counts.dim() == 1 else (2,))
+        self.assertEqual(
+            neighbor_counts.shape, (1,) if neighbor_counts.dim() == 1 else (2,)
+        )
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
         data = create_simple_hetero_data()
 
-        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            attention_mask,
+            neighbor_counts,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=20,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -202,7 +223,9 @@ class TestHeteroToGraphTransformerInput(TestCase):
         # Padding positions should have padding value (0.0)
         if num_valid < 20:
             padding_features = sequences[0, num_valid:]
-            self.assertTrue(torch.allclose(padding_features, torch.zeros_like(padding_features)))
+            self.assertTrue(
+                torch.allclose(padding_features, torch.zeros_like(padding_features))
+            )
 
     def test_anchor_first(self):
         """Test that anchor node is first when include_anchor_first=True."""
@@ -217,7 +240,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
             data=data,
             batch_size=1,
             max_seq_len=10,
-            anchor_node_type='user',
+            anchor_node_type="user",
             include_anchor_first=True,
         )
 
@@ -229,11 +252,15 @@ class TestHeteroToGraphTransformerInput(TestCase):
         data = create_simple_hetero_data()
 
         # Test with 'item' as anchor
-        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            attention_mask,
+            neighbor_counts,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=10,
-            anchor_node_type='item',
+            anchor_node_type="item",
             hop_distance=2,
         )
 
@@ -244,11 +271,15 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test with larger batch size."""
         data = create_larger_hetero_data(num_users=20, num_items=10)
 
-        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            attention_mask,
+            neighbor_counts,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=8,
             max_seq_len=50,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -265,7 +296,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
             data=data,
             batch_size=5,
             max_seq_len=10,  # Small max_seq_len
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -279,11 +310,15 @@ class TestHeteroToGraphTransformerInput(TestCase):
         """Test custom padding value."""
         data = create_simple_hetero_data()
 
-        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            attention_mask,
+            neighbor_counts,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=50,
-            anchor_node_type='user',
+            anchor_node_type="user",
             padding_value=-1.0,
         )
 
@@ -305,7 +340,7 @@ class TestHeteroToGraphTransformerInputClass(TestCase):
         transform = HeteroToGraphTransformerInput(
             batch_size=2,
             max_seq_len=10,
-            anchor_node_type='user',
+            anchor_node_type="user",
         )
 
         sequences, attention_mask, neighbor_counts = transform(data)
@@ -318,15 +353,15 @@ class TestHeteroToGraphTransformerInputClass(TestCase):
         transform = HeteroToGraphTransformerInput(
             batch_size=32,
             max_seq_len=128,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=3,
         )
 
         repr_str = repr(transform)
-        self.assertIn('batch_size=32', repr_str)
-        self.assertIn('max_seq_len=128', repr_str)
+        self.assertIn("batch_size=32", repr_str)
+        self.assertIn("max_seq_len=128", repr_str)
         self.assertIn("anchor_node_type='user'", repr_str)
-        self.assertIn('hop_distance=3', repr_str)
+        self.assertIn("hop_distance=3", repr_str)
 
 
 class TestPyTorchTransformerIntegration(TestCase):
@@ -340,11 +375,15 @@ class TestPyTorchTransformerIntegration(TestCase):
         feature_dim = 32  # Must match the feature dim in create_larger_hetero_data
 
         # Transform HeteroData to sequences
-        sequences, attention_mask, neighbor_counts = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            attention_mask,
+            neighbor_counts,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -388,7 +427,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -424,7 +463,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -460,7 +499,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -502,7 +541,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -563,7 +602,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
-            anchor_node_type='user',
+            anchor_node_type="user",
             hop_distance=2,
         )
 
@@ -579,5 +618,81 @@ class TestPyTorchTransformerIntegration(TestCase):
         self.assertEqual(attention_mask.shape[1], max_seq_len)
 
 
-if __name__ == '__main__':
+def _create_hetero_data_with_relative_pe() -> HeteroData:
+    data = HeteroData()
+
+    data["user"].x = torch.tensor(
+        [[1.0, 0.0, 0.5, 0.0], [0.0, 1.0, 0.5, 0.0], [0.0, 0.0, 1.0, 1.0]]
+    )
+    data["item"].x = torch.tensor(
+        [[2.0, 0.0, 0.0, 1.0], [0.0, 2.0, 1.0, 0.0]]
+    )
+
+    data["user"].random_walk_pe = torch.tensor(
+        [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+    )
+    data["item"].random_walk_pe = torch.tensor([[1.0, 1.1], [1.2, 1.3]])
+
+    data["user", "buys", "item"].edge_index = torch.tensor(
+        [[0, 1, 1, 2], [0, 0, 1, 1]]
+    )
+    data["item", "bought_by", "user"].edge_index = torch.tensor(
+        [[0, 0, 1, 1], [0, 1, 1, 2]]
+    )
+
+    hop_distance = torch.arange(25, dtype=torch.float).reshape(5, 5)
+    data.hop_distance = hop_distance.to_sparse_csr()
+    pairwise_distance = (torch.arange(25, dtype=torch.float).reshape(5, 5) + 1.0) / 10.0
+    data.pairwise_distance = pairwise_distance.to_sparse_csr()
+
+    return data
+
+
+class TestGraphTransformerRelativeBiasAssembly(TestCase):
+    def test_transform_returns_base_sequences_and_anchor_relative_bias(self) -> None:
+        data = _create_hetero_data_with_relative_pe()
+
+        sequences, valid_mask, attention_bias_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            anchor_based_pe_attr_names=["hop_distance"],
+        )
+
+        self.assertEqual(sequences.shape, (1, 4, 4))
+        self.assertEqual(attention_bias_data["anchor_bias"].shape, (1, 4, 1))
+        self.assertIsNone(attention_bias_data["pairwise_bias"])
+        self.assertTrue(valid_mask[0, 0].item())
+
+    def test_attention_bias_outputs_include_valid_mask_and_relative_features(self) -> None:
+        data = _create_hetero_data_with_relative_pe()
+
+        sequences, valid_mask, attention_bias_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            anchor_based_pe_attr_names=["hop_distance"],
+            pairwise_pe_attr_names=["pairwise_distance"],
+        )
+
+        self.assertEqual(sequences.shape, (1, 4, 4))
+        self.assertEqual(valid_mask.shape, (1, 4))
+        self.assertEqual(attention_bias_data["anchor_bias"].shape, (1, 4, 1))
+        self.assertEqual(attention_bias_data["pairwise_bias"].shape, (1, 4, 4, 1))
+        self.assertEqual(attention_bias_data["anchor_bias"][0, 0, 0].item(), 0.0)
+        self.assertEqual(attention_bias_data["pairwise_bias"][0, 0, 0, 0].item(), 0.0)
+
+        invalid_pair_mask = ~(valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1))
+        self.assertTrue(
+            torch.all(
+                attention_bias_data["pairwise_bias"][..., 0][invalid_pair_mask] == 0
+            )
+        )
+
+
+if __name__ == "__main__":
     absltest.main()

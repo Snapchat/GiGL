@@ -11,7 +11,7 @@ Conforms to the same forward interface as ``HGT`` and ``SimpleHGN`` in
 replacement as the encoder in ``LinkPredictionGNN``.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -21,6 +21,37 @@ from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import heterodata_to_graph_transformer_input
+
+
+def _get_node_type_positional_encodings(
+    data: torch_geometric.data.hetero_data.HeteroData,
+    node_type: NodeType,
+    pe_attr_names: list[str],
+    device: torch.device,
+) -> Tensor:
+    """Collect concatenated node-level PE for a single node type."""
+    pe_parts = []
+    sorted_node_types = sorted(data.node_types)
+    node_store = data[node_type]
+
+    for attr_name in pe_attr_names:
+        if hasattr(node_store, attr_name):
+            pe_parts.append(getattr(node_store, attr_name).to(device))
+            continue
+
+        attr_dim = None
+        for other_node_type in sorted_node_types:
+            other_store = data[other_node_type]
+            if hasattr(other_store, attr_name):
+                attr_dim = getattr(other_store, attr_name).size(-1)
+                break
+        if attr_dim is None:
+            raise ValueError(
+                f"Positional encoding '{attr_name}' not found in any node type."
+            )
+        pe_parts.append(torch.zeros(node_store.num_nodes, attr_dim, device=device))
+
+    return torch.cat(pe_parts, dim=-1)
 
 
 class FeedForwardNetwork(nn.Module):
@@ -147,6 +178,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         self,
         x: Tensor,
         attn_bias: Optional[Tensor] = None,
+        valid_mask: Optional[Tensor] = None,
     ) -> Tensor:
         """Forward pass.
 
@@ -155,6 +187,8 @@ class GraphTransformerEncoderLayer(nn.Module):
             attn_bias: Optional attention bias of shape
                 ``(batch, num_heads, seq, seq)`` or broadcastable.
                 Added as an additive mask to attention scores.
+            valid_mask: Optional boolean tensor of shape ``(batch, seq)`` used
+                to zero out padded token states after each residual block.
 
         Returns:
             Output tensor of shape ``(batch, seq, hidden_dim)``.
@@ -197,12 +231,16 @@ class GraphTransformerEncoderLayer(nn.Module):
         attention_output = self._attention_dropout(attention_output)
 
         x = residual + attention_output
+        if valid_mask is not None:
+            x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
         # Feed-forward block (pre-norm)
         residual = x
         x_norm = self._ffn_norm(x)
         ffn_output = self._ffn(x_norm)
         x = residual + ffn_output
+        if valid_mask is not None:
+            x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
         return x
 
@@ -239,20 +277,37 @@ class GraphTransformerEncoder(nn.Module):
         attention_dropout_rate: Dropout probability for attention weights.
         should_l2_normalize_embedding_layer_output: Whether to L2 normalize
             output embeddings.
-        pe_attr_names: List of positional encoding attribute names to concatenate
-            to node features. These should be node-level attributes stored by
-            transforms like ``AddHeteroRandomWalkPE`` or ``AddHeteroRandomWalkSE``.
-            Example: ``['random_walk_pe', 'random_walk_se']``.
-            If None, no positional encodings are attached. (default: None)
-        anchor_based_pe_attr_names: List of graph-level attribute names containing
-            sparse (N x N) matrices for anchor-based positional encodings. For each
-            node in the sequence, the value ``PE[anchor_idx, node_idx]`` is looked up
-            and concatenated to node features.
-            Example: ``['hop_distance']`` (from ``AddHeteroHopDistanceEncoding``).
-            If None, no anchor-based PEs are attached. (default: None)
+        pe_attr_names: List of node-level positional encoding attribute names.
+            In ``"concat"`` mode these are concatenated to sequence features.
+            In ``"add"`` mode they are projected to ``hid_dim`` and added to
+            node features before sequence construction.
+        anchor_based_pe_attr_names: List of relative-encoding attribute names
+            containing sparse (N x N) matrices for anchor-relative positional
+            encodings.
+            These are used as additive attention bias for sequence keys.
+        pairwise_pe_attr_names: List of relative-encoding attribute names
+            containing sparse (N x N) matrices for pairwise relative encodings
+            between sequence nodes. These are used as additive attention bias
+            and can be combined with anchor-relative bias in the same model.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
+        pe_integration_mode: How to fuse positional encodings into the model
+            input. ``"concat"`` preserves the current behavior by concatenating
+            node-level PE to token features. ``"add"`` uses node-level additive
+            PE before sequence construction and attention bias for relative
+            encodings.
+
+    Notes:
+        This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
+        it with ``DistributedDataParallel``, run one representative no-grad
+        forward first, passing ``anchor_node_ids``/``anchor_node_type`` for the
+        graph-transformer path, or load a checkpoint before DDP so all ranks see
+        initialized weights.
+
+        TODO: Pairwise relative bias is currently materialized densely for the selected
+            sequence. That is fine for moderate ``max_seq_len``, but a chunked or
+            sparse LPFormer-style path is still future work for larger sequences.
 
     Example:
         >>> from gigl.src.common.models.graph_transformer.graph_transformer import (
@@ -284,11 +339,19 @@ class GraphTransformerEncoder(nn.Module):
         should_l2_normalize_embedding_layer_output: bool = False,
         pe_attr_names: Optional[list[str]] = None,
         anchor_based_pe_attr_names: Optional[list[str]] = None,
+        pairwise_pe_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
-        pe_dim: int = 0,
+        pe_integration_mode: Literal["concat", "add"] = "concat",
         **kwargs: object,
     ) -> None:
         super().__init__()
+        del kwargs
+
+        if pe_integration_mode not in {"concat", "add"}:
+            raise ValueError(
+                "pe_integration_mode must be one of {'concat', 'add'}, "
+                f"got '{pe_integration_mode}'"
+            )
 
         self._hid_dim = hid_dim
         self._out_dim = out_dim
@@ -299,7 +362,10 @@ class GraphTransformerEncoder(nn.Module):
         )
         self._pe_attr_names = pe_attr_names
         self._anchor_based_pe_attr_names = anchor_based_pe_attr_names
+        self._pairwise_pe_attr_names = pairwise_pe_attr_names
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
+        self._pe_integration_mode = pe_integration_mode
+        self._num_heads = num_heads
 
         # Per-node-type input projection to hid_dim (like HGT's lin_dict)
         self._node_projection_dict = nn.ModuleDict(
@@ -309,13 +375,31 @@ class GraphTransformerEncoder(nn.Module):
             }
         )
 
-        # Projection for sequences with PE concatenated (hid_dim + pe_dim -> hid_dim)
-        # pe_dim should be set to total dimension of all PE attributes
-        # e.g., for anchor_based_pe like hop_distance (dim=1 each), pe_dim = num_attrs
-        # e.g., for pe_attr_names like random_walk_pe (dim=walk_length), pe_dim = walk_length
-        self._pe_projection: Optional[nn.Linear] = None
-        if pe_dim > 0:
-            self._pe_projection = nn.Linear(hid_dim + pe_dim, hid_dim)
+        # PE fusion layer. In concat mode, infer the concatenated input width
+        # from the per-node feature tensors before sequence construction.
+        self._pe_projection: Optional[nn.Module] = None
+        if pe_integration_mode == "concat" and pe_attr_names:
+            self._pe_projection = nn.LazyLinear(hid_dim)
+
+        self._node_pe_projection: Optional[nn.Module] = None
+        if pe_integration_mode == "add" and pe_attr_names:
+            self._node_pe_projection = nn.LazyLinear(hid_dim, bias=False)
+
+        self._anchor_pe_attention_bias_projection: Optional[nn.Linear] = None
+        if anchor_based_pe_attr_names:
+            self._anchor_pe_attention_bias_projection = nn.Linear(
+                len(anchor_based_pe_attr_names),
+                num_heads,
+                bias=False,
+            )
+
+        self._pairwise_pe_attention_bias_projection: Optional[nn.Linear] = None
+        if pairwise_pe_attr_names:
+            self._pairwise_pe_attention_bias_projection = nn.Linear(
+                len(pairwise_pe_attr_names),
+                num_heads,
+                bias=False,
+            )
 
         # Transformer encoder layers
         feedforward_dim = 2 * hid_dim
@@ -379,9 +463,31 @@ class GraphTransformerEncoder(nn.Module):
             # Apply feature embedding if available for this node type
             if self._feature_embedding_layer_dict is not None:
                 if node_type in self._feature_embedding_layer_dict:
-                    x_processed = self._feature_embedding_layer_dict[node_type](x_processed)
+                    x_processed = self._feature_embedding_layer_dict[node_type](
+                        x_processed
+                    )
             # Project to hid_dim
-            projected_x_dict[node_type] = self._node_projection_dict[str(node_type)](x_processed)
+            x_projected = self._node_projection_dict[str(node_type)](x_processed)
+            if self._pe_attr_names:
+                node_pe = _get_node_type_positional_encodings(
+                    data=data,
+                    node_type=node_type,
+                    pe_attr_names=self._pe_attr_names,
+                    device=device,
+                )
+                if self._pe_integration_mode == "add":
+                    if self._node_pe_projection is None:
+                        raise ValueError("Node PE projection layer is not initialized.")
+                    x_projected = x_projected + self._node_pe_projection(node_pe)
+                else:
+                    if self._pe_projection is None:
+                        raise ValueError(
+                            "Concat PE projection layer is not initialized."
+                        )
+                    x_projected = self._pe_projection(
+                        torch.cat([x_projected, node_pe], dim=-1)
+                    )
+            projected_x_dict[node_type] = x_projected
 
         # Create a new HeteroData with projected features (avoiding in-place modification)
         projected_data = torch_geometric.data.HeteroData()
@@ -390,16 +496,13 @@ class GraphTransformerEncoder(nn.Module):
             # Copy batch_size if it exists
             if hasattr(data[node_type], "batch_size"):
                 projected_data[node_type].batch_size = data[node_type].batch_size
-            # Copy node-level PE attributes (e.g., random_walk_pe, random_walk_se)
-            if self._pe_attr_names:
-                for pe_attr in self._pe_attr_names:
-                    if hasattr(data[node_type], pe_attr):
-                        setattr(projected_data[node_type], pe_attr, getattr(data[node_type], pe_attr))
         for edge_type in data.edge_types:
             projected_data[edge_type].edge_index = data[edge_type].edge_index
-        # Copy graph-level attributes (e.g., hop_distance PE stored as sparse matrix)
-        if self._anchor_based_pe_attr_names:
-            for attr_name in self._anchor_based_pe_attr_names:
+        # Copy relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
+        relative_pe_attr_names = set(self._anchor_based_pe_attr_names or [])
+        relative_pe_attr_names.update(self._pairwise_pe_attr_names or [])
+        if relative_pe_attr_names:
+            for attr_name in sorted(relative_pe_attr_names):
                 if hasattr(data, attr_name):
                     setattr(projected_data, attr_name, getattr(data, attr_name))
 
@@ -409,28 +512,46 @@ class GraphTransformerEncoder(nn.Module):
             num_anchor_nodes = anchor_node_ids.size(0)
         else:
             num_anchor_nodes = getattr(
-                projected_data[anchor_node_type], "batch_size", projected_data[anchor_node_type].num_nodes
+                projected_data[anchor_node_type],
+                "batch_size",
+                projected_data[anchor_node_type].num_nodes,
             )
 
-        sequences = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            valid_mask,
+            attention_bias_data,
+        ) = heterodata_to_graph_transformer_input(
             data=projected_data,
             batch_size=num_anchor_nodes,
             max_seq_len=self._max_seq_len,
             anchor_node_type=anchor_node_type,
             anchor_node_ids=anchor_node_ids,
             hop_distance=self._hop_distance,
-            pe_attr_names=self._pe_attr_names,
             anchor_based_pe_attr_names=self._anchor_based_pe_attr_names,
+            pairwise_pe_attr_names=self._pairwise_pe_attr_names,
         )
 
         # Free memory after sequences are built
         del projected_data
 
-        # Project sequences back to hid_dim if PE was concatenated
-        if self._pe_projection is not None:
-            sequences = self._pe_projection(sequences)
+        if sequences.size(-1) != self._hid_dim:
+            raise ValueError(
+                f"Expected sequence dim {self._hid_dim} after node projection, "
+                f"got {sequences.size(-1)}."
+            )
 
-        embeddings = self._encode_and_readout(sequences)
+        attn_bias = self._build_attention_bias(
+            valid_mask=valid_mask,
+            sequences=sequences,
+            attention_bias_data=attention_bias_data,
+        )
+
+        embeddings = self._encode_and_readout(
+            sequences=sequences,
+            valid_mask=valid_mask,
+            attn_bias=attn_bias,
+        )
         embeddings = self._output_projection(embeddings)
 
         if self._should_l2_normalize_embedding_layer_output:
@@ -438,25 +559,81 @@ class GraphTransformerEncoder(nn.Module):
 
         return embeddings
 
-    def _encode_and_readout(self, sequences: Tensor) -> Tensor:
+    def _build_attention_bias(
+        self,
+        valid_mask: Tensor,
+        sequences: Tensor,
+        attention_bias_data: dict[str, Optional[Tensor]],
+    ) -> Tensor:
+        """Build additive attention bias from padding and learned relative PE projections."""
+        batch_size, seq_len = valid_mask.shape
+        dtype = sequences.dtype
+        device = sequences.device
+        negative_inf = torch.finfo(dtype).min
+
+        attn_bias = torch.zeros(
+            (batch_size, 1, 1, seq_len),
+            dtype=dtype,
+            device=device,
+        )
+        attn_bias = attn_bias.masked_fill(
+            ~valid_mask.unsqueeze(1).unsqueeze(2),
+            negative_inf,
+        )
+
+        anchor_bias_features = attention_bias_data.get("anchor_bias")
+        if anchor_bias_features is not None:
+            if self._anchor_pe_attention_bias_projection is None:
+                raise ValueError("Anchor attention-bias projection is not initialized.")
+            anchor_bias = self._anchor_pe_attention_bias_projection(
+                anchor_bias_features.to(dtype)
+            )
+            anchor_bias = anchor_bias.permute(0, 2, 1).unsqueeze(2)
+            attn_bias = attn_bias + anchor_bias
+
+        pairwise_bias_features = attention_bias_data.get("pairwise_bias")
+        if pairwise_bias_features is not None:
+            if self._pairwise_pe_attention_bias_projection is None:
+                raise ValueError(
+                    "Pairwise attention-bias projection is not initialized."
+                )
+            pairwise_bias = self._pairwise_pe_attention_bias_projection(
+                pairwise_bias_features.to(dtype)
+            )
+            pairwise_bias = pairwise_bias.permute(0, 3, 1, 2)
+            attn_bias = attn_bias + pairwise_bias
+
+        return attn_bias
+
+    def _encode_and_readout(
+        self,
+        sequences: Tensor,
+        valid_mask: Tensor,
+        attn_bias: Optional[Tensor] = None,
+    ) -> Tensor:
         """Process sequences through transformer layers and attention readout.
 
         Args:
             sequences: Input tensor of shape ``(batch_size, max_seq_len, hid_dim)``.
+            valid_mask: Boolean mask of shape ``(batch_size, max_seq_len)``.
+            attn_bias: Optional additive attention bias broadcastable to
+                ``(batch_size, num_heads, seq, seq)``.
 
         Returns:
             Output embeddings of shape ``(batch_size, hid_dim)``.
         """
-        x = sequences
+        x = sequences * valid_mask.unsqueeze(-1).to(sequences.dtype)
 
         for encoder_layer in self._encoder_layers:
-            x = encoder_layer(x)
+            x = encoder_layer(x, attn_bias=attn_bias, valid_mask=valid_mask)
 
         x = self._final_norm(x)
+        x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
         # Readout: anchor (position 0) + attention-weighted neighbor aggregation
         anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
         neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
+        neighbor_valid_mask = valid_mask[:, 1:]
         seq_minus_one = neighbors.size(1)
 
         if seq_minus_one == 0:
@@ -469,7 +646,15 @@ class GraphTransformerEncoder(nn.Module):
         readout_scores = self._readout_attention(
             torch.cat([anchor_expanded, neighbors], dim=-1)
         )  # (batch, seq-1, 1)
+        readout_scores = readout_scores.masked_fill(
+            ~neighbor_valid_mask.unsqueeze(-1),
+            torch.finfo(readout_scores.dtype).min,
+        )
         readout_weights = F.softmax(readout_scores, dim=1)  # (batch, seq-1, 1)
+        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
+        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
+            readout_weights.dtype
+        )
 
         neighbor_aggregation = (neighbors * readout_weights).sum(
             dim=1, keepdim=True

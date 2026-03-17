@@ -2,7 +2,6 @@ from typing import Dict, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
-
 from torch_geometric.data import HeteroData
 
 # Type alias for edge types in PyG HeteroData
@@ -78,9 +77,7 @@ def _set_node_attr_for_type(
             # Reshape 1D tensor [num_nodes] to 2D [num_nodes, 1] for concatenation
             x = x.view(-1, 1) if x.dim() == 1 else x
             # Move value to same device/dtype as x, then concatenate along feature dim
-            data[node_type].x = torch.cat(
-                [x, value.to(x.device, x.dtype)], dim=-1
-            )
+            data[node_type].x = torch.cat([x, value.to(x.device, x.dtype)], dim=-1)
         else:
             # No existing features: use new values as x directly
             data[node_type].x = value
