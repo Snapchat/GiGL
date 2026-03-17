@@ -866,18 +866,20 @@ class DistABLPLoader(BaseDistLoader):
         positive_labels, metadata = extract_edge_type_metadata(
             metadata, POSITIVE_LABEL_METADATA_KEY
         )
+        negative_labels, metadata = extract_edge_type_metadata(
+            metadata, NEGATIVE_LABEL_METADATA_KEY
+        )
+        # When edge_dir="in", GLT internally swaps src/dst on all edge types during sampling,
+        # so the sampler encodes label edge types in their reversed (incoming) form.
+        # We reverse them back here to restore the original outward edge type that
+        # _set_labels and downstream code expect.
         if self.edge_dir == "in":
             positive_labels = {
                 reverse_edge_type(et): v for et, v in positive_labels.items()
             }
-        negative_labels, metadata = extract_edge_type_metadata(
-            metadata, NEGATIVE_LABEL_METADATA_KEY
-        )
-        if self.edge_dir == "in":
             negative_labels = {
                 reverse_edge_type(et): v for et, v in negative_labels.items()
             }
-
         data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
