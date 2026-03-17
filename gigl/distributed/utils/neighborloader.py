@@ -1,4 +1,5 @@
 """Utils for Neighbor loaders."""
+import ast
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -298,3 +299,44 @@ def extract_metadata(
         else:
             stripped_msg[k] = v
     return metadata, stripped_msg
+
+
+def extract_edge_type_metadata(
+    metadata: dict[str, torch.Tensor],
+    prefix: str,
+) -> tuple[dict[EdgeType, torch.Tensor], dict[str, torch.Tensor]]:
+    """Extract entries with a given prefix from metadata, parsing the suffix as an EdgeType.
+
+    Scans ``metadata`` for keys that start with ``prefix``.  For each match,
+    the suffix (everything after ``prefix``) is parsed via ``ast.literal_eval``
+    as an ``EdgeType`` tuple and the tensor is added to the matched dict.
+    All other keys are placed in the remaining dict.
+
+    The original ``metadata`` is not modified.
+
+    Typical usage threads ``remaining`` through successive calls, one per prefix:
+
+    .. code-block:: python
+
+        edge_indices, metadata = extract_edge_type_metadata(metadata, EDGE_INDEX_KEY)
+        weights, metadata = extract_edge_type_metadata(metadata, WEIGHT_KEY)
+
+    Args:
+        metadata: Dict of string keys to tensors.
+        prefix: The prefix to match against.
+
+    Returns:
+        A 2-tuple of:
+        - matched: Dict mapping parsed ``EdgeType`` to tensor for keys that
+          started with ``prefix``.
+        - remaining: Dict of all other key/value pairs.
+    """
+    matched: dict[EdgeType, torch.Tensor] = {}
+    remaining: dict[str, torch.Tensor] = {}
+    for key, value in metadata.items():
+        if key.startswith(prefix):
+            edge_type: EdgeType = ast.literal_eval(key[len(prefix) :])
+            matched[edge_type] = value
+        else:
+            remaining[key] = value
+    return matched, remaining
