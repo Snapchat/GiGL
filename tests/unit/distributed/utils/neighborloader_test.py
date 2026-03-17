@@ -565,12 +565,15 @@ class ExtractEdgeTypeMetadataTest(TestCase):
             "other_key": torch.tensor([99]),
         }
         matched, remaining = extract_edge_type_metadata(
-            metadata, POSITIVE_LABEL_METADATA_KEY
+            metadata, [POSITIVE_LABEL_METADATA_KEY]
         )
 
-        self.assertEqual(set(matched.keys()), {pos_label_edge_type})
+        self.assertEqual(
+            set(matched[POSITIVE_LABEL_METADATA_KEY].keys()), {pos_label_edge_type}
+        )
         self.assert_tensor_equality(
-            matched[pos_label_edge_type], torch.tensor([[0, 1], [2, 3]])
+            matched[POSITIVE_LABEL_METADATA_KEY][pos_label_edge_type],
+            torch.tensor([[0, 1], [2, 3]]),
         )
         self.assertEqual(set(remaining.keys()), {"other_key"})
         self.assert_tensor_equality(remaining["other_key"], torch.tensor([99]))
@@ -583,17 +586,17 @@ class ExtractEdgeTypeMetadataTest(TestCase):
             ),
         }
         matched, remaining = extract_edge_type_metadata(
-            metadata, POSITIVE_LABEL_METADATA_KEY
+            metadata, [POSITIVE_LABEL_METADATA_KEY]
         )
 
-        self.assertEqual(matched, {})
+        self.assertEqual(matched[POSITIVE_LABEL_METADATA_KEY], {})
         self.assertEqual(
             set(remaining.keys()),
             {f"{NEGATIVE_LABEL_METADATA_KEY}{repr(neg_label_edge_type)}"},
         )
 
-    def test_positive_and_negative_labels_extracted_independently(self):
-        """Typical usage: call twice for positive and negative label prefixes."""
+    def test_positive_and_negative_labels_extracted_in_single_call(self):
+        """Typical usage: call once with both positive and negative label prefixes."""
         pos_label_edge_type = message_passing_to_positive_label(_U2I_EDGE_TYPE)
         neg_label_edge_type = message_passing_to_positive_label(_U2I_EDGE_TYPE)
         metadata = {
@@ -605,12 +608,11 @@ class ExtractEdgeTypeMetadataTest(TestCase):
             ),
             "extra": torch.tensor([42]),
         }
-        positive_labels, metadata = extract_edge_type_metadata(
-            metadata, POSITIVE_LABEL_METADATA_KEY
+        matched, remaining = extract_edge_type_metadata(
+            metadata, [POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY]
         )
-        negative_labels, metadata = extract_edge_type_metadata(
-            metadata, NEGATIVE_LABEL_METADATA_KEY
-        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
 
         self.assertEqual(set(positive_labels.keys()), {pos_label_edge_type})
         self.assert_tensor_equality(
@@ -620,7 +622,7 @@ class ExtractEdgeTypeMetadataTest(TestCase):
         self.assert_tensor_equality(
             negative_labels[neg_label_edge_type], torch.tensor([[4, 5]])
         )
-        self.assertEqual(set(metadata.keys()), {"extra"})
+        self.assertEqual(set(remaining.keys()), {"extra"})
 
 
 if __name__ == "__main__":
