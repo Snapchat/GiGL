@@ -873,7 +873,8 @@ class DistABLPLoader(BaseDistLoader):
         )
 
         matched, metadata = extract_edge_type_metadata(
-            metadata, [POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY]
+            metadata=metadata,
+            prefixes=[POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
         )
         positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
         negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
