@@ -30,6 +30,7 @@ from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_opt
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    apply_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
@@ -939,7 +940,6 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
-        for key, value in non_label_metadata.items():
-            data[key] = value
+        data = apply_metadata(data, non_label_metadata)
         data = self._set_labels(data, positive_labels, negative_labels)
         return data

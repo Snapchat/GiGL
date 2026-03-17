@@ -25,6 +25,7 @@ from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_opt
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    apply_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
@@ -576,6 +577,5 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
-        for key, value in non_edge_metadata.items():
-            data[key] = value
+        data = apply_metadata(data, non_edge_metadata)
         return data

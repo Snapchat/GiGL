@@ -298,3 +298,39 @@ def extract_metadata(
         else:
             stripped_msg[k] = v
     return metadata, stripped_msg
+
+
+# Metadata keys matching this format encode a PyG edge-type attribute:
+#   "{attr_name}.{src_type}.{relation}.{dst_type}"
+# e.g. "edge_index.user.ppr.item" → data[("user", "ppr", "item")].edge_index
+_EDGE_TYPE_ATTR_PARTS = 4  # attr_name + 3-tuple edge type
+
+
+def apply_metadata(
+    data: Union[Data, HeteroData],
+    metadata: dict[str, torch.Tensor],
+) -> Union[Data, HeteroData]:
+    """Apply extracted metadata to a Data/HeteroData object.
+
+    Metadata keys that encode an edge-type attribute (format
+    ``{attr}.{src}.{rel}.{dst}``) are set on the corresponding edge-type
+    store of a HeteroData object.  All other keys are set as top-level
+    attributes.
+
+    Args:
+        data: The PyG graph object to apply metadata to.
+        metadata: Dict of metadata keys to tensors, as returned by
+            ``extract_metadata``.
+
+    Returns:
+        The same ``data`` object with metadata applied.
+    """
+    for key, value in metadata.items():
+        parts = key.split(".")
+        if isinstance(data, HeteroData) and len(parts) == _EDGE_TYPE_ATTR_PARTS:
+            attr_name, src_type, relation, dst_type = parts
+            edge_type: EdgeType = (src_type, relation, dst_type)
+            setattr(data[edge_type], attr_name, value)
+        else:
+            data[key] = value
+    return data

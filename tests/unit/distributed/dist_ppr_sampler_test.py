@@ -233,14 +233,13 @@ def _extract_hetero_ppr_scores(
     """
     ntype_to_sampler_ppr: dict[str, dict[int, float]] = {}
     for ntype in node_types:
-        key_ids = f"ppr_neighbor_ids_{seed_type}_{ntype}"
-        key_weights = f"ppr_weights_{seed_type}_{ntype}"
+        virtual_etype = (seed_type, "ppr", ntype)
+        assert (
+            virtual_etype in datum.edge_types
+        ), f"Missing virtual edge type {virtual_etype} on HeteroData"
 
-        assert hasattr(datum, key_ids), f"Missing {key_ids}"
-        assert hasattr(datum, key_weights), f"Missing {key_weights}"
-
-        ppr_edge_index = getattr(datum, key_ids)
-        ppr_weights = getattr(datum, key_weights)
+        ppr_edge_index = datum[virtual_etype].edge_index
+        ppr_weights = datum[virtual_etype].weight
 
         assert (
             ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
@@ -329,13 +328,11 @@ def _run_ppr_loader_correctness_check(
     for datum in loader:
         assert isinstance(datum, Data)
 
-        # GLT's to_data() unpacks metadata dict keys directly onto the Data
-        # object (data[k] = v), so PPR results are top-level attributes.
-        assert hasattr(datum, "ppr_neighbor_ids"), "Missing ppr_neighbor_ids on Data"
-        assert hasattr(datum, "ppr_weights"), "Missing ppr_weights on Data"
+        assert hasattr(datum, "edge_index"), "Missing edge_index on Data"
+        assert hasattr(datum, "weight"), "Missing weight on Data"
 
-        ppr_edge_index = datum.ppr_neighbor_ids
-        ppr_weights = datum.ppr_weights
+        ppr_edge_index = datum.edge_index
+        ppr_weights = datum.weight
 
         assert (
             ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
@@ -531,14 +528,13 @@ def _run_ppr_ablp_loader_correctness_check(
         # against NetworkX) because the supervision seeds vary per batch depending
         # on the label edges, making deterministic reference computation complex.
         for ntype in [USER, STORY]:
-            key_ids = f"ppr_neighbor_ids_{STORY}_{ntype}"
-            key_weights = f"ppr_weights_{STORY}_{ntype}"
+            virtual_etype = (STORY, "ppr", ntype)
+            assert (
+                virtual_etype in datum.edge_types
+            ), f"Missing virtual edge type {virtual_etype} on HeteroData"
 
-            assert hasattr(datum, key_ids), f"Missing {key_ids}"
-            assert hasattr(datum, key_weights), f"Missing {key_weights}"
-
-            ppr_edge_index = getattr(datum, key_ids)
-            ppr_weights = getattr(datum, key_weights)
+            ppr_edge_index = datum[virtual_etype].edge_index
+            ppr_weights = datum[virtual_etype].weight
 
             assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
             assert ppr_weights.dim() == 1

@@ -7,6 +7,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.neighborloader import (
+    apply_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -548,6 +549,57 @@ class ExtractMetadataTest(TestCase):
         metadata, stripped_msg = extract_metadata({}, self._device)
         self.assertEqual(metadata, {})
         self.assertEqual(stripped_msg, {})
+
+
+class ApplyMetadataTest(TestCase):
+    def test_edge_type_keys_set_on_hetero_data(self):
+        data = HeteroData()
+        metadata = {
+            "edge_index.user.ppr.item": torch.tensor([[0, 0], [1, 2]]),
+            "weight.user.ppr.item": torch.tensor([0.5, 0.3]),
+        }
+        apply_metadata(data, metadata)
+
+        edge_type = ("user", "ppr", "item")
+        self.assertIn(edge_type, data.edge_types)
+        self.assert_tensor_equality(
+            data[edge_type].edge_index, torch.tensor([[0, 0], [1, 2]])
+        )
+        self.assert_tensor_equality(data[edge_type].weight, torch.tensor([0.5, 0.3]))
+
+    def test_non_edge_type_keys_set_as_top_level(self):
+        data = HeteroData()
+        metadata = {
+            "some_scalar": torch.tensor([42]),
+        }
+        apply_metadata(data, metadata)
+        self.assert_tensor_equality(data["some_scalar"], torch.tensor([42]))
+
+    def test_homo_data_sets_top_level(self):
+        data = Data()
+        metadata = {
+            "edge_index": torch.tensor([[0, 0], [1, 2]]),
+            "weight": torch.tensor([0.5, 0.3]),
+        }
+        apply_metadata(data, metadata)
+        self.assert_tensor_equality(data.edge_index, torch.tensor([[0, 0], [1, 2]]))
+        self.assert_tensor_equality(data.weight, torch.tensor([0.5, 0.3]))
+
+    def test_mixed_keys_on_hetero_data(self):
+        data = HeteroData()
+        metadata = {
+            "edge_index.user.ppr.item": torch.tensor([[0], [1]]),
+            "weight.user.ppr.item": torch.tensor([0.7]),
+            "other_key": torch.tensor([99]),
+        }
+        apply_metadata(data, metadata)
+
+        edge_type = ("user", "ppr", "item")
+        self.assertIn(edge_type, data.edge_types)
+        self.assert_tensor_equality(
+            data[edge_type].edge_index, torch.tensor([[0], [1]])
+        )
+        self.assert_tensor_equality(data["other_key"], torch.tensor([99]))
 
 
 if __name__ == "__main__":
