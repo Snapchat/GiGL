@@ -583,7 +583,8 @@ class DistNeighborLoader(BaseDistLoader):
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
 
         matched, metadata = extract_edge_type_metadata(
-            metadata, [PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY]
+            metadata=metadata,
+            prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
         )
         ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
         ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
