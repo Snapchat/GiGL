@@ -920,6 +920,8 @@ class DistABLPLoader(BaseDistLoader):
             data[edge_type].edge_index = edge_index
             data[edge_type].weight = ppr_weights[edge_type]
 
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
         for key, value in metadata.items():
             data[key] = value
 
