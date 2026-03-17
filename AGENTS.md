@@ -8,4 +8,4 @@ This file provides guidance to coding agents working in this repository.
 
 - At the start of every session: read [CLAUDE.md](CLAUDE.md) together with this file before making repository changes.
 
-- Keep both files synchronized when adding or changing guidance.
+- This file should *only* say to read CLAUDE.md, and make no other statements about this repository.
