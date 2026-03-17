@@ -899,6 +899,8 @@ class DistABLPLoader(BaseDistLoader):
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
         data = self._set_labels(data, positive_labels, negative_labels)
 
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
         for key, value in metadata.items():
             data[key] = value
         return data

@@ -576,6 +576,8 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
         for key, value in non_edge_metadata.items():
             data[key] = value
         return data
