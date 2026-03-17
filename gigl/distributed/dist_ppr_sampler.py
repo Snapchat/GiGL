@@ -451,21 +451,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         #   - valid_counts:  [count_seed0, count_seed1, ...]
         #
         # valid_counts[i] records how many top-k neighbors seed i contributed.
-        # Callers use it to slice flat_ids/flat_weights back into per-seed
-        # groups and to build PyG edge-index tensors via repeat_interleave:
+        # The inducer uses valid_counts to slice flat_ids into per-seed groups
+        # and assign local indices.  Example:
         #
-        #   Example: 4 seeds, valid_counts = [1, 6, 2, 1]  (10 total pairs)
-        #   flat_dst = [d0a, d1a, d1b, d1c, d1d, d1e, d1f, d2a, d2b, d3a]
+        #   4 seeds, valid_counts = [1, 6, 2, 1]  (10 total pairs)
+        #   flat_ids = [d0a, d1a, d1b, d1c, d1d, d1e, d1f, d2a, d2b, d3a]
         #
-        #   src_indices = repeat_interleave(arange(4), valid_counts)
-        #               = [0, 1, 1, 1, 1, 1, 1, 2, 2, 3]
-        #
-        #   edge_index  = stack([src_indices, flat_dst])
-        #               = [[0, 1, 1, 1, 1, 1, 1, 2, 2, 3],
-        #                  [d0a, d1a, d1b, d1c, d1d, d1e, d1f, d2a, d2b, d3a]]
-        #
-        # Column j means "edge from seed src_indices[j] to neighbor flat_dst[j]"
-        # with PPR weight flat_weights[j].
+        #   seed 0 owns flat_ids[0:1],  seed 1 owns flat_ids[1:7],
+        #   seed 2 owns flat_ids[7:9],  seed 3 owns flat_ids[9:10]
         all_node_types = self._node_type_to_edge_types.keys()
 
         ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
@@ -567,11 +560,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
           ``inducer.induce_next(nbr_dict)`` (hetero) deduplicates neighbors against
           all previously seen nodes and returns:
 
-            - ``new_nodes``: global IDs of nodes not yet registered.
-            - ``cols``: flat local destination indices for *every* neighbor edge,
-              in the same order as the input ``flat_nbrs``.  Combined with
-              ``repeat_interleave``-expanded seed indices, this forms the
-              ``[2, num_edges]`` edge-index tensor directly.
+            - ``new_nodes``: global IDs of nodes not previously registered
+              with the inducer (i.e., not seeds and not returned by a prior
+              ``induce_next`` call).
+            - ``rows``: flat local source indices, expanded to match ``flat_nbrs``.
+            - ``cols``: flat local destination indices for every neighbor,
+              in the same order as ``flat_nbrs``.  Together, ``rows`` and
+              ``cols`` form the ``[2, num_edges]`` edge-index tensor directly.
         """
         sample_loop_inputs = self._prepare_sample_loop_inputs(inputs)
         input_seeds = inputs.node.to(self.device)
@@ -589,10 +584,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         #
         # 2. Local index assignment: init_node registers seeds at local indices
         #    0..N-1.  induce_next then assigns the next available indices to
-        #    newly discovered neighbors.  The returned "cols" tensor contains
-        #    the local destination index for every neighbor (including those
-        #    that were already registered), which we use directly as row 1 of
-        #    the PyG edge-index tensor.
+        #    neighbors not previously registered with the inducer.  The
+        #    returned "cols" tensor contains the local destination index for
+        #    every neighbor (including those already registered), which we
+        #    use directly as row 1 of the PyG edge-index tensor.
         #
         # Acquired once per sample call; returned to the pool at the end.
         inducer = self._acquire_inducer()
@@ -615,9 +610,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             seed_ntype_to_flat_weights: dict[
                 tuple[NodeType, NodeType], torch.Tensor
             ] = {}
-            seed_ntype_to_valid_counts: dict[
-                tuple[NodeType, NodeType], torch.Tensor
-            ] = {}
 
             for seed_type, seed_nodes in nodes_to_sample.items():
                 (
@@ -634,7 +626,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                     seed_ntype_to_flat_weights[
                         (seed_type, ntype)
                     ] = ntype_to_flat_weights[ntype]
-                    seed_ntype_to_valid_counts[(seed_type, ntype)] = valid_counts
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
@@ -647,15 +638,21 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             valid_counts,
                         ]
 
-            # induce_next assigns local indices to all neighbors not yet registered,
-            # deduplicating across all virtual edge types in one pass.
-            # new_nodes_dict: newly discovered global IDs per node type.
-            # cols_dict: flat local destination indices per virtual edge type,
-            #            in the same order the flat neighbors were provided.
-            new_nodes_dict, _rows_dict, cols_dict = inducer.induce_next(nbr_dict)
+            # induce_next processes all virtual edge types in nbr_dict in one
+            # pass, assigning local indices to neighbors not yet registered and
+            # deduplicating nodes seen from multiple seed types.  Returns:
+            #   new_nodes_dict[NodeType] -> global IDs of nodes not previously
+            #                              registered with the inducer
+            #   rows_dict[EdgeType]     -> flat local source indices per virtual
+            #                              edge type, expanded to match flat_ids
+            #   cols_dict[EdgeType]     -> flat local destination indices, one
+            #                              per neighbor in the same order as the
+            #                              flat_ids passed in nbr_dict
+            new_nodes_dict, rows_dict, cols_dict = inducer.induce_next(nbr_dict)
 
-            # node_dict = seeds (already in src_dict) + newly discovered PPR
-            # neighbors.  merge_dict appends tensors into lists; cat collapses them.
+            # node_dict = seeds (already in src_dict) + PPR neighbors not
+            # previously registered.  merge_dict appends tensors into lists;
+            # cat collapses them.
             out_nodes_hetero: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
             merge_dict(src_dict, out_nodes_hetero)
             merge_dict(new_nodes_dict, out_nodes_hetero)
@@ -666,19 +663,15 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             }
 
             # Build PyG-style edge-index output per (seed_type, ntype) pair.
-            # cols_dict[(seed_type, 'ppr', ntype)] gives flat local dst indices in
-            # the same order as the flat neighbors passed to induce_next.
-            # repeat_interleave expands seed local indices to match.
+            # rows_dict and cols_dict are keyed by virtual edge type and give
+            # flat local source/destination indices respectively, aligned with
+            # the flat_ids order passed to induce_next.
             for (seed_type, ntype), flat_weights in seed_ntype_to_flat_weights.items():
-                valid_counts = seed_ntype_to_valid_counts[(seed_type, ntype)]
                 virtual_etype = (seed_type, "ppr", ntype)
+                rows = rows_dict.get(virtual_etype)
                 cols = cols_dict.get(virtual_etype)
-                if cols is not None:
-                    seed_batch_size = nodes_to_sample[seed_type].size(0)
-                    src_indices = torch.repeat_interleave(
-                        torch.arange(seed_batch_size, device=self.device), valid_counts
-                    )
-                    ppr_edge_index = torch.stack([src_indices, cols])
+                if rows is not None and cols is not None:
+                    ppr_edge_index = torch.stack([rows, cols])
                 else:
                     ppr_edge_index = torch.zeros(
                         2, 0, dtype=torch.long, device=self.device
@@ -719,21 +712,17 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             # induce_next deduplicates homo_flat_ids against already-seen nodes
             # (the seeds registered above) and returns:
-            #   new_nodes: global IDs of nodes not yet registered.
+            #   new_nodes: global IDs of nodes not previously registered
+            #             with the inducer.
+            #   rows: flat local source indices (one per neighbor, expanded).
             #   cols: flat local destination indices for every neighbor, in the
             #         same order as homo_flat_ids.
-            new_nodes, _rows, cols = inducer.induce_next(
+            new_nodes, rows, cols = inducer.induce_next(
                 srcs, homo_flat_ids, homo_valid_counts
             )
             all_nodes = torch.cat([srcs, new_nodes])
 
-            # Build PyG-style edge-index: row 0 = local seed indices (expanded via
-            # repeat_interleave), row 1 = local neighbor indices from inducer cols.
-            src_indices = torch.repeat_interleave(
-                torch.arange(nodes_to_sample.size(0), device=self.device),
-                homo_valid_counts,
-            )
-            ppr_edge_index = torch.stack([src_indices, cols])
+            ppr_edge_index = torch.stack([rows, cols])
 
             metadata["ppr_neighbor_ids"] = ppr_edge_index
             metadata["ppr_weights"] = homo_flat_weights
