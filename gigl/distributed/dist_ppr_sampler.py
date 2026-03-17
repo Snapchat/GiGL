@@ -268,6 +268,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             neighbors = output.nbr
             neighbor_counts = output.nbr_num
 
+            # TODO (mkolodner-sc): Investigate performance of a vectorized version of the below code
             neighbors_list = neighbors.tolist()
             counts_list = neighbor_counts.tolist()
             del neighbors, neighbor_counts
