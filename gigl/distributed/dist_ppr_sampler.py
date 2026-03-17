@@ -374,11 +374,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ]
             nodes_to_lookup: dict[EdgeType, set[int]] = defaultdict(set)
 
-            for i in range(batch_size):
-                if queue[i]:
-                    queued_nodes[i] = queue[i]
-                    queue[i] = defaultdict(set)
-                    for node_type, node_ids in queued_nodes[i].items():
+            for seed_idx in range(batch_size):
+                if queue[seed_idx]:
+                    queued_nodes[seed_idx] = queue[seed_idx]
+                    queue[seed_idx] = defaultdict(set)
+                    for node_type, node_ids in queued_nodes[seed_idx].items():
                         num_nodes_in_queue -= len(node_ids)
                         # We fetch neighbors for ALL edge types originating
                         # from this node type, not just the edge type that
@@ -402,15 +402,17 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # Push residual to neighbors and re-queue in a single pass.  This
             # is safe because each seed's state is independent, and residuals
             # are always positive so the merged loop can never miss a re-queue.
-            for i in range(batch_size):
-                for source_type, source_nodes in queued_nodes[i].items():
+            for seed_idx in range(batch_size):
+                for source_type, source_nodes in queued_nodes[seed_idx].items():
                     for source_node in source_nodes:
-                        source_residual = residuals[i][source_type].get(
+                        source_residual = residuals[seed_idx][source_type].get(
                             source_node, 0.0
                         )
 
-                        ppr_scores[i][source_type][source_node] += source_residual
-                        residuals[i][source_type][source_node] = 0.0
+                        ppr_scores[seed_idx][source_type][
+                            source_node
+                        ] += source_residual
+                        residuals[seed_idx][source_type][source_node] = 0.0
 
                         edge_types_for_node = self._node_type_to_edge_types[source_type]
 
@@ -432,7 +434,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             neighbor_type = self._get_destination_type(etype)
 
                             for neighbor_node in neighbor_list:
-                                residuals[i][neighbor_type][
+                                residuals[seed_idx][neighbor_type][
                                     neighbor_node
                                 ] += residual_per_neighbor
 
@@ -443,12 +445,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                     )
                                 )
                                 should_requeue = (
-                                    neighbor_node not in queue[i][neighbor_type]
-                                    and residuals[i][neighbor_type][neighbor_node]
+                                    neighbor_node not in queue[seed_idx][neighbor_type]
+                                    and residuals[seed_idx][neighbor_type][
+                                        neighbor_node
+                                    ]
                                     >= requeue_threshold
                                 )
                                 if should_requeue:
-                                    queue[i][neighbor_type].add(neighbor_node)
+                                    queue[seed_idx][neighbor_type].add(neighbor_node)
                                     num_nodes_in_queue += 1
 
         # Extract top-k nodes by PPR score, grouped by node type.
