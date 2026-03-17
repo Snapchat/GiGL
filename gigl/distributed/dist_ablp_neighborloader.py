@@ -877,10 +877,18 @@ class DistABLPLoader(BaseDistLoader):
         )
 
         matched, metadata = extract_edge_type_metadata(
-            metadata, [POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY]
+            metadata,
+            [
+                POSITIVE_LABEL_METADATA_KEY,
+                NEGATIVE_LABEL_METADATA_KEY,
+                PPR_EDGE_INDEX_METADATA_KEY,
+                PPR_WEIGHT_METADATA_KEY,
+            ],
         )
         positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
         negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
+        ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
+        ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
         # When edge_dir="in", GLT internally swaps src/dst on all edge types during sampling,
         # so the sampler encodes label edge types in their reversed (incoming) form.
         # We reverse them back here to restore the original outward edge type that
@@ -904,12 +912,6 @@ class DistABLPLoader(BaseDistLoader):
 
         data = self._set_labels(data, positive_labels, negative_labels)
 
-        ppr_edge_indices, metadata = extract_edge_type_metadata(
-            metadata, PPR_EDGE_INDEX_METADATA_KEY
-        )
-        ppr_weights, metadata = extract_edge_type_metadata(
-            metadata, PPR_WEIGHT_METADATA_KEY
-        )
         assert ppr_edge_indices.keys() == ppr_weights.keys(), (
             f"PPR edge index and weight edge types must match, "
             f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"

@@ -582,12 +582,11 @@ class DistNeighborLoader(BaseDistLoader):
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
 
-        ppr_edge_indices, metadata = extract_edge_type_metadata(
-            metadata, PPR_EDGE_INDEX_METADATA_KEY
+        matched, metadata = extract_edge_type_metadata(
+            metadata, [PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY]
         )
-        ppr_weights, metadata = extract_edge_type_metadata(
-            metadata, PPR_WEIGHT_METADATA_KEY
-        )
+        ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
+        ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
         assert ppr_edge_indices.keys() == ppr_weights.keys(), (
             f"PPR edge index and weight edge types must match, "
             f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
