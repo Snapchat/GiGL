@@ -596,7 +596,6 @@ class DistNeighborLoader(BaseDistLoader):
             data[edge_type].edge_index = edge_index
             data[edge_type].weight = ppr_weights[edge_type]
 
-        # Any remaining metadata (including homo PPR plain "edge_index"/"weight" keys) is set directly.
         for key, value in metadata.items():
             data[key] = value
         return data
