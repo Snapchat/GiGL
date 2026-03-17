@@ -98,25 +98,8 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Resolve sampler class and any extra kwargs from options
-        extra_sampler_kwargs: dict[str, object] = {}
-        if isinstance(sampler_options, KHopNeighborSamplerOptions):
-            sampler_cls = DistNeighborSampler
-        elif isinstance(sampler_options, PPRSamplerOptions):
-            sampler_cls = DistPPRNeighborSampler
-            extra_sampler_kwargs = {
-                "alpha": sampler_options.alpha,
-                "eps": sampler_options.eps,
-                "max_ppr_nodes": sampler_options.max_ppr_nodes,
-                "num_nbrs_per_hop": sampler_options.num_nbrs_per_hop,
-                "total_degree_dtype": sampler_options.total_degree_dtype,
-            }
-        else:
-            raise NotImplementedError(
-                f"Unsupported sampler options type: {type(sampler_options)}"
-            )
-
-        dist_sampler = sampler_cls(
+        # Shared args for all sampler types (positional args to DistNeighborSampler.__init__)
+        shared_sampler_args = (
             data,
             sampling_config.num_neighbors,
             sampling_config.with_edge,
@@ -128,9 +111,27 @@ def _sampling_worker_loop(
             worker_options.use_all2all,
             worker_options.worker_concurrency,
             current_device,
-            seed=sampling_config.seed,
-            **extra_sampler_kwargs,
         )
+
+        if isinstance(sampler_options, KHopNeighborSamplerOptions):
+            dist_sampler = DistNeighborSampler(
+                *shared_sampler_args,
+                seed=sampling_config.seed,
+            )
+        elif isinstance(sampler_options, PPRSamplerOptions):
+            dist_sampler = DistPPRNeighborSampler(
+                *shared_sampler_args,
+                seed=sampling_config.seed,
+                alpha=sampler_options.alpha,
+                eps=sampler_options.eps,
+                max_ppr_nodes=sampler_options.max_ppr_nodes,
+                num_nbrs_per_hop=sampler_options.num_nbrs_per_hop,
+                total_degree_dtype=sampler_options.total_degree_dtype,
+            )
+        else:
+            raise NotImplementedError(
+                f"Unsupported sampler options type: {type(sampler_options)}"
+            )
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]

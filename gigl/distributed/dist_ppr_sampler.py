@@ -180,8 +180,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         if self._is_homogeneous:
             assert isinstance(degree_tensors, torch.Tensor)
-            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.clamp(max=dtype_max).to(
-                dtype
+            result[_PPR_HOMOGENEOUS_NODE_TYPE] = (
+                degree_tensors.to(torch.int64).clamp(max=dtype_max).to(dtype)
             )
         else:
             assert isinstance(degree_tensors, dict)

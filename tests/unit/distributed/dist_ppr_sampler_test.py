@@ -10,7 +10,7 @@ Both our forward push algorithm (Andersen et al., 2006) and NetworkX's
 ``pagerank`` (power iteration) compute Personalized PageRank — they are
 different solvers for the same quantity.  With a small residual tolerance
 (eps=1e-6), forward push converges close enough that per-node scores match
-NetworkX within atol=1e-3.
+NetworkX within atol=1e-6 (observed deltas are ~1e-7).
 
 Another note is that our ``alpha`` is the *restart* (teleport) probability — the probability of
 jumping back to the seed at each step.  NetworkX's ``alpha`` is the *damping
@@ -271,8 +271,8 @@ def _assert_ppr_scores_match_reference(
     """Assert sampler PPR scores match reference scores per node type.
 
     Checks that top-k node sets are identical and that per-node scores
-    are within atol=1e-3.  The forward push error per node is bounded by
-    O(alpha * eps * degree), so atol=1e-3 is generous for eps=1e-6.
+    are within atol=1e-6.  The forward push error per node is bounded by
+    O(alpha * eps * degree); observed deltas are ~1e-7 for eps=1e-6.
 
     Args:
         ntype_to_sampler_ppr: Sampler output from :func:`_extract_hetero_ppr_scores`.
@@ -291,9 +291,9 @@ def _assert_ppr_scores_match_reference(
         for node_id in reference_ppr[ntype_str]:
             ref_score = reference_ppr[ntype_str][node_id]
             sam_score = ntype_to_sampler_ppr[ntype_str][node_id]
-            assert abs(sam_score - ref_score) < 1e-3, (
+            assert abs(sam_score - ref_score) < 1e-6, (
                 f"{seed_id}, type {ntype_str}, node {node_id}: "
-                f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
+                f"sampler={sam_score:.8f} vs reference={ref_score:.8f}"
             )
 
 
@@ -375,13 +375,13 @@ def _run_ppr_loader_correctness_check(
         )
 
         # Forward push is an approximation; with eps=1e-6 the per-node error
-        # is bounded by O(alpha * eps * degree), so atol=1e-3 is generous.
+        # is bounded by O(alpha * eps * degree).  Observed deltas are ~1e-7.
         for node_id in reference_ppr:
             ref_score = reference_ppr[node_id]
             sam_score = sampler_ppr[node_id]
-            assert abs(sam_score - ref_score) < 1e-3, (
+            assert abs(sam_score - ref_score) < 1e-6, (
                 f"Seed {seed_global_id}, node {node_id}: "
-                f"sampler={sam_score:.6f} vs reference={ref_score:.6f}"
+                f"sampler={sam_score:.8f} vs reference={ref_score:.8f}"
             )
 
         batches_checked += 1
