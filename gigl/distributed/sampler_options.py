@@ -34,9 +34,6 @@ class KHopNeighborSamplerOptions:
 class PPRSamplerOptions:
     """Sampler options for PPR-based neighbor sampling using DistPPRNeighborSampler.
 
-    Degree tensors are sourced automatically from the dataset at sampler
-    initialization time and do not need to be provided here.
-
     Attributes:
         alpha: Restart probability (teleport probability back to seed). Higher
             values keep samples closer to seeds. Typical values: 0.15-0.25.
@@ -69,11 +66,9 @@ def resolve_sampler_options(
 ) -> SamplerOptions:
     """Resolve sampler_options from user-provided values.
 
-    If ``sampler_options`` is a ``PPRSamplerOptions``, returns it directly
-    (``num_neighbors`` is unused for PPR). If ``sampler_options`` is ``None``,
-    wraps ``num_neighbors`` in a ``KHopNeighborSamplerOptions``. If
-    ``KHopNeighborSamplerOptions`` is provided, validates that its
-    ``num_neighbors`` matches the explicit value.
+    If ``sampler_options`` is a ``PPRSamplerOptions``, returns it directly (``num_neighbors`` is unused for PPR).
+    If ``sampler_options`` is ``None``, wraps ``num_neighbors`` in a ``KHopNeighborSamplerOptions``.
+    If ``KHopNeighborSamplerOptions`` is provided, validates that its ``num_neighbors`` matches the explicit value.
 
     Args:
         num_neighbors: Fanout per hop (required for KHop; ignored for PPR).

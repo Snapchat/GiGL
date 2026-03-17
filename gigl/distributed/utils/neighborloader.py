@@ -1,4 +1,5 @@
 """Utils for Neighbor loaders."""
+import ast
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -300,37 +301,42 @@ def extract_metadata(
     return metadata, stripped_msg
 
 
-# Metadata keys matching this format encode a PyG edge-type attribute:
-#   "{attr_name}.{src_type}.{relation}.{dst_type}"
-# e.g. "edge_index.user.ppr.item" → data[("user", "ppr", "item")].edge_index
-_EDGE_TYPE_ATTR_PARTS = 4  # attr_name + 3-tuple edge type
-
-
-def apply_metadata(
-    data: Union[Data, HeteroData],
+def extract_edge_type_metadata(
     metadata: dict[str, torch.Tensor],
-) -> Union[Data, HeteroData]:
-    """Apply extracted metadata to a Data/HeteroData object.
+    prefix: str,
+) -> tuple[dict[EdgeType, torch.Tensor], dict[str, torch.Tensor]]:
+    """Extract entries with a given prefix from metadata, parsing the suffix as an EdgeType.
 
-    Metadata keys that encode an edge-type attribute (format
-    ``{attr}.{src}.{rel}.{dst}``) are set on the corresponding edge-type
-    store of a HeteroData object.  All other keys are set as top-level
-    attributes.
+    Scans ``metadata`` for keys that start with ``prefix``.  For each match,
+    the suffix (everything after ``prefix``) is parsed via ``ast.literal_eval``
+    as an ``EdgeType`` tuple and the tensor is added to the matched dict.
+    All other keys are placed in the remaining dict.
+
+    The original ``metadata`` is not modified.
+
+    Typical usage threads ``remaining`` through successive calls, one per prefix:
+
+    .. code-block:: python
+
+        edge_indices, metadata = extract_edge_type_metadata(metadata, EDGE_INDEX_KEY)
+        weights, metadata = extract_edge_type_metadata(metadata, WEIGHT_KEY)
 
     Args:
-        data: The PyG graph object to apply metadata to.
-        metadata: Dict of metadata keys to tensors, as returned by
-            ``extract_metadata``.
+        metadata: Dict of string keys to tensors.
+        prefix: The prefix to match against.
 
     Returns:
-        The same ``data`` object with metadata applied.
+        A 2-tuple of:
+        - matched: Dict mapping parsed ``EdgeType`` to tensor for keys that
+          started with ``prefix``.
+        - remaining: Dict of all other key/value pairs.
     """
+    matched: dict[EdgeType, torch.Tensor] = {}
+    remaining: dict[str, torch.Tensor] = {}
     for key, value in metadata.items():
-        parts = key.split(".")
-        if isinstance(data, HeteroData) and len(parts) == _EDGE_TYPE_ATTR_PARTS:
-            attr_name, src_type, relation, dst_type = parts
-            edge_type: EdgeType = (src_type, relation, dst_type)
-            setattr(data[edge_type], attr_name, value)
+        if key.startswith(prefix):
+            edge_type: EdgeType = ast.literal_eval(key[len(prefix) :])
+            matched[edge_type] = value
         else:
-            data[key] = value
-    return data
+            remaining[key] = value
+    return matched, remaining

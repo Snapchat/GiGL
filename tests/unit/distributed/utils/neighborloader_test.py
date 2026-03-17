@@ -7,7 +7,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 from gigl.distributed.utils.neighborloader import (
-    apply_metadata,
+    extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -551,55 +551,63 @@ class ExtractMetadataTest(TestCase):
         self.assertEqual(stripped_msg, {})
 
 
-class ApplyMetadataTest(TestCase):
-    def test_edge_type_keys_set_on_hetero_data(self):
-        data = HeteroData()
-        metadata = {
-            "edge_index.user.ppr.item": torch.tensor([[0, 0], [1, 2]]),
-            "weight.user.ppr.item": torch.tensor([0.5, 0.3]),
-        }
-        apply_metadata(data, metadata)
-
+class ExtractEdgeTypeMetadataTest(TestCase):
+    def test_matching_keys_extracted_and_parsed(self):
         edge_type = ("user", "ppr", "item")
-        self.assertIn(edge_type, data.edge_types)
-        self.assert_tensor_equality(
-            data[edge_type].edge_index, torch.tensor([[0, 0], [1, 2]])
-        )
-        self.assert_tensor_equality(data[edge_type].weight, torch.tensor([0.5, 0.3]))
-
-    def test_non_edge_type_keys_set_as_top_level(self):
-        data = HeteroData()
         metadata = {
-            "some_scalar": torch.tensor([42]),
-        }
-        apply_metadata(data, metadata)
-        self.assert_tensor_equality(data["some_scalar"], torch.tensor([42]))
-
-    def test_homo_data_sets_top_level(self):
-        data = Data()
-        metadata = {
-            "edge_index": torch.tensor([[0, 0], [1, 2]]),
-            "weight": torch.tensor([0.5, 0.3]),
-        }
-        apply_metadata(data, metadata)
-        self.assert_tensor_equality(data.edge_index, torch.tensor([[0, 0], [1, 2]]))
-        self.assert_tensor_equality(data.weight, torch.tensor([0.5, 0.3]))
-
-    def test_mixed_keys_on_hetero_data(self):
-        data = HeteroData()
-        metadata = {
-            "edge_index.user.ppr.item": torch.tensor([[0], [1]]),
-            "weight.user.ppr.item": torch.tensor([0.7]),
+            f"ppr_edge_index.{repr(edge_type)}": torch.tensor([[0, 0], [1, 2]]),
             "other_key": torch.tensor([99]),
         }
-        apply_metadata(data, metadata)
+        matched, remaining = extract_edge_type_metadata(metadata, "ppr_edge_index.")
 
+        self.assertEqual(set(matched.keys()), {edge_type})
+        self.assert_tensor_equality(matched[edge_type], torch.tensor([[0, 0], [1, 2]]))
+        self.assertEqual(set(remaining.keys()), {"other_key"})
+        self.assert_tensor_equality(remaining["other_key"], torch.tensor([99]))
+
+    def test_no_matching_keys_returns_empty_matched(self):
+        metadata = {
+            "edge_index": torch.tensor([[0], [1]]),
+            "weight": torch.tensor([0.5]),
+        }
+        matched, remaining = extract_edge_type_metadata(metadata, "ppr_edge_index.")
+
+        self.assertEqual(matched, {})
+        self.assertEqual(set(remaining.keys()), {"edge_index", "weight"})
+
+    def test_all_keys_match(self):
+        edge_type_a = ("user", "ppr", "item")
+        edge_type_b = ("item", "ppr", "user")
+        metadata = {
+            f"prefix.{repr(edge_type_a)}": torch.tensor([1.0]),
+            f"prefix.{repr(edge_type_b)}": torch.tensor([2.0]),
+        }
+        matched, remaining = extract_edge_type_metadata(metadata, "prefix.")
+
+        self.assertEqual(set(matched.keys()), {edge_type_a, edge_type_b})
+        self.assertEqual(remaining, {})
+
+    def test_threading_remaining_through_two_calls(self):
+        """Typical usage: call twice for two prefixes, threading remaining."""
         edge_type = ("user", "ppr", "item")
-        self.assertIn(edge_type, data.edge_types)
-        self.assert_tensor_equality(
-            data[edge_type].edge_index, torch.tensor([[0], [1]])
-        )
-        self.assert_tensor_equality(data["other_key"], torch.tensor([99]))
+        metadata = {
+            f"ppr_edge_index.{repr(edge_type)}": torch.tensor([[0], [1]]),
+            f"ppr_weight.{repr(edge_type)}": torch.tensor([0.7]),
+            "extra": torch.tensor([42]),
+        }
+        edge_indices, metadata = extract_edge_type_metadata(metadata, "ppr_edge_index.")
+        weights, metadata = extract_edge_type_metadata(metadata, "ppr_weight.")
+
+        self.assertEqual(set(edge_indices.keys()), {edge_type})
+        self.assert_tensor_equality(edge_indices[edge_type], torch.tensor([[0], [1]]))
+        self.assertEqual(set(weights.keys()), {edge_type})
+        self.assert_tensor_equality(weights[edge_type], torch.tensor([0.7]))
+        self.assertEqual(set(metadata.keys()), {"extra"})
+
+    def test_empty_metadata(self):
+        matched, remaining = extract_edge_type_metadata({}, "ppr_edge_index.")
+        self.assertEqual(matched, {})
+        self.assertEqual(remaining, {})
 
 
 if __name__ == "__main__":

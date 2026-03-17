@@ -18,7 +18,6 @@ from collections import defaultdict
 from typing import Optional, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -30,6 +29,9 @@ from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
+
+PPR_EDGE_INDEX_METADATA_KEY = "ppr_edge_index."
+PPR_WEIGHT_METADATA_KEY = "ppr_weight."
 
 # Sentinel type names for homogeneous graphs.  The PPR algorithm uses
 # dict[NodeType, ...] internally for both homo and hetero graphs; these
@@ -195,8 +197,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         )
                     max_len = max(max_len, len(degree_tensors[et]))
 
-                # Sum in int64 to avoid overflow during accumulation, then
-                # clamp to the target dtype.
+                # Each degree tensor is indexed by node ID (derived from CSR
+                # indptr), so index i in every edge type's tensor refers to
+                # the same node.  Element-wise summation gives the total degree
+                # per node across all edge types.  Shorter tensors are padded
+                # implicitly (only the first len(et_degrees) entries are added).
+                # Sum in int64 to avoid overflow, then clamp to target dtype.
                 summed = torch.zeros(max_len, dtype=torch.int64)
                 for et in edge_types:
                     et_degrees = degree_tensors[et]
@@ -507,7 +513,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     async def _sample_from_nodes(
         self,
         inputs: NodeSamplerInput,
-    ) -> Optional[SampleMessage]:
+    ) -> Union[SamplerOutput, HeteroSamplerOutput]:
         """
         Override the base sampling method to use PPR-based neighbor selection.
 
@@ -653,7 +659,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # flat local source/destination indices respectively, aligned with
             # the flat_ids order passed to induce_next.
             for virtual_etype, flat_weights in virtual_etype_to_flat_weights.items():
-                seed_type, relation, ntype = virtual_etype
                 rows = rows_dict.get(virtual_etype)
                 cols = cols_dict.get(virtual_etype)
                 if rows is not None and cols is not None:
@@ -661,8 +666,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
                     flat_weights = torch.zeros(0, dtype=torch.float, device=self.device)
-                metadata[f"edge_index.{seed_type}.{relation}.{ntype}"] = edge_index
-                metadata[f"weight.{seed_type}.{relation}.{ntype}"] = flat_weights
+                etype_str = repr(virtual_etype)
+                metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = edge_index
+                metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = flat_weights
 
             sample_output = HeteroSamplerOutput(
                 node=node_dict,

@@ -1,4 +1,3 @@
-import ast
 from collections import abc, defaultdict
 from itertools import count
 from typing import Callable, Optional, Union
@@ -30,7 +29,7 @@ from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_opt
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
-    apply_metadata,
+    extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
@@ -773,66 +772,6 @@ class DistABLPLoader(BaseDistLoader):
             ),
         )
 
-    def _extract_labels(
-        self, metadata: dict[str, torch.Tensor]
-    ) -> tuple[
-        dict[EdgeType, torch.Tensor],
-        dict[EdgeType, torch.Tensor],
-        dict[str, torch.Tensor],
-    ]:
-        """Partition pre-extracted metadata into labels and remaining metadata.
-
-        # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
-
-        Takes the metadata dict already extracted by ``_extract_metadata`` (keys
-        without the ``#META.`` prefix) and separates label entries from
-        non-label entries. We need to remove the labels from GLT's metadata since the `to_hetero_data` function
-        strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
-        building the HeteroData object.
-
-        Label keys use ``POSITIVE_LABEL_METADATA_KEY`` / ``NEGATIVE_LABEL_METADATA_KEY``
-        prefixes followed by a string-encoded edge type tuple.  If ``edge_dir``
-        is ``"in"``, the edge type is reversed because GLT swaps src/dst
-        internally.
-
-        Args:
-            metadata: Dict of metadata keys (without ``#META.`` prefix) to tensors,
-                as returned by ``_extract_metadata``.
-
-        Returns:
-            dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
-                where the ith row  of the tensor corresponds to the ith anchor node ID.
-            dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
-                where the ith row  of the tensor corresponds to the ith anchor node ID.
-                May be empty if no negative labels are present.
-            dict[str, torch.Tensor]: Non-label metadata entries
-        """
-        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        remaining_metadata: dict[str, torch.Tensor] = {}
-
-        for key, value in metadata.items():
-            if key.startswith(POSITIVE_LABEL_METADATA_KEY):
-                edge_type_str = key[len(POSITIVE_LABEL_METADATA_KEY) :]
-                edge_type = ast.literal_eval(edge_type_str)
-                if self.edge_dir == "in":
-                    edge_type = reverse_edge_type(edge_type)
-                positive_labels_by_label_edge_type[edge_type] = value
-            elif key.startswith(NEGATIVE_LABEL_METADATA_KEY):
-                edge_type_str = key[len(NEGATIVE_LABEL_METADATA_KEY) :]
-                edge_type = ast.literal_eval(edge_type_str)
-                if self.edge_dir == "in":
-                    edge_type = reverse_edge_type(edge_type)
-                negative_labels_by_label_edge_type[edge_type] = value
-            else:
-                remaining_metadata[key] = value
-
-        return (
-            positive_labels_by_label_edge_type,
-            negative_labels_by_label_edge_type,
-            remaining_metadata,
-        )
-
     def _set_labels(
         self,
         data: Union[Data, HeteroData],
@@ -918,13 +857,32 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        # _extract_metadata separates #META. keys from the message to work
-        # around a GLT bug in to_hetero_data.  _extract_labels then partitions
-        # the metadata into labels vs remaining non-label metadata.
-        all_metadata, stripped_msg = extract_metadata(msg, self.to_device)
-        positive_labels, negative_labels, non_label_metadata = self._extract_labels(
-            all_metadata
+        # extract_metadata separates #META. keys from the message to work
+        # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
+        # pulls out labels (and PPR edges if present) by prefix.
+        # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
+        from gigl.distributed.dist_ppr_sampler import (
+            PPR_EDGE_INDEX_METADATA_KEY,
+            PPR_WEIGHT_METADATA_KEY,
         )
+
+        metadata, stripped_msg = extract_metadata(msg, self.to_device)
+
+        positive_labels, metadata = extract_edge_type_metadata(
+            metadata, POSITIVE_LABEL_METADATA_KEY
+        )
+        if self.edge_dir == "in":
+            positive_labels = {
+                reverse_edge_type(et): v for et, v in positive_labels.items()
+            }
+        negative_labels, metadata = extract_edge_type_metadata(
+            metadata, NEGATIVE_LABEL_METADATA_KEY
+        )
+        if self.edge_dir == "in":
+            negative_labels = {
+                reverse_edge_type(et): v for et, v in negative_labels.items()
+            }
+
         data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
@@ -940,6 +898,18 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
-        data = apply_metadata(data, non_label_metadata)
+        ppr_edge_indices, metadata = extract_edge_type_metadata(
+            metadata, PPR_EDGE_INDEX_METADATA_KEY
+        )
+        ppr_weights, metadata = extract_edge_type_metadata(
+            metadata, PPR_WEIGHT_METADATA_KEY
+        )
+        for edge_type, edge_index in ppr_edge_indices.items():
+            data[edge_type].edge_index = edge_index
+        for edge_type, weight in ppr_weights.items():
+            data[edge_type].weight = weight
+        # Any remaining metadata (including homo PPR plain "edge_index"/"weight" keys) is set directly.
+        for key, value in metadata.items():
+            data[key] = value
         data = self._set_labels(data, positive_labels, negative_labels)
         return data
