@@ -924,5 +924,4 @@ class DistABLPLoader(BaseDistLoader):
         # data object so downstream code can access them via attribute lookup.
         for key, value in metadata.items():
             data[key] = value
-
         return data
