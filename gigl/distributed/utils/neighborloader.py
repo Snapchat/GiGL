@@ -1,4 +1,5 @@
 """Utils for Neighbor loaders."""
+import ast
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -298,3 +299,53 @@ def extract_metadata(
         else:
             stripped_msg[k] = v
     return metadata, stripped_msg
+
+
+def extract_edge_type_metadata(
+    metadata: dict[str, torch.Tensor],
+    prefixes: list[str],
+) -> tuple[dict[str, dict[EdgeType, torch.Tensor]], dict[str, torch.Tensor]]:
+    """Extract entries matching any of the given prefixes from metadata, grouped by prefix.
+
+    Scans ``metadata`` for keys that start with any of the provided ``prefixes``.
+    For each match, the suffix (everything after the matched prefix) is parsed via
+    ``ast.literal_eval`` as an ``EdgeType`` tuple and added to that prefix's sub-dict.
+    All unmatched keys are placed in the remaining dict.
+
+    Each prefix gets its own sub-dict in the result, so distinct categories (e.g.
+    positive labels, negative labels) can never collide even when extracted in one call.
+
+    The original ``metadata`` is not modified.
+
+    Example:
+
+        matched, remaining = extract_edge_type_metadata(
+            metadata=metadata,
+            prefixes=[POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
+        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
+
+    Args:
+        metadata: Dict of string keys to tensors.
+        prefixes: List of prefixes to match against. Prefixes should be unique (no repeats).
+
+    Returns:
+        A 2-tuple of:
+        - matched: Dict mapping each prefix to a sub-dict of
+          ``{EdgeType: tensor}`` for all keys that started with that prefix.
+          Every prefix in ``prefixes`` is guaranteed to be present as a key
+          (with an empty dict if nothing matched).
+        - remaining: Dict of all key/value pairs that matched no prefix.
+    """
+    matched: dict[str, dict[EdgeType, torch.Tensor]] = {p: {} for p in prefixes}
+    remaining: dict[str, torch.Tensor] = {}
+    for key, value in metadata.items():
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                edge_type: EdgeType = ast.literal_eval(key[len(prefix) :])
+                matched[prefix][edge_type] = value
+                break
+        else:
+            remaining[key] = value
+    return matched, remaining
