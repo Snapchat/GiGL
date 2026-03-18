@@ -240,16 +240,12 @@ def _create_user_graph_with_pe() -> HeteroData:
     data["user"].x = torch.tensor(
         [[1.0, 0.0, 0.5, 0.0], [0.0, 1.0, 0.5, 0.0], [0.0, 0.0, 1.0, 1.0]]
     )
-    data["user"].random_walk_pe = torch.tensor(
-        [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
-    )
+    data["user"].random_walk_pe = torch.tensor([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
     data["user", "connects", "user"].edge_index = torch.tensor(
         [[0, 1, 1, 2], [1, 0, 2, 1]]
     )
 
-    hop_distance = torch.tensor(
-        [[0.0, 1.0, 2.0], [1.0, 0.0, 1.0], [2.0, 1.0, 0.0]]
-    )
+    hop_distance = torch.tensor([[0.0, 1.0, 2.0], [1.0, 0.0, 1.0], [2.0, 1.0, 0.0]])
     data.hop_distance = hop_distance.to_sparse_csr()
     pairwise_distance = torch.tensor(
         [[0.0, 0.2, 0.4], [0.2, 0.0, 0.3], [0.4, 0.3, 0.0]]
@@ -285,7 +281,9 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         defaults.update(kwargs)
         return GraphTransformerEncoder(**defaults)
 
-    def test_additive_mode_matches_base_encoder_when_node_pe_projection_is_zero(self) -> None:
+    def test_additive_mode_matches_base_encoder_when_node_pe_projection_is_zero(
+        self,
+    ) -> None:
         data = _create_user_graph_with_pe()
 
         base_encoder = self._create_encoder()

@@ -283,21 +283,50 @@ def _build_sequence_layout_from_sparse_neighbors(
     if batch_idx.numel() == 0 or start_pos >= max_seq_len:
         return node_index_sequences, valid_mask
 
-    n = batch_idx.size(0)
-    is_new_batch = torch.zeros(n, dtype=torch.long, device=device)
-    is_new_batch[0] = 1
-    if n > 1:
-        is_new_batch[1:] = (batch_idx[1:] != batch_idx[:-1]).long()
+    # Compute within-anchor sequence positions for each neighbor node.
+    #
+    # After extracting from the sparse tensor, we have flattened arrays:
+    #   batch_idx = [0, 0, 0, 1, 1, 2, 2, 2, 2]  <- which anchor each node belongs to
+    #   node_idx  = [5, 7, 9, 3, 8, 1, 4, 6, 10] <- the reachable neighbor node IDs
+    #
+    # We need to compute sequence positions (1, 2, 3, ...) for each anchor's neighbors:
+    #   positions = [1, 2, 3, 1, 2, 1, 2, 3, 4]
+    #                ^anchor0^  ^a1^  ^--anchor2--^
+    #
+    # This allows scattering into the 2D output:
+    #   node_index_sequences[anchor_idx, position] = node_idx
 
-    group_id = is_new_batch.cumsum(0) - 1
-    group_starts = torch.nonzero(is_new_batch, as_tuple=True)[0]
+    n = batch_idx.size(0)
+
+    # Step 1: Mark where each anchor's neighbor group starts
+    # is_group_start = [1, 0, 0, 1, 0, 1, 0, 0, 0]
+    #                   ^        ^     ^
+    #                anchor0  anchor1  anchor2 starts here
+    is_group_start = torch.zeros(n, dtype=torch.long, device=device)
+    is_group_start[0] = 1
+    if n > 1:
+        is_group_start[1:] = (batch_idx[1:] != batch_idx[:-1]).long()
+
+    # Step 2: Assign each node to its anchor group (0-indexed)
+    # group_id = [0, 0, 0, 1, 1, 2, 2, 2, 2]
+    group_id = is_group_start.cumsum(0) - 1
+
+    # Step 3: Find the starting index of each group in the flattened array
+    # group_starts = [0, 3, 5]  (indices where each anchor's neighbors begin)
+    group_starts = torch.nonzero(is_group_start, as_tuple=True)[0]
+
+    # Step 4: Compute position = (global_index - group_start) + start_pos
+    # This gives within-group position offset by start_pos (usually 1 for anchor at pos 0)
+    # positions = [1, 2, 3, 1, 2, 1, 2, 3, 4]
     positions = torch.arange(n, device=device) - group_starts[group_id] + start_pos
 
+    # Step 5: Filter out positions that exceed max_seq_len (truncation)
     valid = positions < max_seq_len
     valid_batch_idx = batch_idx[valid]
     valid_positions = positions[valid]
     valid_node_idx = node_idx[valid]
 
+    # Step 6: Scatter valid nodes into the output tensors
     node_index_sequences[valid_batch_idx, valid_positions] = valid_node_idx
     valid_mask[valid_batch_idx, valid_positions] = True
 
@@ -335,7 +364,37 @@ def _lookup_anchor_relative_features(
     csr_matrices: Optional[list[Tensor]],
     device: torch.device,
 ) -> Optional[Tensor]:
-    """Look up anchor-relative sparse values for each valid token in the sequence."""
+    """
+    Look up anchor-relative sparse values for each valid token in the sequence.
+
+    For each node in the sequence, this looks up the value PE[anchor_idx, node_idx]
+    from each provided sparse CSR matrix. This captures the relationship between
+    each sequence token and its anchor node (e.g., hop distance from anchor).
+
+    Args:
+        anchor_indices: (batch_size,) anchor node indices in homogeneous graph
+        node_index_sequences: (batch_size, max_seq_len) node indices for each sequence position
+        valid_mask: (batch_size, max_seq_len) bool tensor indicating valid positions
+        csr_matrices: List of sparse CSR matrices, each (num_nodes, num_nodes)
+        device: Device for output tensor
+
+    Returns:
+        features: (batch_size, max_seq_len, num_attrs) tensor where
+            features[b, i, k] = csr_matrices[k][anchor_indices[b], node_index_sequences[b, i]]
+            for valid positions, 0.0 for padding positions.
+        Returns None if csr_matrices is empty or None.
+
+    Example:
+        # batch_size=2, max_seq_len=4, num_attrs=1 (e.g., hop_distance)
+        # anchor_indices = [10, 20]  (anchor nodes)
+        # node_index_sequences = [[10, 5, 7, -1],   # anchor 10's sequence
+        #                         [20, 3, 8, 9]]    # anchor 20's sequence
+        # valid_mask = [[T, T, T, F], [T, T, T, T]]
+        #
+        # Output shape: (2, 4, 1)
+        # features[0, :, 0] = [hop_dist[10,10], hop_dist[10,5], hop_dist[10,7], 0.0]
+        # features[1, :, 0] = [hop_dist[20,20], hop_dist[20,3], hop_dist[20,8], hop_dist[20,9]]
+    """
     if not csr_matrices:
         return None
 
@@ -371,7 +430,49 @@ def _lookup_pairwise_relative_features(
     csr_matrices: list[Tensor],
     device: torch.device,
 ) -> Optional[Tensor]:
-    """Look up pairwise sparse values for each valid token pair in the sequence."""
+    """
+    Look up pairwise sparse values for each valid token pair in the sequence.
+
+    For each pair of nodes (i, j) in the sequence, this looks up the value
+    PE[node_i, node_j] from each provided sparse CSR matrix. This captures
+    pairwise relationships between all sequence tokens (e.g., random walk
+    structural encoding between any two nodes).
+
+    The output is typically used as attention bias in Graph Transformers,
+    added to attention scores before softmax.
+
+    Args:
+        node_index_sequences: (batch_size, max_seq_len) node indices for each sequence position
+        valid_mask: (batch_size, max_seq_len) bool tensor indicating valid positions
+        csr_matrices: List of sparse CSR matrices, each (num_nodes, num_nodes)
+        device: Device for output tensor
+
+    Returns:
+        features: (batch_size, max_seq_len, max_seq_len, num_attrs) tensor where
+            features[b, i, j, k] = csr_matrices[k][node_index_sequences[b, i], node_index_sequences[b, j]]
+            for valid (i, j) pairs, 0.0 for padding positions.
+        Returns None if csr_matrices is empty.
+
+    Example:
+        # batch_size=2, max_seq_len=3, num_attrs=1 (e.g., random_walk_se)
+        # node_index_sequences = [[10, 5, 7],   # anchor 0's sequence
+        #                         [20, 3, -1]]  # anchor 1's sequence (padded)
+        # valid_mask = [[T, T, T], [T, T, F]]
+        #
+        # Output shape: (2, 3, 3, 1)
+        #
+        # For batch 0 (all valid), features[0, :, :, 0] is a 3x3 matrix:
+        #        node 10    node 5    node 7
+        # node 10 [PE[10,10], PE[10,5], PE[10,7]]
+        # node 5  [PE[5,10],  PE[5,5],  PE[5,7]]
+        # node 7  [PE[7,10],  PE[7,5],  PE[7,7]]
+        #
+        # For batch 1 (position 2 is padding), features[1, :, :, 0]:
+        #        node 20    node 3    (pad)
+        # node 20 [PE[20,20], PE[20,3], 0.0]
+        # node 3  [PE[3,20],  PE[3,3],  0.0]
+        # (pad)   [0.0,       0.0,      0.0]
+    """
     if not csr_matrices:
         return None
 

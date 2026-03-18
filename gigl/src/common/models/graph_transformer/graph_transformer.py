@@ -375,15 +375,16 @@ class GraphTransformerEncoder(nn.Module):
             }
         )
 
-        # PE fusion layer. In concat mode, infer the concatenated input width
-        # from the per-node feature tensors before sequence construction.
-        self._pe_projection: Optional[nn.Module] = None
+        # PE fusion layers for node-level positional encodings.
+        # In "concat" mode: projects [node_features || PE] → hid_dim
+        # In "add" mode: projects PE → hid_dim, then adds to node features
+        self._concat_pe_fusion_projection: Optional[nn.Module] = None
         if pe_integration_mode == "concat" and pe_attr_names:
-            self._pe_projection = nn.LazyLinear(hid_dim)
+            self._concat_pe_fusion_projection = nn.LazyLinear(hid_dim)
 
-        self._node_pe_projection: Optional[nn.Module] = None
+        self._pe_projection: Optional[nn.Module] = None
         if pe_integration_mode == "add" and pe_attr_names:
-            self._node_pe_projection = nn.LazyLinear(hid_dim, bias=False)
+            self._pe_projection = nn.LazyLinear(hid_dim, bias=False)
 
         self._anchor_pe_attention_bias_projection: Optional[nn.Linear] = None
         if anchor_based_pe_attr_names:
@@ -476,15 +477,15 @@ class GraphTransformerEncoder(nn.Module):
                     device=device,
                 )
                 if self._pe_integration_mode == "add":
-                    if self._node_pe_projection is None:
-                        raise ValueError("Node PE projection layer is not initialized.")
-                    x_projected = x_projected + self._node_pe_projection(node_pe)
-                else:
                     if self._pe_projection is None:
+                        raise ValueError("PE projection layer is not initialized.")
+                    x_projected = x_projected + self._pe_projection(node_pe)
+                else:
+                    if self._concat_pe_fusion_projection is None:
                         raise ValueError(
-                            "Concat PE projection layer is not initialized."
+                            "Concat PE fusion projection layer is not initialized."
                         )
-                    x_projected = self._pe_projection(
+                    x_projected = self._concat_pe_fusion_projection(
                         torch.cat([x_projected, node_pe], dim=-1)
                     )
             projected_x_dict[node_type] = x_projected
@@ -565,32 +566,82 @@ class GraphTransformerEncoder(nn.Module):
         sequences: Tensor,
         attention_bias_data: dict[str, Optional[Tensor]],
     ) -> Tensor:
-        """Build additive attention bias from padding and learned relative PE projections."""
+        """Build additive attention bias from padding mask and learned relative PE projections.
+
+        This function constructs a combined attention bias tensor that is added to
+        attention scores before softmax. The bias has three components:
+
+        1. **Padding mask bias**: Sets padded positions to -inf so they receive zero
+           attention weight after softmax. Shape: (batch, 1, 1, seq) broadcasts to
+           (batch, num_heads, seq, seq) for key masking.
+
+        2. **Anchor-relative bias** (optional): For each sequence position, looks up
+           the PE value relative to the anchor (e.g., hop distance from anchor).
+           Input shape: (batch, seq, num_anchor_attrs)
+           After projection: (batch, num_heads, 1, seq) - same bias for all query positions.
+
+        3. **Pairwise bias** (optional): For each (query, key) pair, looks up the PE
+           value between those two nodes (e.g., random walk structural encoding).
+           Input shape: (batch, seq, seq, num_pairwise_attrs)
+           After projection: (batch, num_heads, seq, seq) - unique bias per query-key pair.
+
+        Args:
+            valid_mask: Boolean mask of shape (batch_size, seq_len) indicating
+                valid (non-padding) positions.
+            sequences: Input sequences of shape (batch_size, seq_len, hid_dim),
+                used only to infer dtype and device.
+            attention_bias_data: Dictionary containing optional PE tensors:
+                - "anchor_bias": (batch, seq, num_anchor_attrs) or None
+                - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
+
+        Returns:
+            Combined attention bias tensor of shape (batch_size, num_heads, seq_len, seq_len)
+            or broadcastable shape. Added to attention scores before softmax.
+
+        Example:
+            # With batch_size=2, seq_len=4, num_heads=8
+            # valid_mask = [[T, T, T, F], [T, T, F, F]]
+            #
+            # Output attn_bias shape: (2, 8, 4, 4)
+            # - Positions where valid_mask is False get -inf
+            # - Anchor bias adds per-key bias (same for all queries)
+            # - Pairwise bias adds unique bias for each (query, key) pair
+        """
         batch_size, seq_len = valid_mask.shape
         dtype = sequences.dtype
         device = sequences.device
         negative_inf = torch.finfo(dtype).min
 
+        # Step 1: Initialize with padding mask bias
+        # Shape: (batch, 1, 1, seq) - broadcasts to mask invalid keys for all queries/heads
         attn_bias = torch.zeros(
             (batch_size, 1, 1, seq_len),
             dtype=dtype,
             device=device,
         )
         attn_bias = attn_bias.masked_fill(
-            ~valid_mask.unsqueeze(1).unsqueeze(2),
+            ~valid_mask.unsqueeze(1).unsqueeze(2),  # (batch, 1, 1, seq)
             negative_inf,
         )
 
+        # Step 2: Add anchor-relative bias (optional)
+        # Projects (batch, seq, num_attrs) → (batch, seq, num_heads)
+        # Then reshapes to (batch, num_heads, 1, seq) for key-side bias
         anchor_bias_features = attention_bias_data.get("anchor_bias")
         if anchor_bias_features is not None:
             if self._anchor_pe_attention_bias_projection is None:
                 raise ValueError("Anchor attention-bias projection is not initialized.")
             anchor_bias = self._anchor_pe_attention_bias_projection(
                 anchor_bias_features.to(dtype)
-            )
-            anchor_bias = anchor_bias.permute(0, 2, 1).unsqueeze(2)
+            )  # (batch, seq, num_heads)
+            anchor_bias = anchor_bias.permute(0, 2, 1).unsqueeze(
+                2
+            )  # (batch, num_heads, 1, seq)
             attn_bias = attn_bias + anchor_bias
 
+        # Step 3: Add pairwise bias (optional)
+        # Projects (batch, seq, seq, num_attrs) → (batch, seq, seq, num_heads)
+        # Then reshapes to (batch, num_heads, seq, seq)
         pairwise_bias_features = attention_bias_data.get("pairwise_bias")
         if pairwise_bias_features is not None:
             if self._pairwise_pe_attention_bias_projection is None:
@@ -599,8 +650,10 @@ class GraphTransformerEncoder(nn.Module):
                 )
             pairwise_bias = self._pairwise_pe_attention_bias_projection(
                 pairwise_bias_features.to(dtype)
-            )
-            pairwise_bias = pairwise_bias.permute(0, 3, 1, 2)
+            )  # (batch, seq, seq, num_heads)
+            pairwise_bias = pairwise_bias.permute(
+                0, 3, 1, 2
+            )  # (batch, num_heads, seq, seq)
             attn_bias = attn_bias + pairwise_bias
 
         return attn_bias

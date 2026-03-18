@@ -624,18 +624,12 @@ def _create_hetero_data_with_relative_pe() -> HeteroData:
     data["user"].x = torch.tensor(
         [[1.0, 0.0, 0.5, 0.0], [0.0, 1.0, 0.5, 0.0], [0.0, 0.0, 1.0, 1.0]]
     )
-    data["item"].x = torch.tensor(
-        [[2.0, 0.0, 0.0, 1.0], [0.0, 2.0, 1.0, 0.0]]
-    )
+    data["item"].x = torch.tensor([[2.0, 0.0, 0.0, 1.0], [0.0, 2.0, 1.0, 0.0]])
 
-    data["user"].random_walk_pe = torch.tensor(
-        [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
-    )
+    data["user"].random_walk_pe = torch.tensor([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
     data["item"].random_walk_pe = torch.tensor([[1.0, 1.1], [1.2, 1.3]])
 
-    data["user", "buys", "item"].edge_index = torch.tensor(
-        [[0, 1, 1, 2], [0, 0, 1, 1]]
-    )
+    data["user", "buys", "item"].edge_index = torch.tensor([[0, 1, 1, 2], [0, 0, 1, 1]])
     data["item", "bought_by", "user"].edge_index = torch.tensor(
         [[0, 0, 1, 1], [0, 1, 1, 2]]
     )
@@ -652,7 +646,11 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
     def test_transform_returns_base_sequences_and_anchor_relative_bias(self) -> None:
         data = _create_hetero_data_with_relative_pe()
 
-        sequences, valid_mask, attention_bias_data = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            valid_mask,
+            attention_bias_data,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=4,
@@ -666,10 +664,16 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         self.assertIsNone(attention_bias_data["pairwise_bias"])
         self.assertTrue(valid_mask[0, 0].item())
 
-    def test_attention_bias_outputs_include_valid_mask_and_relative_features(self) -> None:
+    def test_attention_bias_outputs_include_valid_mask_and_relative_features(
+        self,
+    ) -> None:
         data = _create_hetero_data_with_relative_pe()
 
-        sequences, valid_mask, attention_bias_data = heterodata_to_graph_transformer_input(
+        (
+            sequences,
+            valid_mask,
+            attention_bias_data,
+        ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
             max_seq_len=4,
