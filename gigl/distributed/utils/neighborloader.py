@@ -328,7 +328,7 @@ def extract_edge_type_metadata(
 
     Args:
         metadata: Dict of string keys to tensors.
-        prefixes: List of prefixes to match against.
+        prefixes: List of prefixes to match against. Prefixes should be unique (no repeats).
 
     Returns:
         A 2-tuple of:
