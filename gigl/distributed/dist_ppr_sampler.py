@@ -81,7 +81,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
           row 1 is local neighbor indices.
         - ``data.weight``: ``[N]`` float — PPR score for each pair.
 
-    **Heterogeneous (HeteroData)** — one virtual edge type per
+    **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", ntype)].edge_index``: same format as above.
         - ``data[(seed_type, "ppr", ntype)].weight``: same format as above.
@@ -104,7 +104,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         alpha: float = 0.5,
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
-        num_nbrs_per_hop: int = 100000,
+        num_nbrs_per_hop: int = 100_000,
         total_degree_dtype: torch.dtype = torch.int32,
         **kwargs,
     ):
@@ -602,11 +602,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             # Compute PPR for each seed type, collecting flat global neighbor IDs,
             # weights, and per-seed counts.  Build nbr_dict for a single
-            # inducer.induce_next call using virtual edge types (seed_type, 'ppr', ntype)
+            # inducer.induce_next call using PPR edge types (seed_type, 'ppr', ntype)
             # — the inducer only cares about etype[0] and etype[-1] as source/dest
             # node types, so the relation name is arbitrary.
             nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
-            virtual_etype_to_flat_weights: dict[EdgeType, torch.Tensor] = {}
+            ppr_edge_type_to_flat_weights: dict[EdgeType, torch.Tensor] = {}
 
             for seed_type, seed_nodes in nodes_to_sample.items():
                 (
@@ -619,23 +619,23 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 assert isinstance(ntype_to_valid_counts, dict)
 
                 for ntype, flat_ids in ntype_to_flat_ids.items():
-                    virtual_etype: EdgeType = (seed_type, "ppr", ntype)
+                    ppr_edge_type: EdgeType = (seed_type, "ppr", ntype)
                     valid_counts = ntype_to_valid_counts[ntype]
-                    virtual_etype_to_flat_weights[
-                        virtual_etype
+                    ppr_edge_type_to_flat_weights[
+                        ppr_edge_type
                     ] = ntype_to_flat_weights[ntype]
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
                     # gets one consistent local index in node_dict[ntype].
                     if flat_ids.numel() > 0:
-                        nbr_dict[virtual_etype] = [
+                        nbr_dict[ppr_edge_type] = [
                             src_dict[seed_type],
                             flat_ids,
                             valid_counts,
                         ]
 
-            # induce_next processes all virtual edge types in nbr_dict in one
+            # induce_next processes all PPR edge types in nbr_dict in one
             # pass, assigning local indices to neighbors not yet registered and
             # deduplicating nodes seen from multiple seed types.  Returns:
             #   new_nodes_dict[NodeType] -> global IDs of nodes not previously
@@ -659,25 +659,30 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 if nodes
             }
 
-            # Build PyG-style edge-index output per virtual edge type.
-            # rows_dict and cols_dict are keyed by virtual edge type and give
+            # Build PyG-style edge-index output per PPR edge type.
+            # rows_dict and cols_dict are keyed by PPR edge type and give
             # flat local source/destination indices respectively, aligned with
             # the flat_ids order passed to induce_next.
-            for virtual_etype, flat_weights in virtual_etype_to_flat_weights.items():
-                rows = rows_dict.get(virtual_etype)
-                cols = cols_dict.get(virtual_etype)
+            for ppr_edge_type, flat_weights in ppr_edge_type_to_flat_weights.items():
+                rows = rows_dict.get(ppr_edge_type)
+                cols = cols_dict.get(ppr_edge_type)
                 if rows is not None and cols is not None:
                     edge_index = torch.stack([rows, cols])
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
                     flat_weights = torch.zeros(0, dtype=torch.float, device=self.device)
-                etype_str = repr(virtual_etype)
+                etype_str = repr(ppr_edge_type)
                 metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = edge_index
                 metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = flat_weights
 
             sample_output = HeteroSamplerOutput(
                 node=node_dict,
-                row={},  # PPR doesn't maintain edge structure
+                # row/col/edge are left empty rather than populated with PPR edges because
+                # the virtual (seed_type, "ppr", neighbor_type) edge types are unknown to
+                # GLT: meaning the collate functions would fail trying to process them.
+                # Instead, edge_index and weight tensors are passed through metadata and
+                # attached directly to the data object in the loader's _collate_fn.
+                row={},
                 col={},
                 edge={},  # Empty dict — GLT SampleQueue requires all values to be tensors
                 batch={input_type: input_seeds},
@@ -724,6 +729,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             sample_output = SamplerOutput(
                 node=all_nodes,
+                # row/col/edge are left empty for parity with the hetero case above.
                 row=torch.tensor([], dtype=torch.long, device=self.device),
                 col=torch.tensor([], dtype=torch.long, device=self.device),
                 edge=torch.tensor(

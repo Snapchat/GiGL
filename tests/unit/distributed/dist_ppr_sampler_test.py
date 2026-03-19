@@ -233,13 +233,13 @@ def _extract_hetero_ppr_scores(
     """
     ntype_to_sampler_ppr: dict[str, dict[int, float]] = {}
     for ntype in node_types:
-        virtual_etype = (seed_type, "ppr", ntype)
+        ppr_edge_type = (seed_type, "ppr", ntype)
         assert (
-            virtual_etype in datum.edge_types
-        ), f"Missing virtual edge type {virtual_etype} on HeteroData"
+            ppr_edge_type in datum.edge_types
+        ), f"Missing PPR edge type {ppr_edge_type} on HeteroData"
 
-        ppr_edge_index = datum[virtual_etype].edge_index
-        ppr_weights = datum[virtual_etype].weight
+        ppr_edge_index = datum[ppr_edge_type].edge_index
+        ppr_weights = datum[ppr_edge_type].weight
 
         assert (
             ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
@@ -528,13 +528,13 @@ def _run_ppr_ablp_loader_correctness_check(
         # against NetworkX) because the supervision seeds vary per batch depending
         # on the label edges, making deterministic reference computation complex.
         for ntype in [USER, STORY]:
-            virtual_etype = (STORY, "ppr", ntype)
+            ppr_edge_type = (STORY, "ppr", ntype)
             assert (
-                virtual_etype in datum.edge_types
-            ), f"Missing virtual edge type {virtual_etype} on HeteroData"
+                ppr_edge_type in datum.edge_types
+            ), f"Missing PPR edge type {ppr_edge_type} on HeteroData"
 
-            ppr_edge_index = datum[virtual_etype].edge_index
-            ppr_weights = datum[virtual_etype].weight
+            ppr_edge_index = datum[ppr_edge_type].edge_index
+            ppr_weights = datum[ppr_edge_type].weight
 
             assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
             assert ppr_weights.dim() == 1
