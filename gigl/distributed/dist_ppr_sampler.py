@@ -402,7 +402,9 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 nodes_to_lookup=nodes_to_lookup,
                 device=device,
             )
-            neighbor_cache.update(fetched_neighbors)
+            # fetched_neighbors is intentionally NOT merged into neighbor_cache
+            # upfront.  We only promote entries when a node is requeued — see
+            # the should_requeue block below.
 
             # Push residual to neighbors and re-queue in a single pass.  This
             # is safe because each seed's state is independent, and residuals
@@ -435,7 +437,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
                         for etype in edge_types_for_node:
                             cache_key = (source_node, etype)
-                            neighbor_list = neighbor_cache[cache_key]
+                            # fetched_neighbors and neighbor_cache are mutually
+                            # exclusive per iteration: the queue drain only adds
+                            # a node to nodes_to_lookup if it is absent from
+                            # neighbor_cache, so a key appears in at most one.
+                            neighbor_list = fetched_neighbors.get(
+                                cache_key, neighbor_cache.get(cache_key, [])
+                            )
                             if not neighbor_list:
                                 continue
 
@@ -462,6 +470,25 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                                 if should_requeue:
                                     queue[seed_idx][neighbor_type].add(neighbor_node)
                                     num_nodes_in_queue += 1
+                                    # Promote this node's neighbor lists to the
+                                    # persistent cache: it will be processed next
+                                    # iteration, so caching now avoids a re-fetch.
+                                    # Nodes that are never requeued (typically
+                                    # high-degree) are never promoted, keeping
+                                    # their large neighbor lists out of the cache.
+                                    for (
+                                        promote_etype
+                                    ) in self._node_type_to_edge_types.get(
+                                        neighbor_type, []
+                                    ):
+                                        promote_key = (neighbor_node, promote_etype)
+                                        if (
+                                            promote_key in fetched_neighbors
+                                            and promote_key not in neighbor_cache
+                                        ):
+                                            neighbor_cache[
+                                                promote_key
+                                            ] = fetched_neighbors[promote_key]
 
         # Extract top-k nodes by PPR score, grouped by node type.
         # Results are three flat tensors per node type (no padding):
