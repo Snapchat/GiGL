@@ -5,13 +5,8 @@
 # (e.g. pybind11) would eliminate per-operation Python overhead and enable
 # cache-friendly memory access patterns.
 
-# TODO (mkolodner-sc): In graph store mode, _sample_one_hop is an RPC call
-# and we could dispatch all edge types concurrently via asyncio.gather to
-# overlap network round-trips.  In colocated mode the calls are synchronous
-# C++ under the GIL, so concurrency wouldn't help.  Investigate whether
-# concurrent dispatch is worthwhile for graph store deployments.  The same
-# applies to _compute_ppr_scores calls in _sample_from_nodes to investigate parallelism
-# opportunities.
+# TODO (mkolodner-sc): Investigate whether concurrency for _sample_one_hop and _compute_ppr_scores will
+# yield performance benefits.
 
 import heapq
 from collections import defaultdict
@@ -27,7 +22,6 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
-from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.types.graph import is_label_edge_type
 
@@ -70,8 +64,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
 
-    Degree tensors are sourced automatically from the dataset at initialization time.
-
     The ``edge_index`` and ``weight`` fields on the output Data/HeteroData
     objects are populated with PPR seed-to-neighbor relationships (not edges
     in the original graph). ``N`` is the total number of (seed, neighbor)
@@ -107,6 +99,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         max_ppr_nodes: int = 50,
         num_nbrs_per_hop: int = 100_000,
         total_degree_dtype: torch.dtype = torch.int32,
+        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -115,11 +108,6 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self._max_ppr_nodes = max_ppr_nodes
         self._requeue_threshold_factor = alpha * eps
         self._num_nbrs_per_hop = num_nbrs_per_hop
-
-        assert isinstance(
-            self.data, DistDataset
-        ), "DistPPRNeighborSampler requires a GiGL DistDataset to access degree tensors."
-        degree_tensors = self.data.degree_tensor
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(

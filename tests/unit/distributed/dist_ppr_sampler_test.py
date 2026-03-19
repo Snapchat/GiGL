@@ -312,7 +312,7 @@ def _run_ppr_loader_correctness_check(
 
     loader = DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=[10],  # Unused by PPR sampler; required by interface
+        num_neighbors=[],  # Unused by PPR sampler; required by interface
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
             eps=_TEST_EPS,
@@ -408,7 +408,7 @@ def _run_ppr_hetero_loader_correctness_check(
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=(USER, node_ids[USER]),
-        num_neighbors=[10],  # Unused by PPR sampler; required by interface
+        num_neighbors=[],  # Unused by PPR sampler; required by interface
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
             eps=_TEST_EPS,
@@ -482,7 +482,7 @@ def _run_ppr_ablp_loader_correctness_check(
 
     loader = DistABLPLoader(
         dataset=dataset,
-        num_neighbors=[10],  # Unused by PPR sampler; required by interface
+        num_neighbors=[],  # Unused by PPR sampler; required by interface
         input_nodes=(USER, train_node_ids[USER]),
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
@@ -573,7 +573,7 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
 
     loader = DistNeighborLoader(
         dataset=dataset,
-        num_neighbors=[10],
+        num_neighbors=[],
         input_nodes=(USER, torch.tensor([0])),
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
@@ -630,7 +630,7 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
 
     loader = DistABLPLoader(
         dataset=dataset,
-        num_neighbors=[10],
+        num_neighbors=[],
         input_nodes=(USER, train_node_ids[USER]),
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
@@ -649,14 +649,14 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
 
     # story 1 is reachable only via the positive label edge from user 0.
     # It must not appear in user 0's PPR neighborhood.
-    assert 1 not in sampler_ppr[str(STORY)], (
-        "story 1 appeared in user 0's PPR output — label edge was incorrectly traversed"
-    )
+    assert (
+        1 not in sampler_ppr[str(STORY)]
+    ), "story 1 appeared in user 0's PPR output — label edge was incorrectly traversed"
 
     # story 0 is reachable via message-passing and must be present.
-    assert 0 in sampler_ppr[str(STORY)], (
-        "story 0 missing from user 0's PPR output — message-passing edge was not traversed"
-    )
+    assert (
+        0 in sampler_ppr[str(STORY)]
+    ), "story 0 missing from user 0's PPR output — message-passing edge was not traversed"
 
     shutdown_rpc()
 

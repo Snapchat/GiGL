@@ -119,6 +119,7 @@ def _sampling_worker_loop(
                 seed=sampling_config.seed,
             )
         elif isinstance(sampler_options, PPRSamplerOptions):
+            assert isinstance(data, GiglDistDataset)
             dist_sampler = DistPPRNeighborSampler(
                 *shared_sampler_args,
                 seed=sampling_config.seed,
@@ -127,6 +128,7 @@ def _sampling_worker_loop(
                 max_ppr_nodes=sampler_options.max_ppr_nodes,
                 num_nbrs_per_hop=sampler_options.num_nbrs_per_hop,
                 total_degree_dtype=sampler_options.total_degree_dtype,
+                degree_tensors=data.degree_tensor,
             )
         else:
             raise NotImplementedError(

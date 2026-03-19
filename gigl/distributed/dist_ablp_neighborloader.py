@@ -29,10 +29,15 @@ from gigl.distributed.sampler import (
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
-from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
+from gigl.distributed.sampler_options import (
+    PPRSamplerOptions,
+    SamplerOptions,
+    resolve_sampler_options,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    attach_ppr_outputs,
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
@@ -863,7 +868,7 @@ class DistABLPLoader(BaseDistLoader):
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         # extract_metadata separates #META. keys from the message to work
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
-        # pulls out labels (and PPR edges if present) by prefix.
+        # pulls out labels by prefix.
         # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
 
@@ -878,17 +883,10 @@ class DistABLPLoader(BaseDistLoader):
 
         matched, metadata = extract_edge_type_metadata(
             metadata=metadata,
-            prefixes=[
-                POSITIVE_LABEL_METADATA_KEY,
-                NEGATIVE_LABEL_METADATA_KEY,
-                PPR_EDGE_INDEX_METADATA_KEY,
-                PPR_WEIGHT_METADATA_KEY,
-            ],
+            prefixes=[POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
         )
         positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
         negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
-        ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
-        ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
         # When edge_dir="in", GLT internally swaps src/dst on all edge types during sampling,
         # so the sampler encodes label edge types in their reversed (incoming) form.
         # We reverse them back here to restore the original outward edge type that
@@ -912,13 +910,16 @@ class DistABLPLoader(BaseDistLoader):
 
         data = self._set_labels(data, positive_labels, negative_labels)
 
-        assert ppr_edge_indices.keys() == ppr_weights.keys(), (
-            f"PPR edge index and weight edge types must match, "
-            f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
-        )
-        for edge_type, edge_index in ppr_edge_indices.items():
-            data[edge_type].edge_index = edge_index
-            data[edge_type].weight = ppr_weights[edge_type]
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            matched_ppr, metadata = extract_edge_type_metadata(
+                metadata=metadata,
+                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+            )
+            attach_ppr_outputs(
+                data,
+                matched_ppr[PPR_EDGE_INDEX_METADATA_KEY],
+                matched_ppr[PPR_WEIGHT_METADATA_KEY],
+            )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.
