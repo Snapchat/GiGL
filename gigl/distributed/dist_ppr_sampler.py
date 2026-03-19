@@ -29,6 +29,7 @@ from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
+from gigl.types.graph import is_label_edge_type
 
 PPR_EDGE_INDEX_METADATA_KEY = "ppr_edge_index."
 PPR_WEIGHT_METADATA_KEY = "ppr_weight."
@@ -130,8 +131,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         # heterogeneity check.
         if self.dist_graph.data_cls == "hetero":
             self._is_homogeneous = False
-            # Heterogeneous case: map each node type to its outgoing/incoming edge types
+            # Heterogeneous case: map each node type to its outgoing/incoming edge types.
+            # Label edge types (injected by ABLP for supervision) are excluded: including
+            # them would let PPR walks cross label edges, leaking ground-truth targets into
+            # the sampled neighborhood.
             for etype in self.edge_types:
+                if is_label_edge_type(etype):
+                    continue
                 if self.edge_dir == "in":
                     # For incoming edges, we traverse FROM the destination node type
                     anchor_type = etype[-1]
@@ -225,6 +231,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ValueError: If the node ID is out of range, indicating corrupted
                 graph data or a sampler bug.
         """
+        # Destination-only node types (no outgoing edges) are absent from
+        # _node_type_to_total_degree because total degree is only computed for
+        # traversable source types.  Returning 0 here is correct: such nodes
+        # act as terminals — they accumulate PPR score but never push residual
+        # further.
+        if node_type not in self._node_type_to_total_degree:
+            return 0
         degree_tensor = self._node_type_to_total_degree[node_type]
         if node_id >= len(degree_tensor):
             raise ValueError(
@@ -386,7 +399,11 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         # correctness: forward push distributes residual to
                         # all neighbors proportionally by total degree, so
                         # every edge type must be considered.
-                        edge_types_for_node = self._node_type_to_edge_types[node_type]
+                        # Destination-only types have no entry in _node_type_to_edge_types;
+                        # .get() returns [] so we skip neighbor lookup for them.
+                        edge_types_for_node = self._node_type_to_edge_types.get(
+                            node_type, []
+                        )
                         for node_id in node_ids:
                             for etype in edge_types_for_node:
                                 cache_key = (node_id, etype)
@@ -414,7 +431,10 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                         ] += source_residual
                         residuals[seed_idx][source_type][source_node] = 0.0
 
-                        edge_types_for_node = self._node_type_to_edge_types[source_type]
+                        # Same destination-only guard as in the queue drain loop above.
+                        edge_types_for_node = self._node_type_to_edge_types.get(
+                            source_type, []
+                        )
 
                         total_degree = self._get_total_degree(source_node, source_type)
 
@@ -470,7 +490,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         #
         #   seed 0 owns flat_ids[0:1],  seed 1 owns flat_ids[1:7],
         #   seed 2 owns flat_ids[7:9],  seed 3 owns flat_ids[9:10]
-        all_node_types = self._node_type_to_edge_types.keys()
+        # _node_type_to_edge_types only contains source types; destination-only
+        # types are absent but may have accumulated PPR scores during the walk.
+        # We union with all types seen in ppr_scores so they appear in the output.
+        all_node_types: set[NodeType] = set(self._node_type_to_edge_types.keys())
+        for seed_ppr in ppr_scores:
+            all_node_types.update(seed_ppr.keys())
 
         ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
         ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}

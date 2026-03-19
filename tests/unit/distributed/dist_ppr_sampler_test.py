@@ -551,6 +551,117 @@ def _run_ppr_ablp_loader_correctness_check(
 
 
 # ---------------------------------------------------------------------------
+# Bug regression runners
+# ---------------------------------------------------------------------------
+def _run_ppr_destination_only_node_type(_: int) -> None:
+    """Verify PPR correctly handles a destination-only node type.
+
+    Uses a one-directional USER->STORY graph (no STORY->USER edges) so that
+    STORY is a destination-only type with no outgoing edges.  Previously,
+    _get_total_degree raised KeyError for STORY and ppr_scores for STORY nodes
+    were silently dropped from the output because _node_type_to_edge_types only
+    contained source types.
+    """
+    create_test_process_group()
+
+    # One-directional graph: USER->STORY only, so STORY is destination-only.
+    edge_index = torch.tensor([[0, 1], [0, 1]])
+    dataset = create_heterogeneous_dataset(
+        edge_indices={USER_TO_STORY: edge_index},
+        edge_dir="out",
+    )
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[10],
+        input_nodes=(USER, torch.tensor([0])),
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    datum = next(iter(loader))
+    assert isinstance(datum, HeteroData)
+
+    # STORY must appear in the PPR output even though it has no outgoing edges.
+    ppr_edge_type = (USER, "ppr", STORY)
+    assert (
+        ppr_edge_type in datum.edge_types
+    ), f"Missing PPR edge type {ppr_edge_type} — destination-only STORY was dropped"
+    assert (
+        datum[ppr_edge_type].edge_index.shape[1] > 0
+    ), "Expected at least one PPR edge to STORY"
+    assert (datum[ppr_edge_type].weight > 0).all()
+
+    shutdown_rpc()
+
+
+def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
+    """Verify that ABLP label edges are excluded from anchor-seed PPR walks.
+
+    Uses a graph where user 0's positive label target (story 1) is NOT
+    reachable via message-passing edges.  Previously, label edge types were
+    included in _node_type_to_edge_types, so the PPR walk could cross label
+    edges and story 1 would appear as a PPR neighbor of user 0 — leaking
+    ground-truth supervision signal into the sampled neighborhood.
+    """
+    create_test_process_group()
+
+    # Message-passing graph: user 0 <-> story 0, user 1 <-> story 2
+    # Positive label edges: user 0 -> story 1 (NOT in message graph)
+    dataset = create_heterogeneous_dataset_for_ablp(
+        positive_labels={0: [1], 1: [2]},
+        train_node_ids=[0],
+        val_node_ids=[1],
+        test_node_ids=[],
+        edge_indices={
+            USER_TO_STORY: torch.tensor([[0, 1], [0, 2]]),
+            STORY_TO_USER: torch.tensor([[0, 2], [0, 1]]),
+        },
+        edge_dir="out",
+    )
+
+    train_node_ids = dataset.train_node_ids
+    assert isinstance(train_node_ids, dict)
+
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[10],
+        input_nodes=(USER, train_node_ids[USER]),
+        supervision_edge_type=USER_TO_STORY,
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    datum = next(iter(loader))
+    assert isinstance(datum, HeteroData)
+
+    sampler_ppr = _extract_hetero_ppr_scores(datum, str(USER), [USER, STORY])
+
+    # story 1 is reachable only via the positive label edge from user 0.
+    # It must not appear in user 0's PPR neighborhood.
+    assert 1 not in sampler_ppr[str(STORY)], (
+        "story 1 appeared in user 0's PPR output — label edge was incorrectly traversed"
+    )
+
+    # story 0 is reachable via message-passing and must be present.
+    assert 0 in sampler_ppr[str(STORY)], (
+        "story 0 missing from user 0's PPR output — message-passing edge was not traversed"
+    )
+
+    shutdown_rpc()
+
+
+# ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
 class DistPPRSamplerTest(TestCase):
@@ -604,6 +715,14 @@ class DistPPRSamplerTest(TestCase):
             fn=_run_ppr_ablp_loader_correctness_check,
             args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
         )
+
+    def test_ppr_sampler_destination_only_node_type(self) -> None:
+        """Verify PPR output includes destination-only node types."""
+        mp.spawn(fn=_run_ppr_destination_only_node_type, args=())
+
+    def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
+        """Verify ABLP label edges are excluded from anchor-seed PPR walks."""
+        mp.spawn(fn=_run_ppr_ablp_label_edges_do_not_affect_anchor_ppr, args=())
 
 
 if __name__ == "__main__":
