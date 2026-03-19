@@ -58,9 +58,23 @@ def _load_file_to_bq_with_retry(
 
 
 class BqUtils:
-    def __init__(self, project: Optional[str] = None) -> None:
+    def __init__(self, project: Optional[str] = None, labels: dict[str, str] = {}) -> None:
         logger.info(f"BqUtils initialized with project: {project}")
         self.__bq_client = bigquery.Client(project=project)
+        self._default_labels = labels
+
+    def _merge_labels(self, labels: dict[str, str]) -> dict[str, str]:
+        """Merges instance-level default labels with per-call labels.
+
+        Per-call labels take precedence over instance-level defaults on key conflicts.
+
+        Args:
+            labels: Per-call labels to merge with instance defaults.
+
+        Returns:
+            Merged label dictionary.
+        """
+        return {**self._default_labels, **labels}
 
     def create_bq_dataset(self, dataset_id, exists_ok=True) -> None:
         dataset = bigquery.Dataset(dataset_id)
@@ -128,7 +142,7 @@ class BqUtils:
     ) -> RowIterator:
         logger.info(f"Running query: {query}")
         job_config = bigquery.QueryJobConfig(**job_config_args)
-        job_config.labels = labels
+        job_config.labels = self._merge_labels(labels)
         # Start the query, passing in the extra configuration.
         try:
             query_job = self.__bq_client.query(

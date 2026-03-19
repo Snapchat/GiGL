@@ -1,5 +1,5 @@
 from typing import Sequence
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from parameterized import param, parameterized
 
@@ -141,3 +141,47 @@ class GetLatestTableTest(TestCase):
             bq_table_path_prefix=self.PREFIX, table_partition_suffix="YYYYMMDDHH"
         )
         self.assertEqual(result, "myproject.mydataset.events_2025010112")
+
+
+@patch("gigl.src.common.utils.bq.bigquery.Client")
+class BqUtilsLabelsTest(TestCase):
+    INSTANCE_LABELS: dict[str, str] = {"team": "gnn", "env": "dev"}
+
+    def test_merge_labels_defaults_used_when_no_override(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        bq_utils = BqUtils(project="p", labels=self.INSTANCE_LABELS)
+        self.assertEqual(bq_utils._merge_labels({}), {"team": "gnn", "env": "dev"})
+
+    def test_merge_labels_merges_and_overrides(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        bq_utils = BqUtils(project="p", labels=self.INSTANCE_LABELS)
+        merged = bq_utils._merge_labels({"team": "ml", "job": "train"})
+        self.assertEqual(merged, {"team": "ml", "env": "dev", "job": "train"})
+
+    @patch("gigl.src.common.utils.bq.bigquery.QueryJobConfig")
+    def test_run_query_applies_merged_labels(
+        self, mock_job_config_cls: MagicMock, mock_client_cls: MagicMock
+    ) -> None:
+        bq_utils = BqUtils(project="p", labels=self.INSTANCE_LABELS)
+        mock_job_config = mock_job_config_cls.return_value
+        bq_utils.run_query("SELECT 1", labels={"job": "train"})
+        self.assertEqual(
+            mock_job_config.labels, {"team": "gnn", "env": "dev", "job": "train"}
+        )
+
+    @patch("gigl.src.common.utils.bq.bigquery.QueryJobConfig")
+    def test_count_rows_applies_merged_labels(
+        self, mock_job_config_cls: MagicMock, mock_client_cls: MagicMock
+    ) -> None:
+        bq_utils = BqUtils(project="p", labels=self.INSTANCE_LABELS)
+        mock_job_config = mock_job_config_cls.return_value
+        mock_client_cls.return_value.query.return_value.result.return_value = [
+            {"ct": 42}
+        ]
+        result = bq_utils.count_number_of_rows_in_bq_table("proj.ds.tbl")
+        self.assertEqual(result, 42)
+        self.assertEqual(
+            mock_job_config.labels, {"team": "gnn", "env": "dev"}
+        )
