@@ -25,6 +25,7 @@ from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_opt
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
@@ -558,7 +559,13 @@ class DistNeighborLoader(BaseDistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        data = super()._collate_fn(msg)
+        # Extract user-defined metadata (e.g. PPR scores) before
+        # super()._collate_fn, which calls GLT's to_hetero_data.
+        # to_hetero_data misinterprets #META. keys as edge types and
+        # fails when edge_dir="out" (tries to reverse_edge_type on them).
+        # We strip them here and re-apply after conversion.
+        non_edge_metadata, stripped_msg = extract_metadata(msg, self.to_device)
+        data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
@@ -569,4 +576,8 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
+        for key, value in non_edge_metadata.items():
+            data[key] = value
         return data

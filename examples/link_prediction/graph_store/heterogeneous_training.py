@@ -1,120 +1,76 @@
 """
-This file contains an example for how to run homogeneous link prediction training in
-**graph store mode** using GiGL.
+This file contains an example for how to run heterogeneous training in **graph store mode** using GiGL.
 
-Graph Store Mode vs Standard (Colocated) Mode
-----------------------------------------------
+Graph Store Mode vs Standard Mode:
+----------------------------------
 Graph store mode uses a heterogeneous cluster architecture with two distinct sub-clusters:
-
   1. **Storage Cluster (graph_store_pool)**: Dedicated machines for storing and serving the graph
      data. These are typically high-memory machines without GPUs (e.g., n2-highmem-32).
   2. **Compute Cluster (compute_pool)**: Dedicated machines for running model training.
      These typically have GPUs attached (e.g., n1-standard-16 with NVIDIA_TESLA_T4).
 
-This separation allows for independent scaling of storage and compute resources, better memory
-utilization (graph data stays on storage nodes), and cost optimization by using appropriate
-hardware for each role.
+This separation allows for:
+  - Independent scaling of storage and compute resources
+  - Better memory utilization (graph data stays on storage nodes)
+  - Cost optimization by using appropriate hardware for each role
 
-In contrast, the standard colocated training mode
-(see ``examples/link_prediction/homogeneous_training.py``) uses a homogeneous cluster where each
-machine handles both graph storage and computation.
+In contrast, the standard training mode (see `examples/link_prediction/heterogeneous_training.py`)
+uses a homogeneous cluster where each machine handles both graph storage and computation.
 
-Key Implementation Differences
-------------------------------
+Key Implementation Differences:
+-------------------------------
+This file (graph store mode):
+  - Uses `RemoteDistDataset` to connect to a remote graph store cluster
+  - Uses `init_compute_process` to initialize the compute node connection to storage
+  - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
+  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
+  - Fetches ABLP input via `RemoteDistDataset.get_ablp_input()` for the train/val/test splits
+  - Fetches random negative node IDs via `RemoteDistDataset.get_node_ids()`
 
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| Aspect                    | Standard (``homogeneous_training.py``)       | Graph Store (this file)                      |
-+===========================+==============================================+==============================================+
-| **Dataset class**         | ``DistDataset`` (local partition)             | ``RemoteDistDataset`` (RPC to storage)       |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Dataset loading**       | ``build_dataset_from_task_config_uri()``      | Storage nodes build data; compute nodes      |
-|                           | loads and partitions data locally             | connect via ``init_compute_process()``       |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Process group init**    | Manual ``init_process_group`` with master     | ``init_process_group(gloo)`` to              |
-|                           | IP/port, ``destroy_process_group``, then      | ``get_graph_store_info()``, then             |
-|                           | re-init in spawned processes                  | ``destroy_process_group``; spawned processes |
-|                           |                                               | call ``init_compute_process()``              |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Split/label access**    | ``dataset.train_node_ids`` /                  | ``dataset.fetch_ablp_input(split=...)``      |
-|                           | ``dataset.val_node_ids`` /                    | fetches anchors + labels from storage via    |
-|                           | ``dataset.test_node_ids`` via                 | RPC                                          |
-|                           | ``to_homogeneous()``                          |                                              |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Random negative nodes** | ``dataset.node_ids`` via                      | ``dataset.fetch_node_ids()`` fetches from    |
-|                           | ``to_homogeneous()``                          | storage via RPC                              |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Cluster info**          | ``machine_rank``, ``machine_world_size``,     | ``GraphStoreInfo`` dataclass from            |
-|                           | ``master_ip_address`` extracted manually       | ``get_graph_store_info()`` encapsulates all  |
-|                           |                                               | topology                                     |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Inter-process sharing** | N/A (each process loads own partition)        | ``mp_sharing_dict`` for efficient tensor     |
-|                           |                                               | sharing between local processes              |
-+---------------------------+----------------------------------------------+----------------------------------------------+
-| **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_proccess()`` disconnects  |
-|                           |                                               | from storage cluster                         |
-+---------------------------+----------------------------------------------+----------------------------------------------+
+Standard mode (`heterogeneous_training.py`):
+  - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
+  - Manually manages distributed process groups with master IP and port
+  - Each machine stores its own partition of the graph data
 
-Data Splitting and Storage Pipeline
-------------------------------------
-Before training begins, the **storage cluster** prepares the graph data including train/val/test
-splits.  The flow is:
+To run this file with GiGL orchestration, set the fields similar to below:
 
-1. **Splitter configuration**: The ``splitter_cls_path`` and ``splitter_kwargs`` are specified in
-   the YAML config under ``graphStoreStorageConfig.storageArgs``.  The storage entry point
-   (``storage_main.py``) parses these via ``argparse`` and dynamically imports the splitter class
-   using ``import_obj()``.  The kwargs string is evaluated with ``ast.literal_eval`` and passed to
-   the splitter constructor (e.g. ``DistNodeAnchorLinkSplitter(**splitter_kwargs)``).
+trainerConfig:
+  trainerArgs:
+    log_every_n_batch: "50"
+    ssl_positive_label_percentage: "0.05"
+  command: python -m examples.link_prediction.graph_store.heterogeneous_training
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+      # Note this gets parsed with ast.literal_eval.
+      # We do this so that the tuples for edge types get parsed as such.
+      spillter_kwargs: >-
+        {
+          "sampling_direction": "in",
+          "should_convert_labels_to_edges": true,
+          "num_val": 0.1,
+          "num_test": 0.1
+        }
+      ssl_positive_label_percentage: "0.05"
+    # We only do one session for training.
+    # You should set one server session per process group you want to communicate with.
+    # e.g. for inference:
+    # for node_type in inference_node_types:
+    #   launch_inference_process(node_type)
+    #   num_server_sessions = len(inference_node_types)
+      num_server_sessions: "1"
+featureFlags:
+  should_run_glt_backend: 'True'
 
-2. **ABLP input fetching** (at training time): ``RemoteDistDataset.fetch_ablp_input(split=...)``
-   issues an RPC to the storage cluster and returns a ``dict[int, ABLPInputNodes]`` keyed by
-   storage rank.  Each ``ABLPInputNodes`` contains ``anchor_nodes``, ``positive_labels``, and
-   optional ``negative_labels`` tensors for the requested split.
-
-3. **Node ID fetching**: ``RemoteDistDataset.fetch_node_ids()`` similarly fetches all node IDs
-   from storage, used for the random negative sampling loader.
-
-Because the storage cluster owns the split, compute nodes see train/val/test as first-class
-properties of the remote dataset.
-
-Config Example
---------------
-To run this file with GiGL orchestration, set the fields similar to below::
-
-    trainerConfig:
-      trainerArgs:
-        log_every_n_batch: "50"
-        num_neighbors: "[10, 10]"
-      command: python -m examples.link_prediction.graph_store.homogeneous_training
-      graphStoreStorageConfig:
-        command: python -m examples.link_prediction.graph_store.storage_main
-        storageArgs:
-          sample_edge_direction: "in"
-          splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
-          # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
-          # We do this so that the tuples for edge types get parsed as such.
-          splitter_kwargs: >-
-            {
-              "sampling_direction": "in",
-              "should_convert_labels_to_edges": true,
-              "num_val": 0.1,
-              "num_test": 0.1,
-              "supervision_edge_types": [("paper", "cites", "paper")]
-            }
-          # We only do one session for training.
-          # You should set one server session per process group you want to communicate with.
-          # e.g. for inference:
-          # for node_type in inference_node_types:
-          #   launch_inference_process(node_type)
-          #   num_server_sessions = len(inference_node_types)
-          num_server_sessions: "1"
-    featureFlags:
-      should_run_glt_backend: 'True'
-
-Note: Ensure you use a resource config with ``vertex_ai_graph_store_trainer_config`` when
+Note: Ensure you use a resource config with `vertex_ai_graph_store_trainer_config` when
 running in graph store mode.
 
-You can run this example in a full pipeline with ``make run_hom_cora_sup_gs_e2e_test`` from
-GiGL root.
+You can run this example in a full pipeline with `make run_het_dblp_sup_gs_e2e_test` from GiGL root.
+
+Note that the DBLP Dataset does not have specified labeled edges so we use the `ssl_positive_label_percentage`
+field in the config to indicate what percentage of edges we should select as self-supervised labeled edges.
 """
 
 import argparse
@@ -126,13 +82,13 @@ import threading
 import time
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
-from torch_geometric.data import Data
+from examples.link_prediction.models import init_example_gigl_heterogeneous_model
+from torch_geometric.data import HeteroData
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
@@ -150,7 +106,7 @@ from gigl.nn import LinkPredictionGNN, RetrievalLoss
 from gigl.src.common.translators.model_eval_metrics_translator import (
     write_eval_metrics_to_uri,
 )
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.model_eval_metrics import (
     EvalMetric,
     EvalMetricsCollection,
@@ -165,6 +121,7 @@ logger = Logger()
 
 
 # We don't see logs for graph store mode for whatever reason.
+# Using `print` instead of `logger.info` helps ameliorate the issue.
 # TODO(#442): Revert this once the GCP issues are resolved.
 def flush():
     sys.stdout.write("\n")
@@ -182,7 +139,9 @@ def _sync_metric_across_processes(metric: torch.Tensor) -> float:
         float: The average of the provided metric across all training processes
     """
     assert is_distributed_available_and_initialized(), "DDP is not initialized"
+    # Make a copy of the local loss tensor
     loss_tensor = metric.detach().clone()
+    print(f"---Rank {torch.distributed.get_rank()} loss tensor: {loss_tensor}")
     torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
     return loss_tensor.item() / torch.distributed.get_world_size()
 
@@ -191,7 +150,8 @@ def _setup_dataloaders(
     dataset: RemoteDistDataset,
     split: Literal["train", "val", "test"],
     cluster_info: GraphStoreInfo,
-    num_neighbors: list[int] | dict[EdgeType, list[int]],
+    supervision_edge_type: EdgeType,
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -205,12 +165,13 @@ def _setup_dataloaders(
         dataset (RemoteDistDataset): Remote dataset connected to the graph store cluster.
         split (Literal["train", "val", "test"]): The current split which we are loading data for.
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode.
-        num_neighbors: Fanout for subgraph sampling.
+        supervision_edge_type (EdgeType): The supervision edge type to use for training.
+        num_neighbors: Fanout for subgraph sampling, where the ith item corresponds to the number of items to sample for the ith hop.
         sampling_workers_per_process (int): Number of sampling workers per training/testing process.
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes.
         random_batch_size (int): Batch size for random negative dataloader.
         device (torch.device): Device to put loaded subgraphs on.
-        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) for the channel during sampling.
+        sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for the channel during sampling.
         process_start_gap_seconds (int): The amount of time to sleep for initializing each dataloader.
     Returns:
         DistABLPLoader: Dataloader for loading main batch data with query and labeled nodes.
@@ -218,18 +179,27 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
+    query_node_type = supervision_edge_type.dst_node_type
+    labeled_node_type = supervision_edge_type.src_node_type
+    anchor_node_type = query_node_type
+
+    print(
+        f"---Rank {rank} query node type: {query_node_type}, labeled node type: {labeled_node_type}, anchor node type: {anchor_node_type}"
+    )
+
     shuffle = split == "train"
 
     # In graph store mode, we fetch ABLP input (anchors + positive/negative labels) from the storage cluster.
-    # For homogeneous graphs, no node type or supervision edge type wrapper is needed.
-    logger.info(f"---Rank {rank} fetching ABLP input for split={split}")
+    # This returns dict[server_rank, (anchors, pos_labels, neg_labels)] which the DistABLPLoader knows how to handle.
+    print(f"---Rank {rank} fetching ABLP input for split={split}")
     flush()
     ablp_input = dataset.fetch_ablp_input(
         split=split,
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
+        anchor_node_type=anchor_node_type,
+        supervision_edge_type=supervision_edge_type,
     )
-
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
@@ -243,23 +213,24 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    logger.info(f"---Rank {rank} finished setting up main loader for split={split}")
+    print(f"---Rank {rank} finished setting up main loader for split={split}")
     flush()
 
     # We need to wait for all processes to finish initializing the main_loader before creating the
-    # random_negative_loader so that its initialization doesn't compete for memory.
+    # random_negative_loader so that its initialization doesn't compete for memory with the main_loader.
     torch.distributed.barrier()
 
-    # For the random negative loader, we get all node IDs from the storage cluster.
+    # For the random negative loader, we get all node IDs of the labeled node type from the storage cluster.
     all_node_ids = dataset.fetch_node_ids(
         rank=cluster_info.compute_node_rank,
         world_size=cluster_info.num_compute_nodes,
+        node_type=labeled_node_type,
     )
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=all_node_ids,
+        input_nodes=(labeled_node_type, all_node_ids),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=device,
@@ -269,7 +240,7 @@ def _setup_dataloaders(
         shuffle=shuffle,
     )
 
-    logger.info(
+    print(
         f"---Rank {rank} finished setting up random negative loader for split={split}"
     )
     flush()
@@ -282,28 +253,51 @@ def _setup_dataloaders(
 
 def _compute_loss(
     model: LinkPredictionGNN,
-    main_data: Data,
-    random_negative_data: Data,
+    main_data: HeteroData,
+    random_negative_data: HeteroData,
     loss_fn: RetrievalLoss,
+    supervision_edge_type: EdgeType,
+    edge_dir: str,
     device: torch.device,
 ) -> torch.Tensor:
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
         model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
-        main_data (Data): The batch of data containing query nodes, positive nodes, and hard negative nodes
-        random_negative_data (Data): The batch of data containing random negative nodes
+        main_data (HeteroData): The batch of data containing query nodes, positive nodes, and hard negative nodes
+        random_negative_data (HeteroData): The batch of data containing random negative nodes
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
+        supervision_edge_type (EdgeType): The supervision edge type to use for training in format query_node -> relation -> labeled_node
+        edge_dir (str): Direction of the supervision edge
         device (torch.device): Device for training or validation
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    # Forward pass through encoder
-    main_embeddings = model(data=main_data, device=device)
-    random_negative_embeddings = model(data=random_negative_data, device=device)
+    # Extract relevant node types from the supervision edge
+    query_node_type = supervision_edge_type.dst_node_type
+    labeled_node_type = supervision_edge_type.src_node_type
 
-    query_node_idx: torch.Tensor = torch.arange(main_data.batch_size).to(device)
-    random_negative_batch_size = random_negative_data.batch_size
+    if query_node_type == labeled_node_type:
+        inference_node_types = [query_node_type]
+    else:
+        inference_node_types = [query_node_type, labeled_node_type]
+
+    # Forward pass through encoder
+    flush()
+    main_embeddings = model(
+        data=main_data, output_node_types=inference_node_types, device=device
+    )
+    random_negative_embeddings = model(
+        data=random_negative_data,
+        output_node_types=inference_node_types,
+        device=device,
+    )
+
+    # Extracting local query, random negative, positive, hard_negative, and random_negative indices.
+    query_node_idx: torch.Tensor = torch.arange(
+        main_data[query_node_type].batch_size
+    ).to(device)
+    random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
     positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
         device
@@ -320,10 +314,16 @@ def _compute_loss(
 
     # Use local IDs to get the corresponding embeddings in the tensors
 
-    repeated_query_embeddings = main_embeddings[repeated_query_node_idx]
-    positive_node_embeddings = main_embeddings[positive_idx]
-    hard_negative_embeddings = main_embeddings[hard_negative_idx]
-    random_negative_embeddings = random_negative_embeddings[:random_negative_batch_size]
+    repeated_query_embeddings = main_embeddings[query_node_type][
+        repeated_query_node_idx
+    ]
+    positive_node_embeddings = main_embeddings[labeled_node_type][positive_idx]
+    hard_negative_embeddings = main_embeddings[labeled_node_type][hard_negative_idx]
+    random_negative_embeddings = random_negative_embeddings[labeled_node_type][
+        :random_negative_batch_size
+    ]
+
+    # Decode the query embeddings and the candidate embeddings
 
     repeated_candidate_scores = model.decode(
         query_embeddings=repeated_query_embeddings,
@@ -337,15 +337,19 @@ def _compute_loss(
         ),
     )
 
+    # Compute the global candidate ids and concatenate into a single tensor
+
     global_candidate_ids = torch.cat(
         (
-            main_data.node[positive_idx],
-            main_data.node[hard_negative_idx],
-            random_negative_data.node[:random_negative_batch_size],
+            main_data[labeled_node_type].node[positive_idx],
+            main_data[labeled_node_type].node[hard_negative_idx],
+            random_negative_data[labeled_node_type].node[:random_negative_batch_size],
         )
     )
 
-    global_repeated_query_ids = main_data.node[repeated_query_node_idx]
+    global_repeated_query_ids = main_data[query_node_type].node[repeated_query_node_idx]
+
+    # Feed scores and ids into the RetrievalLoss forward pass to get the final loss
 
     loss = loss_fn(
         repeated_candidate_scores=repeated_candidate_scores,
@@ -360,21 +364,20 @@ def _compute_loss(
 @dataclass(frozen=True)
 class TrainingProcessArgs:
     """
-    Arguments for the homogeneous training process in graph store mode.
+    Arguments for the heterogeneous training process in graph store mode.
 
     Attributes:
         local_world_size (int): Number of training processes spawned by each machine.
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode.
         mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
             sharing between local processes.
+        supervision_edge_type (EdgeType): The supervision edge type for training.
         model_uri (Uri): URI to save/load the trained model state dict.
-        eval_metrics_uri (Optional[Uri]): Destination URI for writing evaluation metrics in
-            KFP-compatible JSON format. If None, metrics are not written.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
-        node_feature_dim (int): Input node feature dimension for the model.
-        edge_feature_dim (int): Input edge feature dimension for the model.
-        num_neighbors (list[int] | dict[EdgeType, list[int]]): Fanout for subgraph sampling.
+        node_type_to_feature_dim (dict[NodeType, int]): Mapping of node types to their feature dimensions.
+        edge_type_to_feature_dim (dict[EdgeType, int]): Mapping of edge types to their feature dimensions.
+        num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling.
         sampling_workers_per_process (int): Number of sampling workers per training/testing process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size for the channel during sampling.
         process_start_gap_seconds (int): Time to sleep between dataloader initializations.
@@ -395,16 +398,19 @@ class TrainingProcessArgs:
     mp_sharing_dict: MutableMapping[str, torch.Tensor]
     mp_barrier: threading.Barrier
 
+    # Data
+    supervision_edge_type: EdgeType
+
     # Model
     model_uri: Uri
     eval_metrics_uri: Optional[Uri]
     hid_dim: int
     out_dim: int
-    node_feature_dim: int
-    edge_feature_dim: int
+    node_type_to_feature_dim: dict[NodeType, int]
+    edge_type_to_feature_dim: dict[EdgeType, int]
 
     # Sampling config
-    num_neighbors: list[int] | dict[EdgeType, list[int]]
+    num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
     sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     process_start_gap_seconds: int
@@ -434,7 +440,7 @@ def _training_process(
 
     # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster
     # and sets up torch.distributed with the appropriate backend (NCCL if CUDA available, gloo otherwise).
-    logger.info(
+    print(
         f"Initializing compute process for local_rank {local_rank} in machine {args.cluster_info.compute_node_rank}"
     )
     flush()
@@ -448,15 +454,16 @@ def _training_process(
 
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    logger.info(
+    print(
         f"---Current training process rank: {rank}, training process world size: {world_size}"
     )
     flush()
 
+    # We use one training device for each local process
     device = get_available_device(local_process_rank=local_rank)
     if torch.cuda.is_available():
         torch.cuda.set_device(device)
-    logger.info(f"---Rank {rank} training process set device {device}")
+    print(f"---Rank {rank} training process set device {device}")
 
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -469,6 +476,7 @@ def _training_process(
             dataset=dataset,
             split="train",
             cluster_info=args.cluster_info,
+            supervision_edge_type=args.supervision_edge_type,
             num_neighbors=args.num_neighbors,
             sampling_workers_per_process=args.sampling_workers_per_process,
             main_batch_size=args.main_batch_size,
@@ -487,6 +495,7 @@ def _training_process(
             dataset=dataset,
             split="val",
             cluster_info=args.cluster_info,
+            supervision_edge_type=args.supervision_edge_type,
             num_neighbors=args.num_neighbors,
             sampling_workers_per_process=args.sampling_workers_per_process,
             main_batch_size=args.main_batch_size,
@@ -499,24 +508,21 @@ def _training_process(
         val_main_loader_iter = InfiniteIterator(val_main_loader)
         val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
 
-        model = init_example_gigl_homogeneous_model(
-            node_feature_dim=args.node_feature_dim,
-            edge_feature_dim=args.edge_feature_dim,
+        model = init_example_gigl_heterogeneous_model(
+            node_type_to_feature_dim=args.node_type_to_feature_dim,
+            edge_type_to_feature_dim=args.edge_type_to_feature_dim,
             hid_dim=args.hid_dim,
             out_dim=args.out_dim,
             device=device,
             wrap_with_ddp=True,
             find_unused_encoder_parameters=True,
         )
-
         optimizer = torch.optim.AdamW(
             params=model.parameters(),
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
         )
-        logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model}"
-        )
+        print(f"Model initialized on rank {rank} training device {device}\n{model}")
         flush()
 
         # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model
@@ -530,7 +536,7 @@ def _training_process(
         last_n_batch_time: list[float] = []
         num_max_train_batches_per_process = args.num_max_train_batches // world_size
         num_val_batches_per_process = args.num_val_batches // world_size
-        logger.info(
+        print(
             f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
         )
 
@@ -541,7 +547,7 @@ def _training_process(
             train_main_loader_iter, train_random_negative_loader_iter
         ):
             if batch_idx >= num_max_train_batches_per_process:
-                logger.info(
+                print(
                     f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
                     f"stopping training on machine {args.cluster_info.compute_node_rank} local rank {local_rank}"
                 )
@@ -551,6 +557,8 @@ def _training_process(
                 main_data=main_data,
                 random_negative_data=random_data,
                 loss_fn=loss_fn,
+                supervision_edge_type=args.supervision_edge_type,
+                edge_dir=dataset.fetch_edge_dir(),
                 device=device,
             )
             optimizer.zero_grad()
@@ -561,37 +569,42 @@ def _training_process(
             last_n_batch_time.append(time.time() - batch_start)
             batch_start = time.time()
             batch_idx += 1
-            if batch_idx % args.log_every_n_batch == 0:
-                logger.info(
+            if (
+                batch_idx % args.log_every_n_batch == 0 or batch_idx < 10
+            ):  # Log the first 10 batches to ensure the model is initialized correctly
+                print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
-                logger.info(
-                    f"rank={rank}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                print(
+                    f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
                 )
                 last_n_batch_time.clear()
-                logger.info(
+                print(
                     f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
                 )
                 last_n_batch_avg_loss.clear()
                 flush()
 
             if batch_idx % args.val_every_n_batch == 0:
-                logger.info(f"rank={rank}, batch={batch_idx}, validating...")
+                print(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
                 _run_validation_loops(
                     model=model,
                     main_loader=val_main_loader_iter,
                     random_negative_loader=val_random_negative_loader_iter,
                     loss_fn=loss_fn,
+                    supervision_edge_type=args.supervision_edge_type,
+                    edge_dir=dataset.fetch_edge_dir(),
                     device=device,
                     log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
                 )
                 model.train()
-
-        logger.info(f"---Rank {rank} finished training")
+        else:
+            print(f"rank={rank} ended training early - no break condition was met")
+        print(f"---Rank {rank} finished training")
         flush()
 
         # Memory cleanup and waiting for all processes to finish
@@ -608,7 +621,7 @@ def _training_process(
 
         # We save the model on the process with rank 0.
         if torch.distributed.get_rank() == 0:
-            logger.info(
+            print(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
             )
             save_state_dict(
@@ -620,9 +633,9 @@ def _training_process(
         state_dict = load_state_dict_from_uri(
             load_from_uri=args.model_uri, device=device
         )
-        model = init_example_gigl_homogeneous_model(
-            node_feature_dim=args.node_feature_dim,
-            edge_feature_dim=args.edge_feature_dim,
+        model = init_example_gigl_heterogeneous_model(
+            node_type_to_feature_dim=args.node_type_to_feature_dim,
+            edge_type_to_feature_dim=args.edge_type_to_feature_dim,
             hid_dim=args.hid_dim,
             out_dim=args.out_dim,
             device=device,
@@ -630,19 +643,19 @@ def _training_process(
             find_unused_encoder_parameters=True,
             state_dict=state_dict,
         )
-        logger.info(
-            f"Model initialized on rank {rank} training device {device}\n{model}"
-        )
+        print(f"Model initialized on rank {rank} training device {device}\n{model}")
 
-    logger.info(f"---Rank {rank} started testing")
+    print(f"---Rank {rank} started testing")
     flush()
     testing_start_time = time.time()
+
     model.eval()
 
     test_main_loader, test_random_negative_loader = _setup_dataloaders(
         dataset=dataset,
         split="test",
         cluster_info=args.cluster_info,
+        supervision_edge_type=args.supervision_edge_type,
         num_neighbors=args.num_neighbors,
         sampling_workers_per_process=args.sampling_workers_per_process,
         main_batch_size=args.main_batch_size,
@@ -661,6 +674,8 @@ def _training_process(
         main_loader=test_main_loader_iter,
         random_negative_loader=test_random_negative_loader_iter,
         loss_fn=loss_fn,
+        supervision_edge_type=args.supervision_edge_type,
+        edge_dir=dataset.fetch_edge_dir(),
         device=device,
         log_every_n_batch=args.log_every_n_batch,
     )
@@ -687,7 +702,7 @@ def _training_process(
             eval_metrics=eval_metrics, eval_metrics_uri=args.eval_metrics_uri
         )
 
-    logger.info(
+    print(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
     )
     flush()
@@ -696,7 +711,7 @@ def _training_process(
     shutdown_compute_proccess()
     gc.collect()
 
-    logger.info(
+    print(
         f"---Rank {rank} finished all training and testing, shut down compute process"
     )
     flush()
@@ -705,30 +720,33 @@ def _training_process(
 @torch.inference_mode()
 def _run_validation_loops(
     model: LinkPredictionGNN,
-    main_loader: Iterator[Data],
-    random_negative_loader: Iterator[Data],
+    main_loader: Iterator[HeteroData],
+    random_negative_loader: Iterator[HeteroData],
     loss_fn: RetrievalLoss,
+    supervision_edge_type: EdgeType,
+    edge_dir: str,
     device: torch.device,
     log_every_n_batch: int,
     num_batches: Optional[int] = None,
 ) -> float:
     """
     Runs validation using the provided models and dataloaders.
+    This function is shared for both validation while training and testing after training has completed.
     Args:
         model (LinkPredictionGNN): DDP-wrapped LinkPredictionGNN model for training and testing
-        main_loader (Iterator[Data]): Dataloader for loading main batch data
-        random_negative_loader (Iterator[Data]): Dataloader for loading random negative data
+        main_loader (Iterator[HeteroData]): Dataloader for loading main batch data with query and labeled nodes
+        random_negative_loader (Iterator[HeteroData]): Dataloader for loading random negative data
         loss_fn (RetrievalLoss): Initialized class to use for loss calculation
+        supervision_edge_type (EdgeType): The supervision edge type to use for training
+        edge_dir (Literal["in", "out"]): Direction of the supervision edge
         device (torch.device): Device to use for training or testing
         log_every_n_batch (int): The frequency we should log batch information
         num_batches (Optional[int]): The number of batches to run the validation loop for.
-
-    Returns:
-        float: The global average validation/test loss across all processes.
     """
+
     rank = torch.distributed.get_rank()
 
-    logger.info(
+    print(
         f"Running validation loop on rank={rank}, log_every_n_batch={log_every_n_batch}, num_batches={num_batches}"
     )
     if num_batches is None:
@@ -747,25 +765,16 @@ def _run_validation_loops(
     while True:
         if num_batches and batch_idx >= num_batches:
             print(
-                f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop with batch_idx={batch_idx} and num_batches={num_batches}"
+                f"Rank {torch.distributed.get_rank()} num_batches={num_batches} reached, stopping validation loop"
             )
-            flush()
             break
         try:
             main_data = next(main_loader)
-        except StopIteration:
-            print(
-                f"Rank {torch.distributed.get_rank()} MAIN loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}"
-            )
-            flush()
-            break
-        try:
             random_data = next(random_negative_loader)
         except StopIteration:
             print(
-                f"Rank {torch.distributed.get_rank()} RANDOM NEGATIVE loader exhausted at batch_idx={batch_idx}, num_batches={num_batches}"
+                f"Rank {torch.distributed.get_rank()} test data loader exhausted, stopping validation loop"
             )
-            flush()
             break
 
         loss = _compute_loss(
@@ -773,6 +782,8 @@ def _run_validation_loops(
             main_data=main_data,
             random_negative_data=random_data,
             loss_fn=loss_fn,
+            supervision_edge_type=supervision_edge_type,
+            edge_dir=edge_dir,
             device=device,
         )
 
@@ -784,23 +795,19 @@ def _run_validation_loops(
             print(f"rank={rank}, batch={batch_idx}, latest test_loss={loss:.6f}")
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-            logger.info(
+            print(
                 f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
             flush()
-    if batch_losses:
-        local_avg_loss = statistics.mean(batch_losses)
-    else:
+    if len(batch_losses) == 0:
         print(
             f"rank={rank} WARNING: 0 batches processed in validation loop, setting local loss to 0.0"
         )
         flush()
         local_avg_loss = 0.0
-    print(
-        f"rank={rank} finished validation loop, num_batches_processed={len(batch_losses)}, local loss: {local_avg_loss:.6f}"
-    )
-    flush()
+    else:
+        local_avg_loss = statistics.mean(batch_losses)
     global_avg_val_loss = _sync_metric_across_processes(
         metric=torch.tensor(local_avg_loss, device=device)
     )
@@ -820,20 +827,17 @@ def _run_example_training(
     """
     program_start_time = time.time()
     mp.set_start_method("spawn")
-    logger.info(f"Starting sub process method: {mp.get_start_method()}")
+    print(f"Starting sub process method: {mp.get_start_method()}")
 
     # Step 1: Initialize global process group to get cluster info
     torch.distributed.init_process_group(backend="gloo")
-    logger.info(
+    print(
         f"World size: {torch.distributed.get_world_size()}, rank: {torch.distributed.get_rank()}, OS world size: {os.environ['WORLD_SIZE']}, OS rank: {os.environ['RANK']}"
     )
     cluster_info = get_graph_store_info()
     print(f"Cluster info: {cluster_info}")
-    flush()
     torch.distributed.destroy_process_group()
-    logger.info(
-        f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool"
-    )
+    print(f"Took {time.time() - program_start_time:.2f} seconds to connect worker pool")
     flush()
 
     # Step 2: Read config
@@ -865,8 +869,8 @@ def _run_example_training(
         trainer_args.get("sampling_workers_per_process", "4")
     )
 
-    main_batch_size = int(trainer_args.get("main_batch_size", "16"))
-    random_batch_size = int(trainer_args.get("random_batch_size", "16"))
+    main_batch_size = int(trainer_args.get("main_batch_size", "4"))
+    random_batch_size = int(trainer_args.get("random_batch_size", "4"))
 
     hid_dim = int(trainer_args.get("hid_dim", "16"))
     out_dim = int(trainer_args.get("out_dim", "16"))
@@ -884,7 +888,7 @@ def _run_example_training(
     num_val_batches = int(trainer_args.get("num_val_batches", "100"))
     val_every_n_batch = int(trainer_args.get("val_every_n_batch", "50"))
 
-    logger.info(
+    print(
         f"Got training args local_world_size={local_world_size}, \
         num_neighbors={num_neighbors}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
@@ -905,12 +909,19 @@ def _run_example_training(
     # Step 3: Extract model/data config
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_node_type
-    ]
-    edge_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_edge_type
-    ]
+    node_type_to_feature_dim: dict[NodeType, int] = {
+        graph_metadata.condensed_node_type_to_node_type_map[
+            condensed_node_type
+        ]: node_feature_dim
+        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
+    }
+
+    edge_type_to_feature_dim: dict[EdgeType, int] = {
+        graph_metadata.condensed_edge_type_to_edge_type_map[
+            condensed_edge_type
+        ]: edge_feature_dim
+        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
+    }
 
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
@@ -925,12 +936,21 @@ def _run_example_training(
 
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
-    # Step 4: Create shared dict for inter-process tensor sharing
+    supervision_edge_types = (
+        gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+    )
+    if len(supervision_edge_types) != 1:
+        raise NotImplementedError(
+            "GiGL Training currently only supports 1 supervision edge type."
+        )
+    supervision_edge_type = supervision_edge_types[0]
+
+    # Step 4: Create shared dict and mp barrierfor inter-process tensor sharing
     manager = mp.Manager()
     mp_sharing_dict = manager.dict()
     mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
     # Step 5: Spawn training processes
-    logger.info("--- Launching training processes ...\n")
+    print("--- Launching training processes ...\n")
     flush()
     start_time = time.time()
 
@@ -939,12 +959,13 @@ def _run_example_training(
         cluster_info=cluster_info,
         mp_sharing_dict=mp_sharing_dict,
         mp_barrier=mp_barrier,
+        supervision_edge_type=supervision_edge_type,
         model_uri=model_uri,
         eval_metrics_uri=eval_metrics_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
-        node_feature_dim=node_feature_dim,
-        edge_feature_dim=edge_feature_dim,
+        node_type_to_feature_dim=node_type_to_feature_dim,
+        edge_type_to_feature_dim=edge_type_to_feature_dim,
         num_neighbors=num_neighbors,
         sampling_workers_per_process=sampling_workers_per_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
@@ -966,8 +987,8 @@ def _run_example_training(
         nprocs=local_world_size,
         join=True,
     )
-    logger.info(f"--- Training finished, took {time.time() - start_time} seconds")
-    logger.info(
+    print(f"--- Training finished, took {time.time() - start_time} seconds")
+    print(
         f"--- Program finished, which took {time.time() - program_start_time:.2f} seconds"
     )
     flush()
@@ -980,7 +1001,7 @@ if __name__ == "__main__":
     parser.add_argument("--task_config_uri", type=str, help="Gbml config uri")
 
     args, unused_args = parser.parse_known_args()
-    logger.info(f"Unused arguments: {unused_args}")
+    print(f"Unused arguments: {unused_args}")
 
     _run_example_training(
         task_config_uri=args.task_config_uri,
