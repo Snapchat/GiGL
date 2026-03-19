@@ -378,7 +378,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
                 is_new = ~is_visited
                 del frontier_linear, insert_pos, insert_pos_clamped, is_visited
 
-            num_new = is_new.sum().item()
+            num_new = int(is_new.sum().item())
             if num_new > 0:
                 new_i = reach_i[is_new]
                 new_j = reach_j[is_new]
