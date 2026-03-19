@@ -38,8 +38,10 @@ def initialize_metrics(task_config_uri: Uri, service_name: str):
         _metrics_instance = metrics_cls_instance
         logger.info(f"Instantiated Custom Metrics Class from: {metrics_cls_path}")
     except Exception as e:
-        logger.error(f"Could not instantiate class {metrics_cls_path}: {e}")
-        raise e
+        logger.error(
+            f"Could not instantiate class {metrics_cls_path}: {e}. Falling back to No-op metrics."
+        )
+        _metrics_instance = NopMetricsPublisher()
 
 
 def get_metrics_service_instance() -> Optional[OpsMetricPublisher]:
