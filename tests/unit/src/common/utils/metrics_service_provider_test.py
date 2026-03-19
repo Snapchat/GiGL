@@ -13,7 +13,7 @@ from snapchat.research.gbml import gbml_config_pb2
 from tests.test_assets.test_case import TestCase
 
 
-class _InvalidMetricsPublisher:
+class _FailingMetricsPublisher:
     def __init__(self) -> None:
         raise ValueError("Simulated class instantiation failure")
 
@@ -67,7 +67,7 @@ class MetricsServiceProviderTest(TestCase):
 
         with patch(
             "gigl.src.common.utils.metrics_service_provider.os_utils.import_obj",
-            return_value=_InvalidMetricsPublisher,
+            return_value=_FailingMetricsPublisher,
         ):
             result = initialize_metrics(
                 task_config_uri=uri, service_name="test_service"
