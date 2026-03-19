@@ -29,7 +29,7 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
     Returns:
         ``True`` if metrics were initialized successfully (including the
         no-op default when no custom class is configured), ``False`` if a
-        custom metrics class was specified but could not be instantiated.
+        custom metrics class was specified but could not be loaded or instantiated.
     """
     global _metrics_instance
     os.environ[JOB_NAME_GROUPING_ENV_KEY] = service_name
@@ -46,8 +46,8 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
         _metrics_instance = NopMetricsPublisher()
         return True
 
-    metrics_cls = os_utils.import_obj(metrics_cls_path)
     try:
+        metrics_cls = os_utils.import_obj(metrics_cls_path)
         metrics_cls_instance: OpsMetricPublisher = metrics_cls(**metrics_args)
         assert isinstance(metrics_cls_instance, OpsMetricPublisher)
         _metrics_instance = metrics_cls_instance

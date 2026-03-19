@@ -1,5 +1,4 @@
 import tempfile
-from unittest.mock import patch
 
 from gigl.common import LocalUri
 from gigl.common.metrics.base_metrics import NopMetricsPublisher
@@ -13,19 +12,15 @@ from snapchat.research.gbml import gbml_config_pb2
 from tests.test_assets.test_case import TestCase
 
 
-class _FailingMetricsPublisher:
-    def __init__(self) -> None:
-        raise ValueError("Simulated class instantiation failure")
-
-
 class MetricsServiceProviderTest(TestCase):
     def setUp(self) -> None:
         self.proto_utils = ProtoUtils()
         self.tmp_dir = tempfile.TemporaryDirectory()
+        self._original_metrics_instance = metrics_service_provider._metrics_instance
 
     def tearDown(self) -> None:
         self.tmp_dir.cleanup()
-        metrics_service_provider._metrics_instance = None
+        metrics_service_provider._metrics_instance = self._original_metrics_instance
 
     def _write_task_config(self, config: gbml_config_pb2.GbmlConfig) -> LocalUri:
         uri = LocalUri.join(self.tmp_dir.name, "task_config.yaml")
@@ -55,23 +50,13 @@ class MetricsServiceProviderTest(TestCase):
         self.assertTrue(result)
         self.assertIsInstance(get_metrics_service_instance(), NopMetricsPublisher)
 
-    def test_class_instantiation_failure_returns_false_and_falls_back_to_nop(
-        self,
-    ) -> None:
-        """initialize_metrics returns False and falls back to NopMetricsPublisher when the class raises during instantiation."""
+    def test_invalid_custom_class_returns_false_and_falls_back_to_nop(self) -> None:
+        """initialize_metrics returns False and falls back to NopMetricsPublisher when the class path does not exist."""
         config = gbml_config_pb2.GbmlConfig()
-        config.metrics_config.metrics_cls_path = (
-            "gigl.common.metrics.base_metrics.NopMetricsPublisher"
-        )
+        config.metrics_config.metrics_cls_path = "gigl.does.not.exist.MetricsClass"
         uri = self._write_task_config(config)
 
-        with patch(
-            "gigl.src.common.utils.metrics_service_provider.os_utils.import_obj",
-            return_value=_FailingMetricsPublisher,
-        ):
-            result = initialize_metrics(
-                task_config_uri=uri, service_name="test_service"
-            )
+        result = initialize_metrics(task_config_uri=uri, service_name="test_service")
 
         self.assertFalse(result)
         self.assertIsInstance(get_metrics_service_instance(), NopMetricsPublisher)
