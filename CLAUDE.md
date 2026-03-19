@@ -141,6 +141,7 @@ development.
 - Prefer explicit parameter passing over stateful objects when the workflow is local and sequential.
 - Avoid boolean soup. If a function starts accumulating mode flags, optional callbacks, or branching setup paths,
   consider splitting it by use case instead of growing a generic entry point.
+- Don't re-invent the wheel. Check the code base for utilities that solve the task at hand.
 
 **Small examples**
 
