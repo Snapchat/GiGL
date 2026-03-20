@@ -65,7 +65,6 @@ class Trainer:
                 accelerator_type=trainer_config.gpu_type.upper().replace("-", "_"),
                 accelerator_count=trainer_config.gpu_limit,
                 replica_count=trainer_config.num_replicas,
-                boot_disk_size_gb=trainer_config.boot_disk_size_gb or 100,
                 labels=resource_config.get_resource_labels(
                     component=GiGLComponents.Trainer
                 ),

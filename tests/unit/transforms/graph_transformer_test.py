@@ -1,5 +1,5 @@
 """
-Tests for HeteroToGraphTransformerInput transform.
+Tests for heterodata_to_graph_transformer_input transform.
 """
 
 import torch
@@ -8,7 +8,6 @@ from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
 from gigl.transforms.graph_transformer import (
-    HeteroToGraphTransformerInput,
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
 )
@@ -83,7 +82,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
         anchor_indices = torch.tensor([0])
 
-        neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
+        reachable = _get_k_hop_neighbors_sparse(
             anchor_indices=anchor_indices,
             edge_index=edge_index,
             num_nodes=4,
@@ -92,7 +91,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
 
         # Should include anchor (0) and 1-hop neighbor (1)
-        mask_indices = neighbor_mask.indices()
+        mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertIn(0, nodes_reached)  # anchor
         self.assertIn(1, nodes_reached)  # 1-hop neighbor
@@ -108,7 +107,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
         anchor_indices = torch.tensor([0])
 
-        neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
+        reachable = _get_k_hop_neighbors_sparse(
             anchor_indices=anchor_indices,
             edge_index=edge_index,
             num_nodes=4,
@@ -117,7 +116,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
 
         # Should include anchor (0), 1-hop (1), and 2-hop (2)
-        mask_indices = neighbor_mask.indices()
+        mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertIn(0, nodes_reached)  # anchor
         self.assertIn(1, nodes_reached)  # 1-hop
@@ -135,7 +134,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
         anchor_indices = torch.tensor([1, 2])  # Two anchors
 
-        neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
+        reachable = _get_k_hop_neighbors_sparse(
             anchor_indices=anchor_indices,
             edge_index=edge_index,
             num_nodes=5,
@@ -145,7 +144,7 @@ class TestGetKHopNeighborsSparse(TestCase):
 
         # Both anchors should reach center (0) in 1 hop
         # And reach other leaf nodes in 2 hops
-        self.assertTrue(neighbor_mask._nnz() > 0)
+        self.assertTrue(reachable._nnz() > 0)
 
     def test_disconnected_node(self):
         """Test neighbor extraction for disconnected node."""
@@ -157,7 +156,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
         anchor_indices = torch.tensor([0])  # Node 0 is disconnected
 
-        neighbor_mask, hop_distances = _get_k_hop_neighbors_sparse(
+        reachable = _get_k_hop_neighbors_sparse(
             anchor_indices=anchor_indices,
             edge_index=edge_index,
             num_nodes=3,
@@ -166,7 +165,7 @@ class TestGetKHopNeighborsSparse(TestCase):
         )
 
         # Only anchor itself should be reachable
-        mask_indices = neighbor_mask.indices()
+        mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertEqual(nodes_reached, [0])
 
@@ -180,8 +179,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         (
             sequences,
-            attention_mask,
-            neighbor_counts,
+            valid_mask,
+            attention_bias_data,
         ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=2,
@@ -195,10 +194,10 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertEqual(sequences.shape[1], 10)  # max_seq_len
         self.assertEqual(sequences.shape[2], 16)  # feature_dim (inferred)
 
-        self.assertEqual(attention_mask.shape, (2, 10))
-        self.assertEqual(
-            neighbor_counts.shape, (1,) if neighbor_counts.dim() == 1 else (2,)
-        )
+        self.assertEqual(valid_mask.shape, (2, 10))
+        self.assertIsInstance(attention_bias_data, dict)
+        self.assertIn("anchor_bias", attention_bias_data)
+        self.assertIn("pairwise_bias", attention_bias_data)
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
@@ -206,8 +205,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         (
             sequences,
-            attention_mask,
-            neighbor_counts,
+            valid_mask,
+            attention_bias_data,
         ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
@@ -216,9 +215,9 @@ class TestHeteroToGraphTransformerInput(TestCase):
             hop_distance=2,
         )
 
-        # Attention mask should have 1s for valid positions, 0s for padding
-        num_valid = int(attention_mask[0].sum().item())
-        self.assertEqual(num_valid, neighbor_counts[0].item())
+        # Valid mask should be boolean with True for valid positions, False for padding
+        num_valid = int(valid_mask[0].sum().item())
+        self.assertGreater(num_valid, 0)  # At least anchor should be valid
 
         # Padding positions should have padding value (0.0)
         if num_valid < 20:
@@ -254,8 +253,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         # Test with 'item' as anchor
         (
             sequences,
-            attention_mask,
-            neighbor_counts,
+            valid_mask,
+            attention_bias_data,
         ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
@@ -273,8 +272,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         (
             sequences,
-            attention_mask,
-            neighbor_counts,
+            valid_mask,
+            attention_bias_data,
         ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=8,
@@ -285,14 +284,13 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         self.assertEqual(sequences.shape[0], 8)
         self.assertEqual(sequences.shape[1], 50)
-        self.assertEqual(attention_mask.shape, (8, 50))
-        self.assertEqual(neighbor_counts.shape[0], 8)
+        self.assertEqual(valid_mask.shape, (8, 50))
 
     def test_truncation(self):
         """Test that sequences are truncated to max_seq_len."""
         data = create_larger_hetero_data(num_users=50, num_items=50)
 
-        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=5,
             max_seq_len=10,  # Small max_seq_len
@@ -303,8 +301,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         # Output should respect max_seq_len
         self.assertEqual(sequences.shape[1], 10)
 
-        # All attention values should be <= 10
-        self.assertTrue((attention_mask.sum(dim=1) <= 10).all())
+        # All valid counts should be <= 10
+        self.assertTrue((valid_mask.sum(dim=1) <= 10).all())
 
     def test_custom_padding_value(self):
         """Test custom padding value."""
@@ -312,8 +310,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         (
             sequences,
-            attention_mask,
-            neighbor_counts,
+            valid_mask,
+            attention_bias_data,
         ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=1,
@@ -322,46 +320,12 @@ class TestHeteroToGraphTransformerInput(TestCase):
             padding_value=-1.0,
         )
 
-        num_valid = int(attention_mask[0].sum().item())
+        num_valid = int(valid_mask[0].sum().item())
         if num_valid < 50:
             # Padding should be -1.0
             padding_features = sequences[0, num_valid:]
             expected_padding = torch.full_like(padding_features, -1.0)
             self.assertTrue(torch.allclose(padding_features, expected_padding))
-
-
-class TestHeteroToGraphTransformerInputClass(TestCase):
-    """Tests for HeteroToGraphTransformerInput class."""
-
-    def test_callable(self):
-        """Test that class is callable and produces correct output."""
-        data = create_simple_hetero_data()
-
-        transform = HeteroToGraphTransformerInput(
-            batch_size=2,
-            max_seq_len=10,
-            anchor_node_type="user",
-        )
-
-        sequences, attention_mask, neighbor_counts = transform(data)
-
-        self.assertEqual(sequences.shape[0], 2)
-        self.assertEqual(sequences.shape[1], 10)
-
-    def test_repr(self):
-        """Test string representation."""
-        transform = HeteroToGraphTransformerInput(
-            batch_size=32,
-            max_seq_len=128,
-            anchor_node_type="user",
-            hop_distance=3,
-        )
-
-        repr_str = repr(transform)
-        self.assertIn("batch_size=32", repr_str)
-        self.assertIn("max_seq_len=128", repr_str)
-        self.assertIn("anchor_node_type='user'", repr_str)
-        self.assertIn("hop_distance=3", repr_str)
 
 
 class TestPyTorchTransformerIntegration(TestCase):
@@ -377,8 +341,8 @@ class TestPyTorchTransformerIntegration(TestCase):
         # Transform HeteroData to sequences
         (
             sequences,
-            attention_mask,
-            neighbor_counts,
+            valid_mask,
+            attention_bias_data,
         ) = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
@@ -389,7 +353,7 @@ class TestPyTorchTransformerIntegration(TestCase):
 
         # Verify shapes
         self.assertEqual(sequences.shape, (batch_size, max_seq_len, feature_dim))
-        self.assertEqual(attention_mask.shape, (batch_size, max_seq_len))
+        self.assertEqual(valid_mask.shape, (batch_size, max_seq_len))
 
         # Create a TransformerEncoderLayer
         encoder_layer = nn.TransformerEncoderLayer(
@@ -399,10 +363,10 @@ class TestPyTorchTransformerIntegration(TestCase):
             batch_first=True,  # Important: we use (batch, seq, feature) format
         )
 
-        # Convert attention_mask to the format expected by PyTorch Transformer
+        # Convert valid_mask to the format expected by PyTorch Transformer
         # PyTorch expects: True = ignore (padding), False = attend
-        # Our mask: 1.0 = valid, 0.0 = padding
-        src_key_padding_mask = attention_mask == 0  # True where padding
+        # Our mask: True = valid, False = padding
+        src_key_padding_mask = ~valid_mask  # Invert: True where padding
 
         # Forward pass through encoder layer
         output = encoder_layer(
@@ -423,7 +387,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -440,8 +404,8 @@ class TestPyTorchTransformerIntegration(TestCase):
         )
         transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
 
-        # Convert mask
-        src_key_padding_mask = attention_mask == 0
+        # Convert mask: True = padding (ignore)
+        src_key_padding_mask = ~valid_mask
 
         # Forward pass
         output = transformer_encoder(
@@ -459,7 +423,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -476,7 +440,7 @@ class TestPyTorchTransformerIntegration(TestCase):
 
         # Create causal mask (optional for graph transformers, but test compatibility)
         causal_mask = nn.Transformer.generate_square_subsequent_mask(max_seq_len)
-        src_key_padding_mask = attention_mask == 0
+        src_key_padding_mask = ~valid_mask
 
         # Forward pass with both masks
         output = encoder_layer(
@@ -495,7 +459,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -513,7 +477,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             batch_first=True,
         )
 
-        src_key_padding_mask = attention_mask == 0
+        src_key_padding_mask = ~valid_mask
 
         output = encoder_layer(
             sequences,
@@ -537,7 +501,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         feature_dim = 32
         num_classes = 5
 
-        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -572,7 +536,7 @@ class TestPyTorchTransformerIntegration(TestCase):
             num_classes=num_classes,
         )
 
-        src_key_padding_mask = attention_mask == 0
+        src_key_padding_mask = ~valid_mask
         logits = model(sequences, src_key_padding_mask)
 
         # Check output shape
@@ -598,7 +562,7 @@ class TestPyTorchTransformerIntegration(TestCase):
         max_seq_len = 20
         feature_dim = 32
 
-        sequences, attention_mask, _ = heterodata_to_graph_transformer_input(
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
             data=data,
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -613,9 +577,9 @@ class TestPyTorchTransformerIntegration(TestCase):
         self.assertEqual(sequences.shape[2], feature_dim)  # feature dimension
 
         # Verify mask is also batch-first
-        self.assertEqual(attention_mask.dim(), 2)
-        self.assertEqual(attention_mask.shape[0], batch_size)
-        self.assertEqual(attention_mask.shape[1], max_seq_len)
+        self.assertEqual(valid_mask.dim(), 2)
+        self.assertEqual(valid_mask.shape[0], batch_size)
+        self.assertEqual(valid_mask.shape[1], max_seq_len)
 
 
 def _create_hetero_data_with_relative_pe() -> HeteroData:

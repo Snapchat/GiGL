@@ -5,7 +5,9 @@ from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.models.graph_transformer.graph_transformer import (
+    FeedForwardNetwork,
     GraphTransformerEncoder,
+    GraphTransformerEncoderLayer,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from tests.test_assets.test_case import TestCase
@@ -399,6 +401,228 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 8.0)
         self.assertEqual(attn_bias[0, 0, 2, 2].item(), 27.0)
         self.assertEqual(attn_bias[0, 1, 2, 2].item(), 38.0)
+
+
+class TestFeedForwardNetwork(TestCase):
+    """Tests for FeedForwardNetwork with various activations."""
+
+    def test_standard_activation_gelu(self) -> None:
+        """Test FFN with default GELU activation."""
+        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="gelu")
+        x = torch.randn(2, 10, 32)
+        out = ffn(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+        self.assertFalse(torch.isnan(out).any())
+
+    def test_standard_activation_relu(self) -> None:
+        """Test FFN with ReLU activation."""
+        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="relu")
+        x = torch.randn(2, 10, 32)
+        out = ffn(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+        self.assertFalse(torch.isnan(out).any())
+
+    def test_standard_activation_silu(self) -> None:
+        """Test FFN with SiLU/Swish activation."""
+        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="silu")
+        x = torch.randn(2, 10, 32)
+        out = ffn(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+        self.assertFalse(torch.isnan(out).any())
+
+    def test_xglu_activation_swiglu(self) -> None:
+        """Test FFN with SwiGLU activation."""
+        ffn = FeedForwardNetwork(
+            hidden_dim=32, feedforward_dim=128, activation="swiglu"
+        )
+        x = torch.randn(2, 10, 32)
+        out = ffn(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+        self.assertFalse(torch.isnan(out).any())
+
+    def test_xglu_activation_geglu(self) -> None:
+        """Test FFN with GeGLU activation."""
+        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="geglu")
+        x = torch.randn(2, 10, 32)
+        out = ffn(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+        self.assertFalse(torch.isnan(out).any())
+
+    def test_xglu_activation_reglu(self) -> None:
+        """Test FFN with ReGLU activation."""
+        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="reglu")
+        x = torch.randn(2, 10, 32)
+        out = ffn(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+        self.assertFalse(torch.isnan(out).any())
+
+    def test_invalid_activation_raises_error(self) -> None:
+        """Test that invalid activation name raises ValueError."""
+        with self.assertRaises(ValueError) as context:
+            FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="invalid")
+        self.assertIn("Unsupported activation", str(context.exception))
+
+    def test_xglu_has_double_input_projection(self) -> None:
+        """Test that XGLU activations project to 2x feedforward_dim."""
+        ffn = FeedForwardNetwork(
+            hidden_dim=32, feedforward_dim=128, activation="swiglu"
+        )
+        # XGLU projects to 2 * feedforward_dim for gating
+        self.assertEqual(ffn._linear_in.out_features, 256)  # 2 * 128
+        self.assertEqual(ffn._linear_out.in_features, 128)
+
+    def test_gradient_flow_xglu(self) -> None:
+        """Test that gradients flow through XGLU activation."""
+        ffn = FeedForwardNetwork(
+            hidden_dim=32, feedforward_dim=128, activation="swiglu"
+        )
+        x = torch.randn(2, 10, 32, requires_grad=True)
+        out = ffn(x)
+        loss = out.sum()
+        loss.backward()
+        self.assertIsNotNone(x.grad)
+        self.assertFalse(torch.isnan(x.grad).any())
+
+
+class TestGraphTransformerEncoderLayerActivations(TestCase):
+    """Tests for GraphTransformerEncoderLayer with various activations."""
+
+    def test_layer_with_gelu(self) -> None:
+        """Test encoder layer with GELU activation."""
+        layer = GraphTransformerEncoderLayer(
+            hidden_dim=32, num_heads=4, feedforward_dim=128, activation="gelu"
+        )
+        x = torch.randn(2, 10, 32)
+        out = layer(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+
+    def test_layer_with_swiglu(self) -> None:
+        """Test encoder layer with SwiGLU activation."""
+        layer = GraphTransformerEncoderLayer(
+            hidden_dim=32, num_heads=4, feedforward_dim=128, activation="swiglu"
+        )
+        x = torch.randn(2, 10, 32)
+        out = layer(x)
+        self.assertEqual(out.shape, (2, 10, 32))
+
+
+class TestGraphTransformerEncoderFeedforwardRatio(TestCase):
+    """Tests for GraphTransformerEncoder feedforward_ratio parameter."""
+
+    def setUp(self) -> None:
+        self._node_type = NodeType("user")
+        self._edge_type = EdgeType(
+            self._node_type, Relation("connects"), self._node_type
+        )
+        self._device = torch.device("cpu")
+
+    def _create_data(self) -> HeteroData:
+        data = HeteroData()
+        data["user"].x = torch.randn(3, 16)
+        data["user", "connects", "user"].edge_index = torch.tensor(
+            [[0, 1, 2], [1, 2, 0]]
+        )
+        return data
+
+    def test_default_ratio_for_gelu_is_4(self) -> None:
+        """Test that default feedforward_ratio is 4.0 for GELU."""
+        encoder = GraphTransformerEncoder(
+            node_type_to_feat_dim_map={self._node_type: 16},
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            hid_dim=32,
+            out_dim=16,
+            num_layers=1,
+            num_heads=4,
+            activation="gelu",
+        )
+        # Check internal layer's FFN dimension
+        layer = encoder._encoder_layers[0]
+        # For standard activation, _ffn is a Sequential with Linear as first layer
+        self.assertEqual(layer._ffn._ffn[0].out_features, 128)  # 32 * 4
+
+    def test_default_ratio_for_swiglu_is_8_over_3(self) -> None:
+        """Test that default feedforward_ratio is 8/3 for SwiGLU."""
+        encoder = GraphTransformerEncoder(
+            node_type_to_feat_dim_map={self._node_type: 16},
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            hid_dim=32,
+            out_dim=16,
+            num_layers=1,
+            num_heads=4,
+            activation="swiglu",
+        )
+        # Check internal layer's FFN dimension
+        layer = encoder._encoder_layers[0]
+        # For XGLU, _linear_in projects to 2 * feedforward_dim
+        # feedforward_dim = int(32 * 8/3) = 85
+        expected_feedforward_dim = int(32 * 8.0 / 3.0)
+        self.assertEqual(
+            layer._ffn._linear_in.out_features, expected_feedforward_dim * 2
+        )
+
+    def test_custom_feedforward_ratio(self) -> None:
+        """Test custom feedforward_ratio overrides default."""
+        encoder = GraphTransformerEncoder(
+            node_type_to_feat_dim_map={self._node_type: 16},
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            hid_dim=32,
+            out_dim=16,
+            num_layers=1,
+            num_heads=4,
+            activation="gelu",
+            feedforward_ratio=2.0,
+        )
+        layer = encoder._encoder_layers[0]
+        self.assertEqual(layer._ffn._ffn[0].out_features, 64)  # 32 * 2
+
+    def test_encoder_forward_with_swiglu(self) -> None:
+        """Test encoder forward pass with SwiGLU activation."""
+        data = self._create_data()
+        encoder = GraphTransformerEncoder(
+            node_type_to_feat_dim_map={self._node_type: 16},
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            hid_dim=32,
+            out_dim=16,
+            num_layers=2,
+            num_heads=4,
+            activation="swiglu",
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            result = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(result.shape, (3, 16))
+        self.assertFalse(torch.isnan(result).any())
+
+    def test_encoder_forward_with_geglu_and_custom_ratio(self) -> None:
+        """Test encoder forward pass with GeGLU and custom feedforward_ratio."""
+        data = self._create_data()
+        encoder = GraphTransformerEncoder(
+            node_type_to_feat_dim_map={self._node_type: 16},
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            hid_dim=32,
+            out_dim=16,
+            num_layers=2,
+            num_heads=4,
+            activation="geglu",
+            feedforward_ratio=3.0,
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            result = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(result.shape, (3, 16))
+        self.assertFalse(torch.isnan(result).any())
 
 
 if __name__ == "__main__":

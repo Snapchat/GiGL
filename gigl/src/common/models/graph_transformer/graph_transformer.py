@@ -54,8 +54,31 @@ def _get_node_type_positional_encodings(
     return torch.cat(pe_parts, dim=-1)
 
 
+# Supported activation functions for FeedForwardNetwork
+_ACTIVATION_FNS = {
+    "gelu": nn.GELU,
+    "relu": nn.ReLU,
+    "silu": nn.SiLU,  # Also known as Swish
+    "tanh": nn.Tanh,
+}
+
+# XGLU activations use a gating mechanism: activation(xW) * xV
+# where W and V are separate linear projections
+_XGLU_BASE_ACTIVATIONS = {
+    "geglu": F.gelu,
+    "swiglu": F.silu,
+    "reglu": F.relu,
+}
+
+
 class FeedForwardNetwork(nn.Module):
-    """Two-layer feed-forward network with LayerNorm and GELU activation.
+    """Two-layer feed-forward network with configurable activation.
+
+    Supports standard activations (GELU, ReLU, SiLU) and XGLU family
+    (SwiGLU, GeGLU, ReGLU) which use a gating mechanism.
+
+    Note: This module does NOT include LayerNorm. Normalization should be
+    applied externally (e.g., pre-norm in the transformer layer).
 
     Adapted from RelGT's FeedForwardNetwork.
 
@@ -63,6 +86,11 @@ class FeedForwardNetwork(nn.Module):
         hidden_dim: Hidden (and output) dimension of the FFN.
         feedforward_dim: Inner dimension of the two-layer MLP.
         dropout_rate: Dropout probability applied after each linear layer.
+        activation: Activation function name. Supported values:
+            - Standard: "gelu" (default), "relu", "silu", "tanh"
+            - XGLU family: "geglu", "swiglu", "reglu"
+            XGLU activations use gating: activation(xW) * xV, which requires
+            projecting to 2x feedforward_dim internally.
     """
 
     def __init__(
@@ -70,28 +98,55 @@ class FeedForwardNetwork(nn.Module):
         hidden_dim: int,
         feedforward_dim: int,
         dropout_rate: float = 0.0,
+        activation: str = "gelu",
     ) -> None:
         super().__init__()
-        # Use LayerNorm instead of BatchNorm1d to avoid in-place updates
-        # to running statistics during training (which breaks autograd when
-        # model is called multiple times in the same forward-backward cycle)
-        self._norm_in = nn.LayerNorm(hidden_dim)
-        self._norm_out = nn.LayerNorm(hidden_dim)
-        self._ffn = nn.Sequential(
-            nn.Linear(hidden_dim, feedforward_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(feedforward_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-        )
+        self._activation_name = activation.lower()
+
+        # Validate activation
+        if (
+            self._activation_name not in _ACTIVATION_FNS
+            and self._activation_name not in _XGLU_BASE_ACTIVATIONS
+        ):
+            supported = sorted(
+                set(_ACTIVATION_FNS.keys()) | set(_XGLU_BASE_ACTIVATIONS.keys())
+            )
+            raise ValueError(
+                f"Unsupported activation '{activation}'. " f"Supported: {supported}"
+            )
+
+        self._is_xglu = self._activation_name in _XGLU_BASE_ACTIVATIONS
+
+        if self._is_xglu:
+            # XGLU: project to 2x feedforward_dim, split, apply gating
+            self._xglu_base_activation = _XGLU_BASE_ACTIVATIONS[self._activation_name]
+            self._linear_in = nn.Linear(hidden_dim, feedforward_dim * 2)
+            self._dropout_in = nn.Dropout(dropout_rate)
+            self._linear_out = nn.Linear(feedforward_dim, hidden_dim)
+            self._dropout_out = nn.Dropout(dropout_rate)
+            self._ffn = None  # Not used for XGLU
+        else:
+            # Standard activation
+            activation_fn = _ACTIVATION_FNS[self._activation_name]
+            self._ffn = nn.Sequential(
+                nn.Linear(hidden_dim, feedforward_dim),
+                activation_fn(),
+                nn.Dropout(dropout_rate),
+                nn.Linear(feedforward_dim, hidden_dim),
+                nn.Dropout(dropout_rate),
+            )
 
     def reset_parameters(self) -> None:
         """Reinitialize all learnable parameters."""
-        self._norm_in.reset_parameters()
-        self._norm_out.reset_parameters()
-        for layer in self._ffn:
-            if hasattr(layer, "reset_parameters"):
-                layer.reset_parameters()
+        if self._is_xglu:
+            nn.init.xavier_uniform_(self._linear_in.weight)
+            nn.init.zeros_(self._linear_in.bias)
+            nn.init.xavier_uniform_(self._linear_out.weight)
+            nn.init.zeros_(self._linear_out.bias)
+        else:
+            for layer in self._ffn:
+                if hasattr(layer, "reset_parameters"):
+                    layer.reset_parameters()
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass.
@@ -102,11 +157,20 @@ class FeedForwardNetwork(nn.Module):
         Returns:
             Output tensor of shape ``(batch, seq, hidden_dim)``.
         """
-        # LayerNorm normalizes over the last dimension (hidden_dim)
-        # No permute needed unlike BatchNorm1d
-        x = self._norm_in(x)
-        x = self._ffn(x)
-        x = self._norm_out(x)
+        if self._is_xglu:
+            # XGLU gating: activation(x @ W1) * (x @ W2)
+            # where W1 and W2 are the two halves of linear_in
+            x_proj = self._linear_in(x)  # (batch, seq, feedforward_dim * 2)
+            x_gate, x_value = x_proj.chunk(
+                2, dim=-1
+            )  # Each: (batch, seq, feedforward_dim)
+            x = self._xglu_base_activation(x_gate) * x_value
+            x = self._dropout_in(x)
+            x = self._linear_out(x)
+            x = self._dropout_out(x)
+        else:
+            x = self._ffn(x)
+
         return x
 
 
@@ -125,6 +189,9 @@ class GraphTransformerEncoderLayer(nn.Module):
         feedforward_dim: Inner dimension of the feed-forward network.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
+        activation: Activation function for the feed-forward network.
+            Supported values: "gelu" (default), "relu", "silu", "tanh",
+            "geglu", "swiglu", "reglu".
 
     Raises:
         ValueError: If hidden_dim is not divisible by num_heads.
@@ -137,6 +204,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         feedforward_dim: int,
         dropout_rate: float = 0.0,
         attention_dropout_rate: float = 0.0,
+        activation: str = "gelu",
     ) -> None:
         super().__init__()
         if hidden_dim % num_heads != 0:
@@ -157,7 +225,9 @@ class GraphTransformerEncoderLayer(nn.Module):
         self._attention_dropout = nn.Dropout(dropout_rate)
 
         self._ffn_norm = nn.LayerNorm(hidden_dim)
-        self._ffn = FeedForwardNetwork(hidden_dim, feedforward_dim, dropout_rate)
+        self._ffn = FeedForwardNetwork(
+            hidden_dim, feedforward_dim, dropout_rate, activation=activation
+        )
 
     def reset_parameters(self) -> None:
         """Reinitialize all learnable parameters."""
@@ -297,6 +367,16 @@ class GraphTransformerEncoder(nn.Module):
             node-level PE to token features. ``"add"`` uses node-level additive
             PE before sequence construction and attention bias for relative
             encodings.
+        activation: Activation function for the feed-forward network in each
+            transformer layer. Supported values:
+            - Standard: "gelu" (default), "relu", "silu", "tanh"
+            - XGLU family: "geglu", "swiglu", "reglu"
+            XGLU activations use gating: activation(xW) * xV.
+        feedforward_ratio: Ratio of feedforward dimension to hidden dimension
+            (feedforward_dim = hid_dim * feedforward_ratio). If None (default),
+            uses 4.0 for standard activations and 8/3 (~2.67) for XGLU variants,
+            following the convention that XGLU's gating doubles the effective
+            parameters, so a smaller ratio maintains similar parameter count.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -342,6 +422,8 @@ class GraphTransformerEncoder(nn.Module):
         pairwise_pe_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
+        activation: str = "gelu",
+        feedforward_ratio: Optional[float] = None,
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -403,7 +485,13 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         # Transformer encoder layers
-        feedforward_dim = 2 * hid_dim
+        # Default feedforward ratio: 4.0 for standard activations, 8/3 for XGLU
+        # XGLU's gating mechanism doubles effective parameters, so smaller ratio
+        # maintains similar parameter count to standard activations with ratio 4.
+        is_xglu = activation.lower() in _XGLU_BASE_ACTIVATIONS
+        if feedforward_ratio is None:
+            feedforward_ratio = 8.0 / 3.0 if is_xglu else 4.0
+        feedforward_dim = int(hid_dim * feedforward_ratio)
         self._encoder_layers = nn.ModuleList(
             [
                 GraphTransformerEncoderLayer(
@@ -412,6 +500,7 @@ class GraphTransformerEncoder(nn.Module):
                     feedforward_dim=feedforward_dim,
                     dropout_rate=dropout_rate,
                     attention_dropout_rate=attention_dropout_rate,
+                    activation=activation,
                 )
                 for _ in range(num_layers)
             ]

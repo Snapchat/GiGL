@@ -35,15 +35,13 @@ Example Usage:
 
     >>> from torch_geometric.transforms import Compose
     >>> from gigl.transforms.add_positional_encodings import (
-    ...     AddHeteroRandomWalkPE,
-    ...     AddHeteroRandomWalkSE,
+    ...     AddHeteroRandomWalkEncodings,
     ...     AddHeteroHopDistanceEncoding,
     ... )
     >>>
     >>> # First apply PE transforms to the data
     >>> pe_transform = Compose([
-    ...     AddHeteroRandomWalkPE(walk_length=8),
-    ...     AddHeteroRandomWalkSE(walk_length=8),
+    ...     AddHeteroRandomWalkEncodings(walk_length=8),
     ...     AddHeteroHopDistanceEncoding(h_max=5),
     ... ])
     >>> data = pe_transform(data)
@@ -77,7 +75,6 @@ def heterodata_to_graph_transformer_input(
     max_seq_len: int,
     anchor_node_type: NodeType,
     anchor_node_ids: Optional[Tensor] = None,
-    feature_dim: Optional[int] = None,
     hop_distance: int = 2,
     include_anchor_first: bool = True,
     padding_value: float = 0.0,
@@ -96,14 +93,13 @@ def heterodata_to_graph_transformer_input(
     Args:
         data: HeteroData object containing node features and edge indices.
             Expected to have node features as `data[node_type].x`.
+            All node types must have the same feature dimension.
         batch_size: Number of anchor nodes (first batch_size nodes of anchor_node_type).
             Ignored if anchor_node_ids is provided.
         max_seq_len: Maximum sequence length (neighbors beyond this are truncated).
         anchor_node_type: The node type of anchor nodes.
         anchor_node_ids: Optional tensor of local node indices within anchor_node_type
             to use as anchors. If None, uses first batch_size nodes. (default: None)
-        feature_dim: Output feature dimension. If None, inferred from data.
-            If provided and different from input, features are projected.
         hop_distance: Number of hops to consider for neighborhood (default: 2).
         include_anchor_first: If True, anchor node is always first in sequence.
         padding_value: Value to use for padding (default: 0.0).
@@ -129,7 +125,41 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
+
+    Raises:
+        ValueError: If node types have different feature dimensions.
+        ValueError: If no node features exist in the data.
     """
+    # Check each node type for valid features
+    feature_dims: dict[str, int] = {}
+    for nt in data.node_types:
+        if not hasattr(data[nt], "x") or data[nt].x is None:
+            raise ValueError(
+                f"Node type '{nt}' has no features (x is None or missing). "
+                "Graph Transformer input requires node features for all node types."
+            )
+        if data[nt].x.dim() < 2:
+            raise ValueError(
+                f"Node type '{nt}' has invalid feature shape {data[nt].x.shape}. "
+                "Expected 2D tensor (num_nodes, feature_dim)."
+            )
+        feat_dim = data[nt].x.size(1)
+        if feat_dim == 0:
+            raise ValueError(
+                f"Node type '{nt}' has zero feature dimension (shape {data[nt].x.shape}). "
+                "Graph Transformer input requires non-zero feature dimension."
+            )
+        feature_dims[nt] = feat_dim
+
+    # Check all node types have the same feature dimension
+    unique_dims = set(feature_dims.values())
+    if len(unique_dims) > 1:
+        raise ValueError(
+            f"All node types must have the same feature dimension for Graph Transformer input. "
+            f"Please project features to equal dimensions. "
+            f"Found different dimensions: {feature_dims}"
+        )
+
     device = data[anchor_node_type].x.device
 
     # Convert to homogeneous for easier neighborhood extraction
@@ -157,10 +187,6 @@ def heterodata_to_graph_transformer_input(
     else:
         # Default: first batch_size nodes of anchor_node_type
         anchor_indices = torch.arange(offset, offset + batch_size, device=device)
-
-    # Infer feature dimension
-    if feature_dim is None:
-        feature_dim = homo_x.size(1)
 
     # Use sparse matrix operations for efficient k-hop neighbor extraction
     # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
@@ -210,7 +236,7 @@ def heterodata_to_graph_transformer_input(
         padding_value=padding_value,
     )
 
-    anchor_feature_sequences = _lookup_anchor_relative_features(
+    anchor_relative_feature_sequences = _lookup_anchor_relative_features(
         anchor_indices=anchor_indices,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
@@ -218,20 +244,18 @@ def heterodata_to_graph_transformer_input(
         device=device,
     )
 
-    pairwise_feature_sequences: Optional[Tensor] = None
-    if pairwise_pe_matrices:
-        pairwise_feature_sequences = _lookup_pairwise_relative_features(
-            node_index_sequences=node_index_sequences,
-            valid_mask=valid_mask,
-            csr_matrices=pairwise_pe_matrices,
-            device=device,
-        )
+    pairwise_feature_sequences = _lookup_pairwise_relative_features(
+        node_index_sequences=node_index_sequences,
+        valid_mask=valid_mask,
+        csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
+        device=device,
+    )
 
     return (
         node_feature_sequences,
         valid_mask,
         {
-            "anchor_bias": anchor_feature_sequences,
+            "anchor_bias": anchor_relative_feature_sequences,
             "pairwise_bias": pairwise_feature_sequences,
         },
     )
@@ -339,7 +363,17 @@ def _gather_sequences_from_node_indices(
     valid_mask: Tensor,
     padding_value: float,
 ) -> Tensor:
-    """Gather node features into padded sequences using precomputed node indices."""
+    """Gather node features into padded sequences using precomputed node indices.
+
+    Args:
+        node_index_sequences: (batch_size, max_seq_len) node indices
+        node_features: (num_nodes, feature_dim) node features
+        valid_mask: (batch_size, max_seq_len) bool tensor indicating valid positions
+        padding_value: Value to use for padding
+
+    Returns:
+        (batch_size, max_seq_len, feature_dim) padded sequences.
+    """
     batch_size, max_seq_len = node_index_sequences.shape
     feature_dim = node_features.size(-1)
 
@@ -427,7 +461,7 @@ def _lookup_anchor_relative_features(
 def _lookup_pairwise_relative_features(
     node_index_sequences: Tensor,
     valid_mask: Tensor,
-    csr_matrices: list[Tensor],
+    csr_matrices: Optional[list[Tensor]],
     device: torch.device,
 ) -> Optional[Tensor]:
     """
@@ -638,52 +672,3 @@ def _lookup_csr_values(
         result[found] = values_csr[value_indices].float()
 
     return result
-
-
-class HeteroToGraphTransformerInput:
-    """Callable wrapper around ``heterodata_to_graph_transformer_input``."""
-
-    def __init__(
-        self,
-        batch_size: int,
-        max_seq_len: int,
-        anchor_node_type: NodeType,
-        feature_dim: Optional[int] = None,
-        hop_distance: int = 2,
-        include_anchor_first: bool = True,
-        padding_value: float = 0.0,
-        anchor_based_pe_attr_names: Optional[list[str]] = None,
-        pairwise_pe_attr_names: Optional[list[str]] = None,
-    ) -> None:
-        self.batch_size = batch_size
-        self.max_seq_len = max_seq_len
-        self.anchor_node_type = anchor_node_type
-        self.feature_dim = feature_dim
-        self.hop_distance = hop_distance
-        self.include_anchor_first = include_anchor_first
-        self.padding_value = padding_value
-        self.anchor_based_pe_attr_names = anchor_based_pe_attr_names
-        self.pairwise_pe_attr_names = pairwise_pe_attr_names
-
-    def __call__(self, data: HeteroData):
-        return heterodata_to_graph_transformer_input(
-            data=data,
-            batch_size=self.batch_size,
-            max_seq_len=self.max_seq_len,
-            anchor_node_type=self.anchor_node_type,
-            feature_dim=self.feature_dim,
-            hop_distance=self.hop_distance,
-            include_anchor_first=self.include_anchor_first,
-            padding_value=self.padding_value,
-            anchor_based_pe_attr_names=self.anchor_based_pe_attr_names,
-            pairwise_pe_attr_names=self.pairwise_pe_attr_names,
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}("
-            f"batch_size={self.batch_size}, "
-            f"max_seq_len={self.max_seq_len}, "
-            f"anchor_node_type={self.anchor_node_type!r}, "
-            f"hop_distance={self.hop_distance})"
-        )
