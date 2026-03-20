@@ -309,7 +309,7 @@ def attach_ppr_outputs(
     """Attach PPR edge indices and weights onto a HeteroData object.
 
     For each PPR edge type, sets ``data[edge_type].edge_index`` and
-    ``data[edge_type].weight`` in-place.  Called from the loader's
+    ``data[edge_type].edge_attr`` in-place.  Called from the loader's
     ``_collate_fn`` only when a PPR sampler is active; the function is a
     no-op if both dicts are empty.
 
@@ -327,7 +327,7 @@ def attach_ppr_outputs(
     )
     for edge_type, edge_index in ppr_edge_indices.items():
         data[edge_type].edge_index = edge_index
-        data[edge_type].weight = ppr_weights[edge_type]
+        data[edge_type].edge_attr = ppr_weights[edge_type]
 
 
 def extract_edge_type_metadata(

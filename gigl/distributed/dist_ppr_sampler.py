@@ -25,6 +25,10 @@ from graphlearn_torch.utils import merge_dict
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.types.graph import is_label_edge_type
 
+# Trailing "." is an intentional separator.  These constants are used both to
+# write metadata keys (f"{KEY}{repr(edge_type)}" → e.g. "ppr_edge_index.('user', 'to', 'story')")
+# and as the strip prefix in extract_edge_type_metadata (key[len(prefix):] must
+# yield a bare EdgeType repr for ast.literal_eval).
 PPR_EDGE_INDEX_METADATA_KEY = "ppr_edge_index."
 PPR_WEIGHT_METADATA_KEY = "ppr_weight."
 
@@ -72,12 +76,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     **Homogeneous (Data):**
         - ``data.edge_index``: ``[2, N]`` int64 — row 0 is local seed indices,
           row 1 is local neighbor indices.
-        - ``data.weight``: ``[N]`` float — PPR score for each pair.
+        - ``data.edge_attr``: ``[N]`` float — PPR score for each pair.
 
     **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", ntype)].edge_index``: same format as above.
-        - ``data[(seed_type, "ppr", ntype)].weight``: same format as above.
+        - ``data[(seed_type, "ppr", ntype)].edge_attr``: same format as above.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values

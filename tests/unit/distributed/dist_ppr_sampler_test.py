@@ -239,7 +239,7 @@ def _extract_hetero_ppr_scores(
         ), f"Missing PPR edge type {ppr_edge_type} on HeteroData"
 
         ppr_edge_index = datum[ppr_edge_type].edge_index
-        ppr_weights = datum[ppr_edge_type].weight
+        ppr_weights = datum[ppr_edge_type].edge_attr
 
         assert (
             ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
@@ -332,7 +332,7 @@ def _run_ppr_loader_correctness_check(
         assert hasattr(datum, "weight"), "Missing weight on Data"
 
         ppr_edge_index = datum.edge_index
-        ppr_weights = datum.weight
+        ppr_weights = datum.edge_attr
 
         assert (
             ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
@@ -534,7 +534,7 @@ def _run_ppr_ablp_loader_correctness_check(
             ), f"Missing PPR edge type {ppr_edge_type} on HeteroData"
 
             ppr_edge_index = datum[ppr_edge_type].edge_index
-            ppr_weights = datum[ppr_edge_type].weight
+            ppr_weights = datum[ppr_edge_type].edge_attr
 
             assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
             assert ppr_weights.dim() == 1
@@ -595,7 +595,7 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
     assert (
         datum[ppr_edge_type].edge_index.shape[1] > 0
     ), "Expected at least one PPR edge to STORY"
-    assert (datum[ppr_edge_type].weight > 0).all()
+    assert (datum[ppr_edge_type].edge_attr > 0).all()
 
     shutdown_rpc()
 
