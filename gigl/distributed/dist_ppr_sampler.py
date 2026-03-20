@@ -195,12 +195,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 # the same node.  Element-wise summation gives the total degree
                 # per node across all edge types.  Shorter tensors are padded
                 # implicitly (only the first len(et_degrees) entries are added).
-                # Sum in int32: aggregate degrees are bounded by partition size
-                # and fit comfortably within int32 range (~2.1B) in practice.
-                summed = torch.zeros(max_len, dtype=torch.int32)
+                # Sum in int64: aggregate degrees are bounded by partition size
+                # and fit comfortably within int64 range in practice.
+                summed = torch.zeros(max_len, dtype=torch.int64)
                 for et in edge_types:
                     et_degrees = degree_tensors[et]
-                    summed[: len(et_degrees)] += et_degrees.to(torch.int32)
+                    summed[: len(et_degrees)] += et_degrees.to(torch.int64)
                 result[node_type] = summed.clamp(max=dtype_max).to(dtype)
 
         return result
