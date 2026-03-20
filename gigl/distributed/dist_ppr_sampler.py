@@ -89,7 +89,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
-        num_nbrs_per_hop: Maximum number of neighbors to fetch per hop.
+        num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults to
             ``torch.int32``, which supports total degrees up to ~2 billion. Use a
             larger dtype if nodes have exceptionally high aggregate degrees.
@@ -101,7 +101,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         alpha: float = 0.5,
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
-        num_nbrs_per_hop: int = 100_000,
+        num_neighbors_per_hop: int = 100_000,
         total_degree_dtype: torch.dtype = torch.int32,
         degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         **kwargs,
@@ -111,7 +111,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         self._eps = eps
         self._max_ppr_nodes = max_ppr_nodes
         self._requeue_threshold_factor = alpha * eps
-        self._num_nbrs_per_hop = num_nbrs_per_hop
+        self._num_neighbors_per_hop = num_neighbors_per_hop
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -267,7 +267,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
             output: NeighborOutput = await self._sample_one_hop(
                 srcs=lookup_tensor,
-                num_nbr=self._num_nbrs_per_hop,
+                num_nbr=self._num_neighbors_per_hop,
                 etype=etype if etype != _PPR_HOMOGENEOUS_EDGE_TYPE else None,
             )
             neighbors = output.nbr

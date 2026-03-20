@@ -128,7 +128,7 @@ def _sampling_worker_loop(
                 alpha=sampler_options.alpha,
                 eps=sampler_options.eps,
                 max_ppr_nodes=sampler_options.max_ppr_nodes,
-                num_nbrs_per_hop=sampler_options.num_nbrs_per_hop,
+                num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
                 total_degree_dtype=sampler_options.total_degree_dtype,
                 degree_tensors=degree_tensors,
             )
