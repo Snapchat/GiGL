@@ -5,7 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Coordination With AGENTS.md
 
 - CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
-- AGENTS.md should only say to load CLAUDE.md.
+- AGENTS.md should direct agents to read CLAUDE.md and discover/use skills under `.claude/skills`.
+
+## Skills
+
+- Repository-local skills live under `.claude/skills/`.
+- At the start of every session, discover available skills under `.claude/skills` along with reading AGENTS.md and
+  CLAUDE.md.
+- When a relevant skill exists for the task, use it and follow its instructions.
 
 ## Project Overview
 
