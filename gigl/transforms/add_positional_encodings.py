@@ -16,16 +16,14 @@ encodings to HeteroData objects. All transforms follow the PyG BaseTransform int
 and can be composed using `torch_geometric.transforms.Compose`.
 
 Available Transforms:
-    - AddHeteroRandomWalkPE: Random walk positional encoding (column sum of non-diagonal)
-    - AddHeteroRandomWalkSE: Random walk structural encoding (diagonal elements)
+    - AddHeteroRandomWalkEncodings: Combined random walk PE and SE in single pass
     - AddHeteroHopDistanceEncoding: Shortest path distance encoding
 
 Example Usage:
     >>> from torch_geometric.data import HeteroData
     >>> from torch_geometric.transforms import Compose
     >>> from gigl.transforms.add_positional_encodings import (
-    ...     AddHeteroRandomWalkPE,
-    ...     AddHeteroRandomWalkSE,
+    ...     AddHeteroRandomWalkEncodings,
     ...     AddHeteroHopDistanceEncoding,
     ... )
     >>>
@@ -36,15 +34,15 @@ Example Usage:
     >>> data['user', 'buys', 'item'].edge_index = torch.tensor([[0, 1, 2], [0, 1, 2]])
     >>> data['item', 'bought_by', 'user'].edge_index = torch.tensor([[0, 1, 2], [0, 1, 2]])
     >>>
-    >>> # Apply single transform
-    >>> transform = AddHeteroRandomWalkPE(walk_length=8)
+    >>> # Apply random walk encoding transform (computes both PE and SE)
+    >>> transform = AddHeteroRandomWalkEncodings(walk_length=8)
     >>> data = transform(data)
     >>> print(data['user'].random_walk_pe.shape)  # (5, 8)
+    >>> print(data['user'].random_walk_se.shape)  # (5, 8)
     >>>
-    >>> # Compose multiple transforms
+    >>> # Compose with hop distance encoding
     >>> transform = Compose([
-    ...     AddHeteroRandomWalkPE(walk_length=8),
-    ...     AddHeteroRandomWalkSE(walk_length=8),
+    ...     AddHeteroRandomWalkEncodings(walk_length=8),
     ...     AddHeteroHopDistanceEncoding(h_max=3),
     ... ])
     >>> data = transform(data)
@@ -58,11 +56,15 @@ Example Usage:
 """
 
 
-@functional_transform("add_hetero_random_walk_pe")
-class AddHeteroRandomWalkPE(BaseTransform):
-    r"""Adds the random walk positional encoding to the given heterogeneous graph
-    (functional name: :obj:`add_hetero_random_walk_pe`).
+@functional_transform("add_hetero_random_walk_encodings")
+class AddHeteroRandomWalkEncodings(BaseTransform):
+    r"""Adds both random walk positional and structural encodings to the given
+    heterogeneous graph (functional name: :obj:`add_hetero_random_walk_encodings`).
 
+    This transform computes both encodings in a single pass over the random walk
+    matrix, which is more efficient than applying separate transforms.
+
+    **Positional Encoding (PE):**
     For each node j, computes the sum of transition probabilities from all other
     nodes to j after k steps of a random walk, for k = 1, 2, ..., walk_length.
     This captures how "reachable" or "central" a node is from the rest of the graph.
@@ -74,123 +76,7 @@ class AddHeteroRandomWalkPE(BaseTransform):
     where P is the transition matrix. This measures the probability mass flowing
     into node j from all other nodes at step k.
 
-    Args:
-        walk_length (int): The number of random walk steps.
-        attr_name (str, optional): The attribute name of the positional
-            encoding. (default: :obj:`"random_walk_pe"`)
-        is_undirected (bool, optional): If set to :obj:`True`, the graph is
-            assumed to be undirected, and the adjacency matrix will be made
-            symmetric. (default: :obj:`False`)
-        attach_to_x (bool, optional): If set to :obj:`True`, the encoding is
-            concatenated directly to :obj:`data[node_type].x` for each node type
-            instead of being stored as a separate attribute. (default: :obj:`False`)
-    """
-
-    def __init__(
-        self,
-        walk_length: int,
-        attr_name: Optional[str] = "random_walk_pe",
-        is_undirected: bool = False,
-        attach_to_x: bool = False,
-    ) -> None:
-        self.walk_length = walk_length
-        self.attr_name = attr_name
-        self.is_undirected = is_undirected
-        self.attach_to_x = attach_to_x
-
-    def forward(self, data: HeteroData) -> HeteroData:
-        assert isinstance(data, HeteroData), (
-            f"'{self.__class__.__name__}' only supports 'HeteroData' "
-            f"(got '{type(data)}')"
-        )
-
-        # Convert to homogeneous
-        homo_data = data.to_homogeneous()
-        edge_index = homo_data.edge_index
-        num_nodes = homo_data.num_nodes
-
-        if num_nodes == 0:
-            for node_type in data.node_types:
-                empty_pe = torch.zeros(
-                    (data[node_type].num_nodes, self.walk_length),
-                    dtype=torch.float,
-                )
-                effective_attr_name = None if self.attach_to_x else self.attr_name
-                add_node_attr(data, {node_type: empty_pe}, effective_attr_name)
-            return data
-
-        # Compute transition matrix (row-stochastic) using sparse operations
-        adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes))
-
-        if self.is_undirected:
-            # Make symmetric for undirected graphs
-            adj = (adj + adj.t()).coalesce()
-
-        # Compute degree for row normalization
-        adj_coalesced = adj.coalesce()
-        deg = torch.zeros(num_nodes, device=edge_index.device)
-        deg.scatter_add_(0, adj_coalesced.indices()[0], adj_coalesced.values().float())
-        deg = torch.clamp(deg, min=1)  # Avoid division by zero
-
-        # Create row-normalized transition matrix (sparse)
-        # P[i,j] = A[i,j] / deg[i]
-        row_indices = adj_coalesced.indices()[0]
-        normalized_values = adj_coalesced.values().float() / deg[row_indices]
-        transition = torch.sparse_coo_tensor(
-            adj_coalesced.indices(),
-            normalized_values,
-            size=(num_nodes, num_nodes),
-        ).coalesce()
-
-        # Compute random walk positional encoding using sparse operations
-        # PE[j, k] = sum of column j excluding diagonal = Σ_{i≠j} (P^k)[i, j]
-        pe = torch.zeros(
-            (num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device
-        )
-
-        # Start with identity matrix (sparse)
-        identity_indices = torch.arange(num_nodes, device=edge_index.device)
-        current = torch.sparse_coo_tensor(
-            torch.stack([identity_indices, identity_indices]),
-            torch.ones(num_nodes, device=edge_index.device),
-            size=(num_nodes, num_nodes),
-        ).coalesce()
-
-        for k in range(self.walk_length):
-            current = torch.sparse.mm(current, transition).coalesce()
-            # Column sum = sum over rows for each column
-            col_sum = torch.zeros(num_nodes, device=edge_index.device)
-            col_sum.scatter_add_(0, current.indices()[1], current.values())
-            # Extract diagonal elements
-            diag = torch.zeros(num_nodes, device=edge_index.device)
-            diag_mask = current.indices()[0] == current.indices()[1]
-            if diag_mask.any():
-                diag.scatter_add_(
-                    0, current.indices()[0][diag_mask], current.values()[diag_mask]
-                )
-            pe[:, k] = col_sum - diag
-
-        # Map back to HeteroData node types
-        # If attach_to_x is True, pass None as attr_name to concatenate to x directly
-        effective_attr_name = None if self.attach_to_x else self.attr_name
-        add_node_attr(data, pe, effective_attr_name)
-
-        return data
-
-    def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}(walk_length={self.walk_length}, "
-            f"attach_to_x={self.attach_to_x})"
-        )
-
-
-@functional_transform("add_hetero_random_walk_se")
-class AddHeteroRandomWalkSE(BaseTransform):
-    r"""Adds the random walk structural encoding from the
-    `"Graph Neural Networks with Learnable Structural and Positional
-    Representations" <https://arxiv.org/abs/2110.07875>`_ paper to the given
-    heterogeneous graph (functional name: :obj:`add_hetero_random_walk_se`).
-
+    **Structural Encoding (SE):**
     For each node, computes the probability of returning to itself after k steps
     of a random walk, for k = 1, 2, ..., walk_length. This captures the local
     structural role of each node (e.g., cycles, clustering coefficient).
@@ -198,29 +84,35 @@ class AddHeteroRandomWalkSE(BaseTransform):
     The encoding is the diagonal of the k-step random walk matrix:
         SE[i, k] = (P^k)[i, i]
 
-    where P is the transition matrix.
+    Based on the approach from `"Graph Neural Networks with Learnable Structural
+    and Positional Representations" <https://arxiv.org/abs/2110.07875>`_.
 
     Args:
         walk_length (int): The number of random walk steps.
-        attr_name (str, optional): The attribute name of the structural
+        pe_attr_name (str, optional): The attribute name of the positional
+            encoding. (default: :obj:`"random_walk_pe"`)
+        se_attr_name (str, optional): The attribute name of the structural
             encoding. (default: :obj:`"random_walk_se"`)
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected, and the adjacency matrix will be made
             symmetric. (default: :obj:`False`)
-        attach_to_x (bool, optional): If set to :obj:`True`, the encoding is
+        attach_to_x (bool, optional): If set to :obj:`True`, the encodings are
             concatenated directly to :obj:`data[node_type].x` for each node type
-            instead of being stored as a separate attribute. (default: :obj:`False`)
+            instead of being stored as separate attributes. PE is concatenated
+            first, then SE. (default: :obj:`False`)
     """
 
     def __init__(
         self,
         walk_length: int,
-        attr_name: Optional[str] = "random_walk_se",
+        pe_attr_name: Optional[str] = "random_walk_pe",
+        se_attr_name: Optional[str] = "random_walk_se",
         is_undirected: bool = False,
         attach_to_x: bool = False,
     ) -> None:
         self.walk_length = walk_length
-        self.attr_name = attr_name
+        self.pe_attr_name = pe_attr_name
+        self.se_attr_name = se_attr_name
         self.is_undirected = is_undirected
         self.attach_to_x = attach_to_x
 
@@ -237,12 +129,20 @@ class AddHeteroRandomWalkSE(BaseTransform):
 
         if num_nodes == 0:
             for node_type in data.node_types:
-                empty_se = torch.zeros(
+                empty_encoding = torch.zeros(
                     (data[node_type].num_nodes, self.walk_length),
                     dtype=torch.float,
                 )
-                effective_attr_name = None if self.attach_to_x else self.attr_name
-                add_node_attr(data, {node_type: empty_se}, effective_attr_name)
+                # Handle PE
+                effective_pe_attr_name = None if self.attach_to_x else self.pe_attr_name
+                add_node_attr(
+                    data, {node_type: empty_encoding.clone()}, effective_pe_attr_name
+                )
+                # Handle SE
+                effective_se_attr_name = None if self.attach_to_x else self.se_attr_name
+                add_node_attr(
+                    data, {node_type: empty_encoding.clone()}, effective_se_attr_name
+                )
             return data
 
         # Compute transition matrix (row-stochastic) using sparse operations
@@ -268,7 +168,12 @@ class AddHeteroRandomWalkSE(BaseTransform):
             size=(num_nodes, num_nodes),
         ).coalesce()
 
-        # Compute random walk return probabilities (diagonal elements) using sparse operations
+        # Compute both PE and SE in a single pass over the random walk
+        # PE[j, k] = sum of column j excluding diagonal = Σ_{i≠j} (P^k)[i, j]
+        # SE[i, k] = diagonal element = (P^k)[i, i]
+        pe = torch.zeros(
+            (num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device
+        )
         se = torch.zeros(
             (num_nodes, self.walk_length), dtype=torch.float, device=edge_index.device
         )
@@ -283,17 +188,31 @@ class AddHeteroRandomWalkSE(BaseTransform):
 
         for k in range(self.walk_length):
             current = torch.sparse.mm(current, transition).coalesce()
-            # Extract diagonal elements: probability of returning to the same node
+
+            # Column sum = sum over rows for each column (for PE)
+            col_sum = torch.zeros(num_nodes, device=edge_index.device)
+            col_sum.scatter_add_(0, current.indices()[1], current.values())
+
+            # Extract diagonal elements (for both PE and SE)
+            diag = torch.zeros(num_nodes, device=edge_index.device)
             diag_mask = current.indices()[0] == current.indices()[1]
             if diag_mask.any():
-                se[:, k].scatter_add_(
+                diag.scatter_add_(
                     0, current.indices()[0][diag_mask], current.values()[diag_mask]
                 )
 
+            # PE: column sum excluding diagonal
+            pe[:, k] = col_sum - diag
+            # SE: diagonal elements (return probability)
+            se[:, k] = diag
+
         # Map back to HeteroData node types
         # If attach_to_x is True, pass None as attr_name to concatenate to x directly
-        effective_attr_name = None if self.attach_to_x else self.attr_name
-        add_node_attr(data, se, effective_attr_name)
+        effective_pe_attr_name = None if self.attach_to_x else self.pe_attr_name
+        add_node_attr(data, pe, effective_pe_attr_name)
+
+        effective_se_attr_name = None if self.attach_to_x else self.se_attr_name
+        add_node_attr(data, se, effective_se_attr_name)
 
         return data
 

@@ -1,6 +1,6 @@
 ---
 description: Testing patterns and conventions for GiGL components
-globs: **/test**.py,**/tests/**,testing/**,**/tests/**
+globs: **/test**.py,**/tests/**
 alwaysApply: false
 ---
 # Testing Patterns & Conventions
@@ -173,7 +173,7 @@ TEST_EDGES = [
 - **Unit tests**: Dir: `tests/unit/` - Fast, isolated tests
 - **Integration tests**: Dir: `tests/integration/` - Component interaction tests
 - **End-to-end tests**: Defined in `Makefile` target: `_run_e2e_kfp_test` - Test complete workflows
-- **Misc repo wide tests**: Dir: `testing`
+- **Config/project-level tests**: Dir: `tests/config_tests`
 
 ### Test Execution
 
