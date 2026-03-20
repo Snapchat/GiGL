@@ -396,6 +396,13 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                             for etype in edge_types_for_node:
                                 cache_key = (node_id, etype)
                                 if cache_key not in neighbor_cache:
+                                    # TODO (mkolodner-sc): Investigate switching from set to list
+                                    # here.  _sample_one_hop handles duplicates correctly (second
+                                    # write to result[(node_id, etype)] is a no-op overwrite), so
+                                    # dedup is not required for correctness.  A list would avoid
+                                    # per-add hash cost and the set->list->tensor conversion in
+                                    # _batch_fetch_neighbors, though at the cost of redundant
+                                    # network calls for any duplicate nodes across seeds.
                                     nodes_to_lookup[etype].add(node_id)
 
             fetched_neighbors = await self._batch_fetch_neighbors(
