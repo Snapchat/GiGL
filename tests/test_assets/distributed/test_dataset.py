@@ -378,7 +378,11 @@ def create_heterogeneous_dataset_for_ablp(
             for dst_id in dst_ids:
                 neg_src.append(node_id)
                 neg_dst.append(dst_id)
-        negative_label_edge_index = torch.tensor([neg_src, neg_dst])
+        negative_label_edge_index = (
+            torch.tensor([neg_dst, neg_src])
+            if edge_dir == "in"
+            else torch.tensor([neg_src, neg_dst])
+        )
         edge_partition_book[negative_label_edge_type] = torch.zeros(
             len(neg_src), dtype=torch.int64
         )
