@@ -33,6 +33,7 @@ from gigl.types.graph import (
     PartitionOutput,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
+    reverse_edge_type,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
 
@@ -303,8 +304,22 @@ def create_heterogeneous_dataset_for_ablp(
             f"Node IDs {missing_nodes} are in train/val/test splits but not in positive_labels"
         )
 
-    positive_label_edge_type = message_passing_to_positive_label(supervision_edge_type)
-    negative_label_edge_type = message_passing_to_negative_label(supervision_edge_type)
+    # When edge_dir="in", the DistNodeAnchorLinkSplitter reverses the label edge type
+    # (supervision_edge_type is always provided outward, e.g. USER_TO_STORY), so the splitter
+    # looks for message_passing_to_positive_label(reverse(supervision_edge_type)) in the graph.
+    # We must store the label edges under that reversed key for the splitter and ABLP loader to
+    # find them. For edge_dir="out" no reversal is needed.
+    actual_label_supervision_edge_type = (
+        reverse_edge_type(supervision_edge_type)
+        if edge_dir == "in"
+        else supervision_edge_type
+    )
+    positive_label_edge_type = message_passing_to_positive_label(
+        actual_label_supervision_edge_type
+    )
+    negative_label_edge_type = message_passing_to_negative_label(
+        actual_label_supervision_edge_type
+    )
 
     # Convert positive_labels dict to COO edge index
     pos_src, pos_dst = [], []
@@ -312,7 +327,13 @@ def create_heterogeneous_dataset_for_ablp(
         for dst_id in dst_ids:
             pos_src.append(node_id)
             pos_dst.append(dst_id)
-    positive_label_edge_index = torch.tensor([pos_src, pos_dst])
+    # For edge_dir="in", the reversed label edge type is (STORY, ..., USER), so
+    # row 0 = story IDs, row 1 = user IDs. For edge_dir="out" it's the natural direction.
+    positive_label_edge_index = (
+        torch.tensor([pos_dst, pos_src])
+        if edge_dir == "in"
+        else torch.tensor([pos_src, pos_dst])
+    )
 
     # Derive node counts from edge indices by collecting max node ID per node type
     node_counts: dict[NodeType, int] = {}

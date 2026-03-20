@@ -29,6 +29,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.typing import EdgeType
 from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
@@ -59,6 +60,7 @@ def _sampling_worker_loop(
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
 ):
     dist_sampler = None
     try:
@@ -119,7 +121,7 @@ def _sampling_worker_loop(
                 seed=sampling_config.seed,
             )
         elif isinstance(sampler_options, PPRSamplerOptions):
-            assert isinstance(data, GiglDistDataset)
+            assert degree_tensors is not None
             dist_sampler = DistPPRNeighborSampler(
                 *shared_sampler_args,
                 seed=sampling_config.seed,
@@ -128,7 +130,7 @@ def _sampling_worker_loop(
                 max_ppr_nodes=sampler_options.max_ppr_nodes,
                 num_nbrs_per_hop=sampler_options.num_nbrs_per_hop,
                 total_degree_dtype=sampler_options.total_degree_dtype,
-                degree_tensors=data.degree_tensor,
+                degree_tensors=degree_tensors,
             )
         else:
             raise NotImplementedError(
@@ -216,21 +218,24 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
-        # PPR sampling requires degree tensors in the sampler __init__.
-        # Worker subprocesses only initialize RPC (not torch.distributed),
-        # so the lazy degree computation would fail there.  Eagerly compute
-        # here — where torch.distributed IS initialized — so the cached
-        # tensor is shared to workers via IPC.
+        # Extract degree tensors before spawning workers.  Worker subprocesses
+        # only initialize RPC (not torch.distributed), so the lazy degree
+        # computation on GiglDistDataset would fail there.  Computing here —
+        # where torch.distributed IS initialized — lets the tensor be shared
+        # to workers via IPC.
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None
         if isinstance(self._sampler_options, PPRSamplerOptions):
             assert isinstance(self.data, GiglDistDataset)
-            degree_tensor = self.data.degree_tensor
-            if isinstance(degree_tensor, dict):
+            degree_tensors = self.data.degree_tensor
+            if isinstance(degree_tensors, dict):
                 logger.info(
-                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensor)} edge types."
+                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} edge types."
                 )
             else:
                 logger.info(
-                    f"Pre-computed degree tensor for PPR sampling with {degree_tensor.size(0)} nodes."
+                    f"Pre-computed degree tensor for PPR sampling with {degree_tensors.size(0)} nodes."
                 )
 
         if self.sampling_config.seed is not None:
@@ -261,6 +266,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self.sampling_completed_worker_count,
                     barrier,
                     self._sampler_options,
+                    degree_tensors,
                 ),
             )
             w.daemon = True

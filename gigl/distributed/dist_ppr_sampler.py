@@ -172,15 +172,14 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             Dict mapping node type to a 1-D tensor of total degrees.
         """
         result: dict[NodeType, torch.Tensor] = {}
-        dtype_max = torch.iinfo(dtype).max
 
         if self._is_homogeneous:
             assert isinstance(degree_tensors, torch.Tensor)
-            result[_PPR_HOMOGENEOUS_NODE_TYPE] = (
-                degree_tensors.to(torch.int64).clamp(max=dtype_max).to(dtype)
-            )
+            # Single edge type: degree values fit directly in the target dtype.
+            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(dtype)
         else:
             assert isinstance(degree_tensors, dict)
+            dtype_max = torch.iinfo(dtype).max
             for node_type, edge_types in self._node_type_to_edge_types.items():
                 max_len = 0
                 for et in edge_types:
@@ -196,11 +195,12 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 # the same node.  Element-wise summation gives the total degree
                 # per node across all edge types.  Shorter tensors are padded
                 # implicitly (only the first len(et_degrees) entries are added).
-                # Sum in int64 to avoid overflow, then clamp to target dtype.
-                summed = torch.zeros(max_len, dtype=torch.int64)
+                # Sum in int32: aggregate degrees are bounded by partition size
+                # and fit comfortably within int32 range (~2.1B) in practice.
+                summed = torch.zeros(max_len, dtype=torch.int32)
                 for et in edge_types:
                     et_degrees = degree_tensors[et]
-                    summed[: len(et_degrees)] += et_degrees.to(torch.int64)
+                    summed[: len(et_degrees)] += et_degrees.to(torch.int32)
                 result[node_type] = summed.clamp(max=dtype_max).to(dtype)
 
         return result

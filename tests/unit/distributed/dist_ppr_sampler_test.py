@@ -554,18 +554,18 @@ def _run_ppr_ablp_loader_correctness_check(
 # Bug regression runners
 # ---------------------------------------------------------------------------
 def _run_ppr_destination_only_node_type(_: int) -> None:
-    """Verify PPR correctly handles a destination-only node type.
+    """Verify PPR output includes destination-only node types.
 
     Uses a one-directional USER->STORY graph (no STORY->USER edges) so that
-    STORY is a destination-only type with no outgoing edges.  Previously,
-    _get_total_degree raised KeyError for STORY and ppr_scores for STORY nodes
-    were silently dropped from the output because _node_type_to_edge_types only
-    contained source types.
+    STORY is a destination-only type with no outgoing edges.  Asserts that
+    STORY nodes appear in the PPR output despite having no outgoing edges and
+    being absent from _node_type_to_edge_types.
     """
     create_test_process_group()
 
     # One-directional graph: USER->STORY only, so STORY is destination-only.
-    edge_index = torch.tensor([[0, 1], [0, 1]])
+    # user 0 -> story 0, user 0 -> story 1, user 1 -> story 0
+    edge_index = torch.tensor([[0, 0, 1], [0, 1, 0]])
     dataset = create_heterogeneous_dataset(
         edge_indices={USER_TO_STORY: edge_index},
         edge_dir="out",
@@ -604,10 +604,9 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
     """Verify that ABLP label edges are excluded from anchor-seed PPR walks.
 
     Uses a graph where user 0's positive label target (story 1) is NOT
-    reachable via message-passing edges.  Previously, label edge types were
-    included in _node_type_to_edge_types, so the PPR walk could cross label
-    edges and story 1 would appear as a PPR neighbor of user 0 — leaking
-    ground-truth supervision signal into the sampled neighborhood.
+    reachable via message-passing edges.  Asserts that story 1 does not appear
+    in user 0's PPR neighborhood, confirming that label edge types are not
+    traversed during PPR walks.
     """
     create_test_process_group()
 
@@ -701,16 +700,12 @@ class DistPPRSamplerTest(TestCase):
 
     @parameterized.expand(
         [
+            param("edge_dir_in", edge_dir="in"),
             param("edge_dir_out", edge_dir="out"),
         ]
     )
     def test_ppr_sampler_ablp_correctness(self, _, edge_dir: str) -> None:
-        """Verify PPR scores through DistABLPLoader on a heterogeneous graph.
-
-        Only tests ``edge_dir="out"`` because ``DistNodeAnchorLinkSplitter``
-        with ``edge_dir="in"`` reverses the supervision edge type, requiring
-        a reversed labeled edge type that the test dataset does not include.
-        """
+        """Verify PPR scores through DistABLPLoader on a heterogeneous graph."""
         mp.spawn(
             fn=_run_ppr_ablp_loader_correctness_check,
             args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
