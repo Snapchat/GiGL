@@ -34,6 +34,17 @@ class KHopNeighborSamplerOptions:
 class PPRSamplerOptions:
     """Sampler options for PPR-based neighbor sampling using DistPPRNeighborSampler.
 
+    **Output format:** When this sampler is active, each output Data/HeteroData batch
+    contains *only* PPR edges — no message-passing edges from the original graph are
+    included.  For each ``(seed_type, neighbor_type)`` pair reachable via PPR walks,
+    the batch will have an edge type ``(seed_type, "ppr", neighbor_type)`` with:
+
+    - ``edge_index``: ``[2, N]`` int64 — row 0 is local seed indices, row 1 is local
+      neighbor indices.
+    - ``edge_attr``: ``[N]`` float — PPR score for each (seed, neighbor) pair.
+
+    For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
+
     Attributes:
         alpha: Restart probability (teleport probability back to seed). Higher
             values keep samples closer to seeds. Typical values: 0.15-0.25.

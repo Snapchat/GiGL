@@ -247,15 +247,36 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         nodes_to_lookup: dict[EdgeType, set[int]],
         device: torch.device,
     ) -> dict[tuple[int, EdgeType], list[int]]:
-        """
-        Batch fetch neighbors for nodes grouped by edge type.
+        """Batch fetch neighbors for nodes grouped by edge type.
+
+        Issues one ``_sample_one_hop`` call per edge type (not per node), so all
+        nodes of the same edge type are fetched in a single RPC round-trip. Each
+        node's neighbor list is capped at ``self._num_neighbors_per_hop``.
 
         Args:
-            nodes_to_lookup: Dict mapping edge type to set of node IDs to fetch.
-            device: Torch device for tensor creation.
+            nodes_to_lookup: Dict mapping each edge type to the set of node IDs
+                whose neighbors should be fetched via that edge type.  Only nodes
+                absent from the caller's ``neighbor_cache`` should be included.
+            device: Torch device for intermediate tensor creation.
 
         Returns:
-            Dict mapping (node_id, edge_type) to list of neighbor node IDs.
+            Dict mapping ``(node_id, edge_type)`` to the list of neighbor node IDs
+            returned by ``_sample_one_hop``.  Only nodes that appeared in
+            ``nodes_to_lookup`` are present; edge types with an empty node set are
+            skipped entirely.
+
+        Example::
+
+            nodes_to_lookup = {
+                ("user", "buys", "item"): {0, 3},
+                ("item", "bought_by", "user"): {7},
+            }
+            # Might return (neighbor lists depend on graph structure):
+            {
+                (0, ("user", "buys", "item")): [5, 9, 2],
+                (3, ("user", "buys", "item")): [1],
+                (7, ("item", "bought_by", "user")): [0, 3],
+            }
         """
         result: dict[tuple[int, EdgeType], list[int]] = {}
         for etype, node_ids in nodes_to_lookup.items():
@@ -317,17 +338,33 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                PPR computation to avoid redundant summation.
 
         Args:
-            seed_nodes: Tensor of seed node IDs [batch_size]
-            seed_node_type: Node type of seed nodes. Should be None for homogeneous graphs.
+            seed_nodes: Tensor of seed node IDs, shape ``[batch_size]``.
+            seed_node_type: Node type of seed nodes.  Pass ``None`` for
+                homogeneous graphs (internally mapped to a sentinel type).
 
         Returns:
-            tuple of (flat_neighbor_ids, flat_weights, valid_counts) where each is either
-            a 1-D tensor (homogeneous) or a dict mapping NodeType to a 1-D tensor
-            (heterogeneous):
-                - flat_neighbor_ids: global neighbor IDs in top-k order, concatenated
-                  across all seeds. Length equals sum(valid_counts).
-                - flat_weights: corresponding PPR scores, same length as flat_neighbor_ids.
-                - valid_counts: number of PPR neighbors found per seed [batch_size].
+            A 3-tuple ``(flat_neighbor_ids, flat_weights, valid_counts)``.
+            For homogeneous graphs each element is a 1-D tensor; for
+            heterogeneous graphs each element is a ``dict[NodeType, Tensor]``
+            where each tensor has the same structure as the homogeneous case.
+
+            - ``flat_neighbor_ids``: global neighbor IDs selected by top-k PPR
+              score, concatenated across seeds.  For batch of size ``B`` with
+              ``C_i`` neighbors for seed ``i``, shape is
+              ``[sum(C_0, ..., C_{B-1})]``.
+            - ``flat_weights``: PPR scores corresponding to each entry in
+              ``flat_neighbor_ids``, same shape.
+            - ``valid_counts``: number of PPR neighbors contributed by each
+              seed, shape ``[batch_size]``.  Used to slice the flat tensors into
+              per-seed groups: seed ``i``'s neighbors are at
+              ``flat_neighbor_ids[sum(valid_counts[:i]) : sum(valid_counts[:i+1])]``.
+
+        Example::
+
+            # 4 seeds, valid_counts = [1, 3, 2, 0]  →  6 total (seed, neighbor) pairs
+            flat_neighbor_ids = tensor([d0, d1a, d1b, d1c, d2a, d2b])
+            flat_weights      = tensor([w0, w1a, w1b, w1c, w2a, w2b])
+            valid_counts      = tensor([1,  3,   2,   0])
         """
         if seed_node_type is None:
             seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
