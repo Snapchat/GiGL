@@ -68,7 +68,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
 
-    The ``edge_index`` and ``weight`` fields on the output Data/HeteroData
+    The ``edge_index`` and ``edge_attr`` fields on the output Data/HeteroData
     objects are populated with PPR seed-to-neighbor relationships (not edges
     in the original graph). ``N`` is the total number of (seed, neighbor)
     pairs across all seeds in the batch.
@@ -618,7 +618,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         edge types based on the current node type.
 
         See the class docstring for the output format (``edge_index`` and
-        ``weight`` fields on the output Data/HeteroData).
+        ``edge_attr`` fields on the output Data/HeteroData).
 
         Local indices are produced by the inducer (see below), so row 1 of
         ``edge_index`` directly indexes into ``data[ntype].x`` without any
@@ -768,7 +768,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
                 # row/col/edge are left empty rather than populated with PPR edges because
                 # the virtual (seed_type, "ppr", neighbor_type) edge types are unknown to
                 # GLT: meaning the collate functions would fail trying to process them.
-                # Instead, edge_index and weight tensors are passed through metadata and
+                # Instead, edge_index and edge_attr tensors are passed through metadata and
                 # attached directly to the data object in the loader's _collate_fn.
                 row={},
                 col={},
