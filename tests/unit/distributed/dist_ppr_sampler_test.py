@@ -329,7 +329,7 @@ def _run_ppr_loader_correctness_check(
         assert isinstance(datum, Data)
 
         assert hasattr(datum, "edge_index"), "Missing edge_index on Data"
-        assert hasattr(datum, "weight"), "Missing weight on Data"
+        assert hasattr(datum, "edge_attr"), "Missing edge_attr on Data"
 
         ppr_edge_index = datum.edge_index
         ppr_weights = datum.edge_attr

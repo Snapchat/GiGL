@@ -813,7 +813,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ppr_edge_index = torch.stack([rows, cols])
 
             metadata["edge_index"] = ppr_edge_index
-            metadata["weight"] = homo_flat_weights
+            metadata["edge_attr"] = homo_flat_weights
 
             sample_output = SamplerOutput(
                 node=all_nodes,
