@@ -1,10 +1,10 @@
 ______________________________________________________________________
 
-## description: Apply KISS and pragmatic simplification to the current task, plan, or code. Invoke when the user says kiss, keep it simple, be pragmatic, don't overcomplicate, simplify this, reduce abstraction, avoid overengineering, or asks for the smallest correct change. argument-hint: "[optional focus]"
+## description: Apply KISS and pragmatic simplification to code, diffs, or plans. Invoke when the user says kiss, keep it simple, be pragmatic, don't overcomplicate, simplify this, reduce abstraction, avoid overengineering, or asks for the smallest correct change. argument-hint: "[file-path | plan | (empty for unstaged diff)]"
 
 # Pragmatic
 
-Use the K.I.S.S. guidance from `CLAUDE.md` to simplify the current task, plan, or code without dropping correctness.
+Scan code, diffs, or plans for over-engineering and produce concrete simplification recommendations.
 
 ## Instructions
 
@@ -12,135 +12,173 @@ When this skill is invoked with `$ARGUMENTS`, execute the following sections in 
 
 ______________________________________________________________________
 
-### 1. Anchor on the concrete need
+### 1. Parse scope
 
-Identify the current concrete use case before proposing changes.
+Determine the review mode from `$ARGUMENTS`:
 
-- Optimize for today's requirement, not hypothetical future reuse.
-- If `$ARGUMENTS` names a specific area, use it as the simplification target.
-- If the request is broad, infer the narrowest immediate objective from the conversation and code.
+| Input                      | Mode   | Target                                                   |
+| -------------------------- | ------ | -------------------------------------------------------- |
+| (empty)                    | `diff` | Unstaged changes (`git diff`)                            |
+| A path to an existing file | `file` | That specific file                                       |
+| `plan`                     | `plan` | The current conversation's plan or most recent plan file |
 
-______________________________________________________________________
+Rules:
 
-### 2. Inspect existing code before inventing structure
-
-Look for existing utilities, patterns, and nearby implementations before proposing new abstractions.
-
-- Reuse or lightly refactor existing code when it already solves most of the problem.
-- Do not introduce new layers just because they look architecturally neat.
-- Prefer local edits over cross-cutting reorganization unless the current shape is clearly blocking correctness.
-
-______________________________________________________________________
-
-### 3. Prefer the smallest direct implementation
-
-Bias toward the simplest implementation that cleanly solves the current problem.
-
-- Avoid abstraction for hypothetical extensibility or configuration.
-- Keep linear workflows easy to follow from top to bottom.
-- Inline tiny one-off helpers when extraction does not materially improve readability, testability, or error handling.
-- Prefer explicit parameter passing over stateful helper objects when the workflow is local and sequential.
+- If `$ARGUMENTS` is a file path and the file exists, use **file** mode.
+- If `$ARGUMENTS` is the word `plan`, use **plan** mode. If a plan file path follows (e.g. `plan docs/my_plan.md`), read
+  that file.
+- Otherwise, use **diff** mode and treat any extra words as a focus hint (e.g. "the sampler" narrows review to
+  sampler-related changes).
 
 ______________________________________________________________________
 
-### 4. Keep data and control flow lightweight
+### 2. Read the target
 
-Reduce indirection in both data shapes and function structure.
+Gather the code to review based on mode:
 
-- Prefer tuples, dicts, or existing objects over tiny one-off dataclasses, wrappers, or config classes.
-- Avoid one-off builders, factories, registries, or strategy objects unless they remove real duplication or support
-  multiple active implementations.
-- If a function is accumulating mode flags, optional callbacks, or branching setup paths, prefer separate simple entry
-  points over one generic function.
-
-______________________________________________________________________
-
-### 5. Preserve correctness while simplifying
-
-Do not simplify away behavior that is required for safe and correct code.
-
-- Keep validation, error handling, and required invariants intact.
-- Do not remove tests, guards, or explicit exceptions that protect against invalid state.
-- Do not churn stable public APIs or established shared abstractions unless they are part of the actual problem.
-- Defer generalization until a second real use case exists, but do not delete real reuse that is already paying for
-  itself.
+- **diff**: Run `git diff` (unstaged). If empty, try `git diff --cached` (staged). If both empty, tell the user there
+  are no changes to review and stop.
+- **file**: Read the file with the Read tool.
+- **plan**: Read the plan file, or extract the plan from conversation context.
 
 ______________________________________________________________________
 
-### 6. Produce a pragmatic answer
+### 3. Scan for anti-patterns
 
-When responding to the user, structure the output around the simplest viable path.
+Review the target code against these specific checks. For each violation found, record the file path, line number, which
+check it violates, and what the simpler alternative is.
 
-- State the recommended simple approach first.
-- Name the specific complexity to avoid and why it is unnecessary for the current use case.
-- If editing code, make the smallest coherent change set that solves the problem.
-- If reviewing a plan, call out where the plan is over-generalized and replace it with a narrower implementation path.
+**Checks to apply:**
+
+1. **Re-implemented utility** — Code that reimplements something already available in the codebase. Common ones to watch
+   for:
+   - `gigl.common.utils.retry.retry` — decorator with backoff, deadline, and exception filtering. Do not hand-roll retry
+     loops with `time.sleep()`.
+   - `gigl.src.common.utils.timeout.timeout` — decorator for process-level timeouts. Do not hand-roll signal/threading
+     timeout logic.
+   - `gigl.common.logger.Logger` — GCP-aware logger. Do not use `logging.getLogger()` directly.
+   - `Uri.get_basename()`, `Uri.join()`, `Uri / other` — URI path operations. Do not parse URIs with manual
+     `.split("/")` calls.
+   - `gigl.common.collections.frozen_dict.FrozenDict` — immutable dict. Do not hand-roll frozen dict wrappers.
+2. **Unnecessary abstraction** — A new class, factory, builder, registry, or strategy object that has only one
+   implementation or caller.
+3. **One-off tiny type** — A dataclass or wrapper with 1-2 fields that could be a tuple, dict, or existing type.
+4. **Flag-heavy function** — A function accumulating boolean flags, optional callbacks, or modal branching that should
+   be split into separate entry points.
+5. **Inlineable helper** — A private function called once or twice that is only a few lines long and does not materially
+   improve readability or testability.
+6. **Premature generalization** — Abstraction justified only by hypothetical future use ("we might need this later")
+   with no second caller today.
+
+**Correctness guardrails — do NOT flag these as over-engineering:**
+
+- Validation, error handling, and guards that protect against invalid state.
+- Tests, explicit exceptions, or invariants required for correctness.
+- Stable public APIs or shared abstractions with multiple active callers.
+- Reuse that is already paying for itself (multiple real callers, not hypothetical).
 
 ______________________________________________________________________
 
-### 7. Apply these default heuristics
+### 4. Present findings
 
-Use these checks when deciding whether to simplify:
+Format output as a numbered list of simplification opportunities. Only include items where you found a concrete
+violation — do not pad with generic advice.
 
-- A helper called once or twice and only a few lines long usually should be inlined.
-- A short-lived internal type with two small fields usually should be a tuple, dict, or existing object.
-- A function with several boolean flags usually should become separate entry points by use case.
-- A new abstraction justified only by "we might need this later" usually should not be added.
-- If the codebase already has a utility that solves the problem, use it instead of re-implementing it.
+```
+## Simplification opportunities
 
-______________________________________________________________________
+### 1. <title>
+- **Location**: `file/path.py:line`
+- **Pattern**: <which check from step 3 it violates>
+- **Current**: <what the code does now>
+- **Simpler**: <the concrete simpler alternative>
 
-### 8. Keep these examples in mind
-
-Prefer inlining tiny one-off helpers:
-
-```python
-# Avoid
-def _normalized_node_id(node_id: str) -> str:
-    return node_id.strip().lower()
-
-
-def load_node(node_id: str) -> Node:
-    return node_store[_normalized_node_id(node_id)]
-
-
-# Prefer
-def load_node(node_id: str) -> Node:
-    normalized_node_id = node_id.strip().lower()
-    return node_store[normalized_node_id]
+### 2. ...
 ```
 
-Prefer lightweight internal data over tiny one-off types:
+If no issues are found, say so: "No over-engineering found. The code looks appropriately simple."
+
+After the list:
+
+- If reviewing a **plan**, call out where the plan is over-generalized and suggest narrower implementation steps.
+- If reviewing **code**, offer to apply the simplifications: "Want me to apply any of these? e.g. 'fix 1, 3, 5'"
+
+______________________________________________________________________
+
+### 5. GiGL-specific patterns to watch for
+
+These are real patterns from this codebase. Use them as reference when scanning.
+
+Use `Uri.get_basename()` instead of manual string splitting:
+
+```python
+# Avoid — reimplements Uri.get_basename()
+main_jar_file_name = main_jar_file_uri.uri.split("/")[-1]
+
+# Prefer
+main_jar_file_name = main_jar_file_uri.get_basename()
+```
+
+Use `@retry()` instead of hand-rolled retry loops:
+
+```python
+# Avoid — reimplements gigl.common.utils.retry.retry
+for attempt in range(max_retries):
+    try:
+        result = flaky_api_call()
+        break
+    except ApiError:
+        time.sleep(2 ** attempt)
+
+# Prefer
+from gigl.common.utils.retry import retry
+
+@retry(exception_to_check=ApiError, tries=5, delay_s=1, backoff=2)
+def flaky_api_call() -> Result:
+    ...
+```
+
+Use `Logger()` instead of `logging.getLogger()`:
+
+```python
+# Avoid — bypasses GCP-aware logging
+import logging
+logger = logging.getLogger(__name__)
+
+# Prefer
+from gigl.common.logger import Logger
+logger = Logger()
+```
+
+Prefer separate entry points over flag-heavy functions:
 
 ```python
 # Avoid
+def build_dataset(mode: str, *, use_remote: bool, use_cache: bool) -> DistDataset:
+    if use_remote:
+        ...
+    elif use_cache:
+        ...
+    else:
+        ...
+
+# Prefer
+def build_local_dataset() -> DistDataset:
+    ...
+
+def build_remote_dataset() -> DistDataset:
+    ...
+```
+
+Prefer lightweight types over one-off dataclasses:
+
+```python
+# Avoid — one-off type used in a single function
 @dataclass(frozen=True)
 class BatchBounds:
     start_index: int
     end_index: int
 
-
-batch_bounds = BatchBounds(start_index=0, end_index=128)
-
-
 # Prefer
-batch_bounds: tuple[int, int] = (0, 128)
-start_index, end_index = batch_bounds
-```
-
-Prefer separate simple entry points over one generic function with flags:
-
-```python
-# Avoid
-def write_output(records: list[Record], *, validate: bool, compress: bool, upload: bool) -> None:
-    ...
-
-
-# Prefer
-def write_local_output(records: list[Record]) -> None:
-    ...
-
-
-def write_uploaded_output(records: list[Record]) -> None:
-    ...
+batch_start, batch_end = 0, 128
 ```

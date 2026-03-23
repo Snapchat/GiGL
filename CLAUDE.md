@@ -7,13 +7,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
 - AGENTS.md should direct agents to read CLAUDE.md and discover/use skills under `.claude/skills`.
 
-## Skills
-
-- Repository-local skills live under `.claude/skills/`.
-- At the start of every session, discover available skills under `.claude/skills` along with reading AGENTS.md and
-  CLAUDE.md.
-- When a relevant skill exists for the task, use it and follow its instructions.
-
 ## Project Overview
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
@@ -130,80 +123,6 @@ development.
   understood abbreviations (`i`, `e`, `url`, `id`, `config`) or to avoid shadowing.
 - Use OOP for model architectures, functional style for data transforms/pipelines.
 - Re-use and refactor existing code as a priority instead of implementing new code.
-
-### K.I.S.S. (Keep It Simple, Stupid)
-
-- Prefer the simplest implementation that solves the current concrete use case. Do not add abstraction for hypothetical
-  reuse, extensibility, or future configuration.
-- Reduce indirection. If a helper is only called once or twice and is only a few lines, inline it unless extracting it
-  clearly improves readability, testability, or error handling.
-- Keep workflows easy to follow from top to bottom. Avoid splitting a linear flow across many tiny functions, classes,
-  or files just to make each unit smaller.
-- Keep internal data shapes lightweight. For short-lived internal plumbing, prefer tuples, dicts, or existing objects
-  over tiny dataclasses, wrapper classes, or new types.
-- Avoid one-off layers. Do not introduce builders, factories, registries, strategy objects, or config classes unless
-  they remove real duplication or support multiple active implementations.
-- Defer generalization until there is a second real use case. Solve today's problem directly first, then extract shared
-  structure only when repetition becomes concrete.
-- Prefer explicit parameter passing over stateful objects when the workflow is local and sequential.
-- Avoid boolean soup. If a function starts accumulating mode flags, optional callbacks, or branching setup paths,
-  consider splitting it by use case instead of growing a generic entry point.
-- Don't re-invent the wheel. Check the code base for utilities that solve the task at hand.
-
-**Small examples**
-
-Prefer inlining tiny one-off helpers:
-
-```python
-# Avoid
-def _normalized_node_id(node_id: str) -> str:
-    return node_id.strip().lower()
-
-
-def load_node(node_id: str) -> Node:
-    return node_store[_normalized_node_id(node_id)]
-
-
-# Prefer
-def load_node(node_id: str) -> Node:
-    normalized_node_id = node_id.strip().lower()
-    return node_store[normalized_node_id]
-```
-
-Prefer lightweight internal data over tiny one-off types:
-
-```python
-# Avoid
-@dataclass(frozen=True)
-class BatchBounds:
-    start_index: int
-    end_index: int
-
-
-batch_bounds = BatchBounds(start_index=0, end_index=128)
-
-
-# Prefer
-batch_bounds: tuple[int, int] = (0, 128)
-start_index, end_index = batch_bounds
-```
-
-Prefer separate simple entry points over one generic function with flags:
-
-```python
-# Avoid
-def write_output(records: list[Record], *, validate: bool, compress: bool, upload: bool) -> None:
-    ...
-
-
-# Prefer
-def write_local_output(records: list[Record]) -> None:
-    ...
-
-
-def write_uploaded_output(records: list[Record]) -> None:
-    ...
-```
 
 ### Fail Fast on Invalid State
 
