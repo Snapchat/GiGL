@@ -28,7 +28,6 @@ those accounts do*.
 
 ```
 User A ──follows──► User B ──follows──► User D
-       ──follows──► User C ──follows──► User E
 ```
 
 **`edge_dir="in"`** — the sampler walks edges in reverse (against their stored direction).
@@ -38,7 +37,6 @@ accounts do*.
 
 ```
 User X ──follows──► User A ◄──follows── User Y
-User Z ──follows──► User X
 ```
 
 Generally, use `"out"` when the signal flows forward along your edges (e.g. a user's taste is defined
