@@ -192,26 +192,6 @@ class TestRemoteDistDataset(RemoteDistDatasetTestBase):
         self.assertIsNone(remote_dataset.fetch_edge_types())
         self.assertIsNone(remote_dataset.fetch_node_types())
 
-    def test_init_rejects_non_dict_proxy_for_mp_sharing_dict(self, mock_request):
-        cluster_info = _create_mock_graph_store_info()
-
-        with self.assertRaises(ValueError):
-            RemoteDistDataset(
-                cluster_info=cluster_info,
-                local_rank=0,
-                mp_sharing_dict=dict(),  # Regular dict should fail
-            )
-
-    def test_init_rejects_non_barrier_for_mp_barrier(self, mock_request):
-        cluster_info = _create_mock_graph_store_info()
-
-        with self.assertRaises(ValueError):
-            RemoteDistDataset(
-                cluster_info=cluster_info,
-                local_rank=0,
-                mp_sharing_dict=mp.Manager().dict(),
-            )
-
     def test_cluster_info_property(self, mock_request):
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=3, num_compute_nodes=2

@@ -1,8 +1,3 @@
-import gc
-import threading
-import time
-from collections.abc import MutableMapping
-from multiprocessing.managers import DictProxy
 from typing import Literal, Optional, Union, cast
 
 import torch
@@ -33,11 +28,9 @@ class RemoteDistDataset:
         self,
         cluster_info: GraphStoreInfo,
         local_rank: int,
-        mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]] = None,
-        mp_barrier: Optional[threading.Barrier] = None,
     ):
         """
-        Represents a dataset that is stored on a difference storage cluster.
+        Represents a dataset that is stored on a different storage cluster.
         *Must* be used in the GiGL graph-store distributed setup.
 
         This class *must* be used on the compute (client) side of the graph-store distributed setup.
@@ -45,41 +38,9 @@ class RemoteDistDataset:
         Args:
             cluster_info (GraphStoreInfo): The cluster information.
             local_rank (int): The local rank of the process on the compute node.
-            mp_sharing_dict (Optional[MutableMapping[str, torch.Tensor]]):
-                (Optional) If provided, will be used to share tensors across the local machine.
-                e.g. for `fetch_node_ids`.
-                If provided, *must* be a `DictProxy` e.g. the return value of a mp.Manager.
-                ex. torch.multiprocessing.Manager().dict().
-            mp_barrier (Optional[threading.Barrier]):
-                (Optional) If provided, will be used to synchronize processes on the local machine
-                when sharing tensors via ``mp_sharing_dict``.
-                Must be provided when ``mp_sharing_dict`` is provided.
-                Must be created from the same ``mp.Manager()`` as ``mp_sharing_dict``,
-                with ``parties`` equal to ``cluster_info.num_processes_per_compute``.
-                ex. torch.multiprocessing.Manager().Barrier(num_processes_per_compute).
         """
         self._cluster_info = cluster_info
         self._local_rank = local_rank
-        self._mp_sharing_dict = mp_sharing_dict
-        self._mp_barrier = mp_barrier
-        # We accept mp_sharing_dict as a `MutableMapping` as if we directly annotate as `DictProxy` (which is what we want)
-        # Then we will have runtime failures e.g.:
-        #   File "/.../GiGL/python/gigl/distributed/graph_store/remote_dist_dataset.py", line 30, in RemoteDistDataset
-        #   mp_sharing_dict: Optional[DictProxy[str, torch.Tensor]] = None,
-        #                              ~~~~~~~~~^^^^^^^^^^^^^^^^^^^
-        # TypeError: type 'DictProxy' is not subscriptable
-
-        if self._mp_sharing_dict is not None and not isinstance(
-            self._mp_sharing_dict, DictProxy
-        ):
-            raise ValueError(
-                f"When using mp_sharing_dict, you must pass in a `DictProxy` e.g. mp.manager().dict(). Recieved a {type(self._mp_sharing_dict)}"
-            )
-        if self._mp_sharing_dict is not None and self._mp_barrier is None:
-            raise ValueError(
-                "mp_barrier must be provided when mp_sharing_dict is provided. "
-                "Use mp.Manager().Barrier(num_processes_per_compute)."
-            )
 
     @property
     def cluster_info(self) -> GraphStoreInfo:
@@ -333,60 +294,15 @@ class RemoteDistDataset:
             When `split=None`, all nodes are queryable. This means nodes from any split
             (train, val, or test) may be returned. This is useful when you need to sample
             neighbors during inference, as neighbor nodes may belong to any split.
-
-            The GLT sampling engine expects all processes on a given compute machine to have
-            the same sampling input (node ids). As such, the input tensors may be duplicated
-            across all processes on a given compute machine. To save on CPU memory, pass
-            `mp_sharing_dict` to the `RemoteDistDataset` constructor.
         """
-
         if shard_strategy == ShardStrategy.CONTIGUOUS:
             if rank is None or world_size is None:
                 raise ValueError(
                     "Both rank and world_size must be provided when using "
                     f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
                 )
-
-        def _do_fetch() -> dict[int, torch.Tensor]:
-            if shard_strategy == ShardStrategy.CONTIGUOUS:
-                assert rank is not None and world_size is not None
-                return self._fetch_node_ids_by_server(
-                    rank, world_size, node_type, split
-                )
-            return self._fetch_node_ids(rank, world_size, node_type, split)
-
-        def server_key(server_rank: int) -> str:
-            return f"node_ids_from_server_{server_rank}"
-
-        if self._mp_sharing_dict is not None:
-            assert self._mp_barrier is not None
-            if self._local_rank == 0:
-                start_time = time.time()
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} is getting node ids from storage nodes"
-                )
-                node_ids = _do_fetch()
-                for server_rank, node_id in node_ids.items():
-                    node_id.share_memory_()
-                    self._mp_sharing_dict[server_key(server_rank)] = node_id
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} got node ids from storage nodes in {time.time() - start_time:.2f} seconds"
-                )
-            # Wait for rank 0 to finish writing shared data before any rank reads.
-            self._mp_barrier.wait()
-            node_ids = {
-                server_rank: self._mp_sharing_dict[server_key(server_rank)]
-                for server_rank in range(self.cluster_info.num_storage_nodes)
-            }
-            # Wait for all ranks to finish reading before rank 0 cleans up.
-            self._mp_barrier.wait()
-            if self._local_rank == 0:
-                for server_rank in range(self.cluster_info.num_storage_nodes):
-                    del self._mp_sharing_dict[server_key(server_rank)]
-                gc.collect()
-            return node_ids
-        else:
-            return _do_fetch()
+            return self._fetch_node_ids_by_server(rank, world_size, node_type, split)
+        return self._fetch_node_ids(rank, world_size, node_type, split)
 
     def fetch_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
@@ -606,11 +522,6 @@ class RemoteDistDataset:
             concrete examples of how each strategy distributes data across
             compute nodes.
 
-        Note:
-            The GLT sampling engine expects all processes on a given compute machine to have
-            the same sampling input (node ids). As such, the input tensors may be duplicated
-            across all processes on a given compute machine. To save on CPU memory, pass
-            `mp_sharing_dict` to the `RemoteDistDataset` constructor.
         """
 
         if shard_strategy == ShardStrategy.CONTIGUOUS:
@@ -635,124 +546,40 @@ class RemoteDistDataset:
             evaluated_supervision_edge_type = supervision_edge_type
         del anchor_node_type, supervision_edge_type
 
-        def anchors_key(server_rank: int) -> str:
-            return f"ablp_server_{server_rank}_anchors"
-
-        def positive_labels_key(server_rank: int) -> str:
-            return f"ablp_server_{server_rank}_positive_labels"
-
-        def negative_labels_key(server_rank: int) -> str:
-            return f"ablp_server_{server_rank}_negative_labels"
-
-        def wrap_ablp_input(
-            anchors: torch.Tensor,
-            anchor_node_type: NodeType,
-            positive_labels: torch.Tensor,
-            negative_labels: Optional[torch.Tensor],
-        ) -> ABLPInputNodes:
-            """Convert raw tensors into an ABLPInputNodes dataclass."""
-            return ABLPInputNodes(
-                anchor_node_type=anchor_node_type,
-                anchor_nodes=anchors,
-                labels={
-                    evaluated_supervision_edge_type: (positive_labels, negative_labels)
-                },
-            )
-
-        def _do_fetch_ablp() -> (
-            dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]
-        ):
-            if shard_strategy == ShardStrategy.CONTIGUOUS:
-                assert rank is not None and world_size is not None
-                return self._fetch_ablp_input_by_server(
-                    split=split,
-                    rank=rank,
-                    world_size=world_size,
-                    node_type=evaluated_anchor_node_type,
-                    supervision_edge_type=evaluated_supervision_edge_type,
-                )
-            return self._fetch_ablp_input(
+        if shard_strategy == ShardStrategy.CONTIGUOUS:
+            assert rank is not None and world_size is not None
+            raw_inputs = self._fetch_ablp_input_by_server(
                 split=split,
                 rank=rank,
                 world_size=world_size,
                 node_type=evaluated_anchor_node_type,
                 supervision_edge_type=evaluated_supervision_edge_type,
             )
-
-        if self._mp_sharing_dict is not None:
-            assert self._mp_barrier is not None
-            if self._local_rank == 0:
-                start_time = time.time()
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} is getting ABLP input from storage nodes"
-                )
-                raw_ablp_inputs = _do_fetch_ablp()
-                for server_rank, (
-                    anchors,
-                    positive_labels,
-                    negative_labels,
-                ) in raw_ablp_inputs.items():
-                    anchors.share_memory_()
-                    positive_labels.share_memory_()
-                    self._mp_sharing_dict[anchors_key(server_rank)] = anchors
-                    self._mp_sharing_dict[
-                        positive_labels_key(server_rank)
-                    ] = positive_labels
-                    if negative_labels is not None:
-                        negative_labels.share_memory_()
-                        self._mp_sharing_dict[
-                            negative_labels_key(server_rank)
-                        ] = negative_labels
-                logger.info(
-                    f"Compute rank {torch.distributed.get_rank()} got ABLP input from storage nodes "
-                    f"in {time.time() - start_time:.2f} seconds"
-                )
-            # Wait for rank 0 to finish writing shared data before any rank reads.
-            self._mp_barrier.wait()
-            returned_ablp_inputs: dict[int, ABLPInputNodes] = {}
-            for server_rank in range(self.cluster_info.num_storage_nodes):
-                anchors = self._mp_sharing_dict[anchors_key(server_rank)]
-                positive_labels = self._mp_sharing_dict[
-                    positive_labels_key(server_rank)
-                ]
-                neg_key = negative_labels_key(server_rank)
-                negative_labels = (
-                    self._mp_sharing_dict[neg_key]
-                    if neg_key in self._mp_sharing_dict
-                    else None
-                )
-                returned_ablp_inputs[server_rank] = wrap_ablp_input(
-                    anchors=anchors,
-                    anchor_node_type=evaluated_anchor_node_type,
-                    positive_labels=positive_labels,
-                    negative_labels=negative_labels,
-                )
-            # Wait for all ranks to finish reading before rank 0 cleans up.
-            self._mp_barrier.wait()
-            if self._local_rank == 0:
-                for server_rank in range(self.cluster_info.num_storage_nodes):
-                    del self._mp_sharing_dict[anchors_key(server_rank)]
-                    del self._mp_sharing_dict[positive_labels_key(server_rank)]
-                    negative_label_key = negative_labels_key(server_rank)
-                    if negative_label_key in self._mp_sharing_dict:
-                        del self._mp_sharing_dict[negative_label_key]
-                gc.collect()
-            return returned_ablp_inputs
         else:
-            raw_inputs = _do_fetch_ablp()
-            return {
-                server_rank: wrap_ablp_input(
-                    anchor_node_type=evaluated_anchor_node_type,
-                    anchors=anchors,
-                    positive_labels=positive_labels,
-                    negative_labels=negative_labels,
-                )
-                for server_rank, (
-                    anchors,
-                    positive_labels,
-                    negative_labels,
-                ) in raw_inputs.items()
-            }
+            raw_inputs = self._fetch_ablp_input(
+                split=split,
+                rank=rank,
+                world_size=world_size,
+                node_type=evaluated_anchor_node_type,
+                supervision_edge_type=evaluated_supervision_edge_type,
+            )
+        return {
+            server_rank: ABLPInputNodes(
+                anchor_node_type=evaluated_anchor_node_type,
+                anchor_nodes=anchors,
+                labels={
+                    evaluated_supervision_edge_type: (
+                        positive_labels,
+                        negative_labels,
+                    )
+                },
+            )
+            for server_rank, (
+                anchors,
+                positive_labels,
+                negative_labels,
+            ) in raw_inputs.items()
+        }
 
     def fetch_edge_types(self) -> Optional[list[EdgeType]]:
         """Fetch the edge types from the registered dataset.
