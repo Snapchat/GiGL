@@ -29,7 +29,6 @@ datasetConfig:
     dataPreprocessorArgs:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'dblp_node_anchor_edge_features_lp'
-# TODO(kmonte): Add GS trainer
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
@@ -49,8 +48,31 @@ trainerConfig:
         ("paper", "to", "author"): [15, 15],
         ("author", "to", "paper"): [20, 20]
       }
-  command: python -m examples.link_prediction.heterogeneous_training
-# TODO(kmonte): Move to user-defined server code
+  command: python -m examples.link_prediction.graph_store.heterogeneous_training
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+      # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
+      # We do this so that the tuples for edge types get parsed as such.
+      # NOTE: We use the reverse "author to paper" edge type here as our splitter reverses the edge type if the sampling direction is "in".
+      splitter_kwargs: >-
+        {
+          "sampling_direction": "in",
+          "should_convert_labels_to_edges": True,
+          "num_val": 0.3,
+          "num_test": 0.3,
+          "supervision_edge_types": [("author", "to", "paper")]
+        }
+      ssl_positive_label_percentage: "0.15"
+      # We only do one session for training.
+      # You should set one server session per process group you want to communicate with.
+      # e.g. for inference:
+      # for node_type in inference_node_types:
+      #   launch_inference_process(node_type)
+      #   num_server_sessions = len(inference_node_types)
+      num_server_sessions: "1"
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer

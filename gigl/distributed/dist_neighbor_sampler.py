@@ -2,10 +2,9 @@ import asyncio
 import gc
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
@@ -178,7 +177,7 @@ class DistNeighborSampler(GLTDistNeighborSampler):
     async def _sample_from_nodes(
         self,
         inputs: NodeSamplerInput,
-    ) -> Optional[SampleMessage]:
+    ) -> Union[SamplerOutput, HeteroSamplerOutput]:
         """Sample subgraph from seed nodes.
 
         Supports both NodeSamplerInput and ABLPNodeSamplerInput. For ABLP,

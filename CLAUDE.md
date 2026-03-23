@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Coordination With AGENTS.md
+
+- CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
+- AGENTS.md should direct agents to read CLAUDE.md and discover/use skills under `.claude/skills`.
+
 ## Project Overview
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
@@ -129,7 +134,8 @@ development.
 
 - Always use type annotations for function parameters and return values.
 - Prefer native types (`dict[str, str]`, `list[int]`) over `typing.Dict`, `typing.List`.
-- Use `Final` for constants. Use `@dataclass(frozen=True)` for immutable data containers.
+- Use `Final` for constants. Use `@dataclass(frozen=True)` for immutable data containers when named fields and a stable
+  shape add real clarity; do not introduce a dataclass for tiny internal-only plumbing.
 - Always annotate empty containers: `names: list[str] = []` not `names = []`.
 
 ### Docstrings

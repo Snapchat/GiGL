@@ -18,13 +18,24 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
+from gigl.distributed.sampler_options import (
+    PPRSamplerOptions,
+    SamplerOptions,
+    resolve_sampler_options,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    attach_ppr_outputs,
+    extract_edge_type_metadata,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
@@ -558,7 +569,13 @@ class DistNeighborLoader(BaseDistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        data = super()._collate_fn(msg)
+        # Extract user-defined metadata before super()._collate_fn, which
+        # calls GLT's to_hetero_data.  to_hetero_data misinterprets #META. keys
+        # as edge types and fails when edge_dir="out" (tries to call
+        # reverse_edge_type on them).  We strip them here and re-apply after.
+        # TODO (mkolodner-sc): Remove once GLT's to_hetero_data is fixed.
+        metadata, stripped_msg = extract_metadata(msg, self.to_device)
+        data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
@@ -569,4 +586,20 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            matched, metadata = extract_edge_type_metadata(
+                metadata=metadata,
+                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+            )
+            attach_ppr_outputs(
+                data,
+                matched[PPR_EDGE_INDEX_METADATA_KEY],
+                matched[PPR_WEIGHT_METADATA_KEY],
+            )
+
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
+        for key, value in metadata.items():
+            data[key] = value
         return data

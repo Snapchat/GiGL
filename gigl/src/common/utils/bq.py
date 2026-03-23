@@ -282,6 +282,69 @@ class BqUtils:
                 matching_tables.append(formatted_table_path)
         return matching_tables
 
+    def get_latest_table(
+        self,
+        bq_table_path_prefix: str,
+        table_partition_suffix: str = "YYYYMMDD",
+        cap_date: Optional[str] = None,
+    ) -> str:
+        """Return the latest table matching *bq_table_path_prefix*.
+
+        Tables are expected to have a partition suffix whose length matches
+        *table_partition_suffix*.  All supported GCP partition suffixes (``YYYY``,
+        ``YYYYMM``, ``YYYYMMDD``, ``YYYYMMDDHH``, integer ranges) are
+        lexicographically sortable, so the latest table is the
+        lexicographic maximum.
+        See: https://docs.cloud.google.com/bigquery/docs/partitioned-tables#date_timestamp_partitioned_tables
+
+
+        If *cap_date* is given, only tables with suffix <= cap_date are
+        considered.
+
+        Args:
+            bq_table_path_prefix: Fully qualified prefix in
+                ``"project.dataset.table_prefix"`` format.
+            table_partition_suffix: A representative suffix string whose length
+                determines how many trailing characters form the sortable
+                partition key.  Defaults to ``"YYYYMMDD"`` (8 characters).
+            cap_date: Optional upper-bound date string that is in the format of
+            *table_partition_suffix*. Only tables with a suffix <= this value are
+            considered.
+
+        Returns:
+            The fully qualified table path of the latest matching table.
+        """
+        project_id, dataset_name, table_prefix = BqUtils.parse_bq_table_path(
+            bq_table_path_prefix
+        )
+
+        bq_dataset_path = BqUtils.join_path(project_id, dataset_name)
+        tables = self.__bq_client.list_tables(bq_dataset_path)
+
+        suffix_len = len(table_partition_suffix)
+        expected_table_path_len = len(bq_table_path_prefix) + suffix_len
+        latest_table_path: str
+        curr_latest_candidate_suffix: Optional[str] = None
+        for table_list_item in tables:
+            if not table_list_item.table_id.startswith(table_prefix):
+                continue
+            table_path = BqUtils.format_bq_path(table_list_item.full_table_id)
+            if len(table_path) != expected_table_path_len:
+                continue
+            suffix = table_path[-suffix_len:]
+            if cap_date is None or suffix <= cap_date:
+                if (
+                    curr_latest_candidate_suffix is None
+                    or suffix > curr_latest_candidate_suffix
+                ):
+                    curr_latest_candidate_suffix = suffix
+                    latest_table_path = table_path
+        if curr_latest_candidate_suffix is None:
+            raise ValueError(
+                f"No tables found with prefix {bq_table_path_prefix} and cap date {cap_date}"
+            )
+        return latest_table_path
+
     def delete_matching_tables(
         self, bq_dataset_path: str, table_match_string: str
     ) -> None:
