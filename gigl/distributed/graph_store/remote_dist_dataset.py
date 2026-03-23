@@ -6,7 +6,8 @@ from graphlearn_torch.partition import PartitionBook
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer
-from gigl.distributed.utils.neighborloader import (
+from gigl.distributed.graph_store.sharding import (
+    ServerSlice,
     ShardStrategy,
     compute_server_assignments,
 )
@@ -163,65 +164,78 @@ class RemoteDistDataset:
                 )
         return edge_type
 
+    def _validate_contiguous_args(
+        self,
+        rank: Optional[int],
+        world_size: Optional[int],
+        shard_strategy: ShardStrategy,
+    ) -> tuple[Optional[int], Optional[int]]:
+        """Validate contiguous sharding inputs and preserve round-robin inputs unchanged."""
+        if shard_strategy != ShardStrategy.CONTIGUOUS:
+            return rank, world_size
+
+        if rank is None or world_size is None:
+            raise ValueError(
+                "Both rank and world_size must be provided when using "
+                f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
+            )
+        if world_size != self.cluster_info.num_compute_nodes:
+            raise ValueError(
+                "ShardStrategy.CONTIGUOUS expects world_size to equal "
+                "cluster_info.num_compute_nodes. "
+                f"Got world_size={world_size}, "
+                f"cluster_info.num_compute_nodes={self.cluster_info.num_compute_nodes}"
+            )
+        return rank, world_size
+
+    def _compute_assignments_if_needed(
+        self,
+        rank: Optional[int],
+        world_size: Optional[int],
+        shard_strategy: ShardStrategy,
+    ) -> Optional[dict[int, ServerSlice]]:
+        """Compute contiguous server assignments when that shard strategy is requested."""
+        if shard_strategy != ShardStrategy.CONTIGUOUS:
+            return None
+
+        assert rank is not None and world_size is not None
+        return compute_server_assignments(
+            num_servers=self.cluster_info.num_storage_nodes,
+            num_compute_nodes=world_size,
+            compute_rank=rank,
+        )
+
     def _fetch_node_ids(
         self,
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
         node_type: Optional[NodeType] = None,
         split: Optional[Literal["train", "val", "test"]] = None,
+        assignments: Optional[dict[int, ServerSlice]] = None,
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
-        futures: list[torch.futures.Future[torch.Tensor]] = []
         node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
 
-        logger.info(
-            f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
-        )
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    DistServer.get_node_ids,
-                    rank=rank,
-                    world_size=world_size,
-                    split=split,
-                    node_type=node_type,
-                )
+        if assignments is None:
+            logger.info(
+                f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
             )
+            futures: list[torch.futures.Future[torch.Tensor]] = []
+            for server_rank in range(self.cluster_info.num_storage_nodes):
+                futures.append(
+                    async_request_server(
+                        server_rank,
+                        DistServer.get_node_ids,
+                        rank=rank,
+                        world_size=world_size,
+                        split=split,
+                        node_type=node_type,
+                    )
+                )
             node_ids = torch.futures.wait_all(futures)
-        return {server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)}
-
-    def _fetch_node_ids_by_server(
-        self,
-        rank: int,
-        world_size: int,
-        node_type: Optional[NodeType] = None,
-        split: Optional[Literal["train", "val", "test"]] = None,
-    ) -> dict[int, torch.Tensor]:
-        """Fetches node ids using contiguous server assignment.
-
-        Each compute node is assigned a contiguous range of servers. Only
-        assigned servers are RPCed; unassigned servers get empty tensors.
-        Boundary servers are sliced fractionally when servers don't divide
-        evenly across compute nodes.
-
-        Args:
-            rank: The rank of the compute node requesting node ids.
-            world_size: The total number of compute nodes.
-            node_type: The type of nodes to get. Must be provided for heterogeneous datasets.
-            split: The split of the dataset to get node ids from.
-
-        Returns:
-            A dict mapping every server rank to a tensor of node ids.
-        """
-        node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
-
-        assignments = compute_server_assignments(
-            num_servers=self.cluster_info.num_storage_nodes,
-            num_compute_nodes=world_size,
-            compute_rank=rank,
-        )
+            return {
+                server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)
+            }
 
         logger.info(
             f"Getting node ids via CONTIGUOUS strategy for rank {rank} / {world_size} "
@@ -229,10 +243,9 @@ class RemoteDistDataset:
             f"Assigned servers: {list(assignments.keys())}"
         )
 
-        # RPC only assigned servers (fetch ALL nodes, no server-side sharding)
-        futures: dict[int, torch.futures.Future[torch.Tensor]] = {}
+        assigned_futures: dict[int, torch.futures.Future[torch.Tensor]] = {}
         for server_rank in assignments:
-            futures[server_rank] = async_request_server(
+            assigned_futures[server_rank] = async_request_server(
                 server_rank,
                 DistServer.get_node_ids,
                 rank=None,
@@ -241,15 +254,13 @@ class RemoteDistDataset:
                 node_type=node_type,
             )
 
-        # Build result: slice assigned servers, empty tensors for unassigned
         result: dict[int, torch.Tensor] = {}
         for server_rank in range(self.cluster_info.num_storage_nodes):
-            if server_rank in futures:
-                all_nodes = futures[server_rank].wait()
+            if server_rank in assigned_futures:
+                all_nodes = assigned_futures[server_rank].wait()
                 result[server_rank] = assignments[server_rank].slice_tensor(all_nodes)
             else:
                 result[server_rank] = torch.empty(0, dtype=torch.long)
-
         return result
 
     def fetch_node_ids(
@@ -267,26 +278,32 @@ class RemoteDistDataset:
         filtered and sharded according to the provided arguments.
 
         Args:
-            rank (Optional[int]): The rank of the process requesting node ids. Must be provided if world_size is provided.
-            world_size (Optional[int]): The total number of processes in the distributed setup. Must be provided if rank is provided.
+            rank (Optional[int]): The requested shard rank.
+                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
+                expects the compute-node rank.
+            world_size (Optional[int]): The requested shard world size.
+                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
+                requires ``world_size == cluster_info.num_compute_nodes``.
             split (Optional[Literal["train", "val", "test"]]):
                 The split of the dataset to get node ids from.
                 If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
             node_type (Optional[NodeType]): The type of nodes to get.
                 Must be provided for heterogeneous datasets.
             shard_strategy (ShardStrategy): Strategy for sharding node IDs across compute nodes.
-                ``ROUND_ROBIN`` (default) shards each server's nodes across all compute nodes.
-                ``CONTIGUOUS`` assigns entire servers to compute nodes, producing empty tensors
-                for unassigned servers. ``CONTIGUOUS`` requires both ``rank`` and ``world_size``.
+                ``ROUND_ROBIN`` (default) shards each server's nodes across the
+                requested rank/world_size on the storage server. ``CONTIGUOUS``
+                assigns storage servers to compute nodes, returning empty tensors
+                for unassigned servers.
 
         Raises:
-            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
+            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None,
+                or if ``world_size`` does not match ``cluster_info.num_compute_nodes``.
 
         Returns:
             dict[int, torch.Tensor]: A dict mapping storage rank to node ids.
 
         Examples:
-            See :class:`~gigl.distributed.utils.neighborloader.ShardStrategy` for
+            See :class:`~gigl.distributed.graph_store.sharding.ShardStrategy` for
             concrete examples of how each strategy distributes node IDs across
             compute nodes.
 
@@ -295,14 +312,23 @@ class RemoteDistDataset:
             (train, val, or test) may be returned. This is useful when you need to sample
             neighbors during inference, as neighbor nodes may belong to any split.
         """
-        if shard_strategy == ShardStrategy.CONTIGUOUS:
-            if rank is None or world_size is None:
-                raise ValueError(
-                    "Both rank and world_size must be provided when using "
-                    f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
-                )
-            return self._fetch_node_ids_by_server(rank, world_size, node_type, split)
-        return self._fetch_node_ids(rank, world_size, node_type, split)
+        rank, world_size = self._validate_contiguous_args(
+            rank=rank,
+            world_size=world_size,
+            shard_strategy=shard_strategy,
+        )
+        assignments = self._compute_assignments_if_needed(
+            rank=rank,
+            world_size=world_size,
+            shard_strategy=shard_strategy,
+        )
+        return self._fetch_node_ids(
+            rank=rank,
+            world_size=world_size,
+            node_type=node_type,
+            split=split,
+            assignments=assignments,
+        )
 
     def fetch_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
@@ -349,67 +375,37 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
         supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        assignments: Optional[dict[int, ServerSlice]] = None,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
-        futures: list[
-            torch.futures.Future[
-                tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-            ]
-        ] = []
-        logger.info(
-            f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
-            f"split {split}, and supervision edge type {supervision_edge_type}"
-        )
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            futures.append(
-                async_request_server(
-                    server_rank,
-                    DistServer.get_ablp_input,
-                    split=split,
-                    rank=rank,
-                    world_size=world_size,
-                    node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
-                )
+        if assignments is None:
+            futures: list[
+                torch.futures.Future[
+                    tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+                ]
+            ] = []
+            logger.info(
+                f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
+                f"split {split}, and supervision edge type {supervision_edge_type}"
             )
+
+            for server_rank in range(self.cluster_info.num_storage_nodes):
+                futures.append(
+                    async_request_server(
+                        server_rank,
+                        DistServer.get_ablp_input,
+                        split=split,
+                        rank=rank,
+                        world_size=world_size,
+                        node_type=node_type,
+                        supervision_edge_type=supervision_edge_type,
+                    )
+                )
             ablp_inputs = torch.futures.wait_all(futures)
-        return {
-            server_rank: ablp_input
-            for server_rank, ablp_input in enumerate(ablp_inputs)
-        }
-
-    def _fetch_ablp_input_by_server(
-        self,
-        split: Literal["train", "val", "test"],
-        rank: int,
-        world_size: int,
-        node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
-        supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
-        """Fetches ABLP input using contiguous server assignment.
-
-        Each compute node is assigned a contiguous range of servers. Only
-        assigned servers are RPCed; unassigned servers get empty tensors.
-        Boundary servers are sliced fractionally when servers don't divide
-        evenly across compute nodes.
-
-        Args:
-            split: The split of the dataset to get ABLP input from.
-            rank: The rank of the compute node requesting ABLP input.
-            world_size: The total number of compute nodes.
-            node_type: The type of anchor nodes to retrieve.
-            supervision_edge_type: The edge type for supervision.
-
-        Returns:
-            A dict mapping every server rank to a tuple of
-            (anchors, positive_labels, negative_labels).
-        """
-        assignments = compute_server_assignments(
-            num_servers=self.cluster_info.num_storage_nodes,
-            num_compute_nodes=world_size,
-            compute_rank=rank,
-        )
+            return {
+                server_rank: ablp_input
+                for server_rank, ablp_input in enumerate(ablp_inputs)
+            }
 
         logger.info(
             f"Getting ABLP input via CONTIGUOUS strategy for rank {rank} / {world_size} "
@@ -418,15 +414,14 @@ class RemoteDistDataset:
             f"Assigned servers: {list(assignments.keys())}"
         )
 
-        # RPC only assigned servers (fetch ALL ABLP data, no server-side sharding)
-        futures: dict[
+        assigned_futures: dict[
             int,
             torch.futures.Future[
                 tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
             ],
         ] = {}
         for server_rank in assignments:
-            futures[server_rank] = async_request_server(
+            assigned_futures[server_rank] = async_request_server(
                 server_rank,
                 DistServer.get_ablp_input,
                 split=split,
@@ -436,13 +431,14 @@ class RemoteDistDataset:
                 supervision_edge_type=supervision_edge_type,
             )
 
-        # Build result: slice assigned servers, empty tensors for unassigned
         result: dict[
             int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
         ] = {}
         for server_rank in range(self.cluster_info.num_storage_nodes):
-            if server_rank in futures:
-                anchors, positive_labels, negative_labels = futures[server_rank].wait()
+            if server_rank in assigned_futures:
+                anchors, positive_labels, negative_labels = assigned_futures[
+                    server_rank
+                ].wait()
                 server_slice = assignments[server_rank]
                 sliced_anchors = server_slice.slice_tensor(anchors)
                 sliced_positive = server_slice.slice_tensor(positive_labels)
@@ -459,10 +455,9 @@ class RemoteDistDataset:
             else:
                 result[server_rank] = (
                     torch.empty(0, dtype=torch.long),
-                    torch.empty(0, dtype=torch.long),
+                    torch.empty((0, 0), dtype=torch.long),
                     None,
                 )
-
         return result
 
     # TODO(#488) - support multiple supervision edge types
@@ -488,10 +483,12 @@ class RemoteDistDataset:
 
         Args:
             split (Literal["train", "val", "test"]): The split to get the input for.
-            rank (Optional[int]): The rank of the process requesting the input.
-                Must be provided if world_size is provided.
-            world_size (Optional[int]): The total number of processes in the distributed setup.
-                Must be provided if rank is provided.
+            rank (Optional[int]): The requested shard rank.
+                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
+                expects the compute-node rank.
+            world_size (Optional[int]): The requested shard world size.
+                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
+                requires ``world_size == cluster_info.num_compute_nodes``.
             anchor_node_type (Optional[NodeType]): The type of the anchor nodes to retrieve.
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
@@ -501,35 +498,34 @@ class RemoteDistDataset:
                 Must be None for labeled homogeneous graphs.
                 Defaults to None.
             shard_strategy (ShardStrategy): Strategy for sharding ABLP input across compute
-                nodes. ``ROUND_ROBIN`` (default) shards each server's data across all compute
-                nodes. ``CONTIGUOUS`` assigns entire servers to compute nodes, producing empty
-                tensors for unassigned servers. ``CONTIGUOUS`` requires both ``rank`` and
-                ``world_size``.
+                nodes. ``ROUND_ROBIN`` (default) shards each server's data across the
+                requested rank/world_size on the storage server. ``CONTIGUOUS`` assigns
+                storage servers to compute nodes, producing empty tensors for unassigned
+                servers.
 
         Returns:
             dict[int, ABLPInputNodes]:
                 A dict mapping storage rank to an ABLPInputNodes containing:
-                - anchor_node_type: The node type of the anchor nodes, or None for labeled homogeneous.
+                - anchor_node_type: The node type of the anchor nodes, or ``DEFAULT_HOMOGENEOUS_NODE_TYPE`` for labeled homogeneous.
                 - anchor_nodes: 1D tensor of anchor node IDs for the split.
                 - positive_labels: Dict mapping positive label EdgeType to a 2D tensor [N, M].
                 - negative_labels: Optional dict mapping negative label EdgeType to a 2D tensor [N, M].
 
         Raises:
-            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
+            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None,
+                or if ``world_size`` does not match ``cluster_info.num_compute_nodes``.
 
         Examples:
-            See :class:`~gigl.distributed.utils.neighborloader.ShardStrategy` for
+            See :class:`~gigl.distributed.graph_store.sharding.ShardStrategy` for
             concrete examples of how each strategy distributes data across
             compute nodes.
 
         """
-
-        if shard_strategy == ShardStrategy.CONTIGUOUS:
-            if rank is None or world_size is None:
-                raise ValueError(
-                    "Both rank and world_size must be provided when using "
-                    f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
-                )
+        rank, world_size = self._validate_contiguous_args(
+            rank=rank,
+            world_size=world_size,
+            shard_strategy=shard_strategy,
+        )
 
         if (anchor_node_type is None) != (supervision_edge_type is None):
             raise ValueError(
@@ -546,23 +542,19 @@ class RemoteDistDataset:
             evaluated_supervision_edge_type = supervision_edge_type
         del anchor_node_type, supervision_edge_type
 
-        if shard_strategy == ShardStrategy.CONTIGUOUS:
-            assert rank is not None and world_size is not None
-            raw_inputs = self._fetch_ablp_input_by_server(
-                split=split,
-                rank=rank,
-                world_size=world_size,
-                node_type=evaluated_anchor_node_type,
-                supervision_edge_type=evaluated_supervision_edge_type,
-            )
-        else:
-            raw_inputs = self._fetch_ablp_input(
-                split=split,
-                rank=rank,
-                world_size=world_size,
-                node_type=evaluated_anchor_node_type,
-                supervision_edge_type=evaluated_supervision_edge_type,
-            )
+        assignments = self._compute_assignments_if_needed(
+            rank=rank,
+            world_size=world_size,
+            shard_strategy=shard_strategy,
+        )
+        raw_inputs = self._fetch_ablp_input(
+            split=split,
+            rank=rank,
+            world_size=world_size,
+            node_type=evaluated_anchor_node_type,
+            supervision_edge_type=evaluated_supervision_edge_type,
+            assignments=assignments,
+        )
         return {
             server_rank: ABLPInputNodes(
                 anchor_node_type=evaluated_anchor_node_type,
