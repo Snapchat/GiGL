@@ -16,6 +16,10 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.graph_store.dist_server import DistServer
@@ -25,10 +29,15 @@ from gigl.distributed.sampler import (
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
-from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
+from gigl.distributed.sampler_options import (
+    PPRSamplerOptions,
+    SamplerOptions,
+    resolve_sampler_options,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    attach_ppr_outputs,
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
@@ -638,17 +647,19 @@ class DistABLPLoader(BaseDistLoader):
         node_feature_info = dataset.fetch_node_feature_info()
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
-        node_rank = dataset.cluster_info.compute_node_rank
+        compute_rank = torch.distributed.get_rank()
 
         # Get sampling ports for compute-storage connections.
+        # One port per compute process (not per compute node) so that each
+        # process gets its own server-side sampling worker group.
         sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.num_compute_nodes
+            num_ports=dataset.cluster_info.compute_cluster_world_size
         )
-        sampling_port = sampling_ports[node_rank]
+        sampling_port = sampling_ports[compute_rank]
         worker_key = (
-            f"compute_ablp_loader_rank_{node_rank}_worker_{self._instance_count}"
+            f"compute_ablp_loader_rank_{compute_rank}_worker_{self._instance_count}"
         )
-        logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
+        logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -898,7 +909,19 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
+
         data = self._set_labels(data, positive_labels, negative_labels)
+
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            matched_ppr, metadata = extract_edge_type_metadata(
+                metadata=metadata,
+                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+            )
+            attach_ppr_outputs(
+                data,
+                matched_ppr[PPR_EDGE_INDEX_METADATA_KEY],
+                matched_ppr[PPR_WEIGHT_METADATA_KEY],
+            )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.

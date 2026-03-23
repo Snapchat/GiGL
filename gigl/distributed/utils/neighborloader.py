@@ -301,6 +301,35 @@ def extract_metadata(
     return metadata, stripped_msg
 
 
+def attach_ppr_outputs(
+    data: Union[Data, HeteroData],
+    ppr_edge_indices: dict[EdgeType, torch.Tensor],
+    ppr_weights: dict[EdgeType, torch.Tensor],
+) -> None:
+    """Attach PPR edge indices and weights onto a HeteroData object.
+
+    For each PPR edge type, sets ``data[edge_type].edge_index`` and
+    ``data[edge_type].edge_attr`` in-place.  Called from the loader's
+    ``_collate_fn`` only when a PPR sampler is active; the function is a
+    no-op if both dicts are empty.
+
+    Args:
+        data: The Data or HeteroData object to attach outputs to.
+        ppr_edge_indices: Dict mapping PPR edge type to ``[2, N]`` edge-index tensor.
+        ppr_weights: Dict mapping PPR edge type to ``[N]`` weight tensor.
+
+    Raises:
+        AssertionError: If ``ppr_edge_indices`` and ``ppr_weights`` have different edge-type keys.
+    """
+    assert ppr_edge_indices.keys() == ppr_weights.keys(), (
+        f"PPR edge index and weight edge types must match, "
+        f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
+    )
+    for edge_type, edge_index in ppr_edge_indices.items():
+        data[edge_type].edge_index = edge_index
+        data[edge_type].edge_attr = ppr_weights[edge_type]
+
+
 def extract_edge_type_metadata(
     metadata: dict[str, torch.Tensor],
     prefixes: list[str],

@@ -29,13 +29,23 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.typing import EdgeType
 from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
+from gigl.common.logger import Logger
+from gigl.distributed.dist_dataset import DistDataset as GiglDistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-from gigl.distributed.sampler_options import KHopNeighborSamplerOptions, SamplerOptions
+from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
+from gigl.distributed.sampler_options import (
+    KHopNeighborSamplerOptions,
+    PPRSamplerOptions,
+    SamplerOptions,
+)
+
+logger = Logger()
 
 
 def _sampling_worker_loop(
@@ -50,6 +60,7 @@ def _sampling_worker_loop(
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
 ):
     dist_sampler = None
     try:
@@ -89,15 +100,8 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Resolve sampler class from options
-        if isinstance(sampler_options, KHopNeighborSamplerOptions):
-            sampler_cls = DistNeighborSampler
-        else:
-            raise NotImplementedError(
-                f"Unsupported sampler options type: {type(sampler_options)}"
-            )
-
-        dist_sampler = sampler_cls(
+        # Shared args for all sampler types (positional args to DistNeighborSampler.__init__)
+        shared_sampler_args = (
             data,
             sampling_config.num_neighbors,
             sampling_config.with_edge,
@@ -109,8 +113,29 @@ def _sampling_worker_loop(
             worker_options.use_all2all,
             worker_options.worker_concurrency,
             current_device,
-            seed=sampling_config.seed,
         )
+
+        if isinstance(sampler_options, KHopNeighborSamplerOptions):
+            dist_sampler = DistNeighborSampler(
+                *shared_sampler_args,
+                seed=sampling_config.seed,
+            )
+        elif isinstance(sampler_options, PPRSamplerOptions):
+            assert degree_tensors is not None
+            dist_sampler = DistPPRNeighborSampler(
+                *shared_sampler_args,
+                seed=sampling_config.seed,
+                alpha=sampler_options.alpha,
+                eps=sampler_options.eps,
+                max_ppr_nodes=sampler_options.max_ppr_nodes,
+                num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
+                total_degree_dtype=sampler_options.total_degree_dtype,
+                degree_tensors=degree_tensors,
+            )
+        else:
+            raise NotImplementedError(
+                f"Unsupported sampler options type: {type(sampler_options)}"
+            )
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
@@ -193,6 +218,26 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # Extract degree tensors before spawning workers.  Worker subprocesses
+        # only initialize RPC (not torch.distributed), so the lazy degree
+        # computation on GiglDistDataset would fail there.  Computing here —
+        # where torch.distributed IS initialized — lets the tensor be shared
+        # to workers via IPC.
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            assert isinstance(self.data, GiglDistDataset)
+            degree_tensors = self.data.degree_tensor
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} edge types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with {degree_tensors.size(0)} nodes."
+                )
+
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
@@ -221,6 +266,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self.sampling_completed_worker_count,
                     barrier,
                     self._sampler_options,
+                    degree_tensors,
                 ),
             )
             w.daemon = True

@@ -47,8 +47,8 @@ Key Implementation Differences
 |                           | ``master_ip_address`` extracted manually       | ``get_graph_store_info()`` encapsulates all  |
 |                           |                                               | topology                                     |
 +---------------------------+----------------------------------------------+----------------------------------------------+
-| **Inter-process sharing** | N/A (each process loads own partition)        | ``mp_sharing_dict`` for efficient tensor     |
-|                           |                                               | sharing between local processes              |
+| **Inter-process sharing** | N/A (each process loads own partition)        | Each process fetches its own shard from      |
+|                           |                                               | the storage cluster                          |
 +---------------------------+----------------------------------------------+----------------------------------------------+
 | **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_proccess()`` disconnects  |
 |                           |                                               | from storage cluster                         |
@@ -122,9 +122,8 @@ import gc
 import os
 import statistics
 import sys
-import threading
 import time
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -226,8 +225,8 @@ def _setup_dataloaders(
     flush()
     ablp_input = dataset.fetch_ablp_input(
         split=split,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
 
     main_loader = DistABLPLoader(
@@ -252,8 +251,8 @@ def _setup_dataloaders(
 
     # For the random negative loader, we get all node IDs from the storage cluster.
     all_node_ids = dataset.fetch_node_ids(
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
 
     random_negative_loader = DistNeighborLoader(
@@ -365,8 +364,6 @@ class TrainingProcessArgs:
     Attributes:
         local_world_size (int): Number of training processes spawned by each machine.
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode.
-        mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
-            sharing between local processes.
         model_uri (Uri): URI to save/load the trained model state dict.
         eval_metrics_uri (Optional[Uri]): Destination URI for writing evaluation metrics in
             KFP-compatible JSON format. If None, metrics are not written.
@@ -392,8 +389,6 @@ class TrainingProcessArgs:
     # Distributed context
     local_world_size: int
     cluster_info: GraphStoreInfo
-    mp_sharing_dict: MutableMapping[str, torch.Tensor]
-    mp_barrier: threading.Barrier
 
     # Model
     model_uri: Uri
@@ -442,8 +437,6 @@ def _training_process(
     dataset = RemoteDistDataset(
         args.cluster_info,
         local_rank,
-        mp_sharing_dict=args.mp_sharing_dict,
-        mp_barrier=args.mp_barrier,
     )
 
     rank = torch.distributed.get_rank()
@@ -925,11 +918,7 @@ def _run_example_training(
 
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
-    # Step 4: Create shared dict for inter-process tensor sharing
-    manager = mp.Manager()
-    mp_sharing_dict = manager.dict()
-    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
-    # Step 5: Spawn training processes
+    # Step 4: Spawn training processes
     logger.info("--- Launching training processes ...\n")
     flush()
     start_time = time.time()
@@ -937,8 +926,6 @@ def _run_example_training(
     training_args = TrainingProcessArgs(
         local_world_size=local_world_size,
         cluster_info=cluster_info,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
         model_uri=model_uri,
         eval_metrics_uri=eval_metrics_uri,
         hid_dim=hid_dim,
