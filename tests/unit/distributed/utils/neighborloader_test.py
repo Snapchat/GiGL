@@ -6,7 +6,13 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
+from gigl.distributed.sampler import (
+    NEGATIVE_LABEL_METADATA_KEY,
+    POSITIVE_LABEL_METADATA_KEY,
+)
 from gigl.distributed.utils.neighborloader import (
+    extract_edge_type_metadata,
+    extract_metadata,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
     set_missing_features,
@@ -488,6 +494,135 @@ class LoaderUtilsTest(TestCase):
             data[_I2U_EDGE_TYPE].edge_attr,
             torch.zeros((0, 8), device=self._device, dtype=torch.uint8),
         )
+
+
+class ExtractMetadataTest(TestCase):
+    def setUp(self):
+        self._device = torch.device("cpu")
+        super().setUp()
+
+    def test_separates_metadata_from_sampling_data(self):
+        msg = {
+            "#META.ppr_scores": torch.tensor([1.0, 2.0]),
+            "#META.custom_key": torch.tensor([3]),
+            "user.ids": torch.tensor([10, 20]),
+            "user__to__item.rows": torch.tensor([0, 1]),
+        }
+        metadata, stripped_msg = extract_metadata(msg, self._device)
+
+        self.assertEqual(set(metadata.keys()), {"ppr_scores", "custom_key"})
+        self.assert_tensor_equality(metadata["ppr_scores"], torch.tensor([1.0, 2.0]))
+        self.assert_tensor_equality(metadata["custom_key"], torch.tensor([3]))
+
+        self.assertEqual(set(stripped_msg.keys()), {"user.ids", "user__to__item.rows"})
+        self.assert_tensor_equality(stripped_msg["user.ids"], torch.tensor([10, 20]))
+
+    def test_no_metadata_keys(self):
+        msg = {
+            "user.ids": torch.tensor([10, 20]),
+            "#IS_HETERO": torch.tensor([1]),
+        }
+        metadata, stripped_msg = extract_metadata(msg, self._device)
+
+        self.assertEqual(metadata, {})
+        self.assertEqual(set(stripped_msg.keys()), {"user.ids", "#IS_HETERO"})
+
+    def test_only_metadata_keys(self):
+        msg = {
+            "#META.scores": torch.tensor([1.0]),
+        }
+        metadata, stripped_msg = extract_metadata(msg, self._device)
+
+        self.assertEqual(set(metadata.keys()), {"scores"})
+        self.assertEqual(stripped_msg, {})
+
+    def test_does_not_modify_original_message(self):
+        original_tensor = torch.tensor([1.0, 2.0])
+        msg = {
+            "#META.scores": original_tensor,
+            "user.ids": torch.tensor([10]),
+        }
+        original_keys = set(msg.keys())
+
+        extract_metadata(msg, self._device)
+
+        self.assertEqual(set(msg.keys()), original_keys)
+        self.assertIn("#META.scores", msg)
+
+    def test_empty_message(self):
+        metadata, stripped_msg = extract_metadata({}, self._device)
+        self.assertEqual(metadata, {})
+        self.assertEqual(stripped_msg, {})
+
+
+class ExtractEdgeTypeMetadataTest(TestCase):
+    def test_matching_keys_extracted_and_parsed(self):
+        pos_label_edge_type = message_passing_to_positive_label(_U2I_EDGE_TYPE)
+        metadata = {
+            f"{POSITIVE_LABEL_METADATA_KEY}{repr(pos_label_edge_type)}": torch.tensor(
+                [[0, 1], [2, 3]]
+            ),
+            "other_key": torch.tensor([99]),
+        }
+        matched, remaining = extract_edge_type_metadata(
+            metadata, [POSITIVE_LABEL_METADATA_KEY]
+        )
+
+        self.assertEqual(
+            set(matched[POSITIVE_LABEL_METADATA_KEY].keys()), {pos_label_edge_type}
+        )
+        self.assert_tensor_equality(
+            matched[POSITIVE_LABEL_METADATA_KEY][pos_label_edge_type],
+            torch.tensor([[0, 1], [2, 3]]),
+        )
+        self.assertEqual(set(remaining.keys()), {"other_key"})
+        self.assert_tensor_equality(remaining["other_key"], torch.tensor([99]))
+
+    def test_no_matching_keys_returns_empty_matched(self):
+        neg_label_edge_type = message_passing_to_positive_label(_U2I_EDGE_TYPE)
+        metadata = {
+            f"{NEGATIVE_LABEL_METADATA_KEY}{repr(neg_label_edge_type)}": torch.tensor(
+                [[4, 5]]
+            ),
+        }
+        matched, remaining = extract_edge_type_metadata(
+            metadata, [POSITIVE_LABEL_METADATA_KEY]
+        )
+
+        self.assertEqual(matched[POSITIVE_LABEL_METADATA_KEY], {})
+        self.assertEqual(
+            set(remaining.keys()),
+            {f"{NEGATIVE_LABEL_METADATA_KEY}{repr(neg_label_edge_type)}"},
+        )
+
+    def test_positive_and_negative_labels_extracted_in_single_call(self):
+        """Typical usage: call once with both positive and negative label prefixes."""
+        pos_label_edge_type = message_passing_to_positive_label(_U2I_EDGE_TYPE)
+        neg_label_edge_type = message_passing_to_positive_label(_U2I_EDGE_TYPE)
+        metadata = {
+            f"{POSITIVE_LABEL_METADATA_KEY}{repr(pos_label_edge_type)}": torch.tensor(
+                [[0, 1]]
+            ),
+            f"{NEGATIVE_LABEL_METADATA_KEY}{repr(neg_label_edge_type)}": torch.tensor(
+                [[4, 5]]
+            ),
+            "extra": torch.tensor([42]),
+        }
+        matched, remaining = extract_edge_type_metadata(
+            metadata, [POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY]
+        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
+
+        self.assertEqual(set(positive_labels.keys()), {pos_label_edge_type})
+        self.assert_tensor_equality(
+            positive_labels[pos_label_edge_type], torch.tensor([[0, 1]])
+        )
+        self.assertEqual(set(negative_labels.keys()), {neg_label_edge_type})
+        self.assert_tensor_equality(
+            negative_labels[neg_label_edge_type], torch.tensor([[4, 5]])
+        )
+        self.assertEqual(set(remaining.keys()), {"extra"})
 
 
 if __name__ == "__main__":

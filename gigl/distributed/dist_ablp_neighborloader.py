@@ -1,4 +1,3 @@
-import ast
 from collections import abc, defaultdict
 from itertools import count
 from typing import Callable, Optional, Union
@@ -25,12 +24,13 @@ from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
-    metadata_key_with_prefix,
 )
 from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    extract_edge_type_metadata,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
@@ -80,6 +80,7 @@ class DistABLPLoader(BaseDistLoader):
         prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
+        max_concurrent_producer_inits: Optional[int] = None,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -184,9 +185,16 @@ class DistABLPLoader(BaseDistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
-                it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
-                attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
+            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader.
+                In colocated mode, each process sleeps ``local_rank * process_start_gap_seconds``
+                before initializing. In graph store mode, leader ranks are grouped into batches
+                of ``max_concurrent_producer_inits`` and each batch sleeps
+                ``batch_index * process_start_gap_seconds`` before dispatching RPCs.
+            max_concurrent_producer_inits (int): Maximum number of leader ranks that may
+                dispatch create-producer RPCs concurrently in graph store mode. Leaders are
+                grouped into batches of this size; each batch is staggered by
+                ``process_start_gap_seconds``. Only applies to graph store mode.
+                Defaults to ``None`` (no staggering).
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
@@ -232,6 +240,10 @@ class DistABLPLoader(BaseDistLoader):
             if prefetch_size is not None:
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
+            if max_concurrent_producer_inits is not None:
+                raise ValueError(
+                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
                 )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
@@ -363,6 +375,7 @@ class DistABLPLoader(BaseDistLoader):
             producer=producer,
             sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
+            max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
 
     def _setup_for_colocated(
@@ -761,74 +774,6 @@ class DistABLPLoader(BaseDistLoader):
             ),
         )
 
-    def _get_labels(
-        self, msg: SampleMessage
-    ) -> tuple[
-        SampleMessage,
-        dict[EdgeType, torch.Tensor],
-        dict[EdgeType, torch.Tensor],
-    ]:
-        # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
-        f"""
-        Gets the labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
-        `to_hetero_data` function strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
-        building the HeteroData object.
-
-        Args:
-            msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
-        Returns:
-            SampleMessage: Updated sample messsage with the label fields removed
-            dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
-                where the ith row  of the tensor corresponds to the ith anchor node ID.
-            dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
-                where the ith row  of the tensor corresponds to the ith anchor node ID.
-                May be empty if no negative labels are present.
-        """
-        metadata: dict[str, torch.Tensor] = {}
-        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        # We update metadata with sepcial POSITIVE_LABEL_METADATA_KEY and NEGATIVE_LABEL_METADATA_KEY keys
-        # in gigl/distributed/dist_neighbor_sampler.py.
-        # We need to encode the tuples as strings because GLT requires the keys to be strings.
-        # As such, we decode the strings back into tuples,
-        # And then pop those keys out of the metadata as they are not needed otherwise.
-        # If edge_dir is "in", we need to reverse the edge type because GLT swaps src/dst for edge_dir = "out".
-        # NOTE: GLT *prepends* the keys with "#META."
-        positive_label_metadata_key_prefix = metadata_key_with_prefix(
-            POSITIVE_LABEL_METADATA_KEY
-        )
-        negative_label_metadata_key_prefix = metadata_key_with_prefix(
-            NEGATIVE_LABEL_METADATA_KEY
-        )
-        for k in list(msg.keys()):
-            if k.startswith(positive_label_metadata_key_prefix):
-                edge_type_str = k[len(positive_label_metadata_key_prefix) :]
-                edge_type = ast.literal_eval(edge_type_str)
-                if self.edge_dir == "in":
-                    edge_type = reverse_edge_type(edge_type)
-                positive_labels_by_label_edge_type[edge_type] = msg[k].to(
-                    self.to_device
-                )
-                del msg[k]
-            elif k.startswith(negative_label_metadata_key_prefix):
-                edge_type_str = k[len(negative_label_metadata_key_prefix) :]
-                edge_type = ast.literal_eval(edge_type_str)
-                if self.edge_dir == "in":
-                    edge_type = reverse_edge_type(edge_type)
-                negative_labels_by_label_edge_type[edge_type] = msg[k].to(
-                    self.to_device
-                )
-                del msg[k]
-            elif k.startswith("#META."):
-                meta_key = str(k[len("#META.") :])
-                metadata[meta_key] = msg[k].to(self.to_device)
-                del msg[k]
-        return (
-            msg,
-            positive_labels_by_label_edge_type,
-            negative_labels_by_label_edge_type,
-        )
-
     def _set_labels(
         self,
         data: Union[Data, HeteroData],
@@ -914,14 +859,39 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        msg, positive_labels, negative_labels = self._get_labels(msg)
-        data = super()._collate_fn(msg)
+        # extract_metadata separates #META. keys from the message to work
+        # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
+        # pulls out labels by prefix.
+        # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
+        metadata, stripped_msg = extract_metadata(msg, self.to_device)
+
+        data = super()._collate_fn(stripped_msg)
+
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
             edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
+
+        matched, metadata = extract_edge_type_metadata(
+            metadata=metadata,
+            prefixes=[POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
+        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
+        # When edge_dir="in", GLT internally swaps src/dst on all edge types during sampling,
+        # so the sampler encodes label edge types in their reversed (incoming) form.
+        # We reverse them back here to restore the original outward edge type that
+        # _set_labels and downstream code expect.
+        if self.edge_dir == "in":
+            positive_labels = {
+                reverse_edge_type(et): v for et, v in positive_labels.items()
+            }
+            negative_labels = {
+                reverse_edge_type(et): v for et, v in negative_labels.items()
+            }
+
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
@@ -931,4 +901,9 @@ class DistABLPLoader(BaseDistLoader):
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
         data = self._set_labels(data, positive_labels, negative_labels)
+
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
+        for key, value in metadata.items():
+            data[key] = value
         return data

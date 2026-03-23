@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Coordination With AGENTS.md
+
+- CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
+- AGENTS.md should only say to load CLAUDE.md.
+
 ## Project Overview
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
