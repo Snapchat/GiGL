@@ -18,13 +18,23 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions, resolve_sampler_options
+from gigl.distributed.sampler_options import (
+    PPRSamplerOptions,
+    SamplerOptions,
+    resolve_sampler_options,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    attach_ppr_outputs,
+    extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
@@ -321,16 +331,18 @@ class DistNeighborLoader(BaseDistLoader):
         node_feature_info = dataset.fetch_node_feature_info()
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
-        node_rank = dataset.cluster_info.compute_node_rank
+        compute_rank = torch.distributed.get_rank()
 
         # Get sampling ports for compute-storage connections.
+        # One port per compute process (not per compute node) so that each
+        # process gets its own server-side sampling worker group.
         sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.num_compute_nodes
+            num_ports=dataset.cluster_info.compute_cluster_world_size
         )
-        sampling_port = sampling_ports[node_rank]
+        sampling_port = sampling_ports[compute_rank]
 
-        worker_key = f"compute_rank_{node_rank}_worker_{self._instance_count}"
-        logger.info(f"Rank {torch.distributed.get_rank()} worker key: {worker_key}")
+        worker_key = f"compute_rank_{compute_rank}_worker_{self._instance_count}"
+        logger.info(f"Rank {compute_rank} worker key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -559,12 +571,12 @@ class DistNeighborLoader(BaseDistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        # Extract user-defined metadata (e.g. PPR scores) before
-        # super()._collate_fn, which calls GLT's to_hetero_data.
-        # to_hetero_data misinterprets #META. keys as edge types and
-        # fails when edge_dir="out" (tries to reverse_edge_type on them).
-        # We strip them here and re-apply after conversion.
-        non_edge_metadata, stripped_msg = extract_metadata(msg, self.to_device)
+        # Extract user-defined metadata before super()._collate_fn, which
+        # calls GLT's to_hetero_data.  to_hetero_data misinterprets #META. keys
+        # as edge types and fails when edge_dir="out" (tries to call
+        # reverse_edge_type on them).  We strip them here and re-apply after.
+        # TODO (mkolodner-sc): Remove once GLT's to_hetero_data is fixed.
+        metadata, stripped_msg = extract_metadata(msg, self.to_device)
         data = super()._collate_fn(stripped_msg)
         data = set_missing_features(
             data=data,
@@ -576,8 +588,20 @@ class DistNeighborLoader(BaseDistLoader):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            matched, metadata = extract_edge_type_metadata(
+                metadata=metadata,
+                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+            )
+            attach_ppr_outputs(
+                data,
+                matched[PPR_EDGE_INDEX_METADATA_KEY],
+                matched[PPR_WEIGHT_METADATA_KEY],
+            )
+
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.
-        for key, value in non_edge_metadata.items():
+        for key, value in metadata.items():
             data[key] = value
         return data
