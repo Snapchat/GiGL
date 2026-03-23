@@ -64,7 +64,7 @@ GiGL supports two paradigms for providing supervision edges.
 
 ### Self-supervised labels
 
-GiGL derives positive supervision labels from the message passing edges at dataset build time. A random subset — controlled by `_ssl_positive_label_percentage` — is sampled as positive labels. No separate label tensors are needed.
+GiGL derives positive supervision labels from the message passing edges at dataset build time. A random subset — controlled by the `_ssl_positive_label_percentage` flag in `build_dataset` — is sampled as positive labels. No separate label tensors are needed.
 
 You still must pass `supervision_edge_type` in the **outgoing direction** to both `DistNodeAnchorLinkSplitter` and `DistABLPLoader`.
 
@@ -138,7 +138,7 @@ loader = DistABLPLoader(
 This section describes how both supervision edges and message passing edges are stored in a `DistDataset`. This is purely internal detail — you do not need to implement this yourself, but it is useful context when reading the code or debugging.
 
 There are two principles which our internal codebase currently operates under:
-- Both supervision and message passing edges are stored in a single `dict[EdgeType, Tensor]` edge index object. Supervision edges are injected into this dict under derived edge types using a `to_gigl_positive` or `to_gigl_negative` relation (e.g. `("user", "to_gigl_positive", "item")`), keeping them distinct from the message passing edge type keys.
+- Both supervision and message passing edges are stored in a single `dict[EdgeType, Tensor]` edge index object. Supervision edges are injected under derived edge type keys: the relation is suffixed with `_gigl_positive` or `_gigl_negative` (e.g. a user-provided supervision edge type `("user", "to", "item")` becomes `("user", "to_gigl_positive", "item")` for positive labels), keeping them distinct from the message passing edge type keys.
 - All edges stored in the `DistDataset` must share the same edge direction (either both `"in"` or both `"out"`).
 
 Since supervision edges are always provided in the outgoing direction, but `edge_dir="in"` requires all stored edges to point inward, we reverse the supervision edges before storing them alongside the message passing edges. When `edge_dir="out"`, no reversal is needed since both are already outgoing. The reversal (both the edge type and the COO row flip) is implemented in `_get_label_edges` (`gigl/types/graph.py:110`). `DistNodeAnchorLinkSplitter` (`gigl/utils/data_splitters.py:250`) and `DistABLPLoader` (`gigl/distributed/dist_ablp_neighborloader.py:462`) independently apply the same edge type reversal to derive the correct lookup key when accessing supervision edges from the stored graph.
@@ -152,7 +152,7 @@ The splitter reads anchor nodes directly from the stored supervision edge index.
 - **Which edge type to look up** — it derives the stored key the same way as storage (reversing for `edge_dir="in"`), so the lookup always matches.
 - **Which end of the supervision edge holds the anchor nodes** — `edge_dir` determines which endpoint the splitter reads anchor nodes from: the source end for `"out"`, the destination end for `"in"`, since the stored edge type is reversed for `"in"` and the anchor node type shifts accordingly. For example, with `supervision_edge_type = ("user", "to", "item")`: `edge_dir="out"` reads user IDs from the source end of `("user", "to_gigl_positive", "item")`; `edge_dir="in"` reads user IDs from the destination end of `("item", "to_gigl_positive", "user")`.
 
-The invariant: anchor nodes (users in the above example) are always recoverable and used for splitting regardless of `edge_dir`.
+The invariant: anchor nodes (users in the above example) are always used for splitting regardless of `edge_dir`.
 
 ---
 
@@ -232,5 +232,5 @@ inward orientation of the message passing edges:
                                     [0,  1,  2 ]]  ← user IDs  (row 1)
 ```
 
-In both cases the user IDs (anchor nodes) are recoverable from the stored edge index, and
+In both cases the user IDs (anchor nodes) are dervied from from the stored edge index, and
 the user-provided `supervision_edge_type` and edge index tensors are unchanged.
