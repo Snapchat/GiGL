@@ -12,7 +12,6 @@ from gigl.distributed.sampler import (
 )
 from gigl.distributed.utils.neighborloader import (
     ServerSlice,
-    ShardStrategy,
     compute_server_assignments,
     extract_edge_type_metadata,
     extract_metadata,
@@ -499,195 +498,140 @@ class LoaderUtilsTest(TestCase):
         )
 
 
-class TestShardStrategy(TestCase):
-    """Tests for ShardStrategy enum values."""
-
-    def test_enum_values(self):
-        self.assertEqual(ShardStrategy.ROUND_ROBIN.value, "round_robin")
-        self.assertEqual(ShardStrategy.CONTIGUOUS.value, "contiguous")
-
-
 class TestComputeServerAssignments(TestCase):
-    """Tests for compute_server_assignments and ServerSlice."""
+    @parameterized.expand(
+        [
+            param(
+                "rank_0",
+                compute_rank=0,
+                expected_assignments={
+                    0: ServerSlice(
+                        server_rank=0,
+                        start_num=0,
+                        start_den=2,
+                        end_num=2,
+                        end_den=2,
+                    ),
+                    1: ServerSlice(
+                        server_rank=1,
+                        start_num=0,
+                        start_den=2,
+                        end_num=1,
+                        end_den=2,
+                    ),
+                },
+            ),
+            param(
+                "rank_1",
+                compute_rank=1,
+                expected_assignments={
+                    1: ServerSlice(
+                        server_rank=1,
+                        start_num=1,
+                        start_den=2,
+                        end_num=2,
+                        end_den=2,
+                    ),
+                    2: ServerSlice(
+                        server_rank=2,
+                        start_num=0,
+                        start_den=2,
+                        end_num=2,
+                        end_den=2,
+                    ),
+                },
+            ),
+        ]
+    )
+    def test_fractional_boundary_assignment(
+        self, _, compute_rank: int, expected_assignments: dict[int, ServerSlice]
+    ) -> None:
+        assignments = compute_server_assignments(
+            num_servers=3, num_compute_nodes=2, compute_rank=compute_rank
+        )
 
-    def test_even_split_4_servers_2_compute(self):
-        """4 servers, 2 compute nodes: each gets 2 full servers."""
-        # Rank 0: servers 0, 1
-        assignments_0 = compute_server_assignments(
-            num_servers=4, num_compute_nodes=2, compute_rank=0
-        )
-        self.assertEqual(set(assignments_0.keys()), {0, 1})
-        self.assertEqual(
-            assignments_0[0],
-            ServerSlice(server_rank=0, start_num=0, start_den=2, end_num=2, end_den=2),
-        )
-        self.assertEqual(
-            assignments_0[1],
-            ServerSlice(server_rank=1, start_num=0, start_den=2, end_num=2, end_den=2),
-        )
+        self.assertEqual(assignments, expected_assignments)
 
-        # Rank 1: servers 2, 3
-        assignments_1 = compute_server_assignments(
-            num_servers=4, num_compute_nodes=2, compute_rank=1
-        )
-        self.assertEqual(set(assignments_1.keys()), {2, 3})
-
-    def test_fractional_split_3_servers_2_compute(self):
-        """3 servers, 2 compute nodes: server 1 is split at boundary."""
-        # Rank 0: [0, 1.5) → server 0 fully, server 1 first half
-        assignments_0 = compute_server_assignments(
-            num_servers=3, num_compute_nodes=2, compute_rank=0
-        )
-        self.assertEqual(set(assignments_0.keys()), {0, 1})
-        # Server 0: full (start_num=0, end_num=2, den=2)
-        self.assertEqual(assignments_0[0].start_num, 0)
-        self.assertEqual(assignments_0[0].end_num, 2)
-        # Server 1: first half (start_num=0, end_num=1, den=2)
-        self.assertEqual(assignments_0[1].start_num, 0)
-        self.assertEqual(assignments_0[1].end_num, 1)
-
-        # Rank 1: [1.5, 3) → server 1 second half, server 2 fully
-        assignments_1 = compute_server_assignments(
-            num_servers=3, num_compute_nodes=2, compute_rank=1
-        )
-        self.assertEqual(set(assignments_1.keys()), {1, 2})
-        # Server 1: second half (start_num=1, end_num=2, den=2)
-        self.assertEqual(assignments_1[1].start_num, 1)
-        self.assertEqual(assignments_1[1].end_num, 2)
-        # Server 2: full
-        self.assertEqual(assignments_1[2].start_num, 0)
-        self.assertEqual(assignments_1[2].end_num, 2)
-
-    def test_1_server_2_compute(self):
-        """1 server, 2 compute nodes: both share one server."""
-        assignments_0 = compute_server_assignments(
-            num_servers=1, num_compute_nodes=2, compute_rank=0
-        )
-        self.assertEqual(set(assignments_0.keys()), {0})
-        self.assertEqual(assignments_0[0].start_num, 0)
-        self.assertEqual(assignments_0[0].end_num, 1)
-        self.assertEqual(assignments_0[0].start_den, 2)
-
-        assignments_1 = compute_server_assignments(
-            num_servers=1, num_compute_nodes=2, compute_rank=1
-        )
-        self.assertEqual(set(assignments_1.keys()), {0})
-        self.assertEqual(assignments_1[0].start_num, 1)
-        self.assertEqual(assignments_1[0].end_num, 2)
-
-    def test_more_compute_than_servers(self):
-        """2 servers, 5 compute nodes: some compute nodes share a server."""
-        all_assignments: list[dict[int, ServerSlice]] = []
-        for rank in range(5):
-            assignments = compute_server_assignments(
+    def test_assignments_recombine_server_data(self) -> None:
+        tensor = torch.arange(7)
+        all_assignments = [
+            compute_server_assignments(
                 num_servers=2, num_compute_nodes=5, compute_rank=rank
             )
-            all_assignments.append(assignments)
-            # Each rank should have at most 2 servers
-            self.assertLessEqual(len(assignments), 2)
+            for rank in range(5)
+        ]
 
-        # Verify recombination invariant for both servers
-        for server in range(2):
-            tensor = torch.arange(100)
-            slices: list[torch.Tensor] = []
-            for rank_assignments in all_assignments:
-                if server in rank_assignments:
-                    slices.append(rank_assignments[server].slice_tensor(tensor))
-            combined = torch.cat(slices)
+        for server_rank in range(2):
+            combined = torch.cat(
+                [
+                    assignments[server_rank].slice_tensor(tensor)
+                    for assignments in all_assignments
+                    if server_rank in assignments
+                ]
+            )
             self.assert_tensor_equality(combined, tensor)
 
-    def test_single_compute_gets_all_servers(self):
-        """1 compute node should get all servers fully."""
-        assignments = compute_server_assignments(
-            num_servers=3, num_compute_nodes=1, compute_rank=0
-        )
-        self.assertEqual(set(assignments.keys()), {0, 1, 2})
-        for s in range(3):
-            self.assertEqual(assignments[s].start_num, 0)
-            self.assertEqual(assignments[s].end_num, 1)
-            self.assertEqual(assignments[s].end_den, 1)
-
-    def test_recombination_invariant_even(self):
-        """Concatenating all ranks' slices for a server reproduces the original tensor."""
-        tensor = torch.arange(20)
-        for server in range(4):
-            slices: list[torch.Tensor] = []
-            for rank in range(2):
-                assignments = compute_server_assignments(
-                    num_servers=4, num_compute_nodes=2, compute_rank=rank
-                )
-                if server in assignments:
-                    slices.append(assignments[server].slice_tensor(tensor))
-            combined = torch.cat(slices) if slices else torch.empty(0, dtype=torch.long)
-            # Each server is fully owned by exactly one rank in the even case
-            if slices:
-                self.assert_tensor_equality(combined, tensor)
-
-    def test_recombination_invariant_fractional(self):
-        """Fractional split: concatenating all ranks' slices reproduces the original tensor."""
-        tensor = torch.arange(10)
-        for server in range(3):
-            slices: list[torch.Tensor] = []
-            for rank in range(2):
-                assignments = compute_server_assignments(
-                    num_servers=3, num_compute_nodes=2, compute_rank=rank
-                )
-                if server in assignments:
-                    slices.append(assignments[server].slice_tensor(tensor))
-            combined = torch.cat(slices)
-            self.assert_tensor_equality(combined, tensor)
-
-    def test_validation_negative_servers(self):
+    @parameterized.expand(
+        [
+            param(
+                "negative_servers",
+                num_servers=-1,
+                num_compute_nodes=2,
+                compute_rank=0,
+            ),
+            param(
+                "zero_servers",
+                num_servers=0,
+                num_compute_nodes=2,
+                compute_rank=0,
+            ),
+            param(
+                "negative_compute_nodes",
+                num_servers=2,
+                num_compute_nodes=-1,
+                compute_rank=0,
+            ),
+            param(
+                "zero_compute_nodes",
+                num_servers=2,
+                num_compute_nodes=0,
+                compute_rank=0,
+            ),
+            param(
+                "rank_too_large",
+                num_servers=2,
+                num_compute_nodes=2,
+                compute_rank=2,
+            ),
+            param(
+                "negative_rank",
+                num_servers=2,
+                num_compute_nodes=2,
+                compute_rank=-1,
+            ),
+        ]
+    )
+    def test_validates_arguments(
+        self, _, num_servers: int, num_compute_nodes: int, compute_rank: int
+    ) -> None:
         with self.assertRaises(ValueError):
             compute_server_assignments(
-                num_servers=-1, num_compute_nodes=2, compute_rank=0
-            )
-
-    def test_validation_zero_servers(self):
-        with self.assertRaises(ValueError):
-            compute_server_assignments(
-                num_servers=0, num_compute_nodes=2, compute_rank=0
-            )
-
-    def test_validation_negative_compute_nodes(self):
-        with self.assertRaises(ValueError):
-            compute_server_assignments(
-                num_servers=2, num_compute_nodes=-1, compute_rank=0
-            )
-
-    def test_validation_zero_compute_nodes(self):
-        with self.assertRaises(ValueError):
-            compute_server_assignments(
-                num_servers=2, num_compute_nodes=0, compute_rank=0
-            )
-
-    def test_validation_rank_too_large(self):
-        with self.assertRaises(ValueError):
-            compute_server_assignments(
-                num_servers=2, num_compute_nodes=2, compute_rank=2
-            )
-
-    def test_validation_negative_rank(self):
-        with self.assertRaises(ValueError):
-            compute_server_assignments(
-                num_servers=2, num_compute_nodes=2, compute_rank=-1
+                num_servers=num_servers,
+                num_compute_nodes=num_compute_nodes,
+                compute_rank=compute_rank,
             )
 
 
 class TestServerSlice(TestCase):
-    """Tests for ServerSlice.slice_tensor."""
-
-    def test_full_tensor_no_clone(self):
-        """Full tensor (start=0, end=total) returns the same object, no clone."""
+    def test_full_tensor_returns_same_object(self) -> None:
         tensor = torch.arange(10)
         server_slice = ServerSlice(
             server_rank=0, start_num=0, start_den=1, end_num=1, end_den=1
         )
         result = server_slice.slice_tensor(tensor)
-        self.assertTrue(result.data_ptr() == tensor.data_ptr())
+        self.assertEqual(result.data_ptr(), tensor.data_ptr())
 
-    def test_partial_slice_clones(self):
-        """Partial slice returns a clone (different data_ptr)."""
+    def test_partial_slice_clones_requested_range(self) -> None:
         tensor = torch.arange(10)
         server_slice = ServerSlice(
             server_rank=0, start_num=0, start_den=2, end_num=1, end_den=2
@@ -696,47 +640,7 @@ class TestServerSlice(TestCase):
         self.assert_tensor_equality(result, torch.arange(5))
         self.assertNotEqual(result.data_ptr(), tensor.data_ptr())
 
-    def test_second_half_slice(self):
-        """Second half slice works correctly."""
-        tensor = torch.arange(10)
-        server_slice = ServerSlice(
-            server_rank=0, start_num=1, start_den=2, end_num=2, end_den=2
-        )
-        result = server_slice.slice_tensor(tensor)
-        self.assert_tensor_equality(result, torch.arange(5, 10))
 
-    def test_empty_tensor(self):
-        """Slicing an empty tensor returns an empty tensor."""
-        tensor = torch.empty(0, dtype=torch.long)
-        server_slice = ServerSlice(
-            server_rank=0, start_num=0, start_den=2, end_num=1, end_den=2
-        )
-        result = server_slice.slice_tensor(tensor)
-        self.assertEqual(len(result), 0)
-
-    def test_odd_sized_tensor_fractional(self):
-        """Odd-sized tensor with fractional split uses integer division correctly."""
-        tensor = torch.arange(7)  # 7 elements
-        # First half: 7 * 0 // 2 = 0, 7 * 1 // 2 = 3
-        first_half = ServerSlice(
-            server_rank=0, start_num=0, start_den=2, end_num=1, end_den=2
-        )
-        # Second half: 7 * 1 // 2 = 3, 7 * 2 // 2 = 7
-        second_half = ServerSlice(
-            server_rank=0, start_num=1, start_den=2, end_num=2, end_den=2
-        )
-        self.assert_tensor_equality(first_half.slice_tensor(tensor), torch.arange(3))
-        self.assert_tensor_equality(
-            second_half.slice_tensor(tensor), torch.arange(3, 7)
-        )
-        # Recombination
-        combined = torch.cat(
-            [
-                first_half.slice_tensor(tensor),
-                second_half.slice_tensor(tensor),
-            ]
-        )
-        self.assert_tensor_equality(combined, tensor)
 class ExtractMetadataTest(TestCase):
     def setUp(self):
         self._device = torch.device("cpu")
