@@ -11,7 +11,7 @@ Conforms to the same forward interface as ``HGT`` and ``SimpleHGN`` in
 replacement as the encoder in ``LinkPredictionGNN``.
 """
 
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -83,7 +83,7 @@ class FeedForwardNetwork(nn.Module):
     Adapted from RelGT's FeedForwardNetwork.
 
     Args:
-        hidden_dim: Hidden (and output) dimension of the FFN.
+        model_dim: Model (input and output) dimension of the FFN.
         feedforward_dim: Inner dimension of the two-layer MLP.
         dropout_rate: Dropout probability applied after each linear layer.
         activation: Activation function name. Supported values:
@@ -95,9 +95,9 @@ class FeedForwardNetwork(nn.Module):
 
     def __init__(
         self,
-        hidden_dim: int,
+        model_dim: int,
         feedforward_dim: int,
-        dropout_rate: float = 0.0,
+        dropout_rate: float = 0.1,
         activation: str = "gelu",
     ) -> None:
         super().__init__()
@@ -117,49 +117,70 @@ class FeedForwardNetwork(nn.Module):
 
         self._is_xglu = self._activation_name in _XGLU_BASE_ACTIVATIONS
 
+        # Type declarations for optional attributes
+        self._xglu_base_activation: Optional[Callable[..., Tensor]] = None
+        self._linear_in: Optional[nn.Linear] = None
+        self._dropout_in: Optional[nn.Dropout] = None
+        self._linear_out: Optional[nn.Linear] = None
+        self._dropout_out: Optional[nn.Dropout] = None
+        self._ffn: Optional[nn.Sequential] = None
+
         if self._is_xglu:
             # XGLU: project to 2x feedforward_dim, split, apply gating
-            self._xglu_base_activation = _XGLU_BASE_ACTIVATIONS[self._activation_name]
-            self._linear_in = nn.Linear(hidden_dim, feedforward_dim * 2)
+            self._xglu_base_activation = cast(
+                Callable[..., Tensor], _XGLU_BASE_ACTIVATIONS[self._activation_name]
+            )
+            self._linear_in = nn.Linear(model_dim, feedforward_dim * 2)
             self._dropout_in = nn.Dropout(dropout_rate)
-            self._linear_out = nn.Linear(feedforward_dim, hidden_dim)
+            self._linear_out = nn.Linear(feedforward_dim, model_dim)
             self._dropout_out = nn.Dropout(dropout_rate)
-            self._ffn = None  # Not used for XGLU
         else:
             # Standard activation
             activation_fn = _ACTIVATION_FNS[self._activation_name]
             self._ffn = nn.Sequential(
-                nn.Linear(hidden_dim, feedforward_dim),
+                nn.Linear(model_dim, feedforward_dim),
                 activation_fn(),
                 nn.Dropout(dropout_rate),
-                nn.Linear(feedforward_dim, hidden_dim),
+                nn.Linear(feedforward_dim, model_dim),
                 nn.Dropout(dropout_rate),
             )
 
     def reset_parameters(self) -> None:
         """Reinitialize all learnable parameters."""
         if self._is_xglu:
+            assert self._linear_in is not None
+            assert self._linear_out is not None
             nn.init.xavier_uniform_(self._linear_in.weight)
             nn.init.zeros_(self._linear_in.bias)
             nn.init.xavier_uniform_(self._linear_out.weight)
             nn.init.zeros_(self._linear_out.bias)
         else:
+            # Use xavier + zero bias for consistency with XGLU path and
+            # GraphTransformerEncoderLayer (standard Transformer practice)
+            assert self._ffn is not None
             for layer in self._ffn:
-                if hasattr(layer, "reset_parameters"):
-                    layer.reset_parameters()
+                if isinstance(layer, nn.Linear):
+                    nn.init.xavier_uniform_(layer.weight)
+                    if layer.bias is not None:
+                        nn.init.zeros_(layer.bias)
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass.
 
         Args:
-            x: Input tensor of shape ``(batch, seq, hidden_dim)``.
+            x: Input tensor of shape ``(batch, seq, model_dim)``.
 
         Returns:
-            Output tensor of shape ``(batch, seq, hidden_dim)``.
+            Output tensor of shape ``(batch, seq, model_dim)``.
         """
         if self._is_xglu:
             # XGLU gating: activation(x @ W1) * (x @ W2)
             # where W1 and W2 are the two halves of linear_in
+            assert self._xglu_base_activation is not None
+            assert self._linear_in is not None
+            assert self._dropout_in is not None
+            assert self._linear_out is not None
+            assert self._dropout_out is not None
             x_proj = self._linear_in(x)  # (batch, seq, feedforward_dim * 2)
             x_gate, x_value = x_proj.chunk(
                 2, dim=-1
@@ -169,6 +190,7 @@ class FeedForwardNetwork(nn.Module):
             x = self._linear_out(x)
             x = self._dropout_out(x)
         else:
+            assert self._ffn is not None
             x = self._ffn(x)
 
         return x
@@ -184,8 +206,8 @@ class GraphTransformerEncoderLayer(nn.Module):
     Adapted from RelGT's EncoderLayer.
 
     Args:
-        hidden_dim: Model dimension (d_model).
-        num_heads: Number of attention heads. Must evenly divide hidden_dim.
+        model_dim: Model dimension (d_model).
+        num_heads: Number of attention heads. Must evenly divide model_dim.
         feedforward_dim: Inner dimension of the feed-forward network.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
@@ -194,39 +216,39 @@ class GraphTransformerEncoderLayer(nn.Module):
             "geglu", "swiglu", "reglu".
 
     Raises:
-        ValueError: If hidden_dim is not divisible by num_heads.
+        ValueError: If model_dim is not divisible by num_heads.
     """
 
     def __init__(
         self,
-        hidden_dim: int,
+        model_dim: int,
         num_heads: int,
         feedforward_dim: int,
-        dropout_rate: float = 0.0,
+        dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         activation: str = "gelu",
     ) -> None:
         super().__init__()
-        if hidden_dim % num_heads != 0:
+        if model_dim % num_heads != 0:
             raise ValueError(
-                f"hidden_dim ({hidden_dim}) must be divisible by "
+                f"model_dim ({model_dim}) must be divisible by "
                 f"num_heads ({num_heads})"
             )
 
         self._num_heads = num_heads
-        self._head_dim = hidden_dim // num_heads
+        self._head_dim = model_dim // num_heads
         self._attention_dropout_rate = attention_dropout_rate
 
-        self._attention_norm = nn.LayerNorm(hidden_dim)
-        self._query_projection = nn.Linear(hidden_dim, hidden_dim)
-        self._key_projection = nn.Linear(hidden_dim, hidden_dim)
-        self._value_projection = nn.Linear(hidden_dim, hidden_dim)
-        self._output_projection = nn.Linear(hidden_dim, hidden_dim)
-        self._attention_dropout = nn.Dropout(dropout_rate)
+        self._attention_norm = nn.LayerNorm(model_dim)
+        self._query_projection = nn.Linear(model_dim, model_dim)
+        self._key_projection = nn.Linear(model_dim, model_dim)
+        self._value_projection = nn.Linear(model_dim, model_dim)
+        self._output_projection = nn.Linear(model_dim, model_dim)
+        self._dropout = nn.Dropout(dropout_rate)
 
-        self._ffn_norm = nn.LayerNorm(hidden_dim)
+        self._ffn_norm = nn.LayerNorm(model_dim)
         self._ffn = FeedForwardNetwork(
-            hidden_dim, feedforward_dim, dropout_rate, activation=activation
+            model_dim, feedforward_dim, dropout_rate, activation=activation
         )
 
     def reset_parameters(self) -> None:
@@ -253,7 +275,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         """Forward pass.
 
         Args:
-            x: Input tensor of shape ``(batch, seq, hidden_dim)``.
+            x: Input tensor of shape ``(batch, seq, model_dim)``.
             attn_bias: Optional attention bias of shape
                 ``(batch, num_heads, seq, seq)`` or broadcastable.
                 Added as an additive mask to attention scores.
@@ -261,9 +283,9 @@ class GraphTransformerEncoderLayer(nn.Module):
                 to zero out padded token states after each residual block.
 
         Returns:
-            Output tensor of shape ``(batch, seq, hidden_dim)``.
+            Output tensor of shape ``(batch, seq, model_dim)``.
         """
-        batch_size, seq_len, hidden_dim = x.shape
+        batch_size, seq_len, model_dim = x.shape
 
         # Self-attention block (pre-norm)
         residual = x
@@ -293,12 +315,12 @@ class GraphTransformerEncoderLayer(nn.Module):
             is_causal=False,
         )
 
-        # Reshape back to (batch, seq, hidden_dim)
+        # Reshape back to (batch, seq, model_dim)
         attention_output = attention_output.transpose(1, 2).reshape(
-            batch_size, seq_len, hidden_dim
+            batch_size, seq_len, model_dim
         )
         attention_output = self._output_projection(attention_output)
-        attention_output = self._attention_dropout(attention_output)
+        attention_output = self._dropout(attention_output)
 
         x = residual + attention_output
         if valid_mask is not None:
@@ -414,7 +436,7 @@ class GraphTransformerEncoder(nn.Module):
         num_heads: int = 2,
         max_seq_len: int = 128,
         hop_distance: int = 2,
-        dropout_rate: float = 0.3,
+        dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         should_l2_normalize_embedding_layer_output: bool = False,
         pe_attr_names: Optional[list[str]] = None,
@@ -495,7 +517,7 @@ class GraphTransformerEncoder(nn.Module):
         self._encoder_layers = nn.ModuleList(
             [
                 GraphTransformerEncoderLayer(
-                    hidden_dim=hid_dim,
+                    model_dim=hid_dim,
                     num_heads=num_heads,
                     feedforward_dim=feedforward_dim,
                     dropout_rate=dropout_rate,

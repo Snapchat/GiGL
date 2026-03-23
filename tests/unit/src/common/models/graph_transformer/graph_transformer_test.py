@@ -1,6 +1,7 @@
 """Tests for GraphTransformerEncoder."""
 
 import torch
+import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
@@ -304,9 +305,10 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 anchor_node_type=self._node_type,
                 device=self._device,
             )
-            self.assertIsNotNone(additive_encoder._node_pe_projection)
-            assert additive_encoder._node_pe_projection is not None
-            additive_encoder._node_pe_projection.weight.data.zero_()
+            self.assertIsNotNone(additive_encoder._pe_projection)
+            assert additive_encoder._pe_projection is not None
+            assert isinstance(additive_encoder._pe_projection, nn.LazyLinear)
+            additive_encoder._pe_projection.weight.data.zero_()
 
             base_embeddings = base_encoder(
                 data=data,
@@ -408,7 +410,7 @@ class TestFeedForwardNetwork(TestCase):
 
     def test_standard_activation_gelu(self) -> None:
         """Test FFN with default GELU activation."""
-        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="gelu")
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="gelu")
         x = torch.randn(2, 10, 32)
         out = ffn(x)
         self.assertEqual(out.shape, (2, 10, 32))
@@ -416,7 +418,7 @@ class TestFeedForwardNetwork(TestCase):
 
     def test_standard_activation_relu(self) -> None:
         """Test FFN with ReLU activation."""
-        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="relu")
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="relu")
         x = torch.randn(2, 10, 32)
         out = ffn(x)
         self.assertEqual(out.shape, (2, 10, 32))
@@ -424,7 +426,7 @@ class TestFeedForwardNetwork(TestCase):
 
     def test_standard_activation_silu(self) -> None:
         """Test FFN with SiLU/Swish activation."""
-        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="silu")
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="silu")
         x = torch.randn(2, 10, 32)
         out = ffn(x)
         self.assertEqual(out.shape, (2, 10, 32))
@@ -432,9 +434,7 @@ class TestFeedForwardNetwork(TestCase):
 
     def test_xglu_activation_swiglu(self) -> None:
         """Test FFN with SwiGLU activation."""
-        ffn = FeedForwardNetwork(
-            hidden_dim=32, feedforward_dim=128, activation="swiglu"
-        )
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="swiglu")
         x = torch.randn(2, 10, 32)
         out = ffn(x)
         self.assertEqual(out.shape, (2, 10, 32))
@@ -442,7 +442,7 @@ class TestFeedForwardNetwork(TestCase):
 
     def test_xglu_activation_geglu(self) -> None:
         """Test FFN with GeGLU activation."""
-        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="geglu")
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="geglu")
         x = torch.randn(2, 10, 32)
         out = ffn(x)
         self.assertEqual(out.shape, (2, 10, 32))
@@ -450,7 +450,7 @@ class TestFeedForwardNetwork(TestCase):
 
     def test_xglu_activation_reglu(self) -> None:
         """Test FFN with ReGLU activation."""
-        ffn = FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="reglu")
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="reglu")
         x = torch.randn(2, 10, 32)
         out = ffn(x)
         self.assertEqual(out.shape, (2, 10, 32))
@@ -459,28 +459,27 @@ class TestFeedForwardNetwork(TestCase):
     def test_invalid_activation_raises_error(self) -> None:
         """Test that invalid activation name raises ValueError."""
         with self.assertRaises(ValueError) as context:
-            FeedForwardNetwork(hidden_dim=32, feedforward_dim=128, activation="invalid")
+            FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="invalid")
         self.assertIn("Unsupported activation", str(context.exception))
 
     def test_xglu_has_double_input_projection(self) -> None:
         """Test that XGLU activations project to 2x feedforward_dim."""
-        ffn = FeedForwardNetwork(
-            hidden_dim=32, feedforward_dim=128, activation="swiglu"
-        )
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="swiglu")
         # XGLU projects to 2 * feedforward_dim for gating
+        assert ffn._linear_in is not None
+        assert ffn._linear_out is not None
         self.assertEqual(ffn._linear_in.out_features, 256)  # 2 * 128
         self.assertEqual(ffn._linear_out.in_features, 128)
 
     def test_gradient_flow_xglu(self) -> None:
         """Test that gradients flow through XGLU activation."""
-        ffn = FeedForwardNetwork(
-            hidden_dim=32, feedforward_dim=128, activation="swiglu"
-        )
+        ffn = FeedForwardNetwork(model_dim=32, feedforward_dim=128, activation="swiglu")
         x = torch.randn(2, 10, 32, requires_grad=True)
         out = ffn(x)
         loss = out.sum()
         loss.backward()
         self.assertIsNotNone(x.grad)
+        assert x.grad is not None
         self.assertFalse(torch.isnan(x.grad).any())
 
 
@@ -490,7 +489,7 @@ class TestGraphTransformerEncoderLayerActivations(TestCase):
     def test_layer_with_gelu(self) -> None:
         """Test encoder layer with GELU activation."""
         layer = GraphTransformerEncoderLayer(
-            hidden_dim=32, num_heads=4, feedforward_dim=128, activation="gelu"
+            model_dim=32, num_heads=4, feedforward_dim=128, activation="gelu"
         )
         x = torch.randn(2, 10, 32)
         out = layer(x)
@@ -499,7 +498,7 @@ class TestGraphTransformerEncoderLayerActivations(TestCase):
     def test_layer_with_swiglu(self) -> None:
         """Test encoder layer with SwiGLU activation."""
         layer = GraphTransformerEncoderLayer(
-            hidden_dim=32, num_heads=4, feedforward_dim=128, activation="swiglu"
+            model_dim=32, num_heads=4, feedforward_dim=128, activation="swiglu"
         )
         x = torch.randn(2, 10, 32)
         out = layer(x)
@@ -537,7 +536,9 @@ class TestGraphTransformerEncoderFeedforwardRatio(TestCase):
         )
         # Check internal layer's FFN dimension
         layer = encoder._encoder_layers[0]
+        assert isinstance(layer, GraphTransformerEncoderLayer)
         # For standard activation, _ffn is a Sequential with Linear as first layer
+        assert layer._ffn._ffn is not None
         self.assertEqual(layer._ffn._ffn[0].out_features, 128)  # 32 * 4
 
     def test_default_ratio_for_swiglu_is_8_over_3(self) -> None:
@@ -553,9 +554,11 @@ class TestGraphTransformerEncoderFeedforwardRatio(TestCase):
         )
         # Check internal layer's FFN dimension
         layer = encoder._encoder_layers[0]
+        assert isinstance(layer, GraphTransformerEncoderLayer)
         # For XGLU, _linear_in projects to 2 * feedforward_dim
         # feedforward_dim = int(32 * 8/3) = 85
         expected_feedforward_dim = int(32 * 8.0 / 3.0)
+        assert layer._ffn._linear_in is not None
         self.assertEqual(
             layer._ffn._linear_in.out_features, expected_feedforward_dim * 2
         )
@@ -573,6 +576,8 @@ class TestGraphTransformerEncoderFeedforwardRatio(TestCase):
             feedforward_ratio=2.0,
         )
         layer = encoder._encoder_layers[0]
+        assert isinstance(layer, GraphTransformerEncoderLayer)
+        assert layer._ffn._ffn is not None
         self.assertEqual(layer._ffn._ffn[0].out_features, 64)  # 32 * 2
 
     def test_encoder_forward_with_swiglu(self) -> None:

@@ -624,7 +624,9 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         )
 
         self.assertEqual(sequences.shape, (1, 4, 4))
-        self.assertEqual(attention_bias_data["anchor_bias"].shape, (1, 4, 1))
+        anchor_bias = attention_bias_data["anchor_bias"]
+        assert anchor_bias is not None
+        self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertIsNone(attention_bias_data["pairwise_bias"])
         self.assertTrue(valid_mask[0, 0].item())
 
@@ -649,17 +651,17 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
 
         self.assertEqual(sequences.shape, (1, 4, 4))
         self.assertEqual(valid_mask.shape, (1, 4))
-        self.assertEqual(attention_bias_data["anchor_bias"].shape, (1, 4, 1))
-        self.assertEqual(attention_bias_data["pairwise_bias"].shape, (1, 4, 4, 1))
-        self.assertEqual(attention_bias_data["anchor_bias"][0, 0, 0].item(), 0.0)
-        self.assertEqual(attention_bias_data["pairwise_bias"][0, 0, 0, 0].item(), 0.0)
+        anchor_bias = attention_bias_data["anchor_bias"]
+        pairwise_bias = attention_bias_data["pairwise_bias"]
+        assert anchor_bias is not None
+        assert pairwise_bias is not None
+        self.assertEqual(anchor_bias.shape, (1, 4, 1))
+        self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
+        self.assertEqual(anchor_bias[0, 0, 0].item(), 0.0)
+        self.assertEqual(pairwise_bias[0, 0, 0, 0].item(), 0.0)
 
         invalid_pair_mask = ~(valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1))
-        self.assertTrue(
-            torch.all(
-                attention_bias_data["pairwise_bias"][..., 0][invalid_pair_mask] == 0
-            )
-        )
+        self.assertTrue(torch.all(pairwise_bias[..., 0][invalid_pair_mask] == 0))
 
 
 if __name__ == "__main__":
