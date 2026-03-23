@@ -64,7 +64,7 @@ GiGL supports two paradigms for providing supervision edges.
 
 ### Self-supervised labels
 
-GiGL derives positive supervision labels from the message passing edges at dataset build time. A random subset — controlled by the `_ssl_positive_label_percentage` flag in `build_dataset` — is sampled as positive labels. No separate label tensors are needed.
+GiGL derives positive supervision labels from the message passing edges at dataset build time. A random subset — controlled by the `_ssl_positive_label_percentage` argument in `build_dataset` — is sampled as positive labels. No separate label tensors are needed.
 
 You still must pass `supervision_edge_type` in the **outgoing direction** to both `DistNodeAnchorLinkSplitter` and `DistABLPLoader`.
 
