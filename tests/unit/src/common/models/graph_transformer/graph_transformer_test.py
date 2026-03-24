@@ -1,6 +1,7 @@
 """Tests for GraphTransformerEncoder."""
 
 import torch
+import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
@@ -305,6 +306,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             )
             self.assertIsNotNone(additive_encoder._pe_projection)
             assert additive_encoder._pe_projection is not None
+            assert isinstance(additive_encoder._pe_projection, nn.Linear)
             additive_encoder._pe_projection.weight.data.zero_()
 
             base_embeddings = base_encoder(
