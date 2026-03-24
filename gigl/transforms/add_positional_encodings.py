@@ -225,7 +225,7 @@ class AddHeteroRandomWalkEncodings(BaseTransform):
 
 @functional_transform("add_hetero_hop_distance_encoding")
 class AddHeteroHopDistanceEncoding(BaseTransform):
-    r"""Adds hop distance positional encoding as relative encoding (sparse).
+    r"""Adds hop distance positional encoding as relative encoding (sparse CSR).
 
     For each pair of nodes (vi, vj), computes the shortest path distance p(vi, vj).
     This captures structural proximity and can be used with a learnable embedding
@@ -236,12 +236,12 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
     Based on the approach from `"Do Transformers Really Perform Bad for Graph
     Representation?" <https://arxiv.org/abs/2106.05234>`_ (Graphormer).
 
-    The output is a **sparse matrix** where:
+    The output is a **sparse CSR matrix** where:
         - Reachable pairs (i, j) within h_max hops have value = hop distance (1 to h_max)
         - Unreachable pairs have value = 0 (not stored in sparse tensor)
         - Self-loops (diagonal) are not stored (distance to self is implicitly 0)
 
-    This sparse representation avoids GPU memory blowup for large graphs.
+    CSR format is used for efficient row-based lookups during sequence building.
 
     Args:
         h_max (int): Maximum hop distance to consider. Distances > h_max
@@ -278,12 +278,13 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         num_edges = edge_index.size(1)
 
         if num_nodes == 0 or num_edges == 0:
-            # Handle empty graph case - return empty sparse tensor
-            empty_sparse = torch.sparse_coo_tensor(
-                torch.zeros((2, 0), dtype=torch.long),
+            # Handle empty graph case - return empty sparse CSR tensor
+            empty_sparse = torch.sparse_csr_tensor(
+                torch.zeros(num_nodes + 1, dtype=torch.long),
+                torch.zeros(0, dtype=torch.long),
                 torch.zeros(0, dtype=torch.float),
                 size=(num_nodes, num_nodes),
-            ).coalesce()
+            )
             data[self.attr_name] = empty_sparse
             return data
 
@@ -420,19 +421,21 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             dist_cols = torch.zeros(0, dtype=torch.long, device=device)
             dist_vals = torch.zeros(0, dtype=torch.float, device=device)
 
-        # Create sparse distance matrix
+        # Create sparse distance matrix in CSR format directly
+        # CSR is more efficient for row-based lookups in _lookup_csr_values
         # Unreachable pairs have value 0 (not stored)
         # Reachable pairs have value = hop distance (1 to h_max)
-        dist_sparse = torch.sparse_coo_tensor(
+        dist_coo = torch.sparse_coo_tensor(
             torch.stack([dist_rows, dist_cols]),
             dist_vals,
             size=(num_nodes, num_nodes),
         ).coalesce()
+        dist_sparse = dist_coo.to_sparse_csr()
+        del dist_coo
 
         # Store sparse pairwise distance matrix as graph-level attribute
         # Access via: data.hop_distance or data['hop_distance']
-        # Usage in attention: dist = data.hop_distance.to_dense() for small graphs,
-        #   or use sparse indexing for memory efficiency
+        # Usage in attention: use sparse indexing for memory efficiency
         # Note: Node ordering follows data.to_homogeneous() order (by node_type alphabetically)
         data[self.attr_name] = dist_sparse
 
