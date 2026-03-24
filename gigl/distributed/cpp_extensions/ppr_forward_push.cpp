@@ -33,14 +33,14 @@ public:
     PPRForwardPushState(
         torch::Tensor seed_nodes,
         int32_t seed_node_type_id,
-        float alpha,
-        float requeue_threshold_factor,
+        double alpha,
+        double requeue_threshold_factor,
         std::vector<std::vector<int32_t>> node_type_to_edge_type_ids,
         std::vector<int32_t> edge_type_to_dst_ntype_id,
         std::vector<torch::Tensor> degree_tensors
     )
         : alpha_(alpha),
-          one_minus_alpha_(1.0f - alpha),
+          one_minus_alpha_(1.0 - alpha),
           requeue_threshold_factor_(requeue_threshold_factor),
           node_type_to_edge_type_ids_(std::move(node_type_to_edge_type_ids)),
           edge_type_to_dst_ntype_id_(std::move(edge_type_to_dst_ntype_id)),
@@ -50,8 +50,8 @@ public:
         batch_size_     = static_cast<int32_t>(seed_nodes.size(0));
         num_node_types_ = static_cast<int32_t>(node_type_to_edge_type_ids_.size());
 
-        ppr_scores_.assign(batch_size_,    std::vector<std::unordered_map<int32_t, float>>(num_node_types_));
-        residuals_.assign(batch_size_,     std::vector<std::unordered_map<int32_t, float>>(num_node_types_));
+        ppr_scores_.assign(batch_size_,    std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
+        residuals_.assign(batch_size_,     std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
         queue_.assign(batch_size_,         std::vector<std::unordered_set<int32_t>>(num_node_types_));
         queued_nodes_.assign(batch_size_,  std::vector<std::unordered_set<int32_t>>(num_node_types_));
 
@@ -148,15 +148,15 @@ public:
                 for (int32_t src : queued_nodes_[s][nt]) {
                     auto& src_res = residuals_[s][nt];
                     auto it = src_res.find(src);
-                    float res = (it != src_res.end()) ? it->second : 0.0f;
+                    double res = (it != src_res.end()) ? it->second : 0.0;
 
                     ppr_scores_[s][nt][src] += res;
-                    src_res[src] = 0.0f;
+                    src_res[src] = 0.0;
 
                     int32_t total_deg = get_total_degree(src, nt);
                     if (total_deg == 0) continue;
 
-                    float res_per_nbr = one_minus_alpha_ * res / static_cast<float>(total_deg);
+                    double res_per_nbr = one_minus_alpha_ * res / static_cast<double>(total_deg);
 
                     for (int32_t eid : node_type_to_edge_type_ids_[nt]) {
                         // fetched and neighbor_cache are mutually exclusive per iteration:
@@ -177,8 +177,8 @@ public:
                         for (int32_t nbr : *nbr_list) {
                             residuals_[s][dst_nt][nbr] += res_per_nbr;
 
-                            float threshold = requeue_threshold_factor_ *
-                                static_cast<float>(get_total_degree(nbr, dst_nt));
+                            double threshold = requeue_threshold_factor_ *
+                                static_cast<double>(get_total_degree(nbr, dst_nt));
 
                             if (queue_[s][dst_nt].find(nbr) == queue_[s][dst_nt].end() &&
                                 residuals_[s][dst_nt][nbr] >= threshold) {
@@ -225,12 +225,12 @@ public:
                 const auto& scores = ppr_scores_[s][nt];
                 int32_t k = std::min(max_ppr_nodes, static_cast<int32_t>(scores.size()));
                 if (k > 0) {
-                    std::vector<std::pair<int32_t, float>> items(scores.begin(), scores.end());
+                    std::vector<std::pair<int32_t, double>> items(scores.begin(), scores.end());
                     std::partial_sort(items.begin(), items.begin() + k, items.end(),
                         [](const auto& a, const auto& b) { return a.second > b.second; });
                     for (int32_t i = 0; i < k; ++i) {
                         flat_ids.push_back(static_cast<int64_t>(items[i].first));
-                        flat_weights.push_back(items[i].second);
+                        flat_weights.push_back(static_cast<float>(items[i].second));
                     }
                 }
                 valid_counts.push_back(static_cast<int64_t>(k));
@@ -258,7 +258,7 @@ private:
         return t.data_ptr<int32_t>()[node_id];
     }
 
-    float   alpha_, one_minus_alpha_, requeue_threshold_factor_;
+    double  alpha_, one_minus_alpha_, requeue_threshold_factor_;
     int32_t batch_size_, num_node_types_, num_nodes_in_queue_{0};
 
     std::vector<std::vector<int32_t>> node_type_to_edge_type_ids_;
@@ -266,8 +266,11 @@ private:
     std::vector<torch::Tensor>        degree_tensors_;
 
     // Per-seed, per-node-type PPR state (indexed [seed_idx][ntype_id]).
-    std::vector<std::vector<std::unordered_map<int32_t, float>>> ppr_scores_;
-    std::vector<std::vector<std::unordered_map<int32_t, float>>> residuals_;
+    // double precision avoids float32 rounding errors accumulating over 20-30
+    // push iterations, which would otherwise cause ~1e-4 score errors vs the
+    // true PPR.  Output weights are cast to float32 in extract_top_k.
+    std::vector<std::vector<std::unordered_map<int32_t, double>>> ppr_scores_;
+    std::vector<std::vector<std::unordered_map<int32_t, double>>> residuals_;
     std::vector<std::vector<std::unordered_set<int32_t>>>         queue_;
     // Snapshot of queue contents from the last drain_queue() call, used by push_residuals().
     std::vector<std::vector<std::unordered_set<int32_t>>>         queued_nodes_;
@@ -283,7 +286,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(py::init<
             torch::Tensor,
             int32_t,
-            float, float,
+            double, double,
             std::vector<std::vector<int32_t>>,
             std::vector<int32_t>,
             std::vector<torch::Tensor>
