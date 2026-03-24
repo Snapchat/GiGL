@@ -42,23 +42,25 @@ from tests.test_assets.test_case import TestCase
 _test_server: Optional[DistServer] = None
 
 # Shared ABLP label data used by multiple test classes
-_DEFAULT_POSITIVE_LABELS: Final[dict[int, list[int]]] = {
+# The keys represent the source (USER) node IDs and the values represent the destination (STORY) node IDs.
+_DEFAULT_POSITIVE_ABLP_LABELS: Final[dict[int, list[int]]] = {
     0: [0, 1],
     1: [1, 2],
     2: [2, 3],
     3: [3, 4],
     4: [4, 0],
 }
-_DEFAULT_NEGATIVE_LABELS: Final[dict[int, list[int]]] = {
+_DEFAULT_NEGATIVE_ABLP_LABELS: Final[dict[int, list[int]]] = {
     0: [2],
     1: [3],
     2: [4],
     3: [0],
     4: [1],
 }
-_DEFAULT_TRAIN_IDS: Final[list[int]] = [0, 1, 2]
-_DEFAULT_VAL_IDS: Final[list[int]] = [3]
-_DEFAULT_TEST_IDS: Final[list[int]] = [4]
+# The list of source (USER) node IDs in the different splits.
+_DEFAULT_ABLP_TRAIN_IDS: Final[list[int]] = [0, 1, 2]
+_DEFAULT_ABLP_VAL_IDS: Final[list[int]] = [3]
+_DEFAULT_ABLP_TEST_IDS: Final[list[int]] = [4]
 
 
 def _mock_request_server(
@@ -138,11 +140,11 @@ def _create_server_with_splits(
     create_test_process_group()
 
     dataset = create_heterogeneous_dataset_for_ablp(
-        positive_labels=_DEFAULT_POSITIVE_LABELS,
-        negative_labels=_DEFAULT_NEGATIVE_LABELS,
-        train_node_ids=_DEFAULT_TRAIN_IDS,
-        val_node_ids=_DEFAULT_VAL_IDS,
-        test_node_ids=_DEFAULT_TEST_IDS,
+        positive_labels=_DEFAULT_POSITIVE_ABLP_LABELS,
+        negative_labels=_DEFAULT_NEGATIVE_ABLP_LABELS,
+        train_node_ids=_DEFAULT_ABLP_TRAIN_IDS,
+        val_node_ids=_DEFAULT_ABLP_VAL_IDS,
+        test_node_ids=_DEFAULT_ABLP_TEST_IDS,
         edge_indices=edge_indices or DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         src_node_type=src_node_type,
         dst_node_type=dst_node_type,
