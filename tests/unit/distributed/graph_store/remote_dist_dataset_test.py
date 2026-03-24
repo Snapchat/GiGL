@@ -859,12 +859,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 world_size=2,
                 shard_strategy=ShardStrategy.CONTIGUOUS,
             )
-        with self.assertRaises(ValueError):
-            remote_dataset.fetch_node_ids(
-                rank=0,
-                world_size=3,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
-            )
 
     def test_contiguous_labeled_homogeneous_auto_inference(self):
         """CONTIGUOUS strategy auto-infers DEFAULT_HOMOGENEOUS_NODE_TYPE for labeled homogeneous datasets."""
@@ -1122,13 +1116,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             remote_dataset.fetch_ablp_input(
                 split="train",
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
-            )
-        with self.assertRaises(ValueError):
-            remote_dataset.fetch_ablp_input(
-                split="train",
-                rank=0,
-                world_size=3,
                 shard_strategy=ShardStrategy.CONTIGUOUS,
             )
 

@@ -24,6 +24,22 @@ from gigl.utils.sampling import ABLPInputNodes
 logger = Logger()
 
 
+def _validate_contiguous_args(
+    rank: Optional[int],
+    world_size: Optional[int],
+    shard_strategy: ShardStrategy,
+) -> None:
+    """Validate contiguous sharding inputs; no-op for round-robin."""
+    if shard_strategy != ShardStrategy.CONTIGUOUS:
+        return
+
+    if rank is None or world_size is None:
+        raise ValueError(
+            "Both rank and world_size must be provided when using "
+            f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
+        )
+
+
 class RemoteDistDataset:
     def __init__(
         self,
@@ -164,30 +180,6 @@ class RemoteDistDataset:
                 )
         return edge_type
 
-    def _validate_contiguous_args(
-        self,
-        rank: Optional[int],
-        world_size: Optional[int],
-        shard_strategy: ShardStrategy,
-    ) -> tuple[Optional[int], Optional[int]]:
-        """Validate contiguous sharding inputs and preserve round-robin inputs unchanged."""
-        if shard_strategy != ShardStrategy.CONTIGUOUS:
-            return rank, world_size
-
-        if rank is None or world_size is None:
-            raise ValueError(
-                "Both rank and world_size must be provided when using "
-                f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
-            )
-        if world_size != self.cluster_info.num_compute_nodes:
-            raise ValueError(
-                "ShardStrategy.CONTIGUOUS expects world_size to equal "
-                "cluster_info.num_compute_nodes. "
-                f"Got world_size={world_size}, "
-                f"cluster_info.num_compute_nodes={self.cluster_info.num_compute_nodes}"
-            )
-        return rank, world_size
-
     def _compute_assignments_if_needed(
         self,
         rank: Optional[int],
@@ -283,7 +275,7 @@ class RemoteDistDataset:
                 expects the compute-node rank.
             world_size (Optional[int]): The requested shard world size.
                 ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
-                requires ``world_size == cluster_info.num_compute_nodes``.
+                expects the compute-node world size.
             split (Optional[Literal["train", "val", "test"]]):
                 The split of the dataset to get node ids from.
                 If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
@@ -296,8 +288,7 @@ class RemoteDistDataset:
                 for unassigned servers.
 
         Raises:
-            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None,
-                or if ``world_size`` does not match ``cluster_info.num_compute_nodes``.
+            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
 
         Returns:
             dict[int, torch.Tensor]: A dict mapping storage rank to node ids.
@@ -312,7 +303,7 @@ class RemoteDistDataset:
             (train, val, or test) may be returned. This is useful when you need to sample
             neighbors during inference, as neighbor nodes may belong to any split.
         """
-        rank, world_size = self._validate_contiguous_args(
+        _validate_contiguous_args(
             rank=rank,
             world_size=world_size,
             shard_strategy=shard_strategy,
@@ -488,7 +479,7 @@ class RemoteDistDataset:
                 expects the compute-node rank.
             world_size (Optional[int]): The requested shard world size.
                 ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
-                requires ``world_size == cluster_info.num_compute_nodes``.
+                expects the compute-node world size.
             anchor_node_type (Optional[NodeType]): The type of the anchor nodes to retrieve.
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
@@ -512,8 +503,7 @@ class RemoteDistDataset:
                 - negative_labels: Optional dict mapping negative label EdgeType to a 2D tensor [N, M].
 
         Raises:
-            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None,
-                or if ``world_size`` does not match ``cluster_info.num_compute_nodes``.
+            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
 
         Examples:
             See :class:`~gigl.distributed.graph_store.sharding.ShardStrategy` for
@@ -521,7 +511,7 @@ class RemoteDistDataset:
             compute nodes.
 
         """
-        rank, world_size = self._validate_contiguous_args(
+        _validate_contiguous_args(
             rank=rank,
             world_size=world_size,
             shard_strategy=shard_strategy,
