@@ -261,15 +261,27 @@ def _run_compute_train_tests(
     ), f"Rank {rank} should have empty tensor for server {other_rank}"
 
     # Assert total node parity: CONTIGUOUS and ROUND_ROBIN should cover the same nodes
-    local_contiguous_count = sum(t.numel() for t in contiguous_node_ids.values())
-    local_round_robin_count = sum(t.numel() for t in random_negative_input.values())
-    contiguous_total = torch.tensor(local_contiguous_count, dtype=torch.int64)
-    round_robin_total = torch.tensor(local_round_robin_count, dtype=torch.int64)
-    torch.distributed.all_reduce(contiguous_total, op=torch.distributed.ReduceOp.SUM)
-    torch.distributed.all_reduce(round_robin_total, op=torch.distributed.ReduceOp.SUM)
-    assert contiguous_total.item() == round_robin_total.item(), (
-        f"CONTIGUOUS total ({contiguous_total.item()}) must equal "
-        f"ROUND_ROBIN total ({round_robin_total.item()})"
+    local_contiguous_nodes = torch.cat(list(contiguous_node_ids.values()))
+    local_round_robin_nodes = torch.cat(list(random_negative_input.values()))
+
+    # Gather all nodes from all ranks
+    contiguous_gathered: list[torch.Tensor] = [
+        torch.empty(0, dtype=torch.long)
+        for _ in range(torch.distributed.get_world_size())
+    ]
+    round_robin_gathered: list[torch.Tensor] = [
+        torch.empty(0, dtype=torch.long)
+        for _ in range(torch.distributed.get_world_size())
+    ]
+    torch.distributed.all_gather_object(contiguous_gathered, local_contiguous_nodes)
+    torch.distributed.all_gather_object(round_robin_gathered, local_round_robin_nodes)
+
+    all_contiguous = torch.cat(contiguous_gathered).sort().values
+    all_round_robin = torch.cat(round_robin_gathered).sort().values
+    assert torch.equal(all_contiguous, all_round_robin), (
+        f"CONTIGUOUS and ROUND_ROBIN must produce the same sorted node set. "
+        f"CONTIGUOUS: {all_contiguous[:10]}... ({all_contiguous.numel()} nodes), "
+        f"ROUND_ROBIN: {all_round_robin[:10]}... ({all_round_robin.numel()} nodes)"
     )
 
     torch.distributed.barrier()
