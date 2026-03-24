@@ -256,7 +256,7 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         split: Optional[Literal["train", "val", "test"]] = None,
         node_type: Optional[NodeType] = None,
-        shard_strategy: ShardStrategy = ShardStrategy.ROUND_ROBIN,
+        shard_strategy: ShardStrategy = ShardStrategy.CONTIGUOUS,
     ) -> dict[int, torch.Tensor]:
         """
         Fetches node ids from the storage nodes for the current compute node (machine).
@@ -276,11 +276,12 @@ class RemoteDistDataset:
                 If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
             node_type (Optional[NodeType]): The type of nodes to get.
                 Must be provided for heterogeneous datasets.
+                Must be None for labeled homogeneous graphs.
             shard_strategy (ShardStrategy): Strategy for sharding node IDs across compute nodes.
-                ``ROUND_ROBIN`` (default) shards each server's nodes across the
-                requested rank/world_size on the storage server. ``CONTIGUOUS``
-                assigns storage servers to compute nodes, returning empty tensors
+                ``CONTIGUOUS`` (default) assigns storage servers to compute nodes, returning empty tensors
                 for unassigned servers.
+                ``ROUND_ROBIN`` shards each server's nodes across the
+                requested rank/world_size on the storage server.
 
         Raises:
             ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
@@ -430,7 +431,7 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         anchor_node_type: Optional[NodeType] = None,
         supervision_edge_type: Optional[EdgeType] = None,
-        shard_strategy: ShardStrategy = ShardStrategy.ROUND_ROBIN,
+        shard_strategy: ShardStrategy = ShardStrategy.CONTIGUOUS,
     ) -> dict[int, ABLPInputNodes]:
         """Fetches ABLP (Anchor Based Link Prediction) input from the storage nodes.
 
@@ -459,11 +460,12 @@ class RemoteDistDataset:
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
                 Defaults to None.
-            shard_strategy (ShardStrategy): Strategy for sharding ABLP input across compute
-                nodes. ``ROUND_ROBIN`` (default) shards each server's data across the
-                requested rank/world_size on the storage server. ``CONTIGUOUS`` assigns
-                storage servers to compute nodes, producing empty tensors for unassigned
-                servers.
+            shard_strategy (ShardStrategy):
+                Strategy for sharding ABLP input across compute nodes.
+                ``CONTIGUOUS`` (default) assigns storage servers to compute nodes,
+                producing empty tensors for unassigned servers.
+                ``ROUND_ROBIN`` shards each server's data across the
+                requested rank/world_size on the storage server.
 
         Returns:
             dict[int, ABLPInputNodes]:
