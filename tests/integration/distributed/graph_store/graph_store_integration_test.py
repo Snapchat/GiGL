@@ -3,7 +3,6 @@ import multiprocessing.context as py_mp_context
 import os
 import socket
 import tempfile
-import threading
 import traceback
 import unittest
 from collections.abc import MutableMapping
@@ -54,7 +53,7 @@ def _assert_sampler_input(
     sampler_input: dict[int, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
-    rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
+    rank_expected_sampler_input = expected_sampler_input[torch.distributed.get_rank()]
     for i in range(cluster_info.compute_cluster_world_size):
         if i == torch.distributed.get_rank():
             logger.info(
@@ -152,53 +151,10 @@ def _assert_ablp_input(
 
     torch.distributed.barrier()
 
-    # Gather ABLP data from all ranks and verify processes on same compute_node_rank have identical data
-    first_input = ablp_result[0]
-    local_anchors = first_input.anchor_nodes
-    # Get the first (and currently only) positive/negative label tensor for comparison
-    first_pos, first_neg = next(iter(first_input.labels.values()))
-    local_positive = first_pos
-    local_negative = first_neg
-    local_data = (
-        cluster_info.compute_node_rank,
-        local_anchors.clone(),
-        local_positive.clone(),
-        local_negative.clone() if local_negative is not None else None,
-    )
-    gathered_data: list[tuple[int, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
-    torch.distributed.all_gather_object(gathered_data, local_data)
-
-    # Group by compute_node_rank and verify all processes in same group have identical ABLP input
-    my_compute_node_rank = cluster_info.compute_node_rank
-    for (
-        other_compute_node_rank,
-        other_anchors,
-        other_positive,
-        other_negative,
-    ) in gathered_data:
-        if other_compute_node_rank == my_compute_node_rank:
-            assert_tensor_equality(local_anchors, other_anchors)
-            assert_tensor_equality(local_positive, other_positive)
-            if local_negative is not None and other_negative is not None:
-                assert_tensor_equality(local_negative, other_negative)
-            else:
-                assert local_negative is None and other_negative is None, (
-                    f"Negative labels mismatch: local={local_negative is not None}, "
-                    f"other={other_negative is not None}"
-                )
-
-    torch.distributed.barrier()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} verified processes on same compute_node_rank "
-        f"({my_compute_node_rank}) have identical ABLP input"
-    )
-
 
 def _run_compute_train_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
-    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -209,15 +165,13 @@ def _run_compute_train_tests(
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
 
     # Test fetch_ablp_input for train split
     ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
 
     _assert_ablp_input(cluster_info, ablp_result)
@@ -280,9 +234,7 @@ def _run_compute_train_tests(
     torch.distributed.all_reduce(
         expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
     )
-    expected_batches = (
-        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
-    )
+    expected_batches = expected_anchors_tensor.item()
     assert (
         count_tensor.item() == expected_batches
     ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
@@ -293,8 +245,6 @@ def _run_compute_train_tests(
 def _run_compute_multiple_loaders_test(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
-    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
     """
@@ -309,20 +259,18 @@ def _run_compute_multiple_loaders_test(
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
 
     ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
 
     random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
 
     # Calculate expected batch count (same logic as _run_compute_train_tests).
@@ -342,9 +290,7 @@ def _run_compute_multiple_loaders_test(
         total_negative_seeds_tensor, op=torch.distributed.ReduceOp.SUM
     )
     total_negative_seeds = int(total_negative_seeds_tensor.item())
-    expected_batches = int(
-        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
-    )
+    expected_batches = int(expected_anchors_tensor.item())
     logger.info(
         f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
     )
@@ -511,9 +457,6 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
     process_name = f"client_train_{args.client_rank}"
     try:
         mp_context = torch.multiprocessing.get_context("spawn")
-        manager = torch.multiprocessing.Manager()
-        mp_sharing_dict = manager.dict()
-        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting train client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -522,8 +465,6 @@ def _client_train_process(args: ClientTrainProcessArgs) -> None:
                 args=[
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
-                    mp_sharing_dict,  # mp_sharing_dict
-                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                 ],
             )
@@ -546,9 +487,6 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
     process_name = f"client_multiple_loaders_{args.client_rank}"
     try:
         mp_context = torch.multiprocessing.get_context("spawn")
-        manager = torch.multiprocessing.Manager()
-        mp_sharing_dict = manager.dict()
-        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting multiple loaders client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -557,8 +495,6 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
                 args=[
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
-                    mp_sharing_dict,  # mp_sharing_dict
-                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                 ],
             )
@@ -575,8 +511,6 @@ def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
 def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
-    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
@@ -590,8 +524,6 @@ def _run_compute_tests(
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
@@ -625,22 +557,10 @@ def _run_compute_tests(
 
     sampler_input = remote_dist_dataset.fetch_node_ids(
         node_type=node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
-
-    # test "simple" case where we don't have mp sharing dict too
-    simple_sampler_input = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=None,
-    ).fetch_node_ids(
-        node_type=node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-    )
-    _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
     assert (
         remote_dist_dataset.fetch_edge_types() == expected_edge_types
@@ -714,9 +634,6 @@ def _client_process(args: ClientProcessArgs) -> None:
             f"Initializing client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {args.client_rank}"
         )
         mp_context = torch.multiprocessing.get_context("spawn")
-        manager = torch.multiprocessing.Manager()
-        mp_sharing_dict = manager.dict()
-        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
         logger.info("Starting client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
@@ -725,8 +642,6 @@ def _client_process(args: ClientProcessArgs) -> None:
                 args=[
                     i,  # client_rank
                     args.cluster_info,  # cluster_info
-                    mp_sharing_dict,  # mp_sharing_dict
-                    mp_barrier,  # mp_barrier
                     args.node_type,  # node_type
                     args.expected_sampler_input,  # expected_sampler_input
                     args.expected_edge_types,  # expected_edge_types
@@ -825,16 +740,17 @@ def _get_expected_input_nodes_by_rank(
 ) -> dict[int, list[torch.Tensor]]:
     """Get the expected sampler input for each compute rank.
 
-    We generate the expected sampler input for each compute rank by sharding the nodes across the compute ranks.
-    We then append the generated nodes to the expected sampler input for each compute rank.
-    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2:
+    We generate the expected sampler input for each global rank by sharding the nodes across the global ranks.
+    We then append the generated nodes to the expected sampler input for each global rank.
+    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2
+    (compute_cluster_world_size = 2):
     {
-    0: # compute rank 0
+    0: # global rank 0
     [
         [0, 1, 3, 4], # From storage rank 0
         [8, 9, 11, 12] # From storage rank 1
     ]
-    1: # compute rank 1
+    1: # global rank 1
     [
         [5, 6, 7, 8], # From storage rank 0
         [13, 14, 15, 16] # From storage rank 1
@@ -855,13 +771,13 @@ def _get_expected_input_nodes_by_rank(
     expected_sampler_input = collections.defaultdict(list)
     for server_rank in range(cluster_info.num_storage_nodes):
         server_nodes = get_ids_on_rank(partition_book=partition_book, rank=server_rank)
-        for compute_rank in range(cluster_info.num_compute_nodes):
+        for global_rank in range(cluster_info.compute_cluster_world_size):
             generated_nodes = shard_nodes_by_process(
                 input_nodes=server_nodes,
-                local_process_rank=compute_rank,
-                local_process_world_size=cluster_info.num_compute_nodes,
+                local_process_rank=global_rank,
+                local_process_world_size=cluster_info.compute_cluster_world_size,
             )
-            expected_sampler_input[compute_rank].append(generated_nodes)
+            expected_sampler_input[global_rank].append(generated_nodes)
     return dict(expected_sampler_input)
 
 

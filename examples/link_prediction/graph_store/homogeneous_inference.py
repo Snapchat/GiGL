@@ -23,7 +23,7 @@ This file (graph store mode):
   - Uses `RemoteDistDataset` to connect to a remote graph store cluster
   - Uses `init_compute_process` to initialize the compute node connection to storage
   - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
-  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
+  - Each process fetches its own shard of data from the storage cluster
 
 Standard mode (`homogeneous_inference.py`):
   - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
@@ -85,9 +85,7 @@ import argparse
 import gc
 import os
 import sys
-import threading
 import time
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Union
 
@@ -152,8 +150,6 @@ class InferenceProcessArgs:
         log_every_n_batch (int): Frequency to log batch information during inference.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
         gbml_config_pb_wrapper (GbmlConfigPbWrapper): Wrapper containing GBML configuration.
-        mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
-            sharing between local processes.
     """
 
     # Distributed context
@@ -178,8 +174,6 @@ class InferenceProcessArgs:
     log_every_n_batch: int
     inference_node_type: NodeType
     gbml_config_pb_wrapper: GbmlConfigPbWrapper
-    mp_sharing_dict: MutableMapping[str, torch.Tensor]
-    mp_barrier: threading.Barrier
 
 
 @torch.no_grad()
@@ -216,8 +210,6 @@ def _inference_process(
     dataset = RemoteDistDataset(
         args.cluster_info,
         local_rank,
-        mp_sharing_dict=args.mp_sharing_dict,
-        mp_barrier=args.mp_barrier,
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
@@ -225,12 +217,9 @@ def _inference_process(
         f"Local rank {local_rank} in machine {args.cluster_info.compute_node_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
 
-    # We expect that each compute machine has the same input nodes.
-    # As such, we shard across the compute machine cluster.
-    # If this is not done, then all nodes will receive the same input nodes, which is not what we want.
     input_nodes = dataset.fetch_node_ids(
-        rank=args.cluster_info.compute_node_rank,
-        world_size=args.cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
@@ -486,9 +475,6 @@ def _run_example_inference(
             )
             local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
-    manager = mp.Manager()
-    mp_sharing_dict = manager.dict()
-    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
     if cluster_info.compute_node_rank == 0:
         gcs_utils = GcsUtils()
         num_files_at_gcs_path = gcs_utils.count_blobs_in_gcs_path(
@@ -547,8 +533,6 @@ def _run_example_inference(
         log_every_n_batch=log_every_n_batch,
         inference_node_type=graph_metadata.homogeneous_node_type,
         gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
     mp.spawn(
         fn=_inference_process,

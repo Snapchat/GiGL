@@ -78,9 +78,8 @@ import gc
 import os
 import statistics
 import sys
-import threading
 import time
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal, Optional, Union
 
@@ -395,8 +394,6 @@ class TrainingProcessArgs:
     # Distributed context
     local_world_size: int
     cluster_info: GraphStoreInfo
-    mp_sharing_dict: MutableMapping[str, torch.Tensor]
-    mp_barrier: threading.Barrier
 
     # Data
     supervision_edge_type: EdgeType
@@ -448,8 +445,6 @@ def _training_process(
     dataset = RemoteDistDataset(
         args.cluster_info,
         local_rank,
-        mp_sharing_dict=args.mp_sharing_dict,
-        mp_barrier=args.mp_barrier,
     )
 
     rank = torch.distributed.get_rank()
@@ -945,11 +940,7 @@ def _run_example_training(
         )
     supervision_edge_type = supervision_edge_types[0]
 
-    # Step 4: Create shared dict and mp barrierfor inter-process tensor sharing
-    manager = mp.Manager()
-    mp_sharing_dict = manager.dict()
-    mp_barrier = manager.Barrier(local_world_size)  # type: ignore[attr-defined]
-    # Step 5: Spawn training processes
+    # Step 4: Spawn training processes
     print("--- Launching training processes ...\n")
     flush()
     start_time = time.time()
@@ -957,8 +948,6 @@ def _run_example_training(
     training_args = TrainingProcessArgs(
         local_world_size=local_world_size,
         cluster_info=cluster_info,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
         supervision_edge_type=supervision_edge_type,
         model_uri=model_uri,
         eval_metrics_uri=eval_metrics_uri,
