@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, Final, Optional
 from unittest.mock import patch
@@ -62,12 +62,16 @@ _DEFAULT_VAL_IDS: Final[list[int]] = [3]
 _DEFAULT_TEST_IDS: Final[list[int]] = [4]
 
 
-def _mock_request_server(server_rank, func, *args, **kwargs):
+def _mock_request_server(
+    server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
     """Mock request_server that routes through _call_func_on_server."""
     return _call_func_on_server(func, *args, **kwargs)
 
 
-def _mock_async_request_server(server_rank, func, *args, **kwargs):
+def _mock_async_request_server(
+    server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> torch.futures.Future:
     """Mock async_request_server that routes through _call_func_on_server and returns a future."""
     future: torch.futures.Future = torch.futures.Future()
     future.set_result(_call_func_on_server(func, *args, **kwargs))
@@ -99,7 +103,10 @@ def _create_mock_graph_store_info(
 
 
 @contextmanager
-def _patch_remote_requests(async_side_effect, sync_side_effect):
+def _patch_remote_requests(
+    async_side_effect: Callable[..., torch.futures.Future],
+    sync_side_effect: Callable[..., Any],
+) -> Iterator[None]:
     """Context manager that patches both async_request_server and request_server."""
     with (
         patch(
@@ -131,7 +138,7 @@ def _create_server_with_splits(
     global _test_server
     create_test_process_group()
 
-    kwargs: dict = {}
+    kwargs: dict[str, Any] = {}
     if src_node_type is not None:
         kwargs.update(
             src_node_type=src_node_type,
