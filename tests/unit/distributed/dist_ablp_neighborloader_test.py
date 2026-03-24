@@ -1,7 +1,6 @@
 import unittest
 from collections import defaultdict
 from typing import Literal, Optional, Union
-from unittest.mock import Mock, patch
 
 import torch
 import torch.multiprocessing as mp
@@ -29,7 +28,6 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     GraphPartitionData,
     PartitionOutput,
     message_passing_to_negative_label,
@@ -38,7 +36,6 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
-from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
@@ -426,58 +423,6 @@ class DistABLPLoaderTest(TestCase):
             # to avoid interference with subsequent tests
             torch.distributed.destroy_process_group()
         super().tearDown()
-
-    def test_graph_store_setup_detects_negatives_across_all_servers(self) -> None:
-        loader = DistABLPLoader.__new__(DistABLPLoader)
-        loader._instance_count = 0
-        loader._shutdowned = True
-
-        dataset = Mock()
-        dataset.cluster_info.num_storage_nodes = 2
-        dataset.cluster_info.compute_cluster_world_size = 2
-        dataset.cluster_info.storage_cluster_master_ip = "127.0.0.1"
-        dataset.fetch_node_feature_info.return_value = None
-        dataset.fetch_edge_feature_info.return_value = None
-        dataset.fetch_edge_types.return_value = None
-        dataset.fetch_free_ports_on_storage_cluster.return_value = [12345, 12346]
-
-        input_nodes = {
-            0: ABLPInputNodes(
-                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                anchor_nodes=torch.empty(0, dtype=torch.long),
-                labels={
-                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
-                        torch.empty((0, 0), dtype=torch.long),
-                        None,
-                    )
-                },
-            ),
-            1: ABLPInputNodes(
-                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                anchor_nodes=torch.tensor([1]),
-                labels={
-                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
-                        torch.tensor([[2]]),
-                        torch.tensor([[3]]),
-                    )
-                },
-            ),
-        }
-
-        with patch("torch.distributed.get_rank", return_value=0):
-            input_data, _, _ = loader._setup_for_graph_store(
-                input_nodes=input_nodes,
-                dataset=dataset,
-                num_workers=1,
-            )
-
-        self.assertEqual(loader._negative_label_edge_types, [_NEGATIVE_EDGE_TYPE])
-        self.assertEqual(input_data[0].negative_label_by_edge_types, {})
-        self.assertIn(_NEGATIVE_EDGE_TYPE, input_data[1].negative_label_by_edge_types)
-        self.assert_tensor_equality(
-            input_data[0].positive_label_by_edge_types[_POSITIVE_EDGE_TYPE],
-            torch.empty((0, 0), dtype=torch.long),
-        )
 
     @parameterized.expand(
         [

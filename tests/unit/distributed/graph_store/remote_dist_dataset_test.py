@@ -905,9 +905,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             ablp_0 = result[0]
             self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1, 2]))
             pos, neg = ablp_0.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-            self.assert_tensor_equality(
-                pos, torch.tensor([[0, 1], [1, 2], [2, 3]])
-            )
+            self.assert_tensor_equality(pos, torch.tensor([[0, 1], [1, 2], [2, 3]]))
             assert neg is not None
             self.assert_tensor_equality(neg, torch.tensor([[4], [5], [6]]))
 
@@ -928,9 +926,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             self.assertEqual(ablp_0.anchor_nodes.numel(), 0)
 
             ablp_1 = result[1]
-            self.assert_tensor_equality(
-                ablp_1.anchor_nodes, torch.tensor([10, 11, 12])
-            )
+            self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([10, 11, 12]))
             pos, neg = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             self.assert_tensor_equality(
                 pos, torch.tensor([[10, 11], [11, 12], [12, 13]])
@@ -975,26 +971,18 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             ablp_0 = result[0]
-            self.assert_tensor_equality(
-                ablp_0.anchor_nodes, torch.tensor([0, 1, 2, 3])
-            )
+            self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1, 2, 3]))
             pos, neg = ablp_0.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             self.assert_tensor_equality(
                 pos, torch.tensor([[0, 1], [1, 2], [2, 3], [3, 4]])
             )
             assert neg is not None
-            self.assert_tensor_equality(
-                neg, torch.tensor([[10], [11], [12], [13]])
-            )
+            self.assert_tensor_equality(neg, torch.tensor([[10], [11], [12], [13]]))
 
             ablp_1 = result[1]
-            self.assert_tensor_equality(
-                ablp_1.anchor_nodes, torch.tensor([10, 11])
-            )
+            self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([10, 11]))
             pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-            self.assert_tensor_equality(
-                pos_1, torch.tensor([[10, 11], [11, 12]])
-            )
+            self.assert_tensor_equality(pos_1, torch.tensor([[10, 11], [11, 12]]))
             assert neg_1 is not None
             self.assert_tensor_equality(neg_1, torch.tensor([[20], [21]]))
 
@@ -1011,13 +999,9 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             self.assertEqual(result[0].anchor_nodes.numel(), 0)
 
             ablp_1 = result[1]
-            self.assert_tensor_equality(
-                ablp_1.anchor_nodes, torch.tensor([12, 13])
-            )
+            self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([12, 13]))
             pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
-            self.assert_tensor_equality(
-                pos_1, torch.tensor([[12, 13], [13, 14]])
-            )
+            self.assert_tensor_equality(pos_1, torch.tensor([[12, 13], [13, 14]]))
             assert neg_1 is not None
             self.assert_tensor_equality(neg_1, torch.tensor([[22], [23]]))
 
@@ -1031,9 +1015,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 torch.tensor([[20, 21], [21, 22], [22, 23], [23, 24]]),
             )
             assert neg_2 is not None
-            self.assert_tensor_equality(
-                neg_2, torch.tensor([[30], [31], [32], [33]])
-            )
+            self.assert_tensor_equality(neg_2, torch.tensor([[30], [31], [32], [33]]))
 
     def test_ablp_contiguous_requires_rank_and_world_size(self) -> None:
         """ABLP CONTIGUOUS without rank/world_size raises ValueError."""
