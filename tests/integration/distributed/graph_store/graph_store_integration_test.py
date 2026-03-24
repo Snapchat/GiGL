@@ -287,7 +287,7 @@ def _run_compute_train_tests(
     torch.distributed.barrier()
     logger.info(
         f"Rank {torch.distributed.get_rank()} CONTIGUOUS: "
-        f"{local_contiguous_count} nodes from assigned server"
+        f"{local_contiguous_nodes.numel()} nodes from assigned server"
     )
 
     shutdown_compute_proccess()
