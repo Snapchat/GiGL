@@ -2,6 +2,7 @@ import torch
 from absl.testing import absltest
 
 from gigl.distributed.graph_store import dist_server
+from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -83,7 +84,9 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
-        node_ids = server.get_node_ids(rank=0, world_size=1, node_type=None)
+        node_ids = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=1, node_type=None)
+        )
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
         self.assert_tensor_equality(node_ids, torch.arange(10))
@@ -96,13 +99,17 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Test with USER node type
-        user_node_ids = server.get_node_ids(rank=0, world_size=1, node_type=USER)
+        user_node_ids = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=1, node_type=USER)
+        )
         self.assertIsInstance(user_node_ids, torch.Tensor)
         self.assertEqual(user_node_ids.shape[0], 5)
         self.assert_tensor_equality(user_node_ids, torch.arange(5))
 
         # Test with STORY node type
-        story_node_ids = server.get_node_ids(rank=0, world_size=1, node_type=STORY)
+        story_node_ids = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=1, node_type=STORY)
+        )
         self.assertIsInstance(story_node_ids, torch.Tensor)
         self.assertEqual(story_node_ids.shape[0], 5)
         self.assert_tensor_equality(story_node_ids, torch.arange(5))
@@ -115,17 +122,27 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Test with world_size=2
-        rank_0_nodes = server.get_node_ids(rank=0, world_size=2, node_type=None)
-        rank_1_nodes = server.get_node_ids(rank=1, world_size=2, node_type=None)
+        rank_0_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=2, node_type=None)
+        )
+        rank_1_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=1, world_size=2, node_type=None)
+        )
 
         # Verify each rank gets different nodes
         self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
         # Test with world_size=3 (uneven split)
-        rank_0_nodes = server.get_node_ids(rank=0, world_size=3, node_type=None)
-        rank_1_nodes = server.get_node_ids(rank=1, world_size=3, node_type=None)
-        rank_2_nodes = server.get_node_ids(rank=2, world_size=3, node_type=None)
+        rank_0_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=3, node_type=None)
+        )
+        rank_1_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=1, world_size=3, node_type=None)
+        )
+        rank_2_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=2, world_size=3, node_type=None)
+        )
 
         self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
@@ -139,10 +156,10 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
-            server.get_node_ids(rank=0, world_size=None)
+            server.get_node_ids(FetchNodesRequest(rank=0, world_size=None))
 
         with self.assertRaises(ValueError):
-            server.get_node_ids(rank=None, world_size=1)
+            server.get_node_ids(FetchNodesRequest(rank=None, world_size=1))
 
     def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
         """Test get_node_ids with a homogeneous dataset and a node type raises error."""
@@ -151,7 +168,7 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(rank=0, world_size=1, node_type=USER)
+            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=USER))
 
     def test_get_node_ids_with_heterogeneous_dataset_and_no_node_type(
         self,
@@ -162,7 +179,7 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(rank=0, world_size=1, node_type=None)
+            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=None))
 
     def test_get_node_ids_with_train_split(self) -> None:
         """Test get_node_ids returns only training nodes when split='train'."""
@@ -178,7 +195,9 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        train_nodes = server.get_node_ids(node_type=USER, split="train")
+        train_nodes = server.get_node_ids(
+            FetchNodesRequest(node_type=USER, split="train")
+        )
         self.assert_tensor_equality(train_nodes, torch.tensor([0, 1, 2]))
 
     def test_get_node_ids_with_val_split(self) -> None:
@@ -195,7 +214,7 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        val_nodes = server.get_node_ids(node_type=USER, split="val")
+        val_nodes = server.get_node_ids(FetchNodesRequest(node_type=USER, split="val"))
         self.assert_tensor_equality(val_nodes, torch.tensor([3]))
 
     def test_get_node_ids_with_test_split(self) -> None:
@@ -212,7 +231,9 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        test_nodes = server.get_node_ids(node_type=USER, split="test")
+        test_nodes = server.get_node_ids(
+            FetchNodesRequest(node_type=USER, split="test")
+        )
         self.assert_tensor_equality(test_nodes, torch.tensor([4]))
 
     def test_get_node_ids_with_split_and_sharding(self) -> None:
@@ -231,10 +252,10 @@ class TestRemoteDataset(TestCase):
 
         # Train split has [0, 1, 2], shard across 2 ranks
         rank_0_nodes = server.get_node_ids(
-            rank=0, world_size=2, node_type=USER, split="train"
+            FetchNodesRequest(rank=0, world_size=2, node_type=USER, split="train")
         )
         rank_1_nodes = server.get_node_ids(
-            rank=1, world_size=2, node_type=USER, split="train"
+            FetchNodesRequest(rank=1, world_size=2, node_type=USER, split="train")
         )
 
         self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
@@ -248,7 +269,7 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
-            server.get_node_ids(split="invalid")
+            server.get_node_ids(FetchNodesRequest(split="invalid"))
 
     def test_get_edge_dir(self) -> None:
         """Test get_edge_dir with a dataset."""
@@ -337,11 +358,13 @@ class TestRemoteDataset(TestCase):
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
                 anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-                    split=split,
-                    rank=0,
-                    world_size=1,
-                    node_type=USER,
-                    supervision_edge_type=USER_TO_STORY,
+                    FetchABLPRequest(
+                        split=split,
+                        rank=0,
+                        world_size=1,
+                        node_type=USER,
+                        supervision_edge_type=USER_TO_STORY,
+                    )
                 )
 
                 # Verify anchor nodes match expected users
@@ -394,20 +417,24 @@ class TestRemoteDataset(TestCase):
         # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
         # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
         anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
-            split="train",
-            rank=0,
-            world_size=2,
-            node_type=USER,
-            supervision_edge_type=USER_TO_STORY,
+            FetchABLPRequest(
+                split="train",
+                rank=0,
+                world_size=2,
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+            )
         )
 
         # Get training input for rank 1 of 2
         anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
-            split="train",
-            rank=1,
-            world_size=2,
-            node_type=USER,
-            supervision_edge_type=USER_TO_STORY,
+            FetchABLPRequest(
+                split="train",
+                rank=1,
+                world_size=2,
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+            )
         )
 
         # Train nodes [0, 1, 2, 3] should be split across ranks
@@ -452,11 +479,13 @@ class TestRemoteDataset(TestCase):
 
         with self.assertRaises(ValueError):
             server.get_ablp_input(
-                split="invalid",
-                rank=0,
-                world_size=1,
-                node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                FetchABLPRequest(
+                    split="invalid",
+                    rank=0,
+                    world_size=1,
+                    node_type=USER,
+                    supervision_edge_type=USER_TO_STORY,
+                )
             )
 
     def test_get_ablp_input_without_negative_labels(self) -> None:
@@ -483,11 +512,13 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-            split="train",
-            rank=0,
-            world_size=1,
-            node_type=USER,
-            supervision_edge_type=USER_TO_STORY,
+            FetchABLPRequest(
+                split="train",
+                rank=0,
+                world_size=1,
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+            )
         )
 
         # Verify train split returns the expected users

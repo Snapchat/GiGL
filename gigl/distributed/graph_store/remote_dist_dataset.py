@@ -6,6 +6,7 @@ from graphlearn_torch.partition import PartitionBook
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
 from gigl.distributed.utils.networking import get_free_ports
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -179,10 +180,12 @@ class RemoteDistDataset:
                 async_request_server(
                     server_rank,
                     DistServer.get_node_ids,
-                    rank=rank,
-                    world_size=world_size,
-                    split=split,
-                    node_type=node_type,
+                    FetchNodesRequest(
+                        rank=rank,
+                        world_size=world_size,
+                        split=split,
+                        node_type=node_type,
+                    ),
                 )
             )
             node_ids = torch.futures.wait_all(futures)
@@ -323,11 +326,13 @@ class RemoteDistDataset:
                 async_request_server(
                     server_rank,
                     DistServer.get_ablp_input,
-                    split=split,
-                    rank=rank,
-                    world_size=world_size,
-                    node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
+                    FetchABLPRequest(
+                        split=split,
+                        rank=rank,
+                        world_size=world_size,
+                        node_type=node_type,
+                        supervision_edge_type=supervision_edge_type,
+                    ),
                 )
             )
             ablp_inputs = torch.futures.wait_all(futures)
