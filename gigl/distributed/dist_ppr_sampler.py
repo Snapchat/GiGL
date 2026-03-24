@@ -41,49 +41,6 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
 )
 
 
-def _group_fetched_by_etype_id(
-    fetched: dict[tuple[int, EdgeType], list[int]],
-    etype_to_etype_id: dict[EdgeType, int],
-) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-    """Group batch-fetched neighbors by integer edge type ID for the C++ push kernel.
-
-    Performs one linear pass over the fetched dict, building flat tensors per
-    edge type.  This avoids per-neighbor Python overhead in push_residuals by
-    batching all lookups for the same edge type together.
-
-    Args:
-        fetched: Output of _batch_fetch_neighbors: ``(node_id, etype)`` →
-            neighbor list.
-        etype_to_etype_id: Mapping from EdgeType to its integer ID.
-
-    Returns:
-        Dict mapping etype_id to ``(node_ids, flat_neighbors, counts)`` as
-        flat int64 tensors.  ``flat_neighbors`` is the concatenation of all
-        neighbor lists for that edge type; ``counts[i]`` gives the neighbor
-        count for ``node_ids[i]``.
-    """
-    node_ids_by_etype: dict[int, list[int]] = {}
-    flat_nbrs_by_etype: dict[int, list[int]] = {}
-    counts_by_etype: dict[int, list[int]] = {}
-    for (node_id, etype), neighbors in fetched.items():
-        eid = etype_to_etype_id[etype]
-        if eid not in node_ids_by_etype:
-            node_ids_by_etype[eid] = []
-            flat_nbrs_by_etype[eid] = []
-            counts_by_etype[eid] = []
-        node_ids_by_etype[eid].append(node_id)
-        flat_nbrs_by_etype[eid].extend(neighbors)
-        counts_by_etype[eid].append(len(neighbors))
-    return {
-        eid: (
-            torch.tensor(node_ids_by_etype[eid], dtype=torch.long),
-            torch.tensor(flat_nbrs_by_etype[eid], dtype=torch.long),
-            torch.tensor(counts_by_etype[eid], dtype=torch.long),
-        )
-        for eid in node_ids_by_etype
-    }
-
-
 # TODO (mkolodner-sc): Consider introducing a BaseGiGLSampler that owns
 # shared utilities like _prepare_sample_loop_inputs, with KHopSampler and
 # PPRSampler as siblings.  Currently DistPPRNeighborSampler inherits from
@@ -195,7 +152,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
         # NodeType / EdgeType keys are only used at the Python boundary
-        # (translating to/from _batch_fetch_neighbors); all hot-loop state inside
+        # (translating to/from _sample_one_hop); all hot-loop state inside
         # PPRForwardPushState is indexed by int32 IDs.
         #
         # We include both source types (have outgoing edges) and destination-only
@@ -301,68 +258,50 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
     async def _batch_fetch_neighbors(
         self,
-        nodes_to_lookup: dict[EdgeType, set[int]],
+        nodes_by_etype_id: dict[int, torch.Tensor],
         device: torch.device,
-    ) -> dict[tuple[int, EdgeType], list[int]]:
-        """Batch fetch neighbors for nodes grouped by edge type.
+    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
         Issues one ``_sample_one_hop`` call per edge type (not per node), so all
         nodes of the same edge type are fetched in a single RPC round-trip. Each
         node's neighbor list is capped at ``self._num_neighbors_per_hop``.
 
         Args:
-            nodes_to_lookup: Dict mapping each edge type to the set of node IDs
-                whose neighbors should be fetched via that edge type.  Only nodes
-                absent from the caller's ``neighbor_cache`` should be included.
+            nodes_by_etype_id: Dict mapping integer edge type ID to a 1-D int64
+                tensor of node IDs to fetch neighbors for.  Comes directly from
+                ``drain_queue()``; node IDs are already deduplicated.
             device: Torch device for intermediate tensor creation.
 
         Returns:
-            Dict mapping ``(node_id, edge_type)`` to the list of neighbor node IDs
-            returned by ``_sample_one_hop``.  Only nodes that appeared in
-            ``nodes_to_lookup`` are present; edge types with an empty node set are
-            skipped entirely.
+            Dict mapping etype_id to ``(node_ids, flat_neighbors, counts)`` as
+            int64 tensors, ready to pass directly to ``push_residuals``.
+            ``flat_neighbors`` is the flat concatenation of all neighbor lists
+            for that edge type; ``counts[i]`` is the neighbor count for
+            ``node_ids[i]``.
 
         Example::
 
-            nodes_to_lookup = {
-                ("user", "buys", "item"): {0, 3},
-                ("item", "bought_by", "user"): {7},
+            nodes_by_etype_id = {
+                2: tensor([0, 3]),   # etype_id 2 → nodes 0 and 3
+                5: tensor([7]),      # etype_id 5 → node 7
             }
             # Might return (neighbor lists depend on graph structure):
             {
-                (0, ("user", "buys", "item")): [5, 9, 2],
-                (3, ("user", "buys", "item")): [1],
-                (7, ("item", "bought_by", "user")): [0, 3],
+                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1])),
+                5: (tensor([7]),    tensor([0, 3]),        tensor([2])),
             }
         """
-        result: dict[tuple[int, EdgeType], list[int]] = {}
-        for etype, node_ids in nodes_to_lookup.items():
-            if not node_ids:
-                continue
-            nodes_list = list(node_ids)
-            lookup_tensor = torch.tensor(nodes_list, dtype=torch.long, device=device)
-
+        result: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+        for eid, node_ids_tensor in nodes_by_etype_id.items():
+            etype = self._etype_id_to_etype[eid]
             # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
             output: NeighborOutput = await self._sample_one_hop(
-                srcs=lookup_tensor,
+                srcs=node_ids_tensor.to(device),
                 num_nbr=self._num_neighbors_per_hop,
                 etype=etype if etype != _PPR_HOMOGENEOUS_EDGE_TYPE else None,
             )
-            neighbors = output.nbr
-            neighbor_counts = output.nbr_num
-
-            # TODO (mkolodner-sc): Investigate performance of a vectorized version of the below code
-            neighbors_list = neighbors.tolist()
-            counts_list = neighbor_counts.tolist()
-            del neighbors, neighbor_counts
-
-            # neighbors_list is a flat concatenation of all neighbors for all looked-up nodes.
-            # We use offset to slice out each node's neighbors: node i's neighbors are at
-            # neighbors_list[offset : offset + count], then we advance offset by count.
-            offset = 0
-            for node_id, count in zip(nodes_list, counts_list):
-                result[(node_id, etype)] = neighbors_list[offset : offset + count]
-                offset += count
+            result[eid] = (node_ids_tensor, output.nbr, output.nbr_num)
 
         return result
 
@@ -449,17 +388,8 @@ class DistPPRNeighborSampler(DistNeighborSampler):
 
             nodes_by_etype_id: dict[int, torch.Tensor] = drain_result
             if nodes_by_etype_id:
-                # Translate integer etype IDs back to EdgeType for the distributed
-                # fetch layer.  O(num_active_etypes) — negligible vs. RPC round-trip.
-                nodes_to_lookup: dict[EdgeType, set[int]] = {
-                    self._etype_id_to_etype[eid]: set(t.tolist())
-                    for eid, t in nodes_by_etype_id.items()
-                }
-                fetched_neighbors = await self._batch_fetch_neighbors(
-                    nodes_to_lookup, device
-                )
-                fetched_by_etype_id = _group_fetched_by_etype_id(
-                    fetched_neighbors, self._etype_to_etype_id
+                fetched_by_etype_id = await self._batch_fetch_neighbors(
+                    nodes_by_etype_id, device
                 )
             else:
                 fetched_by_etype_id = {}
