@@ -140,11 +140,10 @@ class TestServerSlice(TestCase):
         result = server_slice.slice_tensor(tensor)
         self.assertEqual(result.data_ptr(), tensor.data_ptr())
 
-    def test_partial_slice_clones_requested_range(self) -> None:
+    def test_partial_slice_returns_requested_range(self) -> None:
         tensor = torch.arange(10)
         server_slice = ServerSlice(
             server_rank=0, start_num=0, start_den=2, end_num=1, end_den=2
         )
         result = server_slice.slice_tensor(tensor)
         self.assert_tensor_equality(result, torch.arange(5))
-        self.assertNotEqual(result.data_ptr(), tensor.data_ptr())

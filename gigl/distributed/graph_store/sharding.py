@@ -106,7 +106,7 @@ class ServerSlice:
         end_idx = total * self.end_num // self.end_den
         if start_idx == 0 and end_idx == total:
             return tensor
-        return tensor[start_idx:end_idx].clone()
+        return tensor[start_idx:end_idx]
 
 
 def compute_server_assignments(
