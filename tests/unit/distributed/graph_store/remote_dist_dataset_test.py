@@ -11,8 +11,9 @@ from absl.testing import absltest
 import gigl.distributed.graph_store.dist_server as dist_server_module
 from gigl.common import LocalUri
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
+from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.graph_store.sharding import ShardStrategy
+from gigl.distributed.graph_store.sharding import ServerSlice, ShardStrategy
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -709,20 +710,47 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
     """Tests for fetch_node_ids and fetch_ablp_input with ShardStrategy.CONTIGUOUS."""
 
     def _make_rank_aware_async_mock(
-        self, server_data: dict[int, Any]
+        self,
+        server_data: dict[int, Any],
+        captured_requests: Optional[list[tuple[int, Any]]] = None,
     ) -> Callable[..., torch.futures.Future]:
         """Create an async mock that returns pre-set data per server rank.
 
         Args:
             server_data: Maps server_rank to the value that server should return.
                 Can be a tensor (for node ID tests) or a tuple (for ABLP tests).
+            captured_requests: Optional list populated with ``(server_rank, request)``
+                tuples for later assertions.
         """
 
         def _mock(
             server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
         ) -> torch.futures.Future:
+            assert not kwargs
+            assert len(args) == 1
+            request = args[0]
+            if captured_requests is not None:
+                captured_requests.append((server_rank, request))
+
             future: torch.futures.Future = torch.futures.Future()
-            future.set_result(server_data[server_rank])
+            response = server_data[server_rank]
+            if isinstance(request, FetchNodesRequest):
+                if request.server_slice is not None:
+                    assert isinstance(response, torch.Tensor)
+                    response = request.server_slice.slice_tensor(response)
+            elif isinstance(request, FetchABLPRequest):
+                if request.server_slice is not None:
+                    anchors, positive_labels, negative_labels = response
+                    response = (
+                        request.server_slice.slice_tensor(anchors),
+                        request.server_slice.slice_tensor(positive_labels),
+                        (
+                            request.server_slice.slice_tensor(negative_labels)
+                            if negative_labels is not None
+                            else None
+                        ),
+                    )
+            future.set_result(response)
             return future
 
         return _mock
@@ -744,7 +772,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             0: torch.arange(10),
             1: torch.arange(10, 20),
         }
-        mock_fn = self._make_rank_aware_async_mock(server_data)
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=2, num_compute_nodes=2
         )
@@ -758,13 +787,52 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             )
             self.assert_tensor_equality(result[0], torch.arange(10))
             self.assertEqual(result[1].numel(), 0)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
 
             # Rank 1: empty from server 0, gets all of server 1
+            captured_requests.clear()
             result = ds.fetch_node_ids(
                 rank=1, world_size=2, shard_strategy=ShardStrategy.CONTIGUOUS
             )
             self.assertEqual(result[0].numel(), 0)
             self.assert_tensor_equality(result[1], torch.arange(10, 20))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
 
     def test_fetch_node_ids_contiguous_fractional_split(self) -> None:
         """CONTIGUOUS with 3 storage nodes and 2 compute nodes: server 1 is fractionally split."""
@@ -773,7 +841,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             1: torch.arange(10, 20),
             2: torch.arange(20, 30),
         }
-        mock_fn = self._make_rank_aware_async_mock(server_data)
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=3, num_compute_nodes=2
         )
@@ -788,14 +857,81 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             self.assert_tensor_equality(result[0], torch.arange(10))
             self.assert_tensor_equality(result[1], torch.arange(10, 15))
             self.assertEqual(result[2].numel(), 0)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        1,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_num=0,
+                                start_den=2,
+                                end_num=1,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
 
             # Rank 1: nothing from server 0, second half of server 1, all of server 2
+            captured_requests.clear()
             result = ds.fetch_node_ids(
                 rank=1, world_size=2, shard_strategy=ShardStrategy.CONTIGUOUS
             )
             self.assertEqual(result[0].numel(), 0)
             self.assert_tensor_equality(result[1], torch.arange(15, 20))
             self.assert_tensor_equality(result[2], torch.arange(20, 30))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_num=1,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        2,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=2,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
 
     def test_with_split_filtering(self) -> None:
         """CONTIGUOUS strategy with split='train' filtering."""
@@ -887,7 +1023,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 torch.tensor([[14], [15], [16]]),
             ),
         }
-        mock_fn = self._make_rank_aware_async_mock(server_data)
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=2, num_compute_nodes=2
         )
@@ -914,8 +1051,29 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             self.assertEqual(pos_1.numel(), 0)
             self.assertIsNone(neg_1)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchABLPRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
 
             # Rank 1: empty from server 0, gets all of server 1
+            captured_requests.clear()
             result = ds.fetch_ablp_input(
                 split="train",
                 rank=1,
@@ -933,6 +1091,26 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             )
             assert neg is not None
             self.assert_tensor_equality(neg, torch.tensor([[14], [15], [16]]))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchABLPRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
 
     def test_fetch_ablp_input_contiguous_fractional_split(self) -> None:
         """ABLP CONTIGUOUS with 3 storage nodes and 2 compute nodes: server 1 fractionally split."""
@@ -955,7 +1133,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 torch.tensor([[30], [31], [32], [33]]),
             ),
         }
-        mock_fn = self._make_rank_aware_async_mock(server_data)
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=3, num_compute_nodes=2
         )
@@ -988,8 +1167,44 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
 
             ablp_2 = result[2]
             self.assertEqual(ablp_2.anchor_nodes.numel(), 0)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchABLPRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        1,
+                        FetchABLPRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_num=0,
+                                start_den=2,
+                                end_num=1,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
 
             # Rank 1: nothing from server 0, second half of server 1, all of server 2
+            captured_requests.clear()
             result = ds.fetch_ablp_input(
                 split="train",
                 rank=1,
@@ -1016,6 +1231,41 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             )
             assert neg_2 is not None
             self.assert_tensor_equality(neg_2, torch.tensor([[30], [31], [32], [33]]))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchABLPRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_num=1,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        2,
+                        FetchABLPRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=2,
+                                start_num=0,
+                                start_den=2,
+                                end_num=2,
+                                end_den=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
 
     def test_ablp_contiguous_requires_rank_and_world_size(self) -> None:
         """ABLP CONTIGUOUS without rank/world_size raises ValueError."""

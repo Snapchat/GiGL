@@ -6,6 +6,7 @@ from graphlearn_torch.partition import PartitionBook
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
 from gigl.distributed.graph_store.sharding import (
     ServerSlice,
     ShardStrategy,
@@ -208,52 +209,46 @@ class RemoteDistDataset:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
         node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
 
+        # Build per-server requests
+        requests: dict[int, FetchNodesRequest] = {}
         if assignments is None:
-            logger.info(
-                f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
-            )
-            futures: list[torch.futures.Future[torch.Tensor]] = []
             for server_rank in range(self.cluster_info.num_storage_nodes):
-                futures.append(
-                    async_request_server(
-                        server_rank,
-                        DistServer.get_node_ids,
-                        rank=rank,
-                        world_size=world_size,
-                        split=split,
-                        node_type=node_type,
-                    )
+                requests[server_rank] = FetchNodesRequest(
+                    rank=rank,
+                    world_size=world_size,
+                    split=split,
+                    node_type=node_type,
                 )
-            node_ids = torch.futures.wait_all(futures)
-            return {
-                server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)
-            }
+        else:
+            for server_rank, server_slice in assignments.items():
+                requests[server_rank] = FetchNodesRequest(
+                    split=split,
+                    node_type=node_type,
+                    server_slice=server_slice,
+                )
 
+        strategy = "CONTIGUOUS" if assignments is not None else "ROUND_ROBIN"
         logger.info(
-            f"Getting node ids via CONTIGUOUS strategy for rank {rank} / {world_size} "
+            f"Fetching node ids via {strategy} for rank {rank} / {world_size} "
             f"with node type {node_type} and split {split}. "
-            f"Assigned servers: {list(assignments.keys())}"
+            f"Requesting from servers: {sorted(requests.keys())}"
         )
 
-        assigned_futures: dict[int, torch.futures.Future[torch.Tensor]] = {}
-        for server_rank in assignments:
-            assigned_futures[server_rank] = async_request_server(
-                server_rank,
-                DistServer.get_node_ids,
-                rank=None,
-                world_size=None,
-                split=split,
-                node_type=node_type,
+        # Dispatch all futures
+        futures: dict[int, torch.futures.Future[torch.Tensor]] = {
+            server_rank: async_request_server(
+                server_rank, DistServer.get_node_ids, request
             )
+            for server_rank, request in requests.items()
+        }
 
-        result: dict[int, torch.Tensor] = {}
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            if server_rank in assigned_futures:
-                all_nodes = assigned_futures[server_rank].wait()
-                result[server_rank] = assignments[server_rank].slice_tensor(all_nodes)
-            else:
-                result[server_rank] = torch.empty(0, dtype=torch.long)
-        return result
+        # Collect results, filling empty tensors for unrequested servers
+        return {
+            server_rank: futures[server_rank].wait()
+            if server_rank in futures
+            else torch.empty(0, dtype=torch.long)
+            for server_rank in range(self.cluster_info.num_storage_nodes)
+        }
 
     def fetch_node_ids(
         self,
@@ -369,87 +364,63 @@ class RemoteDistDataset:
         assignments: Optional[dict[int, ServerSlice]] = None,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
+        # Build per-server requests
+        requests: dict[int, FetchABLPRequest] = {}
         if assignments is None:
-            futures: list[
-                torch.futures.Future[
-                    tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-                ]
-            ] = []
-            logger.info(
-                f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
-                f"split {split}, and supervision edge type {supervision_edge_type}"
-            )
-
             for server_rank in range(self.cluster_info.num_storage_nodes):
-                futures.append(
-                    async_request_server(
-                        server_rank,
-                        DistServer.get_ablp_input,
-                        split=split,
-                        rank=rank,
-                        world_size=world_size,
-                        node_type=node_type,
-                        supervision_edge_type=supervision_edge_type,
-                    )
+                requests[server_rank] = FetchABLPRequest(
+                    split=split,
+                    rank=rank,
+                    world_size=world_size,
+                    node_type=node_type,
+                    supervision_edge_type=supervision_edge_type,
                 )
-            ablp_inputs = torch.futures.wait_all(futures)
-            return {
-                server_rank: ablp_input
-                for server_rank, ablp_input in enumerate(ablp_inputs)
-            }
+        else:
+            for server_rank, server_slice in assignments.items():
+                requests[server_rank] = FetchABLPRequest(
+                    split=split,
+                    node_type=node_type,
+                    supervision_edge_type=supervision_edge_type,
+                    server_slice=server_slice,
+                )
 
+        strategy = "CONTIGUOUS" if assignments is not None else "ROUND_ROBIN"
         logger.info(
-            f"Getting ABLP input via CONTIGUOUS strategy for rank {rank} / {world_size} "
+            f"Fetching ABLP input via {strategy} for rank {rank} / {world_size} "
             f"with node type {node_type}, split {split}, and "
             f"supervision edge type {supervision_edge_type}. "
-            f"Assigned servers: {list(assignments.keys())}"
+            f"Requesting from servers: {sorted(requests.keys())}"
         )
 
-        assigned_futures: dict[
+        # Dispatch all futures
+        futures: dict[
             int,
             torch.futures.Future[
                 tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
             ],
-        ] = {}
-        for server_rank in assignments:
-            assigned_futures[server_rank] = async_request_server(
-                server_rank,
-                DistServer.get_ablp_input,
-                split=split,
-                rank=None,
-                world_size=None,
-                node_type=node_type,
-                supervision_edge_type=supervision_edge_type,
+        ] = {
+            server_rank: async_request_server(
+                server_rank, DistServer.get_ablp_input, request
+            )
+            for server_rank, request in requests.items()
+        }
+
+        def _empty_ablp_result() -> (
+            tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+        ):
+            return (
+                torch.empty(0, dtype=torch.long),
+                torch.empty((0, 0), dtype=torch.long),
+                None,
             )
 
-        result: dict[
-            int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-        ] = {}
-        for server_rank in range(self.cluster_info.num_storage_nodes):
-            if server_rank in assigned_futures:
-                anchors, positive_labels, negative_labels = assigned_futures[
-                    server_rank
-                ].wait()
-                server_slice = assignments[server_rank]
-                sliced_anchors = server_slice.slice_tensor(anchors)
-                sliced_positive = server_slice.slice_tensor(positive_labels)
-                sliced_negative = (
-                    server_slice.slice_tensor(negative_labels)
-                    if negative_labels is not None
-                    else None
-                )
-                result[server_rank] = (
-                    sliced_anchors,
-                    sliced_positive,
-                    sliced_negative,
-                )
-            else:
-                result[server_rank] = (
-                    torch.empty(0, dtype=torch.long),
-                    torch.empty((0, 0), dtype=torch.long),
-                    None,
-                )
-        return result
+        # Collect results, filling empty tuples for unrequested servers
+        return {
+            server_rank: futures[server_rank].wait()
+            if server_rank in futures
+            else _empty_ablp_result()
+            for server_rank in range(self.cluster_info.num_storage_nodes)
+        }
 
     # TODO(#488) - support multiple supervision edge types
     def fetch_ablp_input(
