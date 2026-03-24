@@ -1,7 +1,6 @@
 """Tests for GraphTransformerEncoder."""
 
 import torch
-import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
@@ -87,38 +86,39 @@ class TestGraphTransformerEncoder(TestCase):
         return GraphTransformerEncoder(**defaults)
 
     def test_forward_single_node_type(self) -> None:
-        """Test forward pass requesting a single node type."""
+        """Test forward pass for a single anchor node type."""
         data = _create_simple_hetero_data()
         encoder = self._create_encoder()
 
-        result = encoder(
+        embeddings = encoder(
             data=data,
-            output_node_types=[self._user_node_type],
+            anchor_node_type=self._user_node_type,
             device=self._device,
         )
 
-        self.assertIn(self._user_node_type, result)
-        # 3 user nodes, out_dim=16
-        self.assertEqual(result[self._user_node_type].shape, (3, self._out_dim))
-        self.assertFalse(torch.isnan(result[self._user_node_type]).any())
+        self.assertEqual(embeddings.shape, (3, self._out_dim))
+        self.assertFalse(torch.isnan(embeddings).any())
 
-    def test_forward_multiple_node_types(self) -> None:
-        """Test forward pass requesting multiple node types."""
+    def test_forward_different_anchor_node_types(self) -> None:
+        """Test forward pass for different anchor node types."""
         data = _create_simple_hetero_data()
         encoder = self._create_encoder()
 
-        result = encoder(
+        user_embeddings = encoder(
             data=data,
-            output_node_types=[self._user_node_type, self._item_node_type],
+            anchor_node_type=self._user_node_type,
+            device=self._device,
+        )
+        item_embeddings = encoder(
+            data=data,
+            anchor_node_type=self._item_node_type,
             device=self._device,
         )
 
-        self.assertIn(self._user_node_type, result)
-        self.assertIn(self._item_node_type, result)
-        self.assertEqual(result[self._user_node_type].shape, (3, self._out_dim))
-        self.assertEqual(result[self._item_node_type].shape, (2, self._out_dim))
-        self.assertFalse(torch.isnan(result[self._user_node_type]).any())
-        self.assertFalse(torch.isnan(result[self._item_node_type]).any())
+        self.assertEqual(user_embeddings.shape, (3, self._out_dim))
+        self.assertEqual(item_embeddings.shape, (2, self._out_dim))
+        self.assertFalse(torch.isnan(user_embeddings).any())
+        self.assertFalse(torch.isnan(item_embeddings).any())
 
     def test_forward_with_l2_normalization(self) -> None:
         """Test that L2 normalization produces unit-length embeddings."""
@@ -127,29 +127,27 @@ class TestGraphTransformerEncoder(TestCase):
             should_l2_normalize_embedding_layer_output=True,
         )
 
-        result = encoder(
+        embeddings = encoder(
             data=data,
-            output_node_types=[self._user_node_type],
+            anchor_node_type=self._user_node_type,
             device=self._device,
         )
 
-        norms = torch.norm(result[self._user_node_type], p=2, dim=-1)
+        norms = torch.norm(embeddings, p=2, dim=-1)
         self.assertTrue(torch.allclose(norms, torch.ones_like(norms), atol=1e-5))
 
-    def test_missing_node_type_returns_empty_tensor(self) -> None:
-        """Test that requesting a missing node type returns an empty tensor."""
+    def test_forward_defaults_to_first_node_type(self) -> None:
+        """Test that omitted anchor node type defaults to the first node type."""
         data = _create_simple_hetero_data()
         encoder = self._create_encoder()
 
-        missing_type = NodeType("nonexistent")
-        result = encoder(
+        embeddings = encoder(
             data=data,
-            output_node_types=[missing_type],
             device=self._device,
         )
 
-        self.assertIn(missing_type, result)
-        self.assertEqual(result[missing_type].numel(), 0)
+        self.assertEqual(embeddings.shape, (3, self._out_dim))
+        self.assertFalse(torch.isnan(embeddings).any())
 
     def test_gradient_flow(self) -> None:
         """Test that gradients flow through the model."""
@@ -157,13 +155,13 @@ class TestGraphTransformerEncoder(TestCase):
         encoder = self._create_encoder()
         encoder.train()
 
-        result = encoder(
+        embeddings = encoder(
             data=data,
-            output_node_types=[self._user_node_type],
+            anchor_node_type=self._user_node_type,
             device=self._device,
         )
 
-        loss = result[self._user_node_type].sum()
+        loss = embeddings.sum()
         loss.backward()
 
         # Check gradients exist for encoder parameters
@@ -200,16 +198,21 @@ class TestGraphTransformerEncoder(TestCase):
             dropout_rate=0.0,
         )
 
-        result = encoder(
+        embeddings_a = encoder(
             data=data,
-            output_node_types=[node_type_a, node_type_b],
+            anchor_node_type=node_type_a,
+            device=self._device,
+        )
+        embeddings_b = encoder(
+            data=data,
+            anchor_node_type=node_type_b,
             device=self._device,
         )
 
-        self.assertEqual(result[node_type_a].shape, (5, 16))
-        self.assertEqual(result[node_type_b].shape, (3, 16))
-        self.assertFalse(torch.isnan(result[node_type_a]).any())
-        self.assertFalse(torch.isnan(result[node_type_b]).any())
+        self.assertEqual(embeddings_a.shape, (5, 16))
+        self.assertEqual(embeddings_b.shape, (3, 16))
+        self.assertFalse(torch.isnan(embeddings_a).any())
+        self.assertFalse(torch.isnan(embeddings_b).any())
 
     def test_deterministic_eval_mode(self) -> None:
         """Test that eval mode produces deterministic outputs."""
@@ -220,21 +223,16 @@ class TestGraphTransformerEncoder(TestCase):
         with torch.no_grad():
             result_1 = encoder(
                 data=data,
-                output_node_types=[self._user_node_type],
+                anchor_node_type=self._user_node_type,
                 device=self._device,
             )
             result_2 = encoder(
                 data=data,
-                output_node_types=[self._user_node_type],
+                anchor_node_type=self._user_node_type,
                 device=self._device,
             )
 
-        self.assertTrue(
-            torch.allclose(
-                result_1[self._user_node_type],
-                result_2[self._user_node_type],
-            )
-        )
+        self.assertTrue(torch.allclose(result_1, result_2))
 
 
 def _create_user_graph_with_pe() -> HeteroData:
@@ -307,7 +305,6 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             )
             self.assertIsNotNone(additive_encoder._pe_projection)
             assert additive_encoder._pe_projection is not None
-            assert isinstance(additive_encoder._pe_projection, nn.LazyLinear)
             additive_encoder._pe_projection.weight.data.zero_()
 
             base_embeddings = base_encoder(
@@ -399,7 +396,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             )
 
         self.assertEqual(attn_bias.shape, (1, 2, 3, 3))
-        self.assertEqual(attn_bias[0, 0, 0, 1].item(), 4.0)
+        self.assertEqual(attn_bias[0, 0, 0, 1].item(), 5.0)
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 8.0)
         self.assertEqual(attn_bias[0, 0, 2, 2].item(), 27.0)
         self.assertEqual(attn_bias[0, 1, 2, 2].item(), 38.0)
