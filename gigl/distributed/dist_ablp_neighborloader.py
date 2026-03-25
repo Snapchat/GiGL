@@ -918,13 +918,11 @@ class DistABLPLoader(BaseDistLoader):
                 metadata=metadata,
                 prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
             )
-            attach_ppr_outputs(
-                data,
-                matched_ppr[PPR_EDGE_INDEX_METADATA_KEY],
-                matched_ppr[PPR_WEIGHT_METADATA_KEY],
-            )
+            ppr_edge_indices = matched_ppr[PPR_EDGE_INDEX_METADATA_KEY]
+            ppr_weights = matched_ppr[PPR_WEIGHT_METADATA_KEY]
+            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
             if isinstance(data, HeteroData):
-                data = strip_non_ppr_edge_types(data)
+                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.

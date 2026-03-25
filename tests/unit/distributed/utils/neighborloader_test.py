@@ -242,7 +242,8 @@ class LoaderUtilsTest(TestCase):
         data[_PPR_U2U].edge_index = torch.tensor([[0], [0]])
         data[_PPR_U2U].edge_attr = torch.tensor([0.3])
 
-        result = strip_non_ppr_edge_types(data)
+        ppr_edge_types = {_PPR_U2I, _PPR_U2U}
+        result = strip_non_ppr_edge_types(data, ppr_edge_types)
 
         self.assertNotIn(_U2I_EDGE_TYPE, result.edge_types)
         self.assertNotIn(_REV_EDGE_TYPE, result.edge_types)
