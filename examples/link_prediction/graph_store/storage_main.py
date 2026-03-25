@@ -75,6 +75,10 @@ import argparse
 import ast
 import os
 import resource
+from collections.abc import Mapping
+import multiprocessing.context as py_mp_context
+import os
+import time
 from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
@@ -88,6 +92,7 @@ from gigl.distributed.graph_store.storage_utils import (
     run_storage_server,
 )
 from gigl.distributed.utils import get_graph_store_info
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.env.distributed import GraphStoreInfo
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
@@ -103,9 +108,38 @@ def log_fd_state(context: str) -> None:
         open_fds = len(os.listdir("/proc/self/fd"))
     except OSError:
         open_fds = -1
+def _precompute_graph_col_counts(dataset: DistDataset) -> None:
+    graph_partition = dataset.graph
+    if graph_partition is None:
+        logger.info(
+            "Skipping parent-side graph.col_count precompute because the dataset has no graph partition"
+        )
+        return
+
+    if isinstance(graph_partition, Mapping):
+        graph_items = [
+            (str(edge_type), graph) for edge_type, graph in graph_partition.items()
+        ]
+    else:
+        graph_items = [("homogeneous", graph_partition)]
+
     logger.info(
-        f"[FD] {context} | pid={os.getpid()} | open_fds={open_fds} | "
-        f"rlimit_nofile_soft={soft_limit} | rlimit_nofile_hard={hard_limit}"
+        f"Precomputing parent-side graph.col_count for {len(graph_items)} local graph partition(s)"
+    )
+    total_start_time = time.perf_counter()
+    for graph_key, graph in graph_items:
+        graph_start_time = time.perf_counter()
+        col_count = graph.col_count
+        logger.info(
+            "Precomputed parent-side graph.col_count "
+            f"graph_partition={graph_key} "
+            f"row_count={graph.topo.row_count} "
+            f"edge_count={graph.topo.edge_count} "
+            f"col_count={col_count} "
+            f"elapsed_s={time.perf_counter() - graph_start_time:.3f}"
+        )
+    logger.info(
+        f"Completed parent-side graph.col_count precompute in {time.perf_counter() - total_start_time:.3f}s"
     )
 
 
@@ -183,6 +217,7 @@ def storage_node_process(
         should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
+    _precompute_graph_col_counts(dataset)
     log_fd_state("after_build_storage_dataset")
 
     logger.info(f"Number of server sessions: {num_server_sessions}")

@@ -3,6 +3,9 @@
 set -e
 set -x
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GLT_PATCH_FILE="${SCRIPT_DIR}/../third_party/graphlearn_torch/patches/0001-add-optional-col-count.patch"
+
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
     return $?
@@ -47,6 +50,8 @@ then
     git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
         && cd graphlearn-for-pytorch \
         && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
+        && test -f "${GLT_PATCH_FILE}" \
+        && git apply "${GLT_PATCH_FILE}" \
         && git submodule update --init \
         && bash install_dependencies.sh
     if has_cuda_driver;
