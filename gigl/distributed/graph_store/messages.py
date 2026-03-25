@@ -40,7 +40,13 @@ class FetchNodesRequest:
     server_slice: Optional[ServerSlice] = None
 
     def validate(self) -> None:
-        """Validate that the request does not mix sharding modes."""
+        """Validate that the request has consistent rank/world_size.
+
+        Raises:
+            ValueError:
+                If only one of ``rank`` or ``world_size`` is provided.
+                If ``server_slice`` is provided together with ``rank`` or ``world_size``.
+        """
         if (self.rank is None) ^ (self.world_size is None):
             raise ValueError(
                 "rank and world_size must be provided together. "
@@ -54,7 +60,26 @@ class FetchNodesRequest:
 
 @dataclass(frozen=True)
 class FetchABLPInputRequest:
-    """Request for fetching ABLP input from a storage server."""
+    """Request for fetching ABLP input from a storage server.
+
+    Args:
+        split: The split of the dataset to get ABLP input from.
+        node_type: The type of anchor nodes to retrieve.
+        supervision_edge_type: The edge type used for supervision.
+        rank: The rank of the process requesting ABLP input.
+            Must be provided together with ``world_size``.
+        world_size: The total number of processes in the distributed setup.
+            Must be provided together with ``rank``.
+
+    Examples:
+        Fetch training ABLP input without sharding:
+
+        >>> FetchABLPRequest(split="train", node_type="user", supervision_edge_type=("user", "to", "item"))
+
+        Fetch training ABLP input for rank 0 of 4:
+
+        >>> FetchABLPRequest(split="train", node_type="user", supervision_edge_type=("user", "to", "item"), rank=0, world_size=4)
+    """
 
     split: Union[Literal["train", "val", "test"], str]
     node_type: NodeType
@@ -64,7 +89,13 @@ class FetchABLPInputRequest:
     server_slice: Optional[ServerSlice] = None
 
     def validate(self) -> None:
-        """Validate that the request does not mix sharding modes."""
+        """Validate that the request has consistent rank/world_size.
+
+        Raises:
+            ValueError:
+                If only one of ``rank`` or ``world_size`` is provided.
+                If ``server_slice`` is provided together with ``rank`` or ``world_size``.
+        """
         if (self.rank is None) ^ (self.world_size is None):
             raise ValueError(
                 "rank and world_size must be provided together. "
