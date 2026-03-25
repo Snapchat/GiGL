@@ -471,8 +471,12 @@ class BaseDistLoader(DistLoader):
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
-            # Each worker will spawn several sampling workers, and all sampling workers
-            # spawned by workers in one group need to be connected.
+            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
+            # need to be connected. Thus, we need master ip address and master port to
+            # initate the connection.
+            # Note that different groups of workers are independent, and thus
+            # the sampling processes in different groups should be independent, and should
+            # use different master ports.
             master_addr=master_ip_address,
             master_port=master_port,
             # Load testing shows that when num_rpc_threads exceed 16, the performance
