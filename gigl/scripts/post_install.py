@@ -61,21 +61,17 @@ def main():
 
     # Step 2: Build pybind11 C++ extensions in-place so they are importable
     # without requiring a separate `make build_cpp_extensions` call.
-    setup_py = repo_root / "build_cpp_extensions.py"
-    if setup_py.exists():
-        cmd = f"cd {repo_root} && {sys.executable} build_cpp_extensions.py build_ext --inplace"
-        try:
-            print("Building C++ extensions...")
-            result = run_command_and_stream_stdout(cmd)
-            print("C++ extension build finished with return code:", result)
-        except subprocess.CalledProcessError as e:
-            print(f"Error building C++ extensions: {e}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"Unexpected error building C++ extensions: {e}")
-            sys.exit(1)
-    else:
-        print(f"Warning: {setup_py} not found, skipping C++ extension build")
+    cmd = f"cd {repo_root} && {sys.executable} build_cpp_extensions.py build_ext --inplace"
+    try:
+        print("Building C++ extensions...")
+        result = run_command_and_stream_stdout(cmd)
+        print("C++ extension build finished with return code:", result)
+    except subprocess.CalledProcessError as e:
+        print(f"Error building C++ extensions: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error building C++ extensions: {e}")
+        sys.exit(1)
 
     return result
 
