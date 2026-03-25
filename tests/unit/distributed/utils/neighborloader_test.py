@@ -18,6 +18,7 @@ from gigl.distributed.utils.neighborloader import (
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
+    strip_non_ppr_edge_types,
 )
 from gigl.types.graph import FeatureInfo, message_passing_to_positive_label
 from tests.test_assets.test_case import TestCase
@@ -227,6 +228,26 @@ class LoaderUtilsTest(TestCase):
         self.assertFalse(_LABELED_EDGE_TYPE in stripped_data.num_sampled_edges)
         self.assertTrue(_U2I_EDGE_TYPE in stripped_data.num_sampled_edges)
         self.assertTrue(_I2U_EDGE_TYPE in stripped_data.num_sampled_edges)
+
+    def test_strip_non_ppr_edge_types(self):
+        _PPR_U2I = ("user", "ppr", "item")
+        _PPR_U2U = ("user", "ppr", "user")
+        _REV_EDGE_TYPE = ("item", "rev_to", "user")
+
+        data = HeteroData()
+        data[_U2I_EDGE_TYPE].edge_index = torch.tensor([[0], [1]])
+        data[_REV_EDGE_TYPE].edge_index = torch.tensor([[1], [0]])
+        data[_PPR_U2I].edge_index = torch.tensor([[0], [1]])
+        data[_PPR_U2I].edge_attr = torch.tensor([0.5])
+        data[_PPR_U2U].edge_index = torch.tensor([[0], [0]])
+        data[_PPR_U2U].edge_attr = torch.tensor([0.3])
+
+        result = strip_non_ppr_edge_types(data)
+
+        self.assertNotIn(_U2I_EDGE_TYPE, result.edge_types)
+        self.assertNotIn(_REV_EDGE_TYPE, result.edge_types)
+        self.assertIn(_PPR_U2I, result.edge_types)
+        self.assertIn(_PPR_U2U, result.edge_types)
 
     @parameterized.expand(
         [

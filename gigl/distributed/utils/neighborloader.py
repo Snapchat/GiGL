@@ -166,6 +166,28 @@ def labeled_to_homogeneous(supervision_edge_type: EdgeType, data: HeteroData) ->
     return homogeneous_data
 
 
+def strip_non_ppr_edge_types(data: HeteroData) -> HeteroData:
+    """Remove all non-PPR edge types from a HeteroData object.
+
+    GLT's collate function creates edge stores for all edge types registered in
+    the sampler (including original graph and reverse edge types) even when the
+    PPR sampler provides empty row/col tensors.  This removes those ghost stores
+    so the output contains only PPR edge types.
+
+    Modifies the input in place.
+
+    Args:
+        data: The HeteroData object to clean up.
+
+    Returns:
+        The same object with non-PPR edge types removed.
+    """
+    for edge_type in list(data.edge_types):
+        if edge_type[1] != "ppr":
+            del data[edge_type]
+    return data
+
+
 def strip_label_edges(data: HeteroData) -> HeteroData:
     """
     Removes all edges of a specific type from a heterogeneous graph.

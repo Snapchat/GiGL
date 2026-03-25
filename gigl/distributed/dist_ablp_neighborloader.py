@@ -44,6 +44,7 @@ from gigl.distributed.utils.neighborloader import (
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
+    strip_non_ppr_edge_types,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -922,6 +923,8 @@ class DistABLPLoader(BaseDistLoader):
                 matched_ppr[PPR_EDGE_INDEX_METADATA_KEY],
                 matched_ppr[PPR_WEIGHT_METADATA_KEY],
             )
+            if isinstance(data, HeteroData):
+                data = strip_non_ppr_edge_types(data)
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.
