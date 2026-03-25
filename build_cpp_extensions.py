@@ -5,17 +5,13 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 
 def find_cpp_extensions() -> list[CppExtension]:
-    """Auto-discover pybind11 extension modules.
+    """Auto-discover pybind11 extension modules under ``gigl/cpp_extensions/``.
 
-    Any .cpp file anywhere under ``gigl/`` is compiled as a Python C++
-    extension.  The module name is derived from the file path, so the
-    extension is importable at the same location as its Python neighbours.
-
-    To add a new extension, drop a .cpp file anywhere under ``gigl/`` —
-    no changes to this file required.
+    The module name is derived from the file path, so each extension is
+    importable at the Python path corresponding to its location.
     """
     extensions = []
-    for cpp_file in sorted(Path("gigl").rglob("*.cpp")):
+    for cpp_file in sorted(Path("gigl/cpp_extensions").rglob("*.cpp")):
         module_name = ".".join(cpp_file.with_suffix("").parts)
         extensions.append(
             CppExtension(
