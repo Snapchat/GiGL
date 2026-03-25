@@ -14,7 +14,7 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
-from gigl.csrc.distributed import PPRForwardPushState
+from gigl.csrc.sampling import PPRForwardPushState
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.types.graph import is_label_edge_type
 

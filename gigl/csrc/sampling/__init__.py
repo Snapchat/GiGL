@@ -1,5 +1,5 @@
 try:
-    from gigl.csrc.distributed.ppr_forward_push import PPRForwardPushState
+    from gigl.csrc.sampling.ppr_forward_push import PPRForwardPushState
 except ImportError as e:
     raise ImportError(
         "PPR C++ extension not compiled. "
