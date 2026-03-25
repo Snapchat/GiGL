@@ -4,6 +4,7 @@ Utility functions for distributed computing.
 
 __all__ = [
     "GraphStoreInfo",
+    "ShardStrategy",
     "get_available_device",
     "get_free_port",
     "get_free_ports",
@@ -24,6 +25,7 @@ from .init_neighbor_loader_worker import (
     get_process_group_name,
     init_neighbor_loader_worker,
 )
+from .neighborloader import ShardStrategy
 from .networking import (
     GraphStoreInfo,
     get_free_port,

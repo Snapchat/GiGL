@@ -26,6 +26,9 @@ class RemoteReceivingChannel(ChannelBase):
         server_rank: Target storage server rank(s).
         channel_id: Sampling channel id(s), one per server rank.
         prefetch_size: Number of in-flight fetch requests per server.
+        active_mask: Optional per-server mask indicating which channels can
+            produce at least one batch this epoch. Inactive servers are treated
+            as already finished and are never polled.
     """
 
     def __init__(
@@ -33,6 +36,7 @@ class RemoteReceivingChannel(ChannelBase):
         server_rank: Union[int, list[int]],
         channel_id: Union[int, list[int]],
         prefetch_size: int = 2,
+        active_mask: Optional[list[bool]] = None,
     ) -> None:
         self.server_rank_list = (
             list(server_rank)
@@ -52,11 +56,20 @@ class RemoteReceivingChannel(ChannelBase):
                 "server_rank and channel_id must have the same length, got "
                 f"{len(self.server_rank_list)} and {len(self.channel_id_list)}"
             )
+        if active_mask is None:
+            self.active_mask = [True] * len(self.server_rank_list)
+        else:
+            if len(active_mask) != len(self.server_rank_list):
+                raise ValueError(
+                    "active_mask must have the same length as server_rank/channel_id, got "
+                    f"{len(active_mask)} and {len(self.server_rank_list)}"
+                )
+            self.active_mask = list(active_mask)
 
         self.num_request_list = [0] * len(self.server_rank_list)
         self.num_received_list = [0] * len(self.server_rank_list)
-        self.server_end_of_epoch = [False] * len(self.server_rank_list)
-        self.global_end_of_epoch = False
+        self.server_end_of_epoch = [not is_active for is_active in self.active_mask]
+        self.global_end_of_epoch = all(self.server_end_of_epoch)
         self.queue: queue.Queue[
             tuple[Optional[SampleMessage], bool, int]
         ] = queue.Queue(maxsize=self.prefetch_size * len(self.server_rank_list))
@@ -65,10 +78,10 @@ class RemoteReceivingChannel(ChannelBase):
         """Reset all state to start a new epoch."""
         while not self.queue.empty():
             _ = self.queue.get()
-        self.server_end_of_epoch = [False] * len(self.server_rank_list)
+        self.server_end_of_epoch = [not is_active for is_active in self.active_mask]
         self.num_request_list = [0] * len(self.server_rank_list)
         self.num_received_list = [0] * len(self.server_rank_list)
-        self.global_end_of_epoch = False
+        self.global_end_of_epoch = all(self.server_end_of_epoch)
 
     def send(self, msg: SampleMessage, **kwargs: object) -> None:
         raise RuntimeError(
@@ -129,6 +142,8 @@ class RemoteReceivingChannel(ChannelBase):
             return callback
 
         for local_server_idx, server_rank in enumerate(self.server_rank_list):
+            if not self.active_mask[local_server_idx]:
+                continue
             if self.server_end_of_epoch[local_server_idx]:
                 continue
             missing = (

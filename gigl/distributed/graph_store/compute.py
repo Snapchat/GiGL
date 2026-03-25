@@ -1,4 +1,5 @@
 import os
+import resource
 from typing import Any, Callable, Optional, TypeVar
 
 import graphlearn_torch as glt
@@ -14,6 +15,21 @@ from gigl.env.distributed import GraphStoreInfo
 logger = Logger()
 
 R = TypeVar("R")
+
+
+def _log_fd_state(context: str) -> None:
+    try:
+        soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (OSError, ValueError):
+        soft_limit, hard_limit = -1, -1
+    try:
+        open_fds = len(os.listdir("/proc/self/fd"))
+    except OSError:
+        open_fds = -1
+    logger.info(
+        f"[FD] {context} | pid={os.getpid()} | open_fds={open_fds} | "
+        f"rlimit_nofile_soft={soft_limit} | rlimit_nofile_hard={hard_limit}"
+    )
 
 
 def init_compute_process(
@@ -49,8 +65,10 @@ def init_compute_process(
         f" OS rank: {os.environ['RANK']}, local compute rank: {local_rank}"
         f" num_servers: {cluster_info.num_storage_nodes}, num_clients: {cluster_info.compute_cluster_world_size}"
     )
+    _log_fd_state("before_wait_for_readiness")
     # Wait for storage nodes to finish loading data before attempting RPC connections.
     wait_for_readiness_signal(cluster_info.readiness_uri)
+    _log_fd_state("after_wait_for_readiness")
 
     # Initialize the GLT client before starting the Torch Distributed process group.
     # Otherwise, we saw intermittent hangs when initializing the client.
@@ -63,6 +81,7 @@ def init_compute_process(
         client_group_name="gigl_client_rpc",
         timeout=rpc_timeout,
     )
+    _log_fd_state("after_init_client_rpc")
 
     logger.info(
         f"Initializing compute process group {compute_cluster_rank} / {cluster_info.compute_cluster_world_size}. on {cluster_info.compute_cluster_master_ip}:{cluster_info.compute_cluster_master_port} with backend {compute_world_backend}."

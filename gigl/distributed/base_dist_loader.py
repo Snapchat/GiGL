@@ -307,6 +307,9 @@ class BaseDistLoader(DistLoader):
                 else [worker_options.server_rank]
             )
             self._input_data_list = sampler_input
+            self._remote_input_has_batches = [
+                self._sampler_input_has_batches(inp) for inp in self._input_data_list
+            ]
             self._input_type = self._input_data_list[0].input_type
 
             self.num_data_partitions = dataset.cluster_info.num_storage_nodes
@@ -489,6 +492,7 @@ class BaseDistLoader(DistLoader):
             self._server_rank_list,
             self._channel_id_list,
             self.worker_options.prefetch_size,
+            active_mask=self._remote_input_has_batches,
         )
 
         logger.info(
@@ -669,6 +673,14 @@ class BaseDistLoader(DistLoader):
         torch.distributed.all_gather_object(all_channel_ids, channel_id_list)
         return all_channel_ids[leader_rank]
 
+    def _sampler_input_has_batches(self, sampler_input: NodeSamplerInput) -> bool:
+        input_len = len(sampler_input)
+        if input_len <= 0:
+            return False
+        if self.drop_last and input_len < self.batch_size:
+            return False
+        return True
+
     # Overwrite DistLoader.shutdown to so we can use our own shutdown and rpc calls
     def shutdown(self) -> None:
         if self._shutdowned:
@@ -697,18 +709,72 @@ class BaseDistLoader(DistLoader):
         elif self._is_mp_worker:
             self._mp_producer.produce_all()
         else:
+            epoch = self._epoch
             rpc_futures: list[torch.futures.Future[None]] = []
-            for server_rank, channel_id in zip(
-                self._server_rank_list, self._channel_id_list
-            ):
+            active_channel_pairs = [
+                (server_rank, channel_id)
+                for server_rank, channel_id, has_batches in zip(
+                    self._server_rank_list,
+                    self._channel_id_list,
+                    self._remote_input_has_batches,
+                )
+                if has_batches
+            ]
+
+            def _make_done_callback(
+                server_rank: int,
+                channel_id: int,
+                dispatched_at: float,
+            ) -> Callable[[torch.futures.Future[None]], None]:
+                def _callback(future: torch.futures.Future[None]) -> None:
+                    elapsed = time.monotonic() - dispatched_at
+                    try:
+                        future.wait()
+                    except Exception as exc:
+                        logger.error(
+                            "start_new_epoch_sampling callback_error "
+                            f"server_rank={server_rank} channel_id={channel_id} "
+                            f"epoch={epoch} elapsed={elapsed:.4f}s error={exc}"
+                        )
+                    else:
+                        logger.info(
+                            "start_new_epoch_sampling callback_ok "
+                            f"server_rank={server_rank} channel_id={channel_id} "
+                            f"epoch={epoch} elapsed={elapsed:.4f}s"
+                        )
+
+                return _callback
+
+            wait_all_started_at = time.monotonic()
+            for server_rank, channel_id in active_channel_pairs:
+                dispatched_at = time.monotonic()
+                logger.info(
+                    "start_new_epoch_sampling dispatch "
+                    f"server_rank={server_rank} channel_id={channel_id} epoch={epoch}"
+                )
                 fut = async_request_server(
                     server_rank,
                     DistServer.start_new_epoch_sampling,
                     channel_id,
-                    self._epoch,
+                    epoch,
+                )
+                fut.add_done_callback(
+                    _make_done_callback(server_rank, channel_id, dispatched_at)
                 )
                 rpc_futures.append(fut)
-            torch.futures.wait_all(rpc_futures)
+            logger.info(
+                "start_new_epoch_sampling wait_all_begin "
+                f"epoch={epoch} num_futures={len(rpc_futures)} "
+                f"num_active_channels={len(active_channel_pairs)} "
+                f"num_total_channels={len(self._channel_id_list)}"
+            )
+            if rpc_futures:
+                torch.futures.wait_all(rpc_futures)
+            logger.info(
+                "start_new_epoch_sampling wait_all_done "
+                f"epoch={epoch} num_futures={len(rpc_futures)} "
+                f"elapsed={time.monotonic() - wait_all_started_at:.4f}s"
+            )
             self._channel.reset()
         self._epoch += 1
         return self

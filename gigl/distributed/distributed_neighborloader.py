@@ -229,6 +229,7 @@ class DistNeighborLoader(BaseDistLoader):
                 input_nodes=input_nodes,
                 dataset=dataset,
                 num_workers=num_workers,
+                worker_concurrency=worker_concurrency,
                 prefetch_size=prefetch_size,
                 channel_size=channel_size,
             )
@@ -299,6 +300,7 @@ class DistNeighborLoader(BaseDistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
+        worker_concurrency: int,
         prefetch_size: int,
         channel_size: str,
     ) -> tuple[list[NodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema]:
@@ -320,20 +322,20 @@ class DistNeighborLoader(BaseDistLoader):
         node_feature_info = dataset.fetch_node_feature_info()
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
-        node_rank = dataset.cluster_info.compute_node_rank
 
         # Get sampling ports for compute-storage connections.
         sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
             num_ports=dataset.cluster_info.num_compute_nodes
         )
-        sampling_port = sampling_ports[node_rank]
+        sampling_port = sampling_ports[0]
 
-        worker_key = f"compute_rank_{node_rank}_worker_{self._instance_count}"
+        worker_key = f"compute_rank_{torch.distributed.get_rank()}_worker_{self._instance_count}"
         logger.info(f"Rank {torch.distributed.get_rank()} worker key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for i in range(num_workers)],
+            worker_concurrency=worker_concurrency,
             master_addr=dataset.cluster_info.storage_cluster_master_ip,
             buffer_size=channel_size,
             master_port=sampling_port,

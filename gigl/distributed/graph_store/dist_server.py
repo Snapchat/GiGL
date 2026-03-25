@@ -11,7 +11,7 @@ import logging
 import threading
 import time
 import warnings
-from collections import abc
+from collections import abc, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional, TypeVar, Union
 
@@ -50,6 +50,9 @@ from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
 """
+FETCH_STATS_LOG_INTERVAL_SECS = 15.0
+FETCH_SLOW_LOG_SECS = 1.0
+FETCH_SLOW_LOG_INTERVAL_SECS = 5.0
 
 logger = Logger()
 
@@ -85,6 +88,17 @@ class ChannelState:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
+@dataclass
+class FetchStats:
+    fetch_count: int = 0
+    end_of_epoch_count: int = 0
+    slow_fetch_count: int = 0
+    timeout_polls: int = 0
+    total_wait_secs: float = 0.0
+    max_wait_secs: float = 0.0
+    last_log_time: float = 0.0
+
+
 class DistServer:
     r"""A server that supports launching remote sampling workers for
     training clients.
@@ -110,6 +124,123 @@ class DistServer:
         self._backends: dict[int, SharedDistSamplingBackend] = {}
         self._backend_refcount: dict[int, int] = {}
         self._channel_state: dict[int, ChannelState] = {}
+        self._fetch_inflight = 0
+        self._fetch_peak_inflight = 0
+        self._fetch_inflight_by_channel: dict[int, int] = defaultdict(int)
+        self._fetch_stats_by_channel: dict[int, FetchStats] = defaultdict(FetchStats)
+
+    def _begin_fetch(self, channel_id: int) -> None:
+        with self._lock:
+            self._fetch_inflight += 1
+            self._fetch_peak_inflight = max(
+                self._fetch_peak_inflight, self._fetch_inflight
+            )
+            self._fetch_inflight_by_channel[channel_id] += 1
+
+    def _release_fetch_without_result(self, channel_id: int) -> None:
+        with self._lock:
+            self._fetch_inflight = max(0, self._fetch_inflight - 1)
+            channel_inflight = max(
+                0, self._fetch_inflight_by_channel.get(channel_id, 0) - 1
+            )
+            if channel_inflight == 0:
+                self._fetch_inflight_by_channel.pop(channel_id, None)
+            else:
+                self._fetch_inflight_by_channel[channel_id] = channel_inflight
+
+    def _record_fetch_result(
+        self,
+        channel_id: int,
+        total_wait_secs: float,
+        timeout_polls: int,
+        end_of_epoch: bool,
+    ) -> Optional[dict[str, Union[int, float]]]:
+        now = time.monotonic()
+        with self._lock:
+            stats = self._fetch_stats_by_channel[channel_id]
+            stats.fetch_count += 1
+            stats.total_wait_secs += total_wait_secs
+            stats.max_wait_secs = max(stats.max_wait_secs, total_wait_secs)
+            stats.timeout_polls += timeout_polls
+            if end_of_epoch:
+                stats.end_of_epoch_count += 1
+            if total_wait_secs >= FETCH_SLOW_LOG_SECS:
+                stats.slow_fetch_count += 1
+
+            self._fetch_inflight = max(0, self._fetch_inflight - 1)
+            channel_inflight = max(
+                0, self._fetch_inflight_by_channel.get(channel_id, 0) - 1
+            )
+            if channel_inflight == 0:
+                self._fetch_inflight_by_channel.pop(channel_id, None)
+            else:
+                self._fetch_inflight_by_channel[channel_id] = channel_inflight
+
+            should_log = (
+                end_of_epoch
+                or now - stats.last_log_time >= FETCH_STATS_LOG_INTERVAL_SECS
+                or (
+                    total_wait_secs >= FETCH_SLOW_LOG_SECS
+                    and now - stats.last_log_time >= FETCH_SLOW_LOG_INTERVAL_SECS
+                )
+            )
+            if not should_log:
+                return None
+            stats.last_log_time = now
+            return {
+                "fetch_count": stats.fetch_count,
+                "end_of_epoch_count": stats.end_of_epoch_count,
+                "slow_fetch_count": stats.slow_fetch_count,
+                "timeout_polls_total": stats.timeout_polls,
+                "avg_wait_secs": stats.total_wait_secs / max(stats.fetch_count, 1),
+                "max_wait_secs": stats.max_wait_secs,
+                "channel_fetch_inflight": channel_inflight,
+                "rpc_fetch_inflight": self._fetch_inflight,
+                "rpc_fetch_peak": self._fetch_peak_inflight,
+            }
+
+    def _maybe_log_fetch_summary(
+        self,
+        channel_id: int,
+        channel_state: ChannelState,
+        backend: SharedDistSamplingBackend,
+        total_wait_secs: float,
+        channel_lock_wait_secs: float,
+        timeout_polls: int,
+        end_of_epoch: bool,
+    ) -> None:
+        stats_snapshot = self._record_fetch_result(
+            channel_id=channel_id,
+            total_wait_secs=total_wait_secs,
+            timeout_polls=timeout_polls,
+            end_of_epoch=end_of_epoch,
+        )
+        if stats_snapshot is None:
+            return
+        try:
+            backend_state = backend.describe_channel(channel_id)
+        except Exception as exc:
+            backend_state = {"describe_channel_error": str(exc)}
+        log_fn = logger.warning if total_wait_secs >= FETCH_SLOW_LOG_SECS else logger.info
+        log_fn(
+            "fetch_one_sampled_message summary "
+            f"channel_id={channel_id} worker_key={channel_state.worker_key} "
+            f"epoch={channel_state.epoch} "
+            f"result={'end_of_epoch' if end_of_epoch else 'message'} "
+            f"total_wait={total_wait_secs:.4f}s "
+            f"channel_lock_wait={channel_lock_wait_secs:.4f}s "
+            f"timeout_polls={timeout_polls} "
+            f"fetches={stats_snapshot['fetch_count']} "
+            f"avg_wait={stats_snapshot['avg_wait_secs']:.4f}s "
+            f"max_wait={stats_snapshot['max_wait_secs']:.4f}s "
+            f"slow_fetches={stats_snapshot['slow_fetch_count']} "
+            f"end_of_epoch_count={stats_snapshot['end_of_epoch_count']} "
+            f"timeout_polls_total={stats_snapshot['timeout_polls_total']} "
+            f"channel_fetch_inflight={stats_snapshot['channel_fetch_inflight']} "
+            f"rpc_fetch_inflight={stats_snapshot['rpc_fetch_inflight']} "
+            f"rpc_fetch_peak={stats_snapshot['rpc_fetch_peak']} "
+            f"backend_state={backend_state}"
+        )
 
     def shutdown(self) -> None:
         for channel_id in list(self._channel_state.keys()):
@@ -502,6 +633,7 @@ class DistServer:
             self._backend_refcount[opts.backend_id] = (
                 self._backend_refcount.get(opts.backend_id, 0) + 1
             )
+            logger.info(f"Registered sampling input for backend_id={opts.backend_id} worker_key={opts.worker_key} channel_id={channel_id}")
         try:
             backend.register_input(
                 channel_id=channel_id,
@@ -517,6 +649,7 @@ class DistServer:
                     0, self._backend_refcount.get(opts.backend_id, 0) - 1
                 )
             raise
+        logger.info(f"Registered sampling input for backend_id={opts.backend_id} worker_key={opts.worker_key} channel_id={channel_id} completed total connections={self._backend_refcount[opts.backend_id]}")
         return channel_id
 
     def destroy_sampling_input(self, channel_id: int) -> None:
@@ -555,24 +688,72 @@ class DistServer:
             backend_to_shutdown.shutdown()
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
+        request_start_time = time.monotonic()
+        thread_name = threading.current_thread().name
+        logger.info(
+            "start_new_epoch_sampling enter "
+            f"thread={thread_name} channel_id={channel_id} epoch={epoch}"
+        )
+        lock_wait_start_time = time.monotonic()
         with self._lock:
             channel_state = self._channel_state.get(channel_id)
+        logger.info(
+            "start_new_epoch_sampling channel_lookup_done "
+            f"thread={thread_name} channel_id={channel_id} epoch={epoch} "
+            f"elapsed={time.monotonic() - lock_wait_start_time:.4f}s"
+        )
         if channel_state is None:
             warnings.warn(f"invalid channel_id {channel_id}")
             return
 
+        channel_lock_wait_start_time = time.monotonic()
         with channel_state.lock:
+            logger.info(
+                "start_new_epoch_sampling channel_lock_acquired "
+                f"thread={thread_name} channel_id={channel_id} epoch={epoch} "
+                f"elapsed={time.monotonic() - channel_lock_wait_start_time:.4f}s "
+                f"current_epoch={channel_state.epoch}"
+            )
             if channel_state.epoch >= epoch:
+                logger.info(
+                    "start_new_epoch_sampling epoch_already_started "
+                    f"thread={thread_name} channel_id={channel_id} epoch={epoch} "
+                    f"current_epoch={channel_state.epoch}"
+                )
                 return
             channel_state.epoch = epoch
+            backend_lookup_start_time = time.monotonic()
             with self._lock:
                 backend = self._backends.get(channel_state.backend_id)
+            logger.info(
+                "start_new_epoch_sampling backend_lookup_done "
+                f"thread={thread_name} channel_id={channel_id} epoch={epoch} "
+                f"backend_id={channel_state.backend_id} "
+                f"elapsed={time.monotonic() - backend_lookup_start_time:.4f}s "
+                f"backend_found={backend is not None}"
+            )
         if backend is not None:
+            backend_start_time = time.monotonic()
+            logger.info(
+                "start_new_epoch_sampling backend_call_begin "
+                f"thread={thread_name} channel_id={channel_id} epoch={epoch}"
+            )
             backend.start_new_epoch_sampling(channel_id, epoch)
+            logger.info(
+                "start_new_epoch_sampling backend_call_done "
+                f"thread={thread_name} channel_id={channel_id} epoch={epoch} "
+                f"elapsed={time.monotonic() - backend_start_time:.4f}s"
+            )
+        logger.info(
+            "start_new_epoch_sampling exit "
+            f"thread={thread_name} channel_id={channel_id} epoch={epoch} "
+            f"elapsed={time.monotonic() - request_start_time:.4f}s"
+        )
 
     def fetch_one_sampled_message(
         self, channel_id: int
     ) -> tuple[Optional[SampleMessage], bool]:
+        request_start_time = time.monotonic()
         with self._lock:
             channel_state = self._channel_state.get(channel_id)
         if channel_state is None:
@@ -585,15 +766,49 @@ class DistServer:
             warnings.warn(f"invalid backend for channel_id {channel_id}")
             return None, False
 
-        with channel_state.lock:
-            while True:
-                try:
-                    msg = channel_state.channel.recv(timeout_ms=500)
-                    return msg, False
-                except QueueTimeoutError:
-                    if backend.is_channel_epoch_done(channel_id, channel_state.epoch):
-                        if channel_state.channel.empty():
-                            return None, True
+        self._begin_fetch(channel_id)
+        fetch_recorded = False
+        timeout_polls = 0
+        channel_lock_wait_start_time = time.monotonic()
+        try:
+            with channel_state.lock:
+                channel_lock_wait_secs = (
+                    time.monotonic() - channel_lock_wait_start_time
+                )
+                while True:
+                    try:
+                        msg = channel_state.channel.recv(timeout_ms=500)
+                        total_wait_secs = time.monotonic() - request_start_time
+                        self._maybe_log_fetch_summary(
+                            channel_id=channel_id,
+                            channel_state=channel_state,
+                            backend=backend,
+                            total_wait_secs=total_wait_secs,
+                            channel_lock_wait_secs=channel_lock_wait_secs,
+                            timeout_polls=timeout_polls,
+                            end_of_epoch=False,
+                        )
+                        fetch_recorded = True
+                        return msg, False
+                    except QueueTimeoutError:
+                        timeout_polls += 1
+                        if backend.is_channel_epoch_done(channel_id, channel_state.epoch):
+                            if channel_state.channel.empty():
+                                total_wait_secs = time.monotonic() - request_start_time
+                                self._maybe_log_fetch_summary(
+                                    channel_id=channel_id,
+                                    channel_state=channel_state,
+                                    backend=backend,
+                                    total_wait_secs=total_wait_secs,
+                                    channel_lock_wait_secs=channel_lock_wait_secs,
+                                    timeout_polls=timeout_polls,
+                                    end_of_epoch=True,
+                                )
+                                fetch_recorded = True
+                                return None, True
+        finally:
+            if not fetch_recorded:
+                self._release_fetch_without_result(channel_id)
 
     def create_sampling_producer(
         self,
@@ -732,11 +947,37 @@ def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R
         )
         return None
 
-    server = get_server()
-    if hasattr(server, func.__name__):
-        # NOTE: method does not respect inheritance.
-        # `func` is the full name of the function, e.g. gigl.distributed.graph_store.dist_server.DistServer.get_edge_dir
-        # And so if something subclasses DistServer, the *base* class method will be called, not the subclass method.
-        return func(server, *args, **kwargs)
-
-    return func(*args, **kwargs)
+    trace_rpc = func.__name__ == "start_new_epoch_sampling"
+    rpc_start_time = time.monotonic()
+    if trace_rpc:
+        logger.info(
+            "rpc_server_call enter "
+            f"func={func.__name__} args={args} kwargs={kwargs} "
+            f"thread={threading.current_thread().name}"
+        )
+    try:
+        server = get_server()
+        if hasattr(server, func.__name__):
+            # NOTE: method does not respect inheritance.
+            # `func` is the full name of the function, e.g. gigl.distributed.graph_store.dist_server.DistServer.get_edge_dir
+            # And so if something subclasses DistServer, the *base* class method will be called, not the subclass method.
+            result = func(server, *args, **kwargs)
+        else:
+            result = func(*args, **kwargs)
+    except Exception as exc:
+        if trace_rpc:
+            logger.error(
+                "rpc_server_call error "
+                f"func={func.__name__} args={args} kwargs={kwargs} "
+                f"thread={threading.current_thread().name} "
+                f"elapsed={time.monotonic() - rpc_start_time:.4f}s error={exc}"
+            )
+        raise
+    if trace_rpc:
+        logger.info(
+            "rpc_server_call exit "
+            f"func={func.__name__} args={args} kwargs={kwargs} "
+            f"thread={threading.current_thread().name} "
+            f"elapsed={time.monotonic() - rpc_start_time:.4f}s"
+        )
+    return result

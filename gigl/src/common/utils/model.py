@@ -48,9 +48,11 @@ def load_state_dict_from_uri(
     state_dict: OrderedDict[str, torch.Tensor]
 
     file_loader = FileLoader()
+    print(f"Loading state dict from {load_from_uri} for device {device}")
     tmp_file = file_loader.load_to_temp_file(load_from_uri)
-
+    print(f"Loaded state dict to {tmp_file.name} for device {device}")
     state_dict = torch.load(tmp_file.name, map_location=device)
+    print(f"Loaded state dict to {state_dict} for device {device}")
     tmp_file.close()
 
     return state_dict

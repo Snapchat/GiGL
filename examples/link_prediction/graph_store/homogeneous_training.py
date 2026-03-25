@@ -241,6 +241,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        prefetch_size=1
     )
 
     logger.info(f"---Rank {rank} finished setting up main loader for split={split}")
@@ -267,6 +268,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        prefetch_size=1
     )
 
     logger.info(

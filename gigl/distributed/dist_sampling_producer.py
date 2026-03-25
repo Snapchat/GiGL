@@ -7,7 +7,7 @@ import datetime
 import queue
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from enum import Enum, auto
 from multiprocessing.process import BaseProcess
@@ -46,6 +46,8 @@ from gigl.common.logger import Logger
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import KHopNeighborSamplerOptions, SamplerOptions
+
+logger = Logger()
 
 
 def _sampling_worker_loop(
@@ -247,6 +249,24 @@ class SharedMpCommand(Enum):
 
 
 EPOCH_DONE_EVENT = "EPOCH_DONE"
+TASK_DEQUEUED_EVENT = "TASK_DEQUEUED"
+SCHEDULER_TICK_SECS = 0.05
+SCHEDULER_STATE_LOG_INTERVAL_SECS = 10.0
+SCHEDULER_STATE_MAX_CHANNELS = 6
+SCHEDULER_SLOW_SUBMIT_SECS = 1.0
+
+
+def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[int]:
+    if command == SharedMpCommand.REGISTER_INPUT:
+        assert isinstance(payload, RegisterInputCmd)
+        return payload.channel_id
+    if command == SharedMpCommand.START_EPOCH:
+        assert isinstance(payload, StartEpochCmd)
+        return payload.channel_id
+    if command == SharedMpCommand.UNREGISTER_INPUT:
+        assert isinstance(payload, int)
+        return payload
+    return None
 
 
 @dataclass(frozen=True)
@@ -263,6 +283,44 @@ class StartEpochCmd:
     channel_id: int
     epoch: int
     seeds_index: Optional[torch.Tensor]
+
+
+@dataclass
+class ActiveEpochState:
+    channel_id: int
+    epoch: int
+    input_len: int
+    batch_size: int
+    drop_last: bool
+    seeds_index: Optional[torch.Tensor]
+    total_batches: int
+    submitted_batches: int = 0
+    completed_batches: int = 0
+    cancelled: bool = False
+
+
+def _compute_num_batches(
+    input_len: int,
+    batch_size: int,
+    drop_last: bool,
+) -> int:
+    if input_len <= 0 or batch_size <= 0:
+        return 0
+    if drop_last:
+        return input_len // batch_size
+    return (input_len + batch_size - 1) // batch_size
+
+
+def _epoch_batch_indices(state: ActiveEpochState) -> Optional[torch.Tensor]:
+    if state.submitted_batches >= state.total_batches:
+        return None
+    start = state.submitted_batches * state.batch_size
+    end = min(start + state.batch_size, state.input_len)
+    if end <= start:
+        return None
+    if state.seeds_index is not None:
+        return state.seeds_index[start:end]
+    return torch.arange(start, end, dtype=torch.long)
 
 
 def _compute_worker_seeds_ranges(
@@ -340,35 +398,131 @@ def _shared_sampling_worker_loop(
     ] = {}
     cfgs: dict[int, SamplingConfig] = {}
     route_key_by_channel: dict[int, str] = {}
-    pending: dict[tuple[int, int], int] = defaultdict(int)
     started_epoch: dict[int, int] = defaultdict(lambda: -1)
+    active_epochs_by_channel: dict[int, ActiveEpochState] = {}
+    runnable_channels: deque[int] = deque()
+    runnable_set: set[int] = set()
     removing: set[int] = set()
-    channel_locks: dict[int, threading.Lock] = {}
+    state_lock = threading.RLock()
+    worker_inflight_batches = 0
+    batches_submitted_total = 0
+    batches_completed_total = 0
+    epochs_completed_total = 0
+    last_scheduler_log_time = 0.0
 
-    def _lock_for(channel_id: int) -> threading.Lock:
-        lock = channel_locks.get(channel_id)
-        if lock is None:
-            lock = threading.Lock()
-            channel_locks[channel_id] = lock
-        return lock
+    def _enqueue_channel_if_runnable_locked(channel_id: int) -> None:
+        state = active_epochs_by_channel.get(channel_id)
+        if state is None or state.cancelled:
+            return
+        if state.submitted_batches >= state.total_batches:
+            return
+        if channel_id in runnable_set:
+            return
+        runnable_channels.append(channel_id)
+        runnable_set.add(channel_id)
+
+    def _clear_registered_input_locked(channel_id: int) -> Optional[str]:
+        route_key = route_key_by_channel.pop(channel_id, None)
+        channels.pop(channel_id, None)
+        inputs.pop(channel_id, None)
+        cfgs.pop(channel_id, None)
+        active_epochs_by_channel.pop(channel_id, None)
+        started_epoch.pop(channel_id, None)
+        removing.discard(channel_id)
+        runnable_set.discard(channel_id)
+        return route_key
+
+    def _format_scheduler_state_locked() -> str:
+        runnable_preview: list[int] = []
+        for queued_channel_id in runnable_channels:
+            if queued_channel_id not in runnable_set:
+                continue
+            runnable_preview.append(queued_channel_id)
+            if len(runnable_preview) >= SCHEDULER_STATE_MAX_CHANNELS:
+                break
+
+        active_states = sorted(
+            active_epochs_by_channel.values(),
+            key=lambda state: (
+                state.submitted_batches - state.completed_batches,
+                state.total_batches - state.completed_batches,
+                -state.channel_id,
+            ),
+            reverse=True,
+        )
+        channel_progress = [
+            (
+                f"{state.channel_id}:e{state.epoch}:"
+                f"done={state.completed_batches}/{state.total_batches}:"
+                f"submitted={state.submitted_batches}:"
+                f"inflight={max(0, state.submitted_batches - state.completed_batches)}:"
+                f"pending_submit={max(0, state.total_batches - state.submitted_batches)}:"
+                f"cancelled={int(state.cancelled)}"
+            )
+            for state in active_states[:SCHEDULER_STATE_MAX_CHANNELS]
+        ]
+        removing_preview = sorted(removing)[:SCHEDULER_STATE_MAX_CHANNELS]
+        return (
+            f"active_channels={len(active_epochs_by_channel)} "
+            f"registered_channels={len(channels)} "
+            f"runnable_depth={len(runnable_set)} "
+            f"runnable_preview={runnable_preview} "
+            f"removing_preview={removing_preview} "
+            f"inflight={worker_inflight_batches}/{worker_options.worker_concurrency} "
+            f"submitted_total={batches_submitted_total} "
+            f"completed_total={batches_completed_total} "
+            f"epochs_completed_total={epochs_completed_total} "
+            f"channel_progress={channel_progress if channel_progress else '[]'}"
+        )
+
+    def _maybe_log_scheduler_state(reason: str, force: bool = False) -> None:
+        nonlocal last_scheduler_log_time
+        now = time.monotonic()
+        with state_lock:
+            has_work = (
+                bool(active_epochs_by_channel)
+                or bool(runnable_set)
+                or worker_inflight_batches > 0
+                or bool(removing)
+            )
+            if not force:
+                if not has_work:
+                    return
+                if now - last_scheduler_log_time < SCHEDULER_STATE_LOG_INTERVAL_SECS:
+                    return
+            snapshot = _format_scheduler_state_locked()
+            last_scheduler_log_time = now
+        logger.info(
+            f"sampling_scheduler_state worker_rank={rank} reason={reason} {snapshot}"
+        )
 
     def _on_batch_done(channel_id: int, epoch: int) -> None:
+        nonlocal worker_inflight_batches, batches_completed_total, epochs_completed_total
         route_key_to_remove: Optional[str] = None
-        with _lock_for(channel_id):
-            key = (channel_id, epoch)
-            pending[key] -= 1
-            if pending[key] == 0:
-                pending.pop(key, None)
-                event_queue.put((EPOCH_DONE_EVENT, channel_id, epoch, rank))
-                if channel_id in removing:
-                    channels.pop(channel_id, None)
-                    inputs.pop(channel_id, None)
-                    cfgs.pop(channel_id, None)
-                    started_epoch.pop(channel_id, None)
-                    route_key_to_remove = route_key_by_channel.pop(channel_id, None)
-                    removing.discard(channel_id)
+        epoch_done = False
+        with state_lock:
+            worker_inflight_batches = max(0, worker_inflight_batches - 1)
+            state = active_epochs_by_channel.get(channel_id)
+            if state is not None and state.epoch == epoch:
+                state.completed_batches += 1
+                batches_completed_total += 1
+                if state.cancelled:
+                    if state.completed_batches == state.submitted_batches:
+                        route_key_to_remove = _clear_registered_input_locked(channel_id)
+                elif state.completed_batches >= state.total_batches:
+                    active_epochs_by_channel.pop(channel_id, None)
+                    runnable_set.discard(channel_id)
+                    epoch_done = True
+                    epochs_completed_total += 1
+                    if channel_id in removing:
+                        route_key_to_remove = _clear_registered_input_locked(channel_id)
+                else:
+                    _enqueue_channel_if_runnable_locked(channel_id)
         if route_key_to_remove is not None and dist_sampler is not None:
             dist_sampler.unregister_output(route_key_to_remove)
+        if epoch_done:
+            event_queue.put((EPOCH_DONE_EVENT, channel_id, epoch, rank))
+        _maybe_log_scheduler_state("batch_done")
 
     def _make_batch_done_callback(
         channel_id: int, epoch: int
@@ -377,6 +531,96 @@ def _shared_sampling_worker_loop(
             _on_batch_done(channel_id, epoch)
 
         return _callback
+
+    def _submit_one_batch(channel_id: int) -> bool:
+        nonlocal worker_inflight_batches, batches_submitted_total
+        with state_lock:
+            state = active_epochs_by_channel.get(channel_id)
+            if state is None or state.cancelled:
+                return False
+            if state.submitted_batches >= state.total_batches:
+                return False
+            if worker_inflight_batches >= worker_options.worker_concurrency:
+                return False
+            local_input = inputs.get(channel_id)
+            sampling_config = cfgs.get(channel_id)
+            route_key = route_key_by_channel.get(channel_id)
+            if local_input is None or sampling_config is None or route_key is None:
+                return False
+            batch_indices = _epoch_batch_indices(state)
+            if batch_indices is None:
+                return False
+            epoch = state.epoch
+            state.submitted_batches += 1
+            batches_submitted_total += 1
+            worker_inflight_batches += 1
+            should_requeue = (
+                not state.cancelled and state.submitted_batches < state.total_batches
+            )
+
+        callback = _make_batch_done_callback(channel_id, epoch)
+        submit_start_time = time.monotonic()
+        try:
+            if sampling_config.sampling_type == SamplingType.NODE:
+                dist_sampler.sample_from_nodes(
+                    local_input[batch_indices],
+                    key=route_key,
+                    callback=callback,
+                )
+            elif sampling_config.sampling_type == SamplingType.LINK:
+                dist_sampler.sample_from_edges(
+                    local_input[batch_indices],
+                    key=route_key,
+                    callback=callback,
+                )
+            elif sampling_config.sampling_type == SamplingType.SUBGRAPH:
+                dist_sampler.subgraph(
+                    local_input[batch_indices],
+                    key=route_key,
+                    callback=callback,
+                )
+            else:
+                raise RuntimeError(
+                    f"Unsupported sampling type: {sampling_config.sampling_type}"
+                )
+        except Exception:
+            with state_lock:
+                worker_inflight_batches = max(0, worker_inflight_batches - 1)
+                state = active_epochs_by_channel.get(channel_id)
+                if state is not None and state.epoch == epoch:
+                    state.submitted_batches = max(0, state.submitted_batches - 1)
+                    _enqueue_channel_if_runnable_locked(channel_id)
+            raise
+        submit_elapsed = time.monotonic() - submit_start_time
+        if submit_elapsed >= SCHEDULER_SLOW_SUBMIT_SECS:
+            _maybe_log_scheduler_state("slow_submit", force=True)
+            logger.warning(
+                "sampling_scheduler_submit_slow "
+                f"worker_rank={rank} channel_id={channel_id} epoch={epoch} "
+                f"elapsed={submit_elapsed:.4f}s"
+            )
+
+        if should_requeue:
+            with state_lock:
+                state = active_epochs_by_channel.get(channel_id)
+                if state is not None and state.epoch == epoch:
+                    _enqueue_channel_if_runnable_locked(channel_id)
+        return True
+
+    def _pump_runnable_channels() -> bool:
+        with state_lock:
+            concurrency_limit = worker_options.worker_concurrency
+        made_progress = False
+        while True:
+            with state_lock:
+                if worker_inflight_batches >= concurrency_limit:
+                    return made_progress
+                if not runnable_channels:
+                    return made_progress
+                channel_id = runnable_channels.popleft()
+                runnable_set.discard(channel_id)
+            if _submit_one_batch(channel_id):
+                made_progress = True
 
     try:
         init_worker_group(
@@ -439,115 +683,158 @@ def _shared_sampling_worker_loop(
 
         keep_running = True
         while keep_running:
-            try:
-                command, payload = task_queue.get(timeout=MP_STATUS_CHECK_INTERVAL)
-            except queue.Empty:
+            processed_command = False
+
+            def _handle_command(
+                command: SharedMpCommand, payload: object
+            ) -> bool:
+                nonlocal worker_inflight_batches
+                event_queue.put(
+                    (
+                        TASK_DEQUEUED_EVENT,
+                        rank,
+                        command.name,
+                        _command_channel_id(command, payload),
+                    )
+                )
+
+                if command == SharedMpCommand.REGISTER_INPUT:
+                    register_cmd = cast(RegisterInputCmd, payload)
+                    route_key = str(register_cmd.channel_id)
+                    with state_lock:
+                        channels[register_cmd.channel_id] = register_cmd.channel
+                        inputs[register_cmd.channel_id] = register_cmd.sampler_input
+                        cfgs[register_cmd.channel_id] = register_cmd.sampling_config
+                        route_key_by_channel[register_cmd.channel_id] = route_key
+                        started_epoch[register_cmd.channel_id] = -1
+                        active_epochs_by_channel.pop(register_cmd.channel_id, None)
+                        removing.discard(register_cmd.channel_id)
+                        runnable_set.discard(register_cmd.channel_id)
+                    dist_sampler.register_output(route_key, register_cmd.channel)
+                    logger.info(
+                        f"worker_rank={rank} registered channel_id={register_cmd.channel_id} worker_key={register_cmd.worker_key}"
+                    )
+                    _maybe_log_scheduler_state("register_input", force=True)
+                    return True
+
+                if command == SharedMpCommand.START_EPOCH:
+                    start_cmd = cast(StartEpochCmd, payload)
+                    epoch_done = False
+                    input_len = 0
+                    total_batches = 0
+                    with state_lock:
+                        if start_cmd.channel_id not in inputs:
+                            return True
+                        if started_epoch[start_cmd.channel_id] >= start_cmd.epoch:
+                            return True
+                        active_state = active_epochs_by_channel.get(
+                            start_cmd.channel_id
+                        )
+                        if active_state is not None:
+                            logger.warning(
+                                "worker_rank=%s channel_id=%s ignoring START_EPOCH epoch=%s while epoch=%s is still active",
+                                rank,
+                                start_cmd.channel_id,
+                                start_cmd.epoch,
+                                active_state.epoch,
+                            )
+                            return True
+                        local_input = inputs[start_cmd.channel_id]
+                        sampling_config = cfgs[start_cmd.channel_id]
+                        input_len = len(local_input)
+                        total_batches = _compute_num_batches(
+                            input_len=input_len,
+                            batch_size=sampling_config.batch_size,
+                            drop_last=sampling_config.drop_last,
+                        )
+                        started_epoch[start_cmd.channel_id] = start_cmd.epoch
+                        if total_batches == 0:
+                            epoch_done = True
+                        else:
+                            active_epochs_by_channel[start_cmd.channel_id] = (
+                                ActiveEpochState(
+                                    channel_id=start_cmd.channel_id,
+                                    epoch=start_cmd.epoch,
+                                    input_len=len(local_input),
+                                    batch_size=sampling_config.batch_size,
+                                    drop_last=sampling_config.drop_last,
+                                    seeds_index=start_cmd.seeds_index,
+                                    total_batches=total_batches,
+                                )
+                            )
+                            _enqueue_channel_if_runnable_locked(start_cmd.channel_id)
+                    logger.info(
+                        "sampling_scheduler_epoch_start "
+                        f"worker_rank={rank} channel_id={start_cmd.channel_id} "
+                        f"epoch={start_cmd.epoch} input_len={input_len} "
+                        f"batch_size={sampling_config.batch_size} "
+                        f"total_batches={total_batches}"
+                    )
+                    _maybe_log_scheduler_state("start_epoch", force=True)
+                    if epoch_done:
+                        event_queue.put(
+                            (
+                                EPOCH_DONE_EVENT,
+                                start_cmd.channel_id,
+                                start_cmd.epoch,
+                                rank,
+                            )
+                        )
+                    return True
+
+                if command == SharedMpCommand.UNREGISTER_INPUT:
+                    channel_id = cast(int, payload)
+                    route_key = None
+                    with state_lock:
+                        state = active_epochs_by_channel.get(channel_id)
+                        if state is not None:
+                            state.cancelled = True
+                            removing.add(channel_id)
+                            runnable_set.discard(channel_id)
+                            has_inflight = (
+                                state.completed_batches < state.submitted_batches
+                            )
+                            if not has_inflight:
+                                route_key = _clear_registered_input_locked(
+                                    channel_id
+                                )
+                        else:
+                            route_key = _clear_registered_input_locked(channel_id)
+                    if route_key is not None:
+                        dist_sampler.unregister_output(route_key)
+                    _maybe_log_scheduler_state("unregister_input", force=True)
+                    return True
+
+                if command == SharedMpCommand.STOP:
+                    _maybe_log_scheduler_state("stop", force=True)
+                    dist_sampler.wait_all()
+                    return False
+
+                raise RuntimeError(f"Unknown command type: {command}")
+
+            while keep_running:
+                try:
+                    command, payload = task_queue.get_nowait()
+                except queue.Empty:
+                    break
+                processed_command = True
+                keep_running = _handle_command(command, payload)
+
+            if not keep_running:
+                break
+
+            made_progress = _pump_runnable_channels()
+            _maybe_log_scheduler_state("steady_state")
+
+            if processed_command or made_progress:
                 continue
 
-            if command == SharedMpCommand.REGISTER_INPUT:
-                register_cmd: RegisterInputCmd = payload
-                route_key = str(register_cmd.channel_id)
-                with _lock_for(register_cmd.channel_id):
-                    channels[register_cmd.channel_id] = register_cmd.channel
-                    inputs[register_cmd.channel_id] = register_cmd.sampler_input
-                    cfgs[register_cmd.channel_id] = register_cmd.sampling_config
-                    route_key_by_channel[register_cmd.channel_id] = route_key
-                    started_epoch[register_cmd.channel_id] = -1
-                dist_sampler.register_output(route_key, register_cmd.channel)
-                logger.info(
-                    f"worker_rank={rank} registered channel_id={register_cmd.channel_id} worker_key={register_cmd.worker_key}"
-                )
-
-            elif command == SharedMpCommand.START_EPOCH:
-                start_cmd: StartEpochCmd = payload
-                with _lock_for(start_cmd.channel_id):
-                    if start_cmd.channel_id not in inputs:
-                        continue
-                    if started_epoch[start_cmd.channel_id] >= start_cmd.epoch:
-                        continue
-                    started_epoch[start_cmd.channel_id] = start_cmd.epoch
-                    local_input = inputs[start_cmd.channel_id]
-                    sampling_config = cfgs[start_cmd.channel_id]
-                    route_key = route_key_by_channel[start_cmd.channel_id]
-
-                seeds_index = start_cmd.seeds_index
-                if seeds_index is None:
-                    seeds_index = torch.arange(len(local_input))
-                loader = DataLoader(
-                    cast(Dataset, seeds_index),
-                    batch_size=sampling_config.batch_size,
-                    shuffle=False,
-                    drop_last=sampling_config.drop_last,
-                )
-                num_batches = len(loader)
-                with _lock_for(start_cmd.channel_id):
-                    pending[(start_cmd.channel_id, start_cmd.epoch)] = num_batches
-                if num_batches == 0:
-                    event_queue.put(
-                        (
-                            EPOCH_DONE_EVENT,
-                            start_cmd.channel_id,
-                            start_cmd.epoch,
-                            rank,
-                        )
-                    )
-                    continue
-
-                if sampling_config.sampling_type == SamplingType.NODE:
-                    callback = _make_batch_done_callback(
-                        start_cmd.channel_id, start_cmd.epoch
-                    )
-                    for index in loader:
-                        dist_sampler.sample_from_nodes(
-                            local_input[index],
-                            key=route_key,
-                            callback=callback,
-                        )
-                elif sampling_config.sampling_type == SamplingType.LINK:
-                    callback = _make_batch_done_callback(
-                        start_cmd.channel_id, start_cmd.epoch
-                    )
-                    for index in loader:
-                        dist_sampler.sample_from_edges(
-                            local_input[index],
-                            key=route_key,
-                            callback=callback,
-                        )
-                elif sampling_config.sampling_type == SamplingType.SUBGRAPH:
-                    callback = _make_batch_done_callback(
-                        start_cmd.channel_id, start_cmd.epoch
-                    )
-                    for index in loader:
-                        dist_sampler.subgraph(
-                            local_input[index],
-                            key=route_key,
-                            callback=callback,
-                        )
-
-            elif command == SharedMpCommand.UNREGISTER_INPUT:
-                channel_id = payload
-                route_key = None
-                with _lock_for(channel_id):
-                    has_inflight = any(
-                        cid == channel_id and count > 0
-                        for (cid, _), count in pending.items()
-                    )
-                    if has_inflight:
-                        removing.add(channel_id)
-                    else:
-                        route_key = route_key_by_channel.pop(channel_id, None)
-                        channels.pop(channel_id, None)
-                        inputs.pop(channel_id, None)
-                        cfgs.pop(channel_id, None)
-                        started_epoch.pop(channel_id, None)
-                if not has_inflight and route_key is not None:
-                    dist_sampler.unregister_output(route_key)
-
-            elif command == SharedMpCommand.STOP:
-                dist_sampler.wait_all()
-                keep_running = False
-            else:
-                raise RuntimeError(f"Unknown command type: {command}")
+            try:
+                command, payload = task_queue.get(timeout=SCHEDULER_TICK_SECS)
+            except queue.Empty:
+                _maybe_log_scheduler_state("idle_wait")
+                continue
+            keep_running = _handle_command(command, payload)
     except KeyboardInterrupt:
         pass
 
@@ -583,6 +870,10 @@ class SharedDistSamplingBackend:
         self._channel_input_sizes: dict[int, list[int]] = {}
         self._channel_epoch: dict[int, int] = {}
         self._completed_workers: dict[tuple[int, int], set[int]] = defaultdict(set)
+        self._queued_task_counts_by_worker: dict[int, dict[str, int]] = defaultdict(
+            dict
+        )
+        self._task_queue_maxsize = 0  # unbounded
 
     def init_backend(self) -> None:
         with self._lock:
@@ -598,9 +889,7 @@ class SharedDistSamplingBackend:
             self._event_queue = mp_context.Queue()
             barrier = mp_context.Barrier(self.num_workers + 1)
             for rank in range(self.num_workers):
-                task_queue = mp_context.Queue(
-                    self.num_workers * self.worker_options.worker_concurrency
-                )
+                task_queue = mp_context.Queue(self._task_queue_maxsize)
                 self._task_queues.append(task_queue)
                 worker = mp_context.Process(
                     target=_shared_sampling_worker_loop,
@@ -621,6 +910,101 @@ class SharedDistSamplingBackend:
             barrier.wait()
             self._initialized = True
 
+    @staticmethod
+    def _safe_qsize(queue_: mp.Queue) -> Optional[int]:
+        try:
+            return queue_.qsize()
+        except (AttributeError, NotImplementedError, OSError):
+            return None
+
+    def _snapshot_queue_counts(self, worker_rank: int) -> dict[str, int]:
+        return dict(self._queued_task_counts_by_worker.get(worker_rank, {}))
+
+    def describe_channel(self, channel_id: int) -> dict[str, object]:
+        self._drain_events()
+        with self._lock:
+            epoch = self._channel_epoch.get(channel_id)
+            if epoch is None:
+                return {
+                    "channel_id": channel_id,
+                    "registered": False,
+                }
+            completed_workers = sorted(
+                self._completed_workers.get((channel_id, epoch), set())
+            )
+            queue_sizes = {
+                rank: qsize
+                for rank, qsize in (
+                    (rank, self._safe_qsize(queue_))
+                    for rank, queue_ in enumerate(self._task_queues)
+                )
+                if qsize is not None
+            }
+            queued_task_counts = {
+                rank: dict(counts)
+                for rank, counts in self._queued_task_counts_by_worker.items()
+                if counts
+            }
+            return {
+                "channel_id": channel_id,
+                "registered": True,
+                "epoch": epoch,
+                "worker_input_sizes": list(self._channel_input_sizes.get(channel_id, [])),
+                "completed_workers": completed_workers,
+                "completed_worker_count": len(completed_workers),
+                "num_workers": self.num_workers,
+                "approx_queue_sizes": queue_sizes,
+                "approx_task_counts": queued_task_counts,
+            }
+
+    def _enqueue_worker_command(
+        self,
+        worker_rank: int,
+        command: SharedMpCommand,
+        payload: object,
+    ) -> None:
+        queue_ = self._task_queues[worker_rank]
+        channel_id = _command_channel_id(command, payload)
+        approx_qsize_before = self._safe_qsize(queue_)
+        with self._lock:
+            queued_counts_before = self._snapshot_queue_counts(worker_rank)
+        logger.info(
+            "task_queue enqueue_start "
+            f"worker_rank={worker_rank} command={command.name} channel_id={channel_id} "
+            f"approx_qsize={approx_qsize_before} maxsize={self._task_queue_maxsize} "
+            f"approx_contents={queued_counts_before}"
+        )
+        with self._lock:
+            worker_counts = self._queued_task_counts_by_worker.setdefault(
+                worker_rank, {}
+            )
+            worker_counts[command.name] = worker_counts.get(command.name, 0) + 1
+        enqueue_start_time = time.monotonic()
+        try:
+            queue_.put((command, payload))
+        except Exception:
+            with self._lock:
+                existing_worker_counts = self._queued_task_counts_by_worker.get(
+                    worker_rank
+                )
+                if existing_worker_counts is not None:
+                    current_count = existing_worker_counts.get(command.name, 0)
+                    if current_count <= 1:
+                        existing_worker_counts.pop(command.name, None)
+                    else:
+                        existing_worker_counts[command.name] = current_count - 1
+            raise
+        enqueue_elapsed = time.monotonic() - enqueue_start_time
+        approx_qsize_after = self._safe_qsize(queue_)
+        with self._lock:
+            queued_counts_after = self._snapshot_queue_counts(worker_rank)
+        logger.info(
+            "task_queue enqueue_done "
+            f"worker_rank={worker_rank} command={command.name} channel_id={channel_id} "
+            f"put_elapsed={enqueue_elapsed:.4f}s approx_qsize={approx_qsize_after} "
+            f"maxsize={self._task_queue_maxsize} approx_contents={queued_counts_after}"
+        )
+
     def _drain_events(self) -> None:
         if self._event_queue is None:
             return
@@ -629,15 +1013,25 @@ class SharedDistSamplingBackend:
                 event = self._event_queue.get_nowait()
             except queue.Empty:
                 break
-            if (
-                not isinstance(event, tuple)
-                or len(event) != 4
-                or event[0] != EPOCH_DONE_EVENT
-            ):
+            if not isinstance(event, tuple) or len(event) != 4:
                 continue
-            _, channel_id, epoch, worker_rank = event
-            with self._lock:
-                self._completed_workers[(channel_id, epoch)].add(worker_rank)
+            if event[0] == EPOCH_DONE_EVENT:
+                _, channel_id, epoch, worker_rank = event
+                with self._lock:
+                    self._completed_workers[(channel_id, epoch)].add(worker_rank)
+                continue
+            if event[0] == TASK_DEQUEUED_EVENT:
+                _, worker_rank, command_name, _channel_id = event
+                with self._lock:
+                    worker_counts = self._queued_task_counts_by_worker.get(worker_rank)
+                    if worker_counts is None:
+                        continue
+                    current_count = worker_counts.get(command_name, 0)
+                    if current_count <= 1:
+                        worker_counts.pop(command_name, None)
+                    else:
+                        worker_counts[command_name] = current_count - 1
+                continue
 
     def register_input(
         self,
@@ -648,6 +1042,7 @@ class SharedDistSamplingBackend:
         channel: ChannelBase,
     ) -> None:
         self.init_backend()
+        self._drain_events()
         if hasattr(sampler_input, "share_memory"):
             sampler_input = sampler_input.share_memory()
 
@@ -663,17 +1058,16 @@ class SharedDistSamplingBackend:
         for rank, local_input in enumerate(worker_inputs):
             if hasattr(local_input, "share_memory"):
                 local_input = local_input.share_memory()
-            self._task_queues[rank].put(
-                (
-                    SharedMpCommand.REGISTER_INPUT,
-                    RegisterInputCmd(
-                        channel_id=channel_id,
-                        worker_key=worker_key,
-                        sampler_input=local_input,
-                        sampling_config=sampling_config,
-                        channel=channel,
-                    ),
-                )
+            self._enqueue_worker_command(
+                rank,
+                SharedMpCommand.REGISTER_INPUT,
+                RegisterInputCmd(
+                    channel_id=channel_id,
+                    worker_key=worker_key,
+                    sampler_input=local_input,
+                    sampling_config=sampling_config,
+                    channel=channel,
+                ),
             )
 
         with self._lock:
@@ -710,16 +1104,20 @@ class SharedDistSamplingBackend:
                 else:
                     seeds_index = torch.randperm(input_len)
                     seeds_index.share_memory_()
-            self._task_queues[rank].put(
-                (
-                    SharedMpCommand.START_EPOCH,
-                    StartEpochCmd(
-                        channel_id=channel_id,
-                        epoch=epoch,
-                        seeds_index=seeds_index,
-                    ),
-                )
+            self._enqueue_worker_command(
+                rank,
+                SharedMpCommand.START_EPOCH,
+                StartEpochCmd(
+                    channel_id=channel_id,
+                    epoch=epoch,
+                    seeds_index=seeds_index,
+                ),
             )
+        logger.info(
+            "shared_sampling_backend start_epoch "
+            f"channel_id={channel_id} epoch={epoch} "
+            f"state={self.describe_channel(channel_id)}"
+        )
         time.sleep(0.1)
 
     def unregister_input(self, channel_id: int) -> None:
@@ -733,8 +1131,10 @@ class SharedDistSamplingBackend:
             ]
             for key in keys_to_delete:
                 self._completed_workers.pop(key, None)
-        for queue_ in self._task_queues:
-            queue_.put((SharedMpCommand.UNREGISTER_INPUT, channel_id))
+        for rank in range(len(self._task_queues)):
+            self._enqueue_worker_command(
+                rank, SharedMpCommand.UNREGISTER_INPUT, channel_id
+            )
 
     def is_channel_epoch_done(self, channel_id: int, epoch: int) -> bool:
         self._drain_events()
@@ -750,8 +1150,8 @@ class SharedDistSamplingBackend:
                 return
             self._shutdown = True
         try:
-            for queue_ in self._task_queues:
-                queue_.put((SharedMpCommand.STOP, None))
+            for rank in range(len(self._task_queues)):
+                self._enqueue_worker_command(rank, SharedMpCommand.STOP, None)
             for worker in self._workers:
                 worker.join(timeout=MP_STATUS_CHECK_INTERVAL)
             for queue_ in self._task_queues:
