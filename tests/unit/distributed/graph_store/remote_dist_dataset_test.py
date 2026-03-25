@@ -11,7 +11,10 @@ from absl.testing import absltest
 import gigl.distributed.graph_store.dist_server as dist_server_module
 from gigl.common import LocalUri
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.sharding import ServerSlice, ShardStrategy
 from gigl.env.distributed import GraphStoreInfo
@@ -44,23 +47,25 @@ from tests.test_assets.test_case import TestCase
 _test_server: Optional[DistServer] = None
 
 # Shared ABLP label data used by multiple test classes
-_DEFAULT_POSITIVE_LABELS: Final[dict[int, list[int]]] = {
+# The keys represent the source (USER) node IDs and the values represent the destination (STORY) node IDs.
+_DEFAULT_POSITIVE_ABLP_LABELS: Final[dict[int, list[int]]] = {
     0: [0, 1],
     1: [1, 2],
     2: [2, 3],
     3: [3, 4],
     4: [4, 0],
 }
-_DEFAULT_NEGATIVE_LABELS: Final[dict[int, list[int]]] = {
+_DEFAULT_NEGATIVE_ABLP_LABELS: Final[dict[int, list[int]]] = {
     0: [2],
     1: [3],
     2: [4],
     3: [0],
     4: [1],
 }
-_DEFAULT_TRAIN_IDS: Final[list[int]] = [0, 1, 2]
-_DEFAULT_VAL_IDS: Final[list[int]] = [3]
-_DEFAULT_TEST_IDS: Final[list[int]] = [4]
+# The list of source (USER) node IDs in the different splits.
+_DEFAULT_ABLP_TRAIN_IDS: Final[list[int]] = [0, 1, 2]
+_DEFAULT_ABLP_VAL_IDS: Final[list[int]] = [3]
+_DEFAULT_ABLP_TEST_IDS: Final[list[int]] = [4]
 
 
 def _mock_request_server(
@@ -124,8 +129,8 @@ def _patch_remote_requests(
 
 def _create_server_with_splits(
     edge_indices: Optional[dict] = None,
-    src_node_type: Optional[NodeType] = None,
-    dst_node_type: Optional[NodeType] = None,
+    src_node_type: NodeType = USER,
+    dst_node_type: NodeType = STORY,
     supervision_edge_type: Optional[EdgeType] = None,
 ) -> None:
     """Create a DistServer with a dataset that has train/val/test splits.
@@ -139,22 +144,16 @@ def _create_server_with_splits(
     global _test_server
     create_test_process_group()
 
-    kwargs: dict[str, Any] = {}
-    if src_node_type is not None:
-        kwargs.update(
-            src_node_type=src_node_type,
-            dst_node_type=dst_node_type,
-            supervision_edge_type=supervision_edge_type,
-        )
-
     dataset = create_heterogeneous_dataset_for_ablp(
-        positive_labels=_DEFAULT_POSITIVE_LABELS,
-        negative_labels=_DEFAULT_NEGATIVE_LABELS,
-        train_node_ids=_DEFAULT_TRAIN_IDS,
-        val_node_ids=_DEFAULT_VAL_IDS,
-        test_node_ids=_DEFAULT_TEST_IDS,
+        positive_labels=_DEFAULT_POSITIVE_ABLP_LABELS,
+        negative_labels=_DEFAULT_NEGATIVE_ABLP_LABELS,
+        train_node_ids=_DEFAULT_ABLP_TRAIN_IDS,
+        val_node_ids=_DEFAULT_ABLP_VAL_IDS,
+        test_node_ids=_DEFAULT_ABLP_TEST_IDS,
         edge_indices=edge_indices or DEFAULT_HETEROGENEOUS_EDGE_INDICES,
-        **kwargs,
+        src_node_type=src_node_type,
+        dst_node_type=dst_node_type,
+        supervision_edge_type=supervision_edge_type,
     )
     _test_server = DistServer(dataset)
     dist_server_module._dist_server = _test_server
@@ -738,7 +737,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 if request.server_slice is not None:
                     assert isinstance(response, torch.Tensor)
                     response = request.server_slice.slice_tensor(response)
-            elif isinstance(request, FetchABLPRequest):
+            elif isinstance(request, FetchABLPInputRequest):
                 if request.server_slice is not None:
                     anchors, positive_labels, negative_labels = response
                     response = (
@@ -1056,7 +1055,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 [
                     (
                         0,
-                        FetchABLPRequest(
+                        FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
                             supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -1096,7 +1095,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 [
                     (
                         1,
-                        FetchABLPRequest(
+                        FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
                             supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -1172,7 +1171,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 [
                     (
                         0,
-                        FetchABLPRequest(
+                        FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
                             supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -1187,7 +1186,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                     ),
                     (
                         1,
-                        FetchABLPRequest(
+                        FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
                             supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -1236,7 +1235,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 [
                     (
                         1,
-                        FetchABLPRequest(
+                        FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
                             supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -1251,7 +1250,7 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                     ),
                     (
                         2,
-                        FetchABLPRequest(
+                        FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
                             supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,

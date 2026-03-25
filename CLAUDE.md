@@ -143,6 +143,19 @@ development.
 Add Google-style docstrings for all public functions and methods. Include: one-line summary, optional details, Example
 with `>>>` for doctests, Args, Returns, and Raises. Docstrings should be Sphinx-compatible.
 
+Separate independent statements in docstrings with blank lines. Each distinct idea (purpose, preconditions, side
+effects, caveats) should be its own line. For example:
+
+```python
+# Bad
+"""Computes the foo property of the baz object. Requires baz to be fooable."""
+
+# Good
+"""Computes the foo property of the baz object.
+Requires baz to be fooable.
+"""
+```
+
 ### Logging
 
 ```python
@@ -215,6 +228,11 @@ class TestMyComponent(TestCase):
 
 Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
 `tests/test_assets/configs/`.
+
+## Plan Documents
+
+Plan documents live in `docs/plans/` and must be date-prefixed using the format `YYYYMMDD-<short-description>.md` (e.g.,
+`20260324-add-foo-factory.md`). Use today's date at the time of creation.
 
 ## Additional instructions
 

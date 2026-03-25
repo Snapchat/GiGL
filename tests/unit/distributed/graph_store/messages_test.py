@@ -1,4 +1,7 @@
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from tests.test_assets.test_case import TestCase
@@ -45,7 +48,7 @@ class TestFetchNodesRequest(TestCase):
 
 class TestFetchABLPRequest(TestCase):
     def test_validate_accepts_rank_world_size(self) -> None:
-        request = FetchABLPRequest(
+        request = FetchABLPInputRequest(
             split="train",
             rank=0,
             world_size=2,
@@ -59,7 +62,7 @@ class TestFetchABLPRequest(TestCase):
         request.validate()
 
     def test_validate_accepts_server_slice(self) -> None:
-        request = FetchABLPRequest(
+        request = FetchABLPInputRequest(
             split="train",
             node_type=NodeType("user"),
             supervision_edge_type=EdgeType(
@@ -79,7 +82,7 @@ class TestFetchABLPRequest(TestCase):
 
     def test_validate_rejects_partial_rank_world_size(self) -> None:
         with self.assertRaises(ValueError):
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=0,
                 node_type=NodeType("user"),
@@ -91,7 +94,7 @@ class TestFetchABLPRequest(TestCase):
             ).validate()
 
         with self.assertRaises(ValueError):
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 world_size=2,
                 node_type=NodeType("user"),
@@ -104,7 +107,7 @@ class TestFetchABLPRequest(TestCase):
 
     def test_validate_rejects_mixed_sharding_modes(self) -> None:
         with self.assertRaises(ValueError):
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=0,
                 world_size=2,

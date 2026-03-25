@@ -9,7 +9,29 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 @dataclass(frozen=True)
 class FetchNodesRequest:
-    """Request for fetching node IDs from a storage server."""
+    """Request for fetching node IDs from a storage server.
+
+    Args:
+        rank: The rank of the process requesting node ids.
+            Must be provided together with ``world_size``.
+        world_size: The total number of processes in the distributed setup.
+            Must be provided together with ``rank``.
+        split: The split of the dataset to get node ids from.
+        node_type: The type of nodes to get node ids for.
+
+    Examples:
+        Fetch all nodes without sharding:
+
+        >>> FetchNodesRequest()
+
+        Fetch training nodes for rank 0 of 4:
+
+        >>> FetchNodesRequest(rank=0, world_size=4, split="train")
+
+        Fetch nodes of a specific type:
+
+        >>> FetchNodesRequest(node_type="user")
+    """
 
     rank: Optional[int] = None
     world_size: Optional[int] = None
@@ -31,7 +53,7 @@ class FetchNodesRequest:
 
 
 @dataclass(frozen=True)
-class FetchABLPRequest:
+class FetchABLPInputRequest:
     """Request for fetching ABLP input from a storage server."""
 
     split: Union[Literal["train", "val", "test"], str]

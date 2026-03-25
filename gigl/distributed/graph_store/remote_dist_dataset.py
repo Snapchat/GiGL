@@ -6,7 +6,10 @@ from graphlearn_torch.partition import PartitionBook
 from gigl.common.logger import Logger
 from gigl.distributed.graph_store.compute import async_request_server, request_server
 from gigl.distributed.graph_store.dist_server import DistServer
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.distributed.graph_store.sharding import (
     ServerSlice,
     ShardStrategy,
@@ -366,10 +369,10 @@ class RemoteDistDataset:
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
         # Build per-server requests
-        requests: dict[int, FetchABLPRequest] = {}
+        requests: dict[int, FetchABLPInputRequest] = {}
         if assignments is None:
             for server_rank in range(self.cluster_info.num_storage_nodes):
-                requests[server_rank] = FetchABLPRequest(
+                requests[server_rank] = FetchABLPInputRequest(
                     split=split,
                     rank=rank,
                     world_size=world_size,
@@ -378,7 +381,7 @@ class RemoteDistDataset:
                 )
         else:
             for server_rank, server_slice in assignments.items():
-                requests[server_rank] = FetchABLPRequest(
+                requests[server_rank] = FetchABLPInputRequest(
                     split=split,
                     node_type=node_type,
                     supervision_edge_type=supervision_edge_type,

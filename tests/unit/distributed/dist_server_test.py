@@ -2,7 +2,10 @@ import torch
 from absl.testing import absltest
 
 from gigl.distributed.graph_store import dist_server
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
@@ -85,7 +88,9 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Test with world_size=1, rank=0 (should get all nodes)
-        node_ids = server.get_node_ids(FetchNodesRequest(rank=0, world_size=1))
+        node_ids = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=1, node_type=None)
+        )
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
         self.assert_tensor_equality(node_ids, torch.arange(10))
@@ -121,17 +126,27 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Test with world_size=2
-        rank_0_nodes = server.get_node_ids(FetchNodesRequest(rank=0, world_size=2))
-        rank_1_nodes = server.get_node_ids(FetchNodesRequest(rank=1, world_size=2))
+        rank_0_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=2, node_type=None)
+        )
+        rank_1_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=1, world_size=2, node_type=None)
+        )
 
         # Verify each rank gets different nodes
         self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
         # Test with world_size=3 (uneven split)
-        rank_0_nodes = server.get_node_ids(FetchNodesRequest(rank=0, world_size=3))
-        rank_1_nodes = server.get_node_ids(FetchNodesRequest(rank=1, world_size=3))
-        rank_2_nodes = server.get_node_ids(FetchNodesRequest(rank=2, world_size=3))
+        rank_0_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=0, world_size=3, node_type=None)
+        )
+        rank_1_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=1, world_size=3, node_type=None)
+        )
+        rank_2_nodes = server.get_node_ids(
+            FetchNodesRequest(rank=2, world_size=3, node_type=None)
+        )
 
         self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
@@ -168,7 +183,7 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1))
+            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=None))
 
     def test_get_node_ids_with_train_split(self) -> None:
         """Test get_node_ids returns only training nodes when split='train'."""
@@ -390,7 +405,7 @@ class TestRemoteDataset(TestCase):
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
                 anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-                    FetchABLPRequest(
+                    FetchABLPInputRequest(
                         split=split,
                         rank=0,
                         world_size=1,
@@ -449,7 +464,7 @@ class TestRemoteDataset(TestCase):
         # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
         # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
         anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=0,
                 world_size=2,
@@ -460,7 +475,7 @@ class TestRemoteDataset(TestCase):
 
         # Get training input for rank 1 of 2
         anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=1,
                 world_size=2,
@@ -511,7 +526,7 @@ class TestRemoteDataset(TestCase):
 
         with self.assertRaises(ValueError):
             server.get_ablp_input(
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="invalid",
                     rank=0,
                     world_size=1,
@@ -544,7 +559,7 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=0,
                 world_size=1,
@@ -592,7 +607,7 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
@@ -626,7 +641,7 @@ class TestRemoteDataset(TestCase):
 
         with self.assertRaises(ValueError):
             server.get_ablp_input(
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="train",
                     rank=0,
                     world_size=1,

@@ -34,7 +34,11 @@ from graphlearn_torch.sampler import (
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
@@ -297,35 +301,77 @@ class DistServer:
             to sample neighbors during inference, as neighbor nodes may belong to any split.
         """
         request.validate()
-        if request.split == "train":
+        return self._get_node_ids(
+            split=request.split,
+            node_type=request.node_type,
+            rank=request.rank,
+            world_size=request.world_size,
+            server_slice=request.server_slice,
+        )
+
+    def _get_node_ids(
+        self,
+        split: Optional[Union[Literal["train", "val", "test"], str]],
+        node_type: Optional[NodeType],
+        rank: Optional[int] = None,
+        world_size: Optional[int] = None,
+        server_slice: Optional[ServerSlice] = None,
+    ) -> torch.Tensor:
+        """Core implementation for fetching node IDs by split, type, and sharding.
+
+        Args:
+            split: The dataset split to fetch from (``"train"``, ``"val"``,
+                ``"test"``, or ``None`` for all nodes).
+            node_type: The node type to select. Must be ``None`` for
+                homogeneous datasets.
+            rank: Round-robin rank for sharding. Must be provided together
+                with ``world_size``.
+            world_size: Total number of processes for sharding. Must be
+                provided together with ``rank``.
+
+        Returns:
+            The node IDs tensor, optionally sharded by rank.
+
+        Raises:
+            ValueError: If rank/world_size are not provided together, the
+                split is invalid, or the node type is inconsistent with
+                the dataset type (homogeneous vs. heterogeneous).
+        """
+        if (rank is None) ^ (world_size is None):
+            raise ValueError(
+                "rank and world_size must be provided together. "
+                f"Received rank={rank}, world_size={world_size}"
+            )
+
+        if split == "train":
             nodes = self.dataset.train_node_ids
-        elif request.split == "val":
+        elif split == "val":
             nodes = self.dataset.val_node_ids
-        elif request.split == "test":
+        elif split == "test":
             nodes = self.dataset.test_node_ids
-        elif request.split is None:
+        elif split is None:
             nodes = self.dataset.node_ids
         else:
             raise ValueError(
-                f"Invalid split: {request.split}. Must be one of 'train', 'val', 'test', or None."
+                f"Invalid split: {split}. Must be one of 'train', 'val', 'test', or None."
             )
 
-        if request.node_type is not None:
+        if node_type is not None:
             if not isinstance(nodes, abc.Mapping):
                 raise ValueError(
-                    f"node_type was provided as {request.node_type}, so node ids must be a dict[NodeType, torch.Tensor] "
+                    f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] "
                     f"(e.g. a heterogeneous dataset), got {type(nodes)}"
                 )
-            nodes = nodes[request.node_type]
+            nodes = nodes[node_type]
         elif not isinstance(nodes, torch.Tensor):
             raise ValueError(
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
             )
 
-        if request.server_slice is not None:
-            return request.server_slice.slice_tensor(nodes)
-        if request.rank is not None and request.world_size is not None:
-            return shard_nodes_by_process(nodes, request.rank, request.world_size)
+        if server_slice is not None:
+            return server_slice.slice_tensor(nodes)
+        if rank is not None and world_size is not None:
+            return shard_nodes_by_process(nodes, rank, world_size)
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -352,7 +398,7 @@ class DistServer:
 
     def get_ablp_input(
         self,
-        request: FetchABLPRequest,
+        request: FetchABLPInputRequest,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
 
@@ -361,8 +407,7 @@ class DistServer:
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and either round-robin rank/world_size
-                or a contiguous slice.
+                supervision edge type, and round-robin rank/world_size.
 
         Returns:
             A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
@@ -374,14 +419,12 @@ class DistServer:
             ValueError: If the split is invalid.
         """
         request.validate()
-        anchors = self.get_node_ids(
-            FetchNodesRequest(
-                split=request.split,
-                rank=request.rank,
-                world_size=request.world_size,
-                node_type=request.node_type,
-                server_slice=request.server_slice,
-            )
+        anchors = self._get_node_ids(
+            split=request.split,
+            node_type=request.node_type,
+            rank=request.rank,
+            world_size=request.world_size,
+            server_slice=request.server_slice,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
