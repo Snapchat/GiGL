@@ -22,6 +22,7 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
+CPP_SOURCES:=$(shell find gigl -name "*.cpp")
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -49,6 +50,7 @@ install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
+	bash ./requirements/install_cpp_deps.sh
 	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
@@ -94,7 +96,12 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-unit_test: precondition_tests unit_test_py unit_test_scala
+unit_test_cpp:
+	cmake -S tests/unit/cpp -B build/cpp_tests
+	cmake --build build/cpp_tests --parallel
+	ctest --test-dir build/cpp_tests --output-on-failure
+
+unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
 check_format_py:
 	uv run autoflake --check --config pyproject.toml ${PYTHON_DIRS}
@@ -109,7 +116,10 @@ check_format_md:
 	@echo "Checking markdown files..."
 	uv run mdformat --check ${MD_FILES}
 
-check_format: check_format_py check_format_scala check_format_md
+check_format_cpp:
+	clang-format --dry-run --Werror --style=file $(CPP_SOURCES)
+
+check_format: check_format_py check_format_scala check_format_md check_format_cpp
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
@@ -143,12 +153,19 @@ format_md:
 	@echo "Formatting markdown files..."
 	uv run mdformat ${MD_FILES}
 
-format: format_py format_scala format_md
+format_cpp:
+	clang-format -i --style=file $(CPP_SOURCES)
+
+format: format_py format_scala format_md format_cpp
 
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-lint_test: check_format assert_yaml_configs_parse
+lint_cpp: build_cpp_extensions
+	uv run python scripts/generate_compile_commands.py
+	clang-tidy -p build/compile_commands.json $(CPP_SOURCES)
+
+lint_test: check_format assert_yaml_configs_parse lint_cpp
 	@echo "Lint checks pass!"
 
 # compiles current working state of scala projects to local jars
@@ -313,7 +330,10 @@ clean_build_files_scala:
 	( cd scala; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 	( cd scala_spark35; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 
-clean_build_files: clean_build_files_py clean_build_files_scala
+clean_build_files_cpp:
+	rm -rf build/
+
+clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
 
 # Call to generate new proto definitions if any of the .proto files have been changed.
 # We intentionally rebuild *all* protos with one commmand as they should all be in sync.

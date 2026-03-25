@@ -1,0 +1,37 @@
+# clang-tidy configuration for GiGL C++ sources.
+# Run:  clang-tidy -p build/compile_commands.json <file>
+#
+# Checks are opt-in by prefix.  Each line below enables (*) or disables (-)
+# a category.  More specific patterns override broader ones.
+
+Checks: >
+  clang-analyzer-*,
+  bugprone-use-after-move,
+  bugprone-incorrect-roundings,
+  bugprone-integer-division,
+  bugprone-signed-char-misuse,
+  bugprone-suspicious-memset-usage,
+  modernize-use-nullptr,
+  modernize-loop-convert,
+  modernize-use-override,
+  performance-unnecessary-value-param,
+  performance-unnecessary-copy-initialization,
+  readability-const-return-type,
+  -bugprone-easily-swappable-parameters,
+  -clang-analyzer-optin.cplusplus.UninitializedObject,
+  -modernize-use-trailing-return-type
+
+# Treat every enabled warning as an error so the build fails loudly.
+WarningsAsErrors: "*"
+
+# Only apply header-file checks to GiGL-owned headers, not third-party
+# (torch, pybind11) headers pulled in by includes.
+HeaderFilterRegex: "gigl/.*"
+
+# Per-check configuration options.
+CheckOptions:
+  # Enforce lower_case naming for local variables (matches existing style).
+  - key:   readability-identifier-naming.LocalVariableCase
+    value: lower_case
+  - key:   readability-identifier-naming.ParameterCase
+    value: lower_case

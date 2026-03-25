@@ -1,0 +1,31 @@
+# clang-format configuration for GiGL C++ sources.
+# Run:  clang-format -i <file>       (format in-place)
+#       clang-format --dry-run --Werror <file>  (check only)
+BasedOnStyle: Google
+
+# Match the 100-column limit used for Python throughout the codebase.
+ColumnLimit: 100
+
+# 4-space indentation (Google style defaults to 2; override to match existing code).
+IndentWidth: 4
+ContinuationIndentWidth: 4
+
+# Align consecutive = signs in variable declarations for readability.
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+
+# Keep short functions on one line only when they are truly trivial (getters/setters).
+AllowShortFunctionsOnASingleLine: Inline
+
+# Never put if/else/loop bodies on the same line as the condition.
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Always break before the opening brace of a namespace, class, or function body.
+BreakBeforeBraces: Attach
+
+# Sort #include blocks: standard library first, then project headers.
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
