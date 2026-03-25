@@ -257,6 +257,20 @@ def _create_user_graph_with_pe() -> HeteroData:
     return data
 
 
+def _create_user_graph_with_ppr_edges() -> HeteroData:
+    data = HeteroData()
+
+    data["user"].x = torch.tensor(
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+    )
+    data["user", "ppr", "user"].edge_index = torch.tensor([[0, 0, 1], [1, 2, 2]])
+    data["user", "ppr", "user"].edge_attr = torch.tensor([0.9, 0.4, 0.7])
+    hop_distance = torch.tensor([[0.0, 1.0, 2.0], [1.0, 0.0, 1.0], [2.0, 1.0, 0.0]])
+    data.hop_distance = hop_distance.to_sparse_csr()
+
+    return data
+
+
 class TestGraphTransformerEncoderPEModes(TestCase):
     def setUp(self) -> None:
         self._node_type = NodeType("user")
@@ -328,8 +342,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
 
         encoder = self._create_encoder(
             pe_attr_names=["random_walk_pe"],
-            anchor_based_pe_attr_names=["hop_distance"],
-            pairwise_pe_attr_names=["pairwise_distance"],
+            anchor_based_attention_bias_attr_names=["hop_distance"],
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
             pe_integration_mode="add",
         )
         encoder.eval()
@@ -365,8 +379,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
 
     def test_attention_bias_features_are_projected_per_head(self) -> None:
         encoder = self._create_encoder(
-            anchor_based_pe_attr_names=["hop_distance"],
-            pairwise_pe_attr_names=["pairwise_distance"],
+            anchor_based_attention_bias_attr_names=["hop_distance"],
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
         )
 
         assert encoder._anchor_pe_attention_bias_projection is not None
@@ -402,6 +416,189 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 8.0)
         self.assertEqual(attn_bias[0, 0, 2, 2].item(), 27.0)
         self.assertEqual(attn_bias[0, 1, 2, 2].item(), 38.0)
+
+    def test_attention_bias_supports_anchor_relative_attrs_and_ppr_weights(
+        self,
+    ) -> None:
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={
+                EdgeType(self._node_type, Relation("ppr"), self._node_type): 0
+            },
+            sequence_construction_method="ppr",
+            anchor_based_attention_bias_attr_names=["hop_distance", "ppr_weight"],
+        )
+
+        assert encoder._anchor_pe_attention_bias_projection is not None
+
+        with torch.no_grad():
+            encoder._anchor_pe_attention_bias_projection.weight.copy_(
+                torch.tensor([[1.0, 10.0], [2.0, 20.0]])
+            )
+
+            attn_bias = encoder._build_attention_bias(
+                valid_mask=torch.ones((1, 3), dtype=torch.bool),
+                sequences=torch.zeros((1, 3, 8), dtype=torch.float),
+                attention_bias_data={
+                    "anchor_bias": torch.tensor(
+                        [[[1.0, 0.5], [2.0, 0.25], [3.0, 0.125]]]
+                    ),
+                    "pairwise_bias": None,
+                    "token_input": None,
+                },
+            )
+
+        self.assertEqual(attn_bias.shape, (1, 2, 3, 3))
+        self.assertEqual(attn_bias[0, 0, 0, 1].item(), 4.5)
+        self.assertEqual(attn_bias[0, 1, 0, 1].item(), 9.0)
+        self.assertEqual(attn_bias[0, 0, 2, 2].item(), 4.25)
+        self.assertEqual(attn_bias[0, 1, 2, 2].item(), 8.5)
+
+    def test_sinusoidal_sequence_positional_encoding_masks_padding(self) -> None:
+        encoder = self._create_encoder(
+            sequence_positional_encoding_type="sinusoidal",
+        )
+
+        sequence_positional_encoding = encoder._get_sequence_positional_encoding(
+            valid_mask=torch.tensor([[True, True, False, False]]),
+            sequences=torch.zeros((1, 4, 8), dtype=torch.float),
+        )
+
+        assert sequence_positional_encoding is not None
+        expected_position_zero = torch.tensor(
+            [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            dtype=torch.float,
+        )
+        self.assertEqual(sequence_positional_encoding.shape, (1, 4, 8))
+        self.assertTrue(
+            torch.allclose(sequence_positional_encoding[0, 0], expected_position_zero)
+        )
+        self.assertFalse(
+            torch.allclose(
+                sequence_positional_encoding[0, 1],
+                torch.zeros(8, dtype=torch.float),
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                sequence_positional_encoding[0, 2:],
+                torch.zeros((2, 8), dtype=torch.float),
+            )
+        )
+
+    def test_forward_supports_ppr_sequence_construction(self) -> None:
+        data = _create_user_graph_with_ppr_edges()
+
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={
+                EdgeType(self._node_type, Relation("ppr"), self._node_type): 0
+            },
+            sequence_construction_method="ppr",
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(embeddings.shape, (3, 6))
+        self.assertFalse(torch.isnan(embeddings).any())
+
+    def test_forward_supports_sinusoidal_sequence_position_encoding_in_ppr_mode(
+        self,
+    ) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={
+                EdgeType(self._node_type, Relation("ppr"), self._node_type): 0
+            },
+            sequence_construction_method="ppr",
+            sequence_positional_encoding_type="sinusoidal",
+            anchor_based_attention_bias_attr_names=["hop_distance", "ppr_weight"],
+            anchor_based_input_attr_names=["hop_distance", "ppr_weight"],
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            _ = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            assert encoder._sequence_positional_encoding_table is not None
+            original_position_table = (
+                encoder._sequence_positional_encoding_table.detach().clone()
+            )
+
+            embeddings_with_position_encoding = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            encoder._sequence_positional_encoding_table.zero_()
+            embeddings_without_position_encoding = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            encoder._sequence_positional_encoding_table.copy_(original_position_table)
+
+        self.assertEqual(embeddings_with_position_encoding.shape, (3, 6))
+        self.assertFalse(torch.isnan(embeddings_with_position_encoding).any())
+        self.assertFalse(
+            torch.allclose(
+                embeddings_with_position_encoding,
+                embeddings_without_position_encoding,
+            )
+        )
+
+    def test_forward_supports_anchor_relative_and_ppr_token_input_features(
+        self,
+    ) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        base_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+        )
+        augmented_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+            anchor_based_input_attr_names=["hop_distance", "ppr_weight"],
+        )
+        augmented_encoder.load_state_dict(base_encoder.state_dict(), strict=False)
+
+        base_encoder.eval()
+        augmented_encoder.eval()
+
+        with torch.no_grad():
+            _ = augmented_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            assert augmented_encoder._token_input_projection is not None
+            assert isinstance(augmented_encoder._token_input_projection, nn.Linear)
+            augmented_encoder._token_input_projection.weight.data.zero_()
+
+            base_embeddings = base_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            augmented_embeddings = augmented_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(augmented_embeddings.shape, (3, 6))
+        self.assertTrue(
+            torch.allclose(base_embeddings, augmented_embeddings, atol=1e-6)
+        )
 
 
 class TestFeedForwardNetwork(TestCase):

@@ -11,6 +11,7 @@ Conforms to the same forward interface as ``HGT`` and ``SimpleHGN`` in
 replacement as the encoder in ``LinkPredictionGNN``.
 """
 
+import math
 from typing import Callable, Literal, Optional, cast
 
 import torch
@@ -20,7 +21,10 @@ import torch_geometric.data.hetero_data
 from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.transforms.graph_transformer import heterodata_to_graph_transformer_input
+from gigl.transforms.graph_transformer import (
+    PPR_WEIGHT_FEATURE_NAME,
+    heterodata_to_graph_transformer_input,
+)
 
 
 def _get_node_type_positional_encodings(
@@ -52,6 +56,25 @@ def _get_node_type_positional_encodings(
         pe_parts.append(torch.zeros(node_store.num_nodes, attr_dim, device=device))
 
     return torch.cat(pe_parts, dim=-1)
+
+
+def _build_sinusoidal_sequence_position_table(
+    max_seq_len: int,
+    hid_dim: int,
+) -> Tensor:
+    """Build a standard sinusoidal absolute position table."""
+    positions = torch.arange(max_seq_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(
+        torch.arange(0, hid_dim, 2, dtype=torch.float) * (-math.log(10000.0) / hid_dim)
+    )
+
+    position_table = torch.zeros(max_seq_len, hid_dim, dtype=torch.float)
+    position_table[:, 0::2] = torch.sin(positions * div_term)
+    if hid_dim > 1:
+        position_table[:, 1::2] = torch.cos(
+            positions * div_term[: position_table[:, 1::2].shape[1]]
+        )
+    return position_table
 
 
 # Supported activation functions for FeedForwardNetwork
@@ -364,7 +387,16 @@ class GraphTransformerEncoder(nn.Module):
         max_seq_len: Maximum sequence length for the graph-to-sequence
             transform. Neighborhoods are truncated to this length.
         hop_distance: Number of hops for neighborhood extraction in the
-            graph-to-sequence transform.
+            graph-to-sequence transform when using ``"khop"`` sequence construction.
+        sequence_construction_method: Sequence builder used to create tokens for
+            each anchor. ``"khop"`` expands the sampled graph by hop distance,
+            while ``"ppr"`` consumes outgoing ``"ppr"`` edges sorted by weight.
+        sequence_positional_encoding_type: Optional sequence-level positional
+            encoding applied after sequence construction. Supported values are
+            ``None`` and ``"sinusoidal"``. Lower-cost future extensions could
+            add learned absolute position embeddings here, while attention-level
+            options like RoPE or ALiBi would require changes inside the
+            attention block.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
         should_l2_normalize_embedding_layer_output: Whether to L2 normalize
@@ -373,14 +405,18 @@ class GraphTransformerEncoder(nn.Module):
             In ``"concat"`` mode these are concatenated to sequence features.
             In ``"add"`` mode they are projected to ``hid_dim`` and added to
             node features before sequence construction.
-        anchor_based_pe_attr_names: List of relative-encoding attribute names
-            containing sparse (N x N) matrices for anchor-relative positional
-            encodings.
-            These are used as additive attention bias for sequence keys.
-        pairwise_pe_attr_names: List of relative-encoding attribute names
-            containing sparse (N x N) matrices for pairwise relative encodings
-            between sequence nodes. These are used as additive attention bias
-            and can be combined with anchor-relative bias in the same model.
+        anchor_based_attention_bias_attr_names: List of anchor-relative feature
+            names used as additive attention bias for sequence keys. Sparse
+            graph-level attributes are looked up from ``data`` and the reserved
+            name ``"ppr_weight"`` resolves to PPR edge weights in PPR mode.
+        anchor_based_input_attr_names: List of anchor-relative attribute names
+            used as token-aligned input features. Sparse graph-level attributes
+            are looked up from ``data`` and ``"ppr_weight"`` resolves to PPR
+            edge weights in PPR mode. These are projected to ``hid_dim`` and
+            added to the sequence tokens after sequence construction.
+        pairwise_attention_bias_attr_names: List of pairwise feature names used
+            as additive attention bias. These must correspond to sparse
+            graph-level attributes on ``data``.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
@@ -436,12 +472,15 @@ class GraphTransformerEncoder(nn.Module):
         num_heads: int = 2,
         max_seq_len: int = 128,
         hop_distance: int = 2,
+        sequence_construction_method: Literal["khop", "ppr"] = "khop",
+        sequence_positional_encoding_type: Optional[str] = None,
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         should_l2_normalize_embedding_layer_output: bool = False,
         pe_attr_names: Optional[list[str]] = None,
-        anchor_based_pe_attr_names: Optional[list[str]] = None,
-        pairwise_pe_attr_names: Optional[list[str]] = None,
+        anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
+        anchor_based_input_attr_names: Optional[list[str]] = None,
+        pairwise_attention_bias_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -461,15 +500,68 @@ class GraphTransformerEncoder(nn.Module):
         self._out_dim = out_dim
         self._max_seq_len = max_seq_len
         self._hop_distance = hop_distance
+        if sequence_construction_method not in {"khop", "ppr"}:
+            raise ValueError(
+                "sequence_construction_method must be one of {'khop', 'ppr'}, "
+                f"got '{sequence_construction_method}'"
+            )
+        if sequence_positional_encoding_type is not None:
+            sequence_positional_encoding_type = (
+                sequence_positional_encoding_type.lower()
+            )
+            if sequence_positional_encoding_type == "none":
+                sequence_positional_encoding_type = None
+        if sequence_positional_encoding_type not in {None, "sinusoidal"}:
+            raise ValueError(
+                "sequence_positional_encoding_type must be one of "
+                "{None, 'sinusoidal'}, "
+                f"got '{sequence_positional_encoding_type}'"
+            )
+        anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
+        anchor_input_attr_names = anchor_based_input_attr_names or []
+        pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
+        if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
+            raise ValueError(
+                f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and "
+                "cannot be used as pairwise attention bias."
+            )
+        if (
+            PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
+            and sequence_construction_method != "ppr"
+        ):
+            raise ValueError(
+                "The reserved anchor-relative feature 'ppr_weight' requires "
+                "sequence_construction_method='ppr'."
+            )
+        self._sequence_construction_method = sequence_construction_method
+        self._sequence_positional_encoding_type = sequence_positional_encoding_type
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
         )
         self._pe_attr_names = pe_attr_names
-        self._anchor_based_pe_attr_names = anchor_based_pe_attr_names
-        self._pairwise_pe_attr_names = pairwise_pe_attr_names
+        self._anchor_based_attention_bias_attr_names = (
+            anchor_based_attention_bias_attr_names
+        )
+        self._anchor_based_input_attr_names = anchor_based_input_attr_names
+        self._pairwise_attention_bias_attr_names = pairwise_attention_bias_attr_names
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
+        if self._sequence_positional_encoding_type == "sinusoidal":
+            self.register_buffer(
+                "_sequence_positional_encoding_table",
+                _build_sinusoidal_sequence_position_table(
+                    max_seq_len=max_seq_len,
+                    hid_dim=hid_dim,
+                ),
+                persistent=False,
+            )
+        else:
+            self.register_buffer(
+                "_sequence_positional_encoding_table",
+                None,
+                persistent=False,
+            )
 
         # Per-node-type input projection to hid_dim (like HGT's lin_dict)
         self._node_projection_dict = nn.ModuleDict(
@@ -483,25 +575,31 @@ class GraphTransformerEncoder(nn.Module):
         # In "concat" mode: projects [node_features || PE] → hid_dim
         # In "add" mode: projects PE → hid_dim, then adds to node features
         self._concat_pe_fusion_projection: Optional[nn.Module] = None
-        if pe_integration_mode == "concat" and pe_attr_names:
+        has_node_level_pe = bool(pe_attr_names)
+        if pe_integration_mode == "concat" and has_node_level_pe:
             self._concat_pe_fusion_projection = nn.LazyLinear(hid_dim)
 
         self._pe_projection: Optional[nn.Module] = None
-        if pe_integration_mode == "add" and pe_attr_names:
+        if pe_integration_mode == "add" and has_node_level_pe:
             self._pe_projection = nn.LazyLinear(hid_dim, bias=False)
 
+        self._token_input_projection: Optional[nn.Module] = None
+        if self._anchor_based_input_attr_names:
+            self._token_input_projection = nn.LazyLinear(hid_dim, bias=False)
+
         self._anchor_pe_attention_bias_projection: Optional[nn.Linear] = None
-        if anchor_based_pe_attr_names:
+        num_anchor_bias_attrs = len(self._anchor_based_attention_bias_attr_names or [])
+        if num_anchor_bias_attrs > 0:
             self._anchor_pe_attention_bias_projection = nn.Linear(
-                len(anchor_based_pe_attr_names),
+                num_anchor_bias_attrs,
                 num_heads,
                 bias=False,
             )
 
         self._pairwise_pe_attention_bias_projection: Optional[nn.Linear] = None
-        if pairwise_pe_attr_names:
+        if self._pairwise_attention_bias_attr_names:
             self._pairwise_pe_attention_bias_projection = nn.Linear(
-                len(pairwise_pe_attr_names),
+                len(self._pairwise_attention_bias_attr_names),
                 num_heads,
                 bias=False,
             )
@@ -572,21 +670,29 @@ class GraphTransformerEncoder(nn.Module):
         projected_x_dict: dict[NodeType, torch.Tensor] = {}
         for node_type, x in data.x_dict.items():
             x_processed = x.to(device)
+            feature_embedding_layer = None
+            if (
+                self._feature_embedding_layer_dict is not None
+                and node_type in self._feature_embedding_layer_dict
+            ):
+                feature_embedding_layer = self._feature_embedding_layer_dict[node_type]
             # Apply feature embedding if available for this node type
-            if self._feature_embedding_layer_dict is not None:
-                if node_type in self._feature_embedding_layer_dict:
-                    x_processed = self._feature_embedding_layer_dict[node_type](
-                        x_processed
-                    )
+            if feature_embedding_layer is not None:
+                x_processed = feature_embedding_layer(x_processed)
             # Project to hid_dim
             x_projected = self._node_projection_dict[str(node_type)](x_processed)
+            node_pe_parts = []
             if self._pe_attr_names:
-                node_pe = _get_node_type_positional_encodings(
-                    data=data,
-                    node_type=node_type,
-                    pe_attr_names=self._pe_attr_names,
-                    device=device,
+                node_pe_parts.append(
+                    _get_node_type_positional_encodings(
+                        data=data,
+                        node_type=node_type,
+                        pe_attr_names=self._pe_attr_names,
+                        device=device,
+                    )
                 )
+            if node_pe_parts:
+                node_pe = torch.cat(node_pe_parts, dim=-1)
                 if self._pe_integration_mode == "add":
                     if self._pe_projection is None:
                         raise ValueError("PE projection layer is not initialized.")
@@ -610,9 +716,17 @@ class GraphTransformerEncoder(nn.Module):
                 projected_data[node_type].batch_size = data[node_type].batch_size
         for edge_type in data.edge_types:
             projected_data[edge_type].edge_index = data[edge_type].edge_index
+            if hasattr(data[edge_type], "edge_attr"):
+                projected_data[edge_type].edge_attr = data[edge_type].edge_attr
         # Copy relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
-        relative_pe_attr_names = set(self._anchor_based_pe_attr_names or [])
-        relative_pe_attr_names.update(self._pairwise_pe_attr_names or [])
+        relative_pe_attr_names = {
+            attr_name
+            for attr_name in (self._anchor_based_attention_bias_attr_names or [])
+            if attr_name != PPR_WEIGHT_FEATURE_NAME
+        }
+        relative_pe_attr_names.update(self._anchor_based_input_attr_names or [])
+        relative_pe_attr_names.update(self._pairwise_attention_bias_attr_names or [])
+        relative_pe_attr_names.discard(PPR_WEIGHT_FEATURE_NAME)
         if relative_pe_attr_names:
             for attr_name in sorted(relative_pe_attr_names):
                 if hasattr(data, attr_name):
@@ -632,7 +746,7 @@ class GraphTransformerEncoder(nn.Module):
         (
             sequences,
             valid_mask,
-            attention_bias_data,
+            sequence_auxiliary_data,
         ) = heterodata_to_graph_transformer_input(
             data=projected_data,
             batch_size=num_anchor_nodes,
@@ -640,8 +754,10 @@ class GraphTransformerEncoder(nn.Module):
             anchor_node_type=anchor_node_type,
             anchor_node_ids=anchor_node_ids,
             hop_distance=self._hop_distance,
-            anchor_based_pe_attr_names=self._anchor_based_pe_attr_names,
-            pairwise_pe_attr_names=self._pairwise_pe_attr_names,
+            sequence_construction_method=self._sequence_construction_method,
+            anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
+            anchor_based_input_attr_names=self._anchor_based_input_attr_names,
+            pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
         )
 
         # Free memory after sequences are built
@@ -653,10 +769,25 @@ class GraphTransformerEncoder(nn.Module):
                 f"got {sequences.size(-1)}."
             )
 
+        token_input_features = sequence_auxiliary_data.get("token_input")
+        if token_input_features is not None:
+            if self._token_input_projection is None:
+                raise ValueError("Token-input projection is not initialized.")
+            sequences = sequences + self._token_input_projection(
+                token_input_features.to(sequences.dtype)
+            )
+
+        sequence_positional_encoding = self._get_sequence_positional_encoding(
+            valid_mask=valid_mask,
+            sequences=sequences,
+        )
+        if sequence_positional_encoding is not None:
+            sequences = sequences + sequence_positional_encoding
+
         attn_bias = self._build_attention_bias(
             valid_mask=valid_mask,
             sequences=sequences,
-            attention_bias_data=attention_bias_data,
+            attention_bias_data=sequence_auxiliary_data,
         )
 
         embeddings = self._encode_and_readout(
@@ -670,6 +801,38 @@ class GraphTransformerEncoder(nn.Module):
             embeddings = F.normalize(embeddings, p=2, dim=-1)
 
         return embeddings
+
+    def _get_sequence_positional_encoding(
+        self,
+        valid_mask: Tensor,
+        sequences: Tensor,
+    ) -> Optional[Tensor]:
+        if self._sequence_positional_encoding_type is None:
+            return None
+        if self._sequence_positional_encoding_type != "sinusoidal":
+            raise ValueError(
+                "Unsupported sequence_positional_encoding_type "
+                f"'{self._sequence_positional_encoding_type}'."
+            )
+        if self._sequence_positional_encoding_table is None:
+            raise ValueError("Sequence positional encoding table is not initialized.")
+
+        seq_len = sequences.size(1)
+        if seq_len > self._sequence_positional_encoding_table.size(0):
+            raise ValueError(
+                f"Sequence length {seq_len} exceeds configured max_seq_len "
+                f"{self._sequence_positional_encoding_table.size(0)}."
+            )
+
+        position_encoding = self._sequence_positional_encoding_table[:seq_len]
+        position_encoding = position_encoding.to(
+            device=sequences.device,
+            dtype=sequences.dtype,
+        )
+        position_encoding = position_encoding.unsqueeze(0).expand(
+            sequences.size(0), -1, -1
+        )
+        return position_encoding * valid_mask.unsqueeze(-1).to(sequences.dtype)
 
     def _build_attention_bias(
         self,

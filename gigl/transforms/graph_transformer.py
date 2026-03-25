@@ -1,4 +1,3 @@
-# TODO: support RW sampling, edges from data.ppr_edge, data.ppr_weights
 """
 Transform HeteroData to Graph Transformer sequence input.
 
@@ -52,21 +51,22 @@ Example Usage:
     ...     batch_size=32,
     ...     max_seq_len=128,
     ...     anchor_node_type='user',
-    ...     anchor_based_pe_attr_names=['hop_distance'],  # Anchor-based PE (N×N sparse CSR)
+    ...     anchor_based_attention_bias_attr_names=['hop_distance'],
     ... )
     >>> # sequences: (batch_size, max_seq_len, feature_dim)
     >>> # attention_bias_data['anchor_bias']: (batch_size, max_seq_len, 1)
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 from torch import Tensor
-from torch_geometric.data import HeteroData
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
-AttentionBiasData = dict[str, Optional[Tensor]]
+SequenceAuxiliaryData = dict[str, Optional[Tensor]]
+PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 
 
 def heterodata_to_graph_transformer_input(
@@ -76,11 +76,13 @@ def heterodata_to_graph_transformer_input(
     anchor_node_type: NodeType,
     anchor_node_ids: Optional[Tensor] = None,
     hop_distance: int = 2,
+    sequence_construction_method: Literal["khop", "ppr"] = "khop",
     include_anchor_first: bool = True,
     padding_value: float = 0.0,
-    anchor_based_pe_attr_names: Optional[list[str]] = None,
-    pairwise_pe_attr_names: Optional[list[str]] = None,
-) -> tuple[Tensor, Tensor, AttentionBiasData]:
+    anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
+    anchor_based_input_attr_names: Optional[list[str]] = None,
+    pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
 
@@ -100,20 +102,27 @@ def heterodata_to_graph_transformer_input(
         anchor_node_type: The node type of anchor nodes.
         anchor_node_ids: Optional tensor of local node indices within anchor_node_type
             to use as anchors. If None, uses first batch_size nodes. (default: None)
-        hop_distance: Number of hops to consider for neighborhood (default: 2).
+        hop_distance: Number of hops to consider for neighborhood when
+            ``sequence_construction_method="khop"``. (default: 2)
+        sequence_construction_method: Strategy used to build per-anchor sequences.
+            ``"khop"`` performs the existing k-hop expansion over the sampled graph.
+            ``"ppr"`` uses outgoing ``(anchor_type, "ppr", neighbor_type)`` edges,
+            sorted by descending PPR weight from ``edge_attr``. (default: ``"khop"``)
         include_anchor_first: If True, anchor node is always first in sequence.
         padding_value: Value to use for padding (default: 0.0).
-        anchor_based_pe_attr_names: List of relative-encoding attribute names
-            containing sparse (N x N) matrices for anchor-relative positional
-            encodings.
-            For each node in the sequence, the value PE[anchor_idx, node_idx] is
-            looked up and returned as attention-bias features.
-            Examples: ['hop_distance'] (from AddHeteroHopDistanceEncoding)
-            If None, no anchor-based PEs are attached. (default: None)
-        pairwise_pe_attr_names: List of relative-encoding attribute names
-            containing sparse (N x N) matrices for pairwise relative encodings.
-            For each pair of sequence nodes (i, j), the value PE[node_i, node_j]
-            is looked up and returned as attention-bias features. (default: None)
+        anchor_based_attention_bias_attr_names: List of anchor-relative feature
+            names used as attention bias. Sparse graph-level attributes are
+            looked up from ``data`` and the reserved name ``"ppr_weight"``
+            resolves to PPR edge weights in PPR sequence mode.
+            Example: ['hop_distance', 'ppr_weight'].
+        anchor_based_input_attr_names: List of anchor-relative attribute names
+            returned as token-aligned model-input features. Sparse graph-level
+            attributes are looked up from ``data`` and ``"ppr_weight"`` resolves
+            to PPR edge weights in PPR sequence mode.
+            Example: ['hop_distance', 'ppr_weight'].
+        pairwise_attention_bias_attr_names: List of pairwise feature names used
+            as attention bias. These must correspond to sparse graph-level
+            attributes on ``data``. Example: ['pairwise_distance'].
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -121,10 +130,13 @@ def heterodata_to_graph_transformer_input(
                 taken directly from ``data[node_type].x`` in homogeneous order.
             valid_mask: (batch_size, max_seq_len) bool tensor indicating which
                 sequence positions correspond to real nodes.
-            attention_bias_data: dictionary of raw attention-bias features with:
+            sequence_auxiliary_data: dictionary of raw token-aligned and
+                attention-bias features with:
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
+                ``"token_input"`` shaped
+                ``(batch, seq, num_token_input_attrs)`` or None
 
     Raises:
         ValueError: If node types have different feature dimensions.
@@ -160,73 +172,115 @@ def heterodata_to_graph_transformer_input(
             f"Found different dimensions: {feature_dims}"
         )
 
+    anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
+    anchor_input_attr_names = anchor_based_input_attr_names or []
+    pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
+
+    if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
+        raise ValueError(
+            f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and cannot "
+            "be used as pairwise attention bias."
+        )
+
+    if (
+        PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
+        and sequence_construction_method != "ppr"
+    ):
+        raise ValueError(
+            "The reserved anchor-relative feature 'ppr_weight' requires "
+            "sequence_construction_method='ppr'."
+        )
+
+    if sequence_construction_method == "ppr":
+        _validate_ppr_sequence_input(data)
+
     device = data[anchor_node_type].x.device
 
     # Convert to homogeneous for easier neighborhood extraction
     homo_data = data.to_homogeneous()
     homo_x = homo_data.x  # (total_nodes, feature_dim)
-    homo_edge_index = homo_data.edge_index  # (2, num_edges)
 
     num_nodes = homo_data.num_nodes
 
-    # Get node type to index mapping (sorted alphabetically)
-    sorted_node_types = sorted(data.node_types)
+    # Match the node-type ordering used by to_homogeneous() so homogeneous
+    # indices line up with homo_x / homo_edge_index.
+    node_type_order = list(getattr(homo_data, "_node_type_names", data.node_types))
+    node_type_offsets = _get_node_type_offsets(
+        data=data, node_type_order=node_type_order
+    )
 
     # Find offset for anchor_node_type in homogeneous graph
-    # Nodes are ordered by node_type (alphabetically), then by original index
-    offset = 0
-    for nt in sorted_node_types:
-        if nt == anchor_node_type:
-            break
-        offset += data[nt].num_nodes
+    # Nodes are ordered by the homogeneous node-type order, then by original index.
+    offset = node_type_offsets[anchor_node_type]
 
     # Determine anchor indices in homogeneous graph
     if anchor_node_ids is not None:
         # Use provided local indices, convert to homogeneous indices
-        anchor_indices = offset + anchor_node_ids.to(device)
+        anchor_local_indices = anchor_node_ids.to(device)
     else:
         # Default: first batch_size nodes of anchor_node_type
-        anchor_indices = torch.arange(offset, offset + batch_size, device=device)
+        anchor_local_indices = torch.arange(batch_size, device=device)
+    anchor_indices = offset + anchor_local_indices
 
-    # Use sparse matrix operations for efficient k-hop neighbor extraction
-    # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
-    reachable = _get_k_hop_neighbors_sparse(
-        anchor_indices=anchor_indices,
-        edge_index=homo_edge_index,
-        num_nodes=num_nodes,
-        k=hop_distance,
-        device=device,
+    ppr_weight_sequences: Optional[Tensor] = None
+    if sequence_construction_method == "khop":
+        homo_edge_index = homo_data.edge_index  # (2, num_edges)
+        # Use sparse matrix operations for efficient k-hop neighbor extraction
+        # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
+        reachable = _get_k_hop_neighbors_sparse(
+            anchor_indices=anchor_indices,
+            edge_index=homo_edge_index,
+            num_nodes=num_nodes,
+            k=hop_distance,
+            device=device,
+        )
+        node_index_sequences, valid_mask = _build_sequence_layout_from_sparse_neighbors(
+            reachable=reachable,
+            anchor_indices=anchor_indices,
+            max_seq_len=max_seq_len,
+            include_anchor_first=include_anchor_first,
+            device=device,
+        )
+    elif sequence_construction_method == "ppr":
+        (
+            node_index_sequences,
+            valid_mask,
+            ppr_weight_sequences,
+        ) = _build_sequence_layout_from_ppr_edges(
+            homo_data=homo_data,
+            anchor_indices=anchor_indices,
+            max_seq_len=max_seq_len,
+            include_anchor_first=include_anchor_first,
+            num_nodes=num_nodes,
+            device=device,
+            return_edge_weights=(
+                PPR_WEIGHT_FEATURE_NAME
+                in anchor_bias_attr_names + anchor_input_attr_names
+            ),
+        )
+    else:
+        raise ValueError(
+            "sequence_construction_method must be one of ['khop', 'ppr'], "
+            f"got '{sequence_construction_method}'."
+        )
+
+    anchor_matrix_attr_names = list(
+        {
+            attr_name
+            for attr_name in (anchor_bias_attr_names + anchor_input_attr_names)
+            if attr_name != PPR_WEIGHT_FEATURE_NAME
+        }
+    )
+    anchor_based_matrices = _get_sparse_feature_matrices(
+        data=data,
+        attr_names=anchor_matrix_attr_names,
+        missing_attr_error_prefix="Anchor-based attribute",
     )
 
-    # Get anchor-based PE matrices if specified
-    anchor_based_pe_matrices = []
-    if anchor_based_pe_attr_names:
-        for attr_name in anchor_based_pe_attr_names:
-            if hasattr(data, attr_name):
-                anchor_based_pe_matrices.append(getattr(data, attr_name))
-            else:
-                raise ValueError(
-                    f"Anchor-based PE attribute '{attr_name}' not found in data. "
-                    f"Make sure to apply the corresponding transform first."
-                )
-
-    pairwise_pe_matrices = []
-    if pairwise_pe_attr_names:
-        for attr_name in pairwise_pe_attr_names:
-            if hasattr(data, attr_name):
-                pairwise_pe_matrices.append(getattr(data, attr_name))
-            else:
-                raise ValueError(
-                    f"Pairwise PE attribute '{attr_name}' not found in data. "
-                    f"Make sure to apply the corresponding transform first."
-                )
-
-    node_index_sequences, valid_mask = _build_sequence_layout_from_sparse_neighbors(
-        reachable=reachable,
-        anchor_indices=anchor_indices,
-        max_seq_len=max_seq_len,
-        include_anchor_first=include_anchor_first,
-        device=device,
+    pairwise_pe_matrices = _get_sparse_feature_matrices(
+        data=data,
+        attr_names=pairwise_bias_attr_names,
+        missing_attr_error_prefix="Pairwise PE attribute",
     )
 
     node_feature_sequences = _gather_sequences_from_node_indices(
@@ -240,7 +294,7 @@ def heterodata_to_graph_transformer_input(
         anchor_indices=anchor_indices,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
-        csr_matrices=anchor_based_pe_matrices if anchor_based_pe_matrices else None,
+        csr_matrices=anchor_based_matrices if anchor_based_matrices else None,
         device=device,
     )
 
@@ -251,14 +305,116 @@ def heterodata_to_graph_transformer_input(
         device=device,
     )
 
+    anchor_bias_features = _compose_anchor_feature_tensor(
+        anchor_relative_feature_sequences=anchor_relative_feature_sequences,
+        available_anchor_attr_names=anchor_matrix_attr_names,
+        requested_anchor_attr_names=anchor_bias_attr_names,
+        ppr_weight_sequences=ppr_weight_sequences,
+    )
+    token_input_features = _compose_anchor_feature_tensor(
+        anchor_relative_feature_sequences=anchor_relative_feature_sequences,
+        available_anchor_attr_names=anchor_matrix_attr_names,
+        requested_anchor_attr_names=anchor_input_attr_names,
+        ppr_weight_sequences=ppr_weight_sequences,
+    )
+
     return (
         node_feature_sequences,
         valid_mask,
         {
-            "anchor_bias": anchor_relative_feature_sequences,
+            "anchor_bias": anchor_bias_features,
             "pairwise_bias": pairwise_feature_sequences,
+            "token_input": token_input_features,
         },
     )
+
+
+def _get_node_type_offsets(
+    data: HeteroData,
+    node_type_order: list[NodeType],
+) -> dict[NodeType, int]:
+    offsets: dict[NodeType, int] = {}
+    offset = 0
+    for node_type in node_type_order:
+        offsets[node_type] = offset
+        offset += data[node_type].num_nodes
+    return offsets
+
+
+def _validate_ppr_sequence_input(data: HeteroData) -> None:
+    if not data.edge_types:
+        raise ValueError(
+            "sequence_construction_method='ppr' requires at least one PPR edge type."
+        )
+
+    if any(edge_type[1] != "ppr" for edge_type in data.edge_types):
+        raise ValueError(
+            "sequence_construction_method='ppr' expects the hetero batch to contain "
+            f"only PPR edges, got edge types: {data.edge_types}."
+        )
+
+    for edge_type in data.edge_types:
+        edge_store = data[edge_type]
+        if not hasattr(edge_store, "edge_attr") or edge_store.edge_attr is None:
+            raise ValueError(
+                "sequence_construction_method='ppr' requires every PPR edge type to "
+                f"have edge_attr weights, but {edge_type} is missing them."
+            )
+
+
+def _get_sparse_feature_matrices(
+    data: HeteroData,
+    attr_names: Optional[list[str]],
+    missing_attr_error_prefix: str,
+) -> list[Tensor]:
+    matrices: list[Tensor] = []
+    for attr_name in attr_names or []:
+        if not hasattr(data, attr_name):
+            raise ValueError(
+                f"{missing_attr_error_prefix} '{attr_name}' not found in data. "
+                "Make sure to apply the corresponding transform first."
+            )
+        matrices.append(getattr(data, attr_name))
+    return matrices
+
+
+def _compose_anchor_feature_tensor(
+    anchor_relative_feature_sequences: Optional[Tensor],
+    available_anchor_attr_names: list[str],
+    requested_anchor_attr_names: list[str],
+    ppr_weight_sequences: Optional[Tensor],
+) -> Optional[Tensor]:
+    if not requested_anchor_attr_names:
+        return None
+
+    feature_parts: list[Tensor] = []
+    feature_index_by_name = {
+        attr_name: idx for idx, attr_name in enumerate(available_anchor_attr_names)
+    }
+
+    for attr_name in requested_anchor_attr_names:
+        if attr_name == PPR_WEIGHT_FEATURE_NAME:
+            if ppr_weight_sequences is None:
+                raise ValueError(
+                    f"Requested '{PPR_WEIGHT_FEATURE_NAME}' but it was not computed."
+                )
+            feature_parts.append(ppr_weight_sequences)
+            continue
+
+        if anchor_relative_feature_sequences is None:
+            raise ValueError(
+                "Anchor-relative features were requested but not computed."
+            )
+        if attr_name not in feature_index_by_name:
+            raise ValueError(
+                f"Anchor-relative feature '{attr_name}' was requested but not found."
+            )
+        feature_idx = feature_index_by_name[attr_name]
+        feature_parts.append(
+            anchor_relative_feature_sequences[..., feature_idx : feature_idx + 1]
+        )
+
+    return torch.cat(feature_parts, dim=-1)
 
 
 def _build_sequence_layout_from_sparse_neighbors(
@@ -355,6 +511,139 @@ def _build_sequence_layout_from_sparse_neighbors(
     valid_mask[valid_batch_idx, valid_positions] = True
 
     return node_index_sequences, valid_mask
+
+
+def _build_sequence_layout_from_ppr_edges(
+    homo_data: Data,
+    anchor_indices: Tensor,
+    max_seq_len: int,
+    include_anchor_first: bool,
+    num_nodes: int,
+    device: torch.device,
+    return_edge_weights: bool = False,
+) -> tuple[Tensor, Tensor, Optional[Tensor]]:
+    """Build sequences directly from outgoing PPR edges for each anchor.
+
+    The sequence order is:
+    1. Anchor node first, when ``include_anchor_first`` is True.
+    2. Destination nodes reachable by outgoing ``"ppr"`` edges from that anchor,
+       sorted by descending PPR weight.
+    """
+    batch_size = anchor_indices.size(0)
+    node_index_sequences = torch.full(
+        (batch_size, max_seq_len),
+        fill_value=-1,
+        dtype=torch.long,
+        device=device,
+    )
+    valid_mask = torch.zeros(
+        (batch_size, max_seq_len),
+        dtype=torch.bool,
+        device=device,
+    )
+    ppr_weight_sequences = None
+    if return_edge_weights:
+        ppr_weight_sequences = torch.zeros(
+            (batch_size, max_seq_len, 1),
+            dtype=torch.float,
+            device=device,
+        )
+
+    if include_anchor_first and max_seq_len > 0:
+        node_index_sequences[:, 0] = anchor_indices
+        valid_mask[:, 0] = True
+        start_pos = 1
+    else:
+        start_pos = 0
+
+    if start_pos >= max_seq_len:
+        return node_index_sequences, valid_mask, ppr_weight_sequences
+
+    if not hasattr(homo_data, "edge_attr") or homo_data.edge_attr is None:
+        raise ValueError(
+            "sequence_construction_method='ppr' requires homogeneous edge_attr weights."
+        )
+
+    edge_weights = homo_data.edge_attr
+    if edge_weights.dim() == 2:
+        if edge_weights.size(1) != 1:
+            raise ValueError(
+                "PPR edge weights must be 1D or shape [N, 1], "
+                f"got {tuple(edge_weights.shape)}."
+            )
+        edge_weights = edge_weights.squeeze(1)
+    elif edge_weights.dim() != 1:
+        raise ValueError(
+            "PPR edge weights must be 1D or shape [N, 1], "
+            f"got {tuple(edge_weights.shape)}."
+        )
+
+    anchor_batch_index_by_homo_idx = torch.full(
+        (num_nodes,),
+        fill_value=-1,
+        dtype=torch.long,
+        device=device,
+    )
+    anchor_batch_index_by_homo_idx[anchor_indices] = torch.arange(
+        batch_size, device=device
+    )
+
+    src_idx = homo_data.edge_index[0]
+    dst_idx = homo_data.edge_index[1]
+    anchor_batch_idx = anchor_batch_index_by_homo_idx[src_idx]
+    keep = anchor_batch_idx >= 0
+    if not keep.any():
+        return node_index_sequences, valid_mask, ppr_weight_sequences
+
+    all_anchor_batch_idx = anchor_batch_idx[keep]
+    all_dst_idx = dst_idx[keep]
+    all_weights = edge_weights[keep]
+
+    if include_anchor_first:
+        keep = all_dst_idx != anchor_indices[all_anchor_batch_idx]
+        if not keep.any():
+            return node_index_sequences, valid_mask, ppr_weight_sequences
+        all_anchor_batch_idx = all_anchor_batch_idx[keep]
+        all_dst_idx = all_dst_idx[keep]
+        all_weights = all_weights[keep]
+
+    # Flattened COO edges can be laid out in one pass by sorting first on weight
+    # and then stably on anchor batch id, which preserves descending-weight order
+    # within each anchor group without a Python loop.
+    weight_order = torch.argsort(all_weights, descending=True, stable=True)
+    all_anchor_batch_idx = all_anchor_batch_idx[weight_order]
+    all_dst_idx = all_dst_idx[weight_order]
+    all_weights = all_weights[weight_order]
+
+    batch_order = torch.argsort(all_anchor_batch_idx, stable=True)
+    sorted_batch_idx = all_anchor_batch_idx[batch_order]
+    sorted_dst_idx = all_dst_idx[batch_order]
+    sorted_weights = all_weights[batch_order]
+
+    n = sorted_batch_idx.size(0)
+    is_group_start = torch.zeros(n, dtype=torch.long, device=device)
+    is_group_start[0] = 1
+    if n > 1:
+        is_group_start[1:] = (sorted_batch_idx[1:] != sorted_batch_idx[:-1]).long()
+
+    group_id = is_group_start.cumsum(0) - 1
+    group_starts = torch.nonzero(is_group_start, as_tuple=True)[0]
+    positions = torch.arange(n, device=device) - group_starts[group_id] + start_pos
+
+    valid = positions < max_seq_len
+    valid_batch_idx = sorted_batch_idx[valid]
+    valid_positions = positions[valid]
+    valid_dst_idx = sorted_dst_idx[valid]
+    valid_weights = sorted_weights[valid]
+
+    node_index_sequences[valid_batch_idx, valid_positions] = valid_dst_idx
+    valid_mask[valid_batch_idx, valid_positions] = True
+    if ppr_weight_sequences is not None:
+        ppr_weight_sequences[
+            valid_batch_idx, valid_positions, 0
+        ] = valid_weights.float()
+
+    return node_index_sequences, valid_mask, ppr_weight_sequences
 
 
 def _gather_sequences_from_node_indices(

@@ -68,6 +68,60 @@ def create_larger_hetero_data(num_users: int = 10, num_items: int = 5) -> Hetero
     return data
 
 
+def create_ppr_sequence_hetero_data() -> HeteroData:
+    """Create a graph with explicit PPR edges for sequence-construction tests."""
+    data = HeteroData()
+
+    data["user"].x = torch.tensor([[10.0, 0.0], [11.0, 0.0]])
+    data["item"].x = torch.tensor([[0.0, 20.0], [0.0, 21.0]])
+
+    data["user", "ppr", "item"].edge_index = torch.tensor(
+        [
+            [0, 0, 1],
+            [1, 0, 0],
+        ]
+    )
+    data["user", "ppr", "item"].edge_attr = torch.tensor([0.9, 0.6, 0.8])
+
+    data["user", "ppr", "user"].edge_index = torch.tensor(
+        [
+            [0, 1],
+            [1, 0],
+        ]
+    )
+    data["user", "ppr", "user"].edge_attr = torch.tensor([0.4, 0.3])
+
+    homo_data = data.to_homogeneous()
+    node_type_order = list(getattr(homo_data, "_node_type_names", data.node_types))
+    offsets = {}
+    offset = 0
+    for node_type in node_type_order:
+        offsets[node_type] = offset
+        offset += data[node_type].num_nodes
+
+    total_nodes = homo_data.num_nodes
+    hop_distance = torch.zeros((total_nodes, total_nodes), dtype=torch.float)
+
+    user0_idx = offsets["user"] + 0
+    user1_idx = offsets["user"] + 1
+    item0_idx = offsets["item"] + 0
+    item1_idx = offsets["item"] + 1
+
+    hop_distance[user0_idx, user0_idx] = 0.0
+    hop_distance[user0_idx, user1_idx] = 1.0
+    hop_distance[user0_idx, item0_idx] = 2.0
+    hop_distance[user0_idx, item1_idx] = 3.0
+
+    hop_distance[user1_idx, user0_idx] = 1.0
+    hop_distance[user1_idx, user1_idx] = 0.0
+    hop_distance[user1_idx, item0_idx] = 4.0
+    hop_distance[user1_idx, item1_idx] = 5.0
+
+    data.hop_distance = hop_distance.to_sparse_csr()
+
+    return data
+
+
 class TestGetKHopNeighborsSparse(TestCase):
     """Tests for _get_k_hop_neighbors_sparse helper function."""
 
@@ -232,8 +286,13 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         # Get anchor node feature
         homo_data = data.to_homogeneous()
-        # 'item' comes before 'user' alphabetically, so user offset = num_items = 2
-        anchor_feature = homo_data.x[2]  # First user node
+        node_type_order = list(getattr(homo_data, "_node_type_names", data.node_types))
+        user_offset = 0
+        for node_type in node_type_order:
+            if node_type == "user":
+                break
+            user_offset += data[node_type].num_nodes
+        anchor_feature = homo_data.x[user_offset]  # First user node
 
         sequences, _, _ = heterodata_to_graph_transformer_input(
             data=data,
@@ -326,6 +385,100 @@ class TestHeteroToGraphTransformerInput(TestCase):
             padding_features = sequences[0, num_valid:]
             expected_padding = torch.full_like(padding_features, -1.0)
             self.assertTrue(torch.allclose(padding_features, expected_padding))
+
+    def test_ppr_sequence_construction_sorts_tokens_by_weight(self):
+        """Test that PPR mode uses outgoing PPR edges ordered by descending weight."""
+        data = create_ppr_sequence_hetero_data()
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=2,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+        )
+
+        expected_anchor_0 = torch.tensor(
+            [
+                [10.0, 0.0],  # anchor user0
+                [0.0, 21.0],  # item1, weight 0.9
+                [0.0, 20.0],  # item0, weight 0.6
+                [11.0, 0.0],  # user1, weight 0.4
+            ]
+        )
+        expected_anchor_1 = torch.tensor(
+            [
+                [11.0, 0.0],  # anchor user1
+                [0.0, 20.0],  # item0, weight 0.8
+                [10.0, 0.0],  # user0, weight 0.3
+                [0.0, 0.0],  # padding
+            ]
+        )
+
+        self.assertTrue(torch.allclose(sequences[0], expected_anchor_0))
+        self.assertTrue(torch.allclose(sequences[1], expected_anchor_1))
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, True]))
+        )
+        self.assertTrue(
+            torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
+        )
+
+    def test_ppr_sequence_construction_requires_only_ppr_relations(self):
+        data = create_simple_hetero_data()
+
+        with self.assertRaisesRegex(ValueError, "contain only PPR edges"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=4,
+                anchor_node_type="user",
+                sequence_construction_method="ppr",
+            )
+
+    def test_ppr_sequence_can_return_token_input_and_attention_bias_features(self):
+        data = create_ppr_sequence_hetero_data()
+
+        _, valid_mask, sequence_auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=2,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+            anchor_based_attention_bias_attr_names=["hop_distance", "ppr_weight"],
+            anchor_based_input_attr_names=["hop_distance", "ppr_weight"],
+        )
+
+        anchor_bias = sequence_auxiliary_data["anchor_bias"]
+        token_input = sequence_auxiliary_data["token_input"]
+        assert anchor_bias is not None
+        assert token_input is not None
+
+        expected_anchor_0 = torch.tensor(
+            [
+                [0.0, 0.0],
+                [3.0, 0.9],
+                [2.0, 0.6],
+                [1.0, 0.4],
+            ]
+        )
+        expected_anchor_1 = torch.tensor(
+            [
+                [0.0, 0.0],
+                [4.0, 0.8],
+                [1.0, 0.3],
+                [0.0, 0.0],
+            ]
+        )
+
+        self.assertEqual(anchor_bias.shape, (2, 4, 2))
+        self.assertEqual(token_input.shape, (2, 4, 2))
+        self.assertTrue(torch.allclose(anchor_bias[0], expected_anchor_0))
+        self.assertTrue(torch.allclose(anchor_bias[1], expected_anchor_1))
+        self.assertTrue(torch.allclose(token_input, anchor_bias))
+        self.assertTrue(
+            torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
+        )
 
 
 class TestPyTorchTransformerIntegration(TestCase):
@@ -620,7 +773,7 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
             max_seq_len=4,
             anchor_node_type="user",
             hop_distance=2,
-            anchor_based_pe_attr_names=["hop_distance"],
+            anchor_based_attention_bias_attr_names=["hop_distance"],
         )
 
         self.assertEqual(sequences.shape, (1, 4, 4))
@@ -645,8 +798,8 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
             max_seq_len=4,
             anchor_node_type="user",
             hop_distance=2,
-            anchor_based_pe_attr_names=["hop_distance"],
-            pairwise_pe_attr_names=["pairwise_distance"],
+            anchor_based_attention_bias_attr_names=["hop_distance"],
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
         )
 
         self.assertEqual(sequences.shape, (1, 4, 4))
