@@ -19,13 +19,12 @@ from pathlib import Path
 
 def main() -> None:
     try:
-        import pybind11
         import torch  # noqa: F401 — imported to verify it is installed
         from torch.utils.cpp_extension import include_paths as torch_include_paths
     except ImportError as exc:
         print(
             f"Error: {exc}\n"
-            "Run `make build_cpp_extensions` first to ensure torch and pybind11 are available.",
+            "Run `make build_cpp_extensions` first to ensure torch is available.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -33,10 +32,11 @@ def main() -> None:
     repo_root = Path(__file__).parent.parent.resolve()
 
     # Collect all include directories needed to compile the extension.
+    # torch_include_paths() returns the torch headers, which already bundle
+    # pybind11 under torch/include/pybind11/ — no separate pybind11 import needed.
     include_flags: list[str] = []
     for path in torch_include_paths():
         include_flags.append(f"-I{path}")
-    include_flags.append(f"-I{pybind11.get_include()}")
     # Python C API headers (e.g. Python.h) required by pybind11.
     include_flags.append(f"-I{sysconfig.get_path('include')}")
 
