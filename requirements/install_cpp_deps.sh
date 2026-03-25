@@ -30,7 +30,9 @@ if is_running_on_mac; then
         fi
     done
 
-    # Export for the current shell session so make targets work immediately.
+    # NOTE: this export only affects subprocesses of this script, not the calling
+    # shell or make process. Open a new terminal (or run `source ~/.zshrc`) after
+    # install_dev_deps to pick up the PATH change.
     export PATH="$LLVM_BIN:$PATH"
 else
     # Ubuntu / Debian — clang 15 is the highest version available on Ubuntu 22.04.

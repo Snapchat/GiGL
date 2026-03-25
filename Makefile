@@ -22,7 +22,7 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
-CPP_SOURCES:=$(shell find gigl/cpp_extensions -name "*.cpp" 2>/dev/null)
+CPP_SOURCES:=$(shell find gigl/csrc -name "*.cpp" 2>/dev/null)
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -117,7 +117,7 @@ check_format_md:
 	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
-	clang-format --dry-run --Werror --style=file $(CPP_SOURCES)
+	$(if $(CPP_SOURCES), clang-format --dry-run --Werror --style=file $(CPP_SOURCES))
 
 check_format: check_format_py check_format_scala check_format_md check_format_cpp
 
@@ -154,7 +154,7 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	clang-format -i --style=file $(CPP_SOURCES)
+	$(if $(CPP_SOURCES), clang-format -i --style=file $(CPP_SOURCES))
 
 format: format_py format_scala format_md format_cpp
 

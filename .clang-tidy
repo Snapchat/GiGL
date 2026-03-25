@@ -27,11 +27,3 @@ WarningsAsErrors: "*"
 # Only apply header-file checks to GiGL-owned headers, not third-party
 # (torch, pybind11) headers pulled in by includes.
 HeaderFilterRegex: "gigl/.*"
-
-# Per-check configuration options.
-CheckOptions:
-  # Enforce lower_case naming for local variables (matches existing style).
-  - key:   readability-identifier-naming.LocalVariableCase
-    value: lower_case
-  - key:   readability-identifier-naming.ParameterCase
-    value: lower_case

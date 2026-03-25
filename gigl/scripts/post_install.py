@@ -52,28 +52,28 @@ def main():
         print(f"Executing bash {install_glt_script}...")
         result = run_command_and_stream_stdout(f"bash {install_glt_script}")
         print("GLT install finished with return code:", result)
-    except subprocess.CalledProcessError as e:
-        print(f"Error running install_glt.sh: {e}")
-        sys.exit(1)
     except Exception as e:
         print(f"Unexpected error: {e}")
         sys.exit(1)
 
     # Step 2: Build pybind11 C++ extensions in-place so they are importable
     # without requiring a separate `make build_cpp_extensions` call.
-    cmd = f"cd {repo_root} && {sys.executable} build_cpp_extensions.py build_ext --inplace"
+    # subprocess.run streams stdout/stderr to the terminal and raises
+    # CalledProcessError on a non-zero exit code.
     try:
         print("Building C++ extensions...")
-        result = run_command_and_stream_stdout(cmd)
-        print("C++ extension build finished with return code:", result)
+        subprocess.run(
+            [sys.executable, "build_cpp_extensions.py", "build_ext", "--inplace"],
+            cwd=repo_root,
+            check=True,
+        )
+        print("C++ extension build finished.")
     except subprocess.CalledProcessError as e:
         print(f"Error building C++ extensions: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"Unexpected error building C++ extensions: {e}")
         sys.exit(1)
-
-    return result
 
 
 if __name__ == "__main__":

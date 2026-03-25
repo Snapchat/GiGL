@@ -40,9 +40,10 @@ def main() -> None:
     # Python C API headers (e.g. Python.h) required by pybind11.
     include_flags.append(f"-I{sysconfig.get_path('include')}")
 
-    cpp_sources = sorted((repo_root / "gigl" / "cpp_extensions").rglob("*.cpp"))
+    cpp_dir = repo_root / "gigl" / "csrc"
+    cpp_sources = sorted(cpp_dir.rglob("*.cpp")) if cpp_dir.exists() else []
     if not cpp_sources:
-        print("Warning: no .cpp files found under gigl/", file=sys.stderr)
+        print("Warning: no .cpp files found under gigl/csrc/", file=sys.stderr)
 
     # Each entry in compile_commands.json describes how one source file is compiled.
     # clang-tidy reads this to reproduce the exact compilation environment.

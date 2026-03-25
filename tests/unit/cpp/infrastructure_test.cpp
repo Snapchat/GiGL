@@ -1,8 +1,7 @@
 // Placeholder C++ unit test.
 //
 // This file exists to verify that the GoogleTest infrastructure compiles and
-// runs end-to-end.  Replace or supplement it with tests for actual GiGL C++
-// code (e.g. PPRForwardPushState) as those components are added.
+// runs end-to-end.
 
 #include <gtest/gtest.h>
 
