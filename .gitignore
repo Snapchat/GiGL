@@ -48,3 +48,6 @@ fossa*.zip
 
 # https://github.com/google-github-actions/auth/issues/497
 gha-creds-*.json
+
+# Compiled C++ extension modules
+gigl/csrc/**/*.so

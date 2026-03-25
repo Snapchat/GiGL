@@ -27,6 +27,10 @@ def find_cpp_extensions() -> list[CppExtension]:
     stripped, so ``gigl/csrc/distributed/python_ppr_forward_push.cpp`` is
     importable as ``gigl.csrc.distributed.ppr_forward_push``.
 
+    If a matching implementation file exists alongside the binding file (e.g.
+    ``ppr_forward_push.cpp`` next to ``python_ppr_forward_push.cpp``), it is
+    compiled into the same extension module.
+
     Returns an empty list if ``gigl/csrc/`` does not yet exist.
     """
     if not _CSRC_DIR.exists():
@@ -36,10 +40,14 @@ def find_cpp_extensions() -> list[CppExtension]:
         parts = list(cpp_file.with_suffix("").parts)
         parts[-1] = parts[-1].removeprefix("python_")
         module_name = ".".join(parts)
+        impl_file = cpp_file.parent / (parts[-1] + ".cpp")
+        sources = [str(cpp_file)]
+        if impl_file.exists():
+            sources.append(str(impl_file))
         extensions.append(
             CppExtension(
                 name=module_name,
-                sources=[str(cpp_file)],
+                sources=sources,
                 extra_compile_args=["-O3", "-std=c++17", "-Wall", "-Wextra"],
             )
         )
