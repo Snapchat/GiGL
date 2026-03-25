@@ -1,8 +1,8 @@
+#include <pybind11/stl.h>     // Automatic conversion between C++ containers and Python types
 #include <torch/extension.h>  // PyTorch C++ API (tensors, TORCH_CHECK)
-#include <pybind11/stl.h>      // Automatic conversion between C++ containers and Python types
 
-#include <algorithm>    // std::partial_sort, std::min
-#include <cstdint>      // Fixed-width integer types: int32_t, int64_t, uint32_t, uint64_t
+#include <algorithm>      // std::partial_sort, std::min
+#include <cstdint>        // Fixed-width integer types: int32_t, int64_t, uint32_t, uint64_t
 #include <unordered_map>  // std::unordered_map — like Python dict, O(1) average lookup
 #include <unordered_set>  // std::unordered_set — like Python set, O(1) average lookup
 #include <vector>         // std::vector — like Python list, contiguous in memory
@@ -47,16 +47,12 @@ static inline uint64_t pack_key(int32_t node_id, int32_t etype_id) {
 //   4.  push_residuals(fetched_by_etype_id)    — push residuals, update queue
 //   5.  extract_top_k(max_ppr_nodes)           — top-k selection per seed per node type
 class PPRForwardPushState {
-public:
-    PPRForwardPushState(
-        torch::Tensor seed_nodes,
-        int32_t seed_node_type_id,
-        double alpha,
-        double requeue_threshold_factor,
-        std::vector<std::vector<int32_t>> node_type_to_edge_type_ids,
-        std::vector<int32_t> edge_type_to_dst_ntype_id,
-        std::vector<torch::Tensor> degree_tensors
-    )
+   public:
+    PPRForwardPushState(torch::Tensor seed_nodes, int32_t seed_node_type_id, double alpha,
+                        double requeue_threshold_factor,
+                        std::vector<std::vector<int32_t>> node_type_to_edge_type_ids,
+                        std::vector<int32_t> edge_type_to_dst_ntype_id,
+                        std::vector<torch::Tensor> degree_tensors)
         : alpha_(alpha),
           one_minus_alpha_(1.0 - alpha),
           requeue_threshold_factor_(requeue_threshold_factor),
@@ -66,7 +62,6 @@ public:
           node_type_to_edge_type_ids_(std::move(node_type_to_edge_type_ids)),
           edge_type_to_dst_ntype_id_(std::move(edge_type_to_dst_ntype_id)),
           degree_tensors_(std::move(degree_tensors)) {
-
         TORCH_CHECK(seed_nodes.dim() == 1, "seed_nodes must be 1D");
         batch_size_     = static_cast<int32_t>(seed_nodes.size(0));
         num_node_types_ = static_cast<int32_t>(node_type_to_edge_type_ids_.size());
@@ -74,15 +69,18 @@ public:
         // Allocate per-seed, per-node-type tables.
         // .assign(n, val) fills a vector with n copies of val — like [val] * n in Python.
         // Each inner element is an empty hash map / hash set for that (seed, ntype) pair.
-        ppr_scores_.assign(batch_size_,   std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
-        residuals_.assign(batch_size_,    std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
-        queue_.assign(batch_size_,        std::vector<std::unordered_set<int32_t>>(num_node_types_));
-        queued_nodes_.assign(batch_size_, std::vector<std::unordered_set<int32_t>>(num_node_types_));
+        ppr_scores_.assign(batch_size_,
+                           std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
+        residuals_.assign(batch_size_,
+                          std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
+        queue_.assign(batch_size_, std::vector<std::unordered_set<int32_t>>(num_node_types_));
+        queued_nodes_.assign(batch_size_,
+                             std::vector<std::unordered_set<int32_t>>(num_node_types_));
 
         // accessor<dtype, ndim>() returns a typed view into the tensor's data that
         // supports [i] indexing with bounds checking in debug builds.  Here we read
         // each seed node ID from the 1-D int64 tensor.
-        auto acc = seed_nodes.accessor<int64_t, 1>();
+        auto acc            = seed_nodes.accessor<int64_t, 1>();
         num_nodes_in_queue_ = batch_size_;
         for (int32_t i = 0; i < batch_size_; ++i) {
             // static_cast<int32_t>: explicit narrowing from int64 to int32.
@@ -116,7 +114,8 @@ public:
         // (alias) to the existing set — clearing it modifies the original in-place
         // rather than operating on a copy.
         for (int32_t s = 0; s < batch_size_; ++s)
-            for (auto& qs : queued_nodes_[s]) qs.clear();
+            for (auto& qs : queued_nodes_[s])
+                qs.clear();
 
         // nodes_to_lookup[eid] = set of node IDs that need a neighbor fetch for
         // edge type eid this round.  Using a set deduplicates nodes that appear
@@ -126,7 +125,8 @@ public:
 
         for (int32_t s = 0; s < batch_size_; ++s) {
             for (int32_t nt = 0; nt < num_node_types_; ++nt) {
-                if (queue_[s][nt].empty()) continue;
+                if (queue_[s][nt].empty())
+                    continue;
 
                 // Move the live queue into the snapshot (no data copy — O(1)).
                 // queue_ is then reset to an empty set so new entries added by
@@ -213,7 +213,8 @@ public:
         //   c. Enqueue any neighbor whose residual now exceeds the requeue threshold.
         for (int32_t s = 0; s < batch_size_; ++s) {
             for (int32_t nt = 0; nt < num_node_types_; ++nt) {
-                if (queued_nodes_[s][nt].empty()) continue;
+                if (queued_nodes_[s][nt].empty())
+                    continue;
 
                 for (int32_t src : queued_nodes_[s][nt]) {
                     // `auto&` gives a reference to the residual map for this
@@ -222,7 +223,7 @@ public:
                     auto& src_res = residuals_[s][nt];
                     // .find() returns an iterator; .end() means "not found".
                     // We treat a missing entry as residual = 0.
-                    auto it = src_res.find(src);
+                    auto it    = src_res.find(src);
                     double res = (it != src_res.end()) ? it->second : 0.0;
 
                     // a. Absorb: move residual into the PPR score.
@@ -232,7 +233,8 @@ public:
                     int32_t total_deg = get_total_degree(src, nt);
                     // Destination-only nodes (no outgoing edges) absorb residual
                     // into their PPR score but do not push further.
-                    if (total_deg == 0) continue;
+                    if (total_deg == 0)
+                        continue;
 
                     // b. Distribute: each neighbor of src (across all edge types
                     // from nt) receives an equal share of the pushed residual.
@@ -249,18 +251,20 @@ public:
                         // We use a pointer (rather than copying the list) so we can check
                         // for absence with nullptr without allocating anything.
                         const std::vector<int32_t>* nbr_list = nullptr;
-                        auto fi = fetched.find(pack_key(src, eid));
+                        auto fi                              = fetched.find(pack_key(src, eid));
                         if (fi != fetched.end()) {
                             // `&fi->second` takes the address of the vector stored in
                             // the map — nbr_list now points to it without copying.
                             nbr_list = &fi->second;
                         } else {
                             auto ci = neighbor_cache_.find(pack_key(src, eid));
-                            if (ci != neighbor_cache_.end()) nbr_list = &ci->second;
+                            if (ci != neighbor_cache_.end())
+                                nbr_list = &ci->second;
                         }
                         // Skip if no neighbor list is available (node has no edges of
                         // this type, or the fetch returned an empty list).
-                        if (!nbr_list || nbr_list->empty()) continue;
+                        if (!nbr_list || nbr_list->empty())
+                            continue;
 
                         int32_t dst_nt = edge_type_to_dst_ntype_id_[eid];
 
@@ -270,7 +274,7 @@ public:
                             residuals_[s][dst_nt][nbr] += res_per_nbr;
 
                             double threshold = requeue_threshold_factor_ *
-                                static_cast<double>(get_total_degree(nbr, dst_nt));
+                                               static_cast<double>(get_total_degree(nbr, dst_nt));
 
                             // Only enqueue if: (1) not already in queue for this
                             // iteration, and (2) residual exceeds the push threshold
@@ -315,13 +319,14 @@ public:
         std::unordered_set<int32_t> active;
         for (int32_t s = 0; s < batch_size_; ++s)
             for (int32_t nt = 0; nt < num_node_types_; ++nt)
-                if (!ppr_scores_[s][nt].empty()) active.insert(nt);
+                if (!ppr_scores_[s][nt].empty())
+                    active.insert(nt);
 
         py::dict result;
         for (int32_t nt : active) {
             // Flat output vectors — entries for all seeds are concatenated.
             std::vector<int64_t> flat_ids;
-            std::vector<float>   flat_weights;
+            std::vector<float> flat_weights;
             std::vector<int64_t> valid_counts;
 
             for (int32_t s = 0; s < batch_size_; ++s) {
@@ -341,7 +346,8 @@ public:
                     // is an anonymous comparator (like Python's `key=` argument).
                     // `.second` accesses the score (second element of the pair);
                     // `>` makes it descending (highest score first).
-                    std::partial_sort(items.begin(), items.begin() + k, items.end(),
+                    std::partial_sort(
+                        items.begin(), items.begin() + k, items.end(),
                         [](const auto& a, const auto& b) { return a.second > b.second; });
 
                     for (int32_t i = 0; i < k; ++i) {
@@ -355,27 +361,25 @@ public:
             }
 
             // py::make_tuple wraps C++ values into a Python tuple.
-            result[py::int_(nt)] = py::make_tuple(
-                torch::tensor(flat_ids, torch::kLong),
-                torch::tensor(flat_weights, torch::kFloat),
-                torch::tensor(valid_counts, torch::kLong)
-            );
+            result[py::int_(nt)] = py::make_tuple(torch::tensor(flat_ids, torch::kLong),
+                                                  torch::tensor(flat_weights, torch::kFloat),
+                                                  torch::tensor(valid_counts, torch::kLong));
         }
         return result;
     }
 
-private:
+   private:
     // Look up the total (across all edge types) out-degree of a node.
     // Returns 0 for destination-only node types (no outgoing edges).
     int32_t get_total_degree(int32_t node_id, int32_t ntype_id) const {
-        if (ntype_id >= static_cast<int32_t>(degree_tensors_.size())) return 0;
+        if (ntype_id >= static_cast<int32_t>(degree_tensors_.size()))
+            return 0;
         const auto& t = degree_tensors_[ntype_id];
-        if (t.numel() == 0) return 0;  // destination-only type: no outgoing edges
-        TORCH_CHECK(
-            node_id < static_cast<int32_t>(t.size(0)),
-            "Node ID ", node_id, " out of range for degree tensor of ntype_id ", ntype_id,
-            " (size=", t.size(0), "). This indicates corrupted graph data or a sampler bug."
-        );
+        if (t.numel() == 0)
+            return 0;  // destination-only type: no outgoing edges
+        TORCH_CHECK(node_id < static_cast<int32_t>(t.size(0)), "Node ID ", node_id,
+                    " out of range for degree tensor of ntype_id ", ntype_id, " (size=", t.size(0),
+                    "). This indicates corrupted graph data or a sampler bug.");
         // data_ptr<int32_t>() returns a raw C pointer to the tensor's int32 data
         // buffer.  Direct pointer indexing ([node_id]) is safe here because we
         // validated the bounds with TORCH_CHECK above.
@@ -385,13 +389,14 @@ private:
     // -------------------------------------------------------------------------
     // Scalar algorithm parameters
     // -------------------------------------------------------------------------
-    double  alpha_;                       // Restart probability
-    double  one_minus_alpha_;             // 1 - alpha, precomputed to avoid repeated subtraction
-    double  requeue_threshold_factor_;    // alpha * eps; multiplied by degree to get per-node threshold
+    double alpha_;            // Restart probability
+    double one_minus_alpha_;  // 1 - alpha, precomputed to avoid repeated subtraction
+    double
+        requeue_threshold_factor_;  // alpha * eps; multiplied by degree to get per-node threshold
 
-    int32_t batch_size_;                  // Number of seeds in the current batch
-    int32_t num_node_types_;              // Total number of node types (homo + hetero)
-    int32_t num_nodes_in_queue_{0};       // Running count of nodes across all seeds / types
+    int32_t batch_size_;             // Number of seeds in the current batch
+    int32_t num_node_types_;         // Total number of node types (homo + hetero)
+    int32_t num_nodes_in_queue_{0};  // Running count of nodes across all seeds / types
 
     // -------------------------------------------------------------------------
     // Graph structure (read-only after construction)
@@ -400,10 +405,10 @@ private:
     // traversed from that node type (outgoing or incoming, depending on edge_dir).
     std::vector<std::vector<int32_t>> node_type_to_edge_type_ids_;
     // edge_type_to_dst_ntype_id_[eid] → node type ID at the destination end.
-    std::vector<int32_t>              edge_type_to_dst_ntype_id_;
+    std::vector<int32_t> edge_type_to_dst_ntype_id_;
     // degree_tensors_[ntype_id][node_id] → total degree of that node across all
     // edge types traversable from its type.  Empty tensor means no outgoing edges.
-    std::vector<torch::Tensor>        degree_tensors_;
+    std::vector<torch::Tensor> degree_tensors_;
 
     // -------------------------------------------------------------------------
     // Per-seed, per-node-type PPR state (indexed [seed_idx][ntype_id])
@@ -417,11 +422,11 @@ private:
     // residuals_[s][nt]: node_id → unabsorbed probability mass waiting to be pushed
     std::vector<std::vector<std::unordered_map<int32_t, double>>> residuals_;
     // queue_[s][nt]: nodes whose residual exceeds the threshold and need a push next round
-    std::vector<std::vector<std::unordered_set<int32_t>>>         queue_;
+    std::vector<std::vector<std::unordered_set<int32_t>>> queue_;
     // queued_nodes_[s][nt]: snapshot of queue_ taken by drain_queue() for the current round.
     // Separating it from queue_ lets push_residuals() enqueue new nodes into queue_ without
     // modifying the set currently being iterated.
-    std::vector<std::vector<std::unordered_set<int32_t>>>         queued_nodes_;
+    std::vector<std::vector<std::unordered_set<int32_t>>> queued_nodes_;
 
     // -------------------------------------------------------------------------
     // Neighbor cache
@@ -445,15 +450,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         // .def(py::init<...>()) exposes the constructor.  The template arguments
         // list the exact C++ parameter types so pybind11 can convert Python
         // arguments to the correct C++ types automatically.
-        .def(py::init<
-            torch::Tensor,
-            int32_t,
-            double, double,
-            std::vector<std::vector<int32_t>>,
-            std::vector<int32_t>,
-            std::vector<torch::Tensor>
-        >())
-        .def("drain_queue",    &PPRForwardPushState::drain_queue)
+        .def(py::init<torch::Tensor, int32_t, double, double, std::vector<std::vector<int32_t>>,
+                      std::vector<int32_t>, std::vector<torch::Tensor>>())
+        .def("drain_queue", &PPRForwardPushState::drain_queue)
         .def("push_residuals", &PPRForwardPushState::push_residuals)
-        .def("extract_top_k",  &PPRForwardPushState::extract_top_k);
+        .def("extract_top_k", &PPRForwardPushState::extract_top_k);
 }
