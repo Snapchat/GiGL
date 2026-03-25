@@ -51,6 +51,8 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
 
+DEFAULT_NUM_CPU_THREADS = 2
+
 
 # We don't see logs for graph store mode for whatever reason.
 # TOOD(#442): Revert this once the GCP issues are resolved.
@@ -385,6 +387,142 @@ class BaseDistLoader(DistLoader):
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
+
+    @staticmethod
+    def initialize_colocated_sampling_worker(
+        *,
+        local_rank: int,
+        local_world_size: int,
+        node_rank: int,
+        node_world_size: int,
+        master_ip_address: str,
+        device: torch.device,
+        num_cpu_threads: Optional[int],
+    ) -> None:
+        """Initialize the colocated GLT worker group for the current process.
+
+        Args:
+            local_rank: Local rank of the current process on this machine.
+            local_world_size: Total number of local processes on this machine.
+            node_rank: Rank of the current machine.
+            node_world_size: Total number of machines in the cluster.
+            master_ip_address: Master node IP address used for worker-group setup.
+            device: Device assigned to this loader process.
+            num_cpu_threads: Optional PyTorch CPU thread count override.
+        """
+        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
+            num_ports=local_world_size
+        )
+        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
+        logger.info(
+            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} "
+            f"using device: {device} on port {neighbor_loader_port_for_current_rank}."
+        )
+
+        should_use_cpu_workers = device.type == "cpu"
+        if should_use_cpu_workers and num_cpu_threads is None:
+            logger.info(
+                "Using CPU workers, but found num_cpu_threads to be None. "
+                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
+            )
+            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
+
+        gigl.distributed.utils.init_neighbor_loader_worker(
+            master_ip_address=master_ip_address,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+            rank=node_rank,
+            world_size=node_world_size,
+            master_worker_port=neighbor_loader_port_for_current_rank,
+            device=device,
+            should_use_cpu_workers=should_use_cpu_workers,
+            num_cpu_threads=num_cpu_threads,
+        )
+        logger.info(
+            f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
+        )
+
+    @staticmethod
+    def create_colocated_worker_options(
+        *,
+        dataset_num_partitions: int,
+        num_workers: int,
+        worker_concurrency: int,
+        master_ip_address: str,
+        master_port: int,
+        channel_size: str,
+        pin_memory: bool,
+    ) -> MpDistSamplingWorkerOptions:
+        """Create worker options for colocated sampling workers.
+
+        Args:
+            dataset_num_partitions: Number of graph partitions in the colocated dataset.
+            num_workers: Number of sampling worker processes.
+            worker_concurrency: Max sampling concurrency per worker.
+            master_ip_address: Master node IP address used by GLT RPC.
+            master_port: Port for the GLT sampling worker group.
+            channel_size: Shared-memory channel size.
+            pin_memory: Whether the output channel should be pinned.
+
+        Returns:
+            Fully configured worker options for colocated sampling.
+        """
+        return MpDistSamplingWorkerOptions(
+            num_workers=num_workers,
+            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+            worker_concurrency=worker_concurrency,
+            # Each worker will spawn several sampling workers, and all sampling workers
+            # spawned by workers in one group need to be connected.
+            master_addr=master_ip_address,
+            master_port=master_port,
+            # Load testing shows that when num_rpc_threads exceed 16, the performance
+            # will degrade.
+            num_rpc_threads=min(dataset_num_partitions, 16),
+            rpc_timeout=600,
+            channel_size=channel_size,
+            pin_memory=pin_memory,
+        )
+
+    @staticmethod
+    def create_graph_store_worker_options(
+        *,
+        dataset: RemoteDistDataset,
+        compute_rank: int,
+        worker_key: str,
+        num_workers: int,
+        worker_concurrency: int,
+        channel_size: str,
+        prefetch_size: int,
+    ) -> RemoteDistSamplingWorkerOptions:
+        """Create worker options for graph-store sampling workers.
+
+        Args:
+            dataset: Remote dataset proxy used to discover storage-cluster topology.
+            compute_rank: Global compute-process rank for the current process.
+            worker_key: Unique key used by the storage cluster to deduplicate producers.
+            num_workers: Number of sampling worker processes.
+            worker_concurrency: Max sampling concurrency per worker.
+            channel_size: Remote shared-memory buffer size.
+            prefetch_size: Max prefetched messages per storage server.
+
+        Returns:
+            Fully configured worker options for graph-store sampling.
+        """
+        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
+            num_ports=dataset.cluster_info.compute_cluster_world_size
+        )
+        sampling_port = sampling_ports[compute_rank]
+        return RemoteDistSamplingWorkerOptions(
+            server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
+            num_workers=num_workers,
+            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+            worker_concurrency=worker_concurrency,
+            master_addr=dataset.cluster_info.storage_cluster_master_ip,
+            buffer_size=channel_size,
+            master_port=sampling_port,
+            worker_key=worker_key,
+            prefetch_size=prefetch_size,
+        )
 
     def _init_colocated_connections(
         self,
