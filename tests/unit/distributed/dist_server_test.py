@@ -2,7 +2,10 @@ import torch
 from absl.testing import absltest
 
 from gigl.distributed.graph_store import dist_server
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -358,7 +361,7 @@ class TestRemoteDataset(TestCase):
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
                 anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-                    FetchABLPRequest(
+                    FetchABLPInputRequest(
                         split=split,
                         rank=0,
                         world_size=1,
@@ -417,7 +420,7 @@ class TestRemoteDataset(TestCase):
         # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
         # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
         anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=0,
                 world_size=2,
@@ -428,7 +431,7 @@ class TestRemoteDataset(TestCase):
 
         # Get training input for rank 1 of 2
         anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=1,
                 world_size=2,
@@ -479,7 +482,7 @@ class TestRemoteDataset(TestCase):
 
         with self.assertRaises(ValueError):
             server.get_ablp_input(
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="invalid",
                     rank=0,
                     world_size=1,
@@ -512,7 +515,7 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
-            FetchABLPRequest(
+            FetchABLPInputRequest(
                 split="train",
                 rank=0,
                 world_size=1,

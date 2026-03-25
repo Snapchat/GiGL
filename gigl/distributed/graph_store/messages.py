@@ -51,7 +51,7 @@ class FetchNodesRequest:
 
 
 @dataclass(frozen=True)
-class FetchABLPRequest:
+class FetchABLPInputRequest:
     """Request for fetching ABLP input from a storage server.
 
     Args:

@@ -1,6 +1,9 @@
 from parameterized import param, parameterized
 
-from gigl.distributed.graph_store.messages import FetchABLPRequest, FetchNodesRequest
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from tests.test_assets.distributed.test_dataset import USER, USER_TO_STORY
 from tests.test_assets.test_case import TestCase
 
@@ -40,7 +43,7 @@ class TestFetchABLPRequestValidation(TestCase):
         [
             param(
                 "both_provided",
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="train",
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
@@ -50,7 +53,7 @@ class TestFetchABLPRequestValidation(TestCase):
             ),
             param(
                 "both_none",
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="train",
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
@@ -60,7 +63,7 @@ class TestFetchABLPRequestValidation(TestCase):
             ),
             param(
                 "defaults",
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="train",
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
@@ -68,7 +71,7 @@ class TestFetchABLPRequestValidation(TestCase):
             ),
         ]
     )
-    def test_validate_passes(self, _: str, request: FetchABLPRequest) -> None:
+    def test_validate_passes(self, _: str, request: FetchABLPInputRequest) -> None:
         """Validation passes when rank and world_size are both provided or both absent."""
         request.validate()
 
@@ -76,7 +79,7 @@ class TestFetchABLPRequestValidation(TestCase):
         [
             param(
                 "rank_without_world_size",
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="train",
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
@@ -86,7 +89,7 @@ class TestFetchABLPRequestValidation(TestCase):
             ),
             param(
                 "world_size_without_rank",
-                FetchABLPRequest(
+                FetchABLPInputRequest(
                     split="train",
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
@@ -97,7 +100,7 @@ class TestFetchABLPRequestValidation(TestCase):
         ]
     )
     def test_validate_fails_when_rank_world_size_mismatch(
-        self, _: str, request: FetchABLPRequest
+        self, _: str, request: FetchABLPInputRequest
     ) -> None:
         """Validation fails when only one of rank/world_size is provided."""
         with self.assertRaises(ValueError):
@@ -105,7 +108,7 @@ class TestFetchABLPRequestValidation(TestCase):
 
     def test_frozen(self) -> None:
         """FetchABLPRequest is immutable."""
-        request = FetchABLPRequest(
+        request = FetchABLPInputRequest(
             split="train",
             node_type=USER,
             supervision_edge_type=USER_TO_STORY,
