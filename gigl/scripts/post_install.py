@@ -3,8 +3,9 @@
 Once GiGL is installed w/ `pip install gigl`, this script can be executed by running:
 `gigl-post-install`
 
-This script is used to install the dependencies for GIGL.
-- Currently, it installs GLT by running install_glt.sh.
+This script is used to install the dependencies for GIGL:
+- Installs GLT by running install_glt.sh.
+- Builds pybind11 C++ extensions in-place so they are importable without a separate build step.
 """
 
 import subprocess
@@ -38,30 +39,45 @@ def main():
     """Main entry point for the post-install script."""
     print("Running GIGL post-install script...")
 
-    # Get the directory where this script is located
     script_dir = Path(__file__).parent
+    repo_root = script_dir.parent.parent
 
-    # Path to the install_glt.sh script
+    # Step 1: Install GLT
     install_glt_script = script_dir / "install_glt.sh"
-
     if not install_glt_script.exists():
         print(f"Error: install_glt.sh not found at {install_glt_script}")
         sys.exit(1)
 
-    cmd = f"bash {install_glt_script}"
-
     try:
-        print(f"Executing {cmd}...")
-        result = run_command_and_stream_stdout(cmd)
-        print("Post-install script finished running, with return code: ", result)
-        return result
-
+        print(f"Executing bash {install_glt_script}...")
+        result = run_command_and_stream_stdout(f"bash {install_glt_script}")
+        print("GLT install finished with return code:", result)
     except subprocess.CalledProcessError as e:
         print(f"Error running install_glt.sh: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"Unexpected error: {e}")
         sys.exit(1)
+
+    # Step 2: Build pybind11 C++ extensions in-place so they are importable
+    # without requiring a separate `make build_cpp_extensions` call.
+    setup_py = repo_root / "setup.py"
+    if setup_py.exists():
+        cmd = f"cd {repo_root} && {sys.executable} setup.py build_ext --inplace"
+        try:
+            print("Building C++ extensions...")
+            result = run_command_and_stream_stdout(cmd)
+            print("C++ extension build finished with return code:", result)
+        except subprocess.CalledProcessError as e:
+            print(f"Error building C++ extensions: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Unexpected error building C++ extensions: {e}")
+            sys.exit(1)
+    else:
+        print(f"Warning: {setup_py} not found, skipping C++ extension build")
+
+    return result
 
 
 if __name__ == "__main__":

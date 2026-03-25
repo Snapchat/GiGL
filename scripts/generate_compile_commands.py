@@ -12,24 +12,24 @@ Output: ``build/compile_commands.json`` (created or overwritten).
 """
 
 import json
+import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
+from torch.utils.cpp_extension import include_paths as torch_include_paths
+
 
 def main() -> None:
-    try:
-        import torch  # noqa: F401 — imported to verify it is installed
-        from torch.utils.cpp_extension import include_paths as torch_include_paths
-    except ImportError as exc:
-        print(
-            f"Error: {exc}\n"
-            "Run `make build_cpp_extensions` first to ensure torch is available.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     repo_root = Path(__file__).parent.parent.resolve()
+
+    # Always rebuild C++ extensions before generating compile_commands.json so
+    # the database reflects the current state of the code.
+    subprocess.run(
+        [sys.executable, "setup.py", "build_ext", "--inplace"],
+        cwd=repo_root,
+        check=True,
+    )
 
     # Collect all include directories needed to compile the extension.
     # torch_include_paths() returns the torch headers, which already bundle
@@ -62,7 +62,9 @@ def main() -> None:
     output = repo_root / "build" / "compile_commands.json"
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(commands, indent=2))
-    print(f"Wrote {len(commands)} entr{'y' if len(commands) == 1 else 'ies'} to {output}")
+    print(
+        f"Wrote {len(commands)} entr{'y' if len(commands) == 1 else 'ies'} to {output}"
+    )
 
 
 if __name__ == "__main__":
