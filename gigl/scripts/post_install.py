@@ -61,9 +61,9 @@ def main():
 
     # Step 2: Build pybind11 C++ extensions in-place so they are importable
     # without requiring a separate `make build_cpp_extensions` call.
-    setup_py = repo_root / "setup.py"
+    setup_py = repo_root / "build_cpp_extensions.py"
     if setup_py.exists():
-        cmd = f"cd {repo_root} && {sys.executable} setup.py build_ext --inplace"
+        cmd = f"cd {repo_root} && {sys.executable} build_cpp_extensions.py build_ext --inplace"
         try:
             print("Building C++ extensions...")
             result = run_command_and_stream_stdout(cmd)

@@ -161,6 +161,9 @@ format: format_py format_scala format_md format_cpp
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
+build_cpp_extensions:
+	uv run --no-sync python build_cpp_extensions.py build_ext --inplace
+
 lint_cpp:
 	uv run python scripts/generate_compile_commands.py
 	clang-tidy -p build/compile_commands.json $(CPP_SOURCES)
