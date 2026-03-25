@@ -26,7 +26,7 @@ def main() -> None:
     # Always rebuild C++ extensions before generating compile_commands.json so
     # the database reflects the current state of the code.
     subprocess.run(
-        [sys.executable, "build_cpp_extensions.py", "build_ext", "--inplace"],
+        [sys.executable, "scripts/build_cpp_extensions.py", "build_ext", "--inplace"],
         cwd=repo_root,
         check=True,
     )

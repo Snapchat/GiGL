@@ -20,16 +20,7 @@ def find_cpp_extensions() -> list[CppExtension]:
     """Auto-discover pybind11 extension modules under ``gigl/csrc/``.
 
     Following PyTorch's csrc convention, only files named ``python_*.cpp`` are
-    compiled as Python extension modules.  Pure C++ files (without the
-    ``python_`` prefix) are used only in C++ unit tests.
-
-    The module name is derived from the file path with the ``python_`` prefix
-    stripped, so ``gigl/csrc/distributed/python_ppr_forward_push.cpp`` is
-    importable as ``gigl.csrc.distributed.ppr_forward_push``.
-
-    If a matching implementation file exists alongside the binding file (e.g.
-    ``ppr_forward_push.cpp`` next to ``python_ppr_forward_push.cpp``), it is
-    compiled into the same extension module.
+    compiled as Python extension modules.
 
     Returns an empty list if ``gigl/csrc/`` does not yet exist.
     """

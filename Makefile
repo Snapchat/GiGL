@@ -77,7 +77,7 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under tests/unit.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-unit_test_py: clean_build_files_py type_check
+unit_test_py: clean_build_files_py type_check build_cpp_extensions
 	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -125,7 +125,7 @@ check_format: check_format_py check_format_scala check_format_md check_format_cp
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
 # By default, runs all tests under tests/integration.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-integration_test:
+integration_test: build_cpp_extensions
 	uv run python -m tests.integration.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -162,7 +162,7 @@ type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
 build_cpp_extensions:
-	uv run --no-sync python build_cpp_extensions.py build_ext --inplace
+	uv run --no-sync python scripts/build_cpp_extensions.py build_ext --inplace
 
 lint_cpp:
 	uv run python scripts/generate_compile_commands.py
@@ -282,7 +282,7 @@ run_all_e2e_tests:
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
-compile_gigl_kubeflow_pipeline: compile_jars push_new_docker_images
+compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
 		--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \
@@ -308,7 +308,7 @@ _skip_build_deps:
 # 	job_name=... \ , and other params
 # 	compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" \
 # 	run_dev_gnn_kubeflow_pipeline
-run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars push_new_docker_images)
+run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, build_cpp_extensions compile_jars push_new_docker_images)
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		$(if $(compiled_pipeline_path),,--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}) \
