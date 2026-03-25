@@ -66,8 +66,10 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 
 """
 import argparse
+from collections.abc import Mapping
 import multiprocessing.context as py_mp_context
 import os
+import time
 from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
@@ -91,6 +93,41 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
 logger = Logger()
+
+
+def _precompute_graph_col_counts(dataset: DistDataset) -> None:
+    graph_partition = dataset.graph
+    if graph_partition is None:
+        logger.info(
+            "Skipping parent-side graph.col_count precompute because the dataset has no graph partition"
+        )
+        return
+
+    if isinstance(graph_partition, Mapping):
+        graph_items = [
+            (str(edge_type), graph) for edge_type, graph in graph_partition.items()
+        ]
+    else:
+        graph_items = [("homogeneous", graph_partition)]
+
+    logger.info(
+        f"Precomputing parent-side graph.col_count for {len(graph_items)} local graph partition(s)"
+    )
+    total_start_time = time.perf_counter()
+    for graph_key, graph in graph_items:
+        graph_start_time = time.perf_counter()
+        col_count = graph.col_count
+        logger.info(
+            "Precomputed parent-side graph.col_count "
+            f"graph_partition={graph_key} "
+            f"row_count={graph.topo.row_count} "
+            f"edge_count={graph.topo.edge_count} "
+            f"col_count={col_count} "
+            f"elapsed_s={time.perf_counter() - graph_start_time:.3f}"
+        )
+    logger.info(
+        f"Completed parent-side graph.col_count precompute in {time.perf_counter() - total_start_time:.3f}s"
+    )
 
 
 def _run_storage_process(
@@ -220,6 +257,7 @@ def storage_node_process(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
+    _precompute_graph_col_counts(dataset)
     inference_node_types = sorted(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
     )

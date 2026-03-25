@@ -3,9 +3,11 @@
 
 import datetime
 import queue
+import time
 from threading import Barrier
 from typing import Optional, Union, cast
 
+import psutil
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.channel import ChannelBase
@@ -32,7 +34,20 @@ from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
+from gigl.common.logger import Logger
 from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
+
+logger = Logger()
+
+
+def _log_worker_init_state(rank: int, stage: str, worker_start_time: float) -> None:
+    rss_gb = psutil.Process().memory_info().rss / (1024**3)
+    logger.info(
+        f"sampling_worker_init rank={rank} "
+        f"stage={stage} "
+        f"rss_gb={rss_gb:.3f} "
+        f"elapsed_s={time.perf_counter() - worker_start_time:.3f}"
+    )
 
 
 def _sampling_worker_loop(
@@ -48,6 +63,7 @@ def _sampling_worker_loop(
     mp_barrier: Barrier,
 ):
     dist_sampler = None
+    worker_start_time = time.perf_counter()
     try:
         init_worker_group(
             world_size=worker_options.worker_world_size,
@@ -75,11 +91,21 @@ def _sampling_worker_loop(
         _set_worker_signal_handlers()
         torch.set_num_threads(num_rpc_threads + 1)
 
+        _log_worker_init_state(
+            rank=rank,
+            stage="before_init_rpc",
+            worker_start_time=worker_start_time,
+        )
         init_rpc(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
             rpc_timeout=worker_options.rpc_timeout,
+        )
+        _log_worker_init_state(
+            rank=rank,
+            stage="after_init_rpc",
+            worker_start_time=worker_start_time,
         )
 
         if sampling_config.seed is not None:
@@ -97,6 +123,11 @@ def _sampling_worker_loop(
             worker_options.worker_concurrency,
             current_device,
             seed=sampling_config.seed,
+        )
+        _log_worker_init_state(
+            rank=rank,
+            stage="after_dist_neighbor_sampler",
+            worker_start_time=worker_start_time,
         )
         dist_sampler.start_loop()
 
