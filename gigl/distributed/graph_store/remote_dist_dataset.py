@@ -259,7 +259,7 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         split: Optional[Literal["train", "val", "test"]] = None,
         node_type: Optional[NodeType] = None,
-        shard_strategy: ShardStrategy = ShardStrategy.CONTIGUOUS,
+        shard_strategy: ShardStrategy = ShardStrategy.ROUND_ROBIN,
     ) -> dict[int, torch.Tensor]:
         """
         Fetches node ids from the storage nodes for the current compute node (machine).
@@ -281,10 +281,11 @@ class RemoteDistDataset:
                 Must be provided for heterogeneous datasets.
                 Must be None for labeled homogeneous graphs.
             shard_strategy (ShardStrategy): Strategy for sharding node IDs across compute nodes.
-                ``CONTIGUOUS`` (default) assigns storage servers to compute nodes, returning empty tensors
-                for unassigned servers.
-                ``ROUND_ROBIN`` shards each server's nodes across the
+                ``ROUND_ROBIN`` (default) shards each server's nodes across the
                 requested rank/world_size on the storage server.
+                ``CONTIGUOUS`` assigns storage servers to compute nodes, returning empty tensors
+                for unassigned servers.
+                If CONTIGUOUS is set, rank and world_size must be provided.
 
         Raises:
             ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
@@ -434,7 +435,7 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         anchor_node_type: Optional[NodeType] = None,
         supervision_edge_type: Optional[EdgeType] = None,
-        shard_strategy: ShardStrategy = ShardStrategy.CONTIGUOUS,
+        shard_strategy: ShardStrategy = ShardStrategy.ROUND_ROBIN,
     ) -> dict[int, ABLPInputNodes]:
         """Fetches ABLP (Anchor Based Link Prediction) input from the storage nodes.
 
@@ -465,10 +466,11 @@ class RemoteDistDataset:
                 Defaults to None.
             shard_strategy (ShardStrategy):
                 Strategy for sharding ABLP input across compute nodes.
-                ``CONTIGUOUS`` (default) assigns storage servers to compute nodes,
-                producing empty tensors for unassigned servers.
-                ``ROUND_ROBIN`` shards each server's data across the
+                ``ROUND_ROBIN`` (default) shards each server's data across the
                 requested rank/world_size on the storage server.
+                ``CONTIGUOUS`` assigns storage servers to compute nodes,
+                producing empty tensors for unassigned servers.
+                If CONTIGUOUS is set, rank and world_size must be provided.
 
         Returns:
             dict[int, ABLPInputNodes]:
