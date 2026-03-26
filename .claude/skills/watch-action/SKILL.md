@@ -161,17 +161,35 @@ Look for error messages, stack traces, failing test names.
 
 **Layer 3 — Vertex AI logs (for e2e failures only):**
 
-If the e2e CloudBuild job failed, check which Vertex AI pipeline failed:
+Extract pipeline job names directly from the CloudBuild logs (already fetched in Layer 2):
 
 ```bash
-gcloud ai pipelines runs list \
-  --project=external-snap-ci-github-gigl \
-  --region=us-central1 \
-  --filter="createTime>='{run_created_at}'" \
-  --format="table(name, displayName, state, createTime)"
+gcloud builds log {BUILD_ID} --project=external-snap-ci-github-gigl 2>&1 \
+  | grep -oP 'pipelineJobs/\K\S+'
 ```
 
-For failed pipelines, check the custom jobs within them:
+This outputs lines like `cora-nalp-test-on-20260326-190915`. Use these names to look up each pipeline job.
+
+For each failed pipeline, investigate which task failed:
+
+```bash
+python3 -c "
+from google.cloud import aiplatform
+aiplatform.init(project='external-snap-ci-github-gigl', location='us-central1')
+job = aiplatform.PipelineJob.get('projects/external-snap-ci-github-gigl/locations/us-central1/pipelineJobs/{JOB_NAME}')
+print('State:', job.state.name)
+print('Error:', job.gca_resource.error)
+print()
+print('Failed tasks:')
+for task in job.task_details:
+    if task.state.name not in ('SUCCEEDED', 'SKIPPED', 'NOT_TRIGGERED'):
+        print(f'  {task.task_name}: {task.state.name}')
+        if task.error.message:
+            print(f'    {task.error.message}')
+"
+```
+
+For failed tasks that launched a custom job, find and describe it:
 
 ```bash
 gcloud ai custom-jobs list \
@@ -179,6 +197,12 @@ gcloud ai custom-jobs list \
   --region=us-central1 \
   --filter="createTime>='{run_created_at}'" \
   --format="table(name, displayName, state, createTime, error.message)"
+```
+
+```bash
+gcloud ai custom-jobs describe {CUSTOM_JOB_ID} \
+  --project=external-snap-ci-github-gigl \
+  --region=us-central1
 ```
 
 **After identifying the error:**
@@ -197,14 +221,27 @@ ______________________________________________________________________
 
 When the integration-e2e-test job is in progress and its CloudBuild ID is known:
 
-**Discover pipeline runs:**
+**Discover pipeline runs from CloudBuild logs:**
+
+The CloudBuild e2e job logs every pipeline job it creates. Extract them directly:
 
 ```bash
-gcloud ai pipelines runs list \
-  --project=external-snap-ci-github-gigl \
-  --region=us-central1 \
-  --filter="createTime>='{run_created_at}'" \
-  --format="table(name, displayName, state, createTime)"
+gcloud builds log {E2E_BUILD_ID} --project=external-snap-ci-github-gigl 2>&1 \
+  | grep -oP 'pipelineJobs/\K\S+'
+```
+
+This yields unique job names like `cora-nalp-test-on-20260326-190915`. Then check each one:
+
+```bash
+python3 -c "
+from google.cloud import aiplatform
+aiplatform.init(project='external-snap-ci-github-gigl', location='us-central1')
+for job_name in ['{JOB_NAME_1}', '{JOB_NAME_2}']:  # from grep above
+    job = aiplatform.PipelineJob.get(
+        f'projects/external-snap-ci-github-gigl/locations/us-central1/pipelineJobs/{job_name}'
+    )
+    print(f'{job.name:<55} {job.state.name}')
+"
 ```
 
 **Expected pipelines** (from `tests/e2e_tests/e2e_tests.yaml`):
@@ -262,12 +299,11 @@ This skill requires the following commands to be allowlisted in `.claude/setting
 
 ```json
 "Bash(gh run view:*)",
-"Bash(gh run watch:*)",
-"Bash(gh api:*)",
+"Bash(gh api repos/:*)",
 "Bash(gcloud builds list:*)",
 "Bash(gcloud builds log:*)",
-"Bash(gcloud ai pipelines:*)",
-"Bash(gcloud ai custom-jobs:*)"
+"Bash(gcloud ai custom-jobs list:*)",
+"Bash(gcloud ai custom-jobs describe:*)"
 ```
 
 If a command is blocked, note the limitation and continue with available data sources.
