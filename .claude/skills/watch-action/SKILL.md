@@ -4,8 +4,8 @@ ______________________________________________________________________
 
 # Watch Action
 
-Monitor a GitHub Actions CI/CD run through every layer of the stack: GitHub Actions jobs, Google Cloud Build, and
-Vertex AI Pipelines. Reports status, investigates failures, and proposes fixes.
+Monitor a GitHub Actions CI/CD run through every layer of the stack: GitHub Actions jobs, Google Cloud Build, and Vertex
+AI Pipelines. Reports status, investigates failures, and proposes fixes.
 
 ## Instructions
 
@@ -17,12 +17,12 @@ ______________________________________________________________________
 
 Extract the run ID and repository from `$ARGUMENTS`:
 
-| Input | Run ID | Repo |
-| --- | --- | --- |
-| `https://github.com/{owner}/{repo}/actions/runs/{id}` | `{id}` | `{owner}/{repo}` |
-| `https://github.com/{owner}/{repo}/actions/runs/{id}/attempts/{n}` | `{id}` | `{owner}/{repo}` |
-| `{numeric-id}` | `{numeric-id}` | From `--repo` flag, or current `gh` repo context |
-| `{numeric-id} --repo owner/repo` | `{numeric-id}` | `owner/repo` |
+| Input                                                              | Run ID         | Repo                                             |
+| ------------------------------------------------------------------ | -------------- | ------------------------------------------------ |
+| `https://github.com/{owner}/{repo}/actions/runs/{id}`              | `{id}`         | `{owner}/{repo}`                                 |
+| `https://github.com/{owner}/{repo}/actions/runs/{id}/attempts/{n}` | `{id}`         | `{owner}/{repo}`                                 |
+| `{numeric-id}`                                                     | `{numeric-id}` | From `--repo` flag, or current `gh` repo context |
+| `{numeric-id} --repo owner/repo`                                   | `{numeric-id}` | `owner/repo`                                     |
 
 Validate the run exists:
 
@@ -88,19 +88,19 @@ gcloud builds list \
 
 Map CloudBuild jobs to GH Actions jobs using the `_CMD` substitution:
 
-| `_CMD` contains | GH Actions job |
-| --- | --- |
-| `unit_test_py` | unit-test-python |
-| `unit_test_scala` | unit-test-scala |
-| `integration_test` (without `e2e`) | integration-test |
-| `run_all_e2e_tests` | integration-e2e-test |
-| `lint_test` | lint-test |
-| `run_all_notebook_e2e_tests` | notebooks-e2e-test |
+| `_CMD` contains                    | GH Actions job       |
+| ---------------------------------- | -------------------- |
+| `unit_test_py`                     | unit-test-python     |
+| `unit_test_scala`                  | unit-test-scala      |
+| `integration_test` (without `e2e`) | integration-test     |
+| `run_all_e2e_tests`                | integration-e2e-test |
+| `lint_test`                        | lint-test            |
+| `run_all_notebook_e2e_tests`       | notebooks-e2e-test   |
 
 Store this mapping — you will use CloudBuild IDs to fetch logs when GH Actions logs are unavailable.
 
-**Note:** The CloudBuild project is `external-snap-ci-github-gigl`. If your `gcloud` auth doesn't have access, fall
-back to GH Actions logs only and note this limitation to the user.
+**Note:** The CloudBuild project is `external-snap-ci-github-gigl`. If your `gcloud` auth doesn't have access, fall back
+to GH Actions logs only and note this limitation to the user.
 
 ______________________________________________________________________
 
@@ -128,6 +128,7 @@ Poll until all active jobs reach `completed` status.
 6. Present updated status table
 
 **Long-running jobs:** If only Slow-tier jobs remain and estimated wait is >30 minutes, suggest to the user:
+
 ```
 The remaining e2e jobs may take another 30-90 minutes.
 You can use `/loop` to monitor in the background:
@@ -212,17 +213,17 @@ gcloud ai pipelines runs list \
 - `hom-cora-sup-test`, `het-dblp-sup-test`
 - `hom-cora-sup-gs-test`, `het-dblp-sup-gs-test`
 
-Note: Pipeline job names use hyphens, not underscores (converted via `str(applied_task_identifier).replace("_", "-")`
-in `gigl/orchestration/kubeflow/kfp_orchestrator.py:179`).
+Note: Pipeline job names use hyphens, not underscores (converted via `str(applied_task_identifier).replace("_", "-")` in
+`gigl/orchestration/kubeflow/kfp_orchestrator.py:179`).
 
 **Track pipeline states:**
 
-| State | Meaning |
-| --- | --- |
-| `PIPELINE_STATE_RUNNING` | Still executing |
-| `PIPELINE_STATE_SUCCEEDED` | Passed |
-| `PIPELINE_STATE_FAILED` | Needs investigation |
-| `PIPELINE_STATE_CANCELLED` | Was cancelled |
+| State                      | Meaning             |
+| -------------------------- | ------------------- |
+| `PIPELINE_STATE_RUNNING`   | Still executing     |
+| `PIPELINE_STATE_SUCCEEDED` | Passed              |
+| `PIPELINE_STATE_FAILED`    | Needs investigation |
+| `PIPELINE_STATE_CANCELLED` | Was cancelled       |
 
 Present a pipeline status table alongside the main job status table when Vertex AI pipelines are active.
 
