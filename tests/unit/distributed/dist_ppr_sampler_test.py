@@ -442,6 +442,11 @@ def _run_ppr_hetero_loader_correctness_check(
             ntype_to_sampler_ppr, reference_ppr, seed_global_id
         )
 
+        for edge_type in datum.edge_types:
+            assert (
+                edge_type[1] == "ppr"
+            ), f"Non-PPR edge type {edge_type} found in PPR sampler output"
+
         batches_checked += 1
 
     assert (
@@ -543,6 +548,11 @@ def _run_ppr_ablp_loader_correctness_check(
                 assert (ppr_weights > 0).all()
             assert (ppr_edge_index[1] >= 0).all()
             assert (ppr_edge_index[1] < datum[ntype].node.size(0)).all()
+
+        for edge_type in datum.edge_types:
+            assert (
+                edge_type[1] == "ppr"
+            ), f"Non-PPR edge type {edge_type} found in PPR sampler output"
 
         batches_checked += 1
 
