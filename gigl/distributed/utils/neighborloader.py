@@ -1,4 +1,5 @@
 """Utils for Neighbor loaders."""
+import ast
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -6,6 +7,7 @@ from enum import Enum
 from typing import Literal, Optional, TypeVar, Union
 
 import torch
+from graphlearn_torch.channel import SampleMessage
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
@@ -164,6 +166,32 @@ def labeled_to_homogeneous(supervision_edge_type: EdgeType, data: HeteroData) ->
     return homogeneous_data
 
 
+def strip_non_ppr_edge_types(
+    data: HeteroData, ppr_edge_types: set[EdgeType]
+) -> HeteroData:
+    """Remove all edge types not in ``ppr_edge_types`` from a HeteroData object.
+
+    GLT's collate function creates edge stores for all edge types registered in
+    the sampler (including original graph and reverse edge types) even when the
+    PPR sampler provides empty row/col tensors.  This removes those ghost stores
+    so the output contains only PPR edge types.
+
+    Modifies the input in place.
+
+    Args:
+        data: The HeteroData object to clean up.
+        ppr_edge_types: The exact set of PPR edge types to keep, as returned
+            by ``attach_ppr_outputs``.
+
+    Returns:
+        The same object with non-PPR edge types removed.
+    """
+    for edge_type in list(data.edge_types):
+        if edge_type not in ppr_edge_types:
+            del data[edge_type]
+    return data
+
+
 def strip_label_edges(data: HeteroData) -> HeteroData:
     """
     Removes all edges of a specific type from a heterogeneous graph.
@@ -264,3 +292,115 @@ def set_missing_features(
         )
 
     return data
+
+
+def extract_metadata(
+    msg: SampleMessage, device: torch.device
+) -> tuple[dict[str, torch.Tensor], SampleMessage]:
+    """Separate user-defined metadata from a SampleMessage.
+
+    GLT's ``to_hetero_data`` misinterprets ``#META.``-prefixed keys as
+    edge types, causing failures with ``edge_dir="out"`` (it tries to call
+    ``reverse_edge_type`` on metadata key strings).  This function separates
+    metadata from the sampling data so the stripped message can be passed to
+    GLT's ``_collate_fn`` without triggering the bug.
+
+    The original ``msg`` is not modified.
+
+    Args:
+        msg: The SampleMessage to extract metadata from.
+        device: The device to move metadata tensors to.
+
+    Returns:
+        A 2-tuple of:
+        - metadata: Dict mapping metadata key (without ``#META.`` prefix) to tensor.
+        - stripped_msg: A new SampleMessage with ``#META.``-prefixed keys removed.
+    """
+    meta_prefix = "#META."
+    metadata: dict[str, torch.Tensor] = {}
+    stripped_msg: SampleMessage = {}
+    for k, v in msg.items():
+        if k.startswith(meta_prefix):
+            metadata[k[len(meta_prefix) :]] = v.to(device)
+        else:
+            stripped_msg[k] = v
+    return metadata, stripped_msg
+
+
+def attach_ppr_outputs(
+    data: Union[Data, HeteroData],
+    ppr_edge_indices: dict[EdgeType, torch.Tensor],
+    ppr_weights: dict[EdgeType, torch.Tensor],
+) -> None:
+    """Attach PPR edge indices and weights onto a HeteroData object.
+
+    For each PPR edge type, sets ``data[edge_type].edge_index`` and
+    ``data[edge_type].edge_attr`` in-place.  Called from the loader's
+    ``_collate_fn`` only when a PPR sampler is active; the function is a
+    no-op if both dicts are empty.
+
+    Args:
+        data: The Data or HeteroData object to attach outputs to.
+        ppr_edge_indices: Dict mapping PPR edge type to ``[2, N]`` edge-index tensor.
+        ppr_weights: Dict mapping PPR edge type to ``[N]`` weight tensor.
+
+    Raises:
+        AssertionError: If ``ppr_edge_indices`` and ``ppr_weights`` have different edge-type keys.
+    """
+    assert ppr_edge_indices.keys() == ppr_weights.keys(), (
+        f"PPR edge index and weight edge types must match, "
+        f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
+    )
+    for edge_type, edge_index in ppr_edge_indices.items():
+        data[edge_type].edge_index = edge_index
+        data[edge_type].edge_attr = ppr_weights[edge_type]
+
+
+def extract_edge_type_metadata(
+    metadata: dict[str, torch.Tensor],
+    prefixes: list[str],
+) -> tuple[dict[str, dict[EdgeType, torch.Tensor]], dict[str, torch.Tensor]]:
+    """Extract entries matching any of the given prefixes from metadata, grouped by prefix.
+
+    Scans ``metadata`` for keys that start with any of the provided ``prefixes``.
+    For each match, the suffix (everything after the matched prefix) is parsed via
+    ``ast.literal_eval`` as an ``EdgeType`` tuple and added to that prefix's sub-dict.
+    All unmatched keys are placed in the remaining dict.
+
+    Each prefix gets its own sub-dict in the result, so distinct categories (e.g.
+    positive labels, negative labels) can never collide even when extracted in one call.
+
+    The original ``metadata`` is not modified.
+
+    Example:
+
+        matched, remaining = extract_edge_type_metadata(
+            metadata=metadata,
+            prefixes=[POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
+        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
+
+    Args:
+        metadata: Dict of string keys to tensors.
+        prefixes: List of prefixes to match against. Prefixes should be unique (no repeats).
+
+    Returns:
+        A 2-tuple of:
+        - matched: Dict mapping each prefix to a sub-dict of
+          ``{EdgeType: tensor}`` for all keys that started with that prefix.
+          Every prefix in ``prefixes`` is guaranteed to be present as a key
+          (with an empty dict if nothing matched).
+        - remaining: Dict of all key/value pairs that matched no prefix.
+    """
+    matched: dict[str, dict[EdgeType, torch.Tensor]] = {p: {} for p in prefixes}
+    remaining: dict[str, torch.Tensor] = {}
+    for key, value in metadata.items():
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                edge_type: EdgeType = ast.literal_eval(key[len(prefix) :])
+                matched[prefix][edge_type] = value
+                break
+        else:
+            remaining[key] = value
+    return matched, remaining

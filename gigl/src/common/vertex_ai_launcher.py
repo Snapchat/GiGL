@@ -262,6 +262,7 @@ def _build_job_config(
         accelerator_type=vertex_ai_resource_config.gpu_type.upper().replace("-", "_"),
         accelerator_count=vertex_ai_resource_config.gpu_limit,
         replica_count=vertex_ai_resource_config.num_replicas,
+        boot_disk_size_gb=vertex_ai_resource_config.boot_disk_size_gb or 100,
         labels=labels,
         timeout_s=vertex_ai_resource_config.timeout
         if vertex_ai_resource_config.timeout

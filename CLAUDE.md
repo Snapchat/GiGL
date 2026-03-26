@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Coordination With AGENTS.md
+
+- CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
+- AGENTS.md should direct agents to read CLAUDE.md and discover/use skills under `.claude/skills`.
+
 ## Project Overview
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
@@ -16,11 +21,16 @@ make install_dev_deps              # Full dev setup (gcloud auth, uv, pre-commit
 
 # Testing
 make unit_test_py                                    # All Python unit tests (includes type_check)
+# NOTE: PY_TEST_FILES should *only* be the filename, *not* the full path.
+# e.g. if you want to test `tests/unit/common/foo_test.py` then you should run `make unit_test_py PY_TEST_FILES="foo_test.py"
 make unit_test_py PY_TEST_FILES="specific_test.py"   # Single test file
 make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one at a time, slow)
 
 # Formatting & Linting
 make format              # Auto-fix Python, Scala, Markdown
+make format_py           # Auto-fix Python only
+make format_scala        # Auto-fix Scala only
+make format_md           # Auto-fix Markdown only
 make check_format        # Check without fixing
 make type_check          # mypy static type checking
 
@@ -53,8 +63,8 @@ GiGL extends GraphLearn-for-PyTorch (GLT) for distributed GNN training. Key clas
   labels, split metadata, and feature info
 - **`DistNeighborLoader`** (extends GLT `DistLoader`) - Standard node-based sampling loader
 - **`DistABLPLoader`** (extends GLT `DistLoader`) - Anchor-Based Link Prediction sampling loader
-- **`DistABLPNeighborSampler`** (extends GLT `DistNeighborSampler`) - Custom sampler supporting ABLP with
-  positive/negative label injection
+- **`DistNeighborSampler`** (extends GLT `DistNeighborSampler`) - Unified sampler supporting both standard neighbor
+  sampling and ABLP with positive/negative label injection
 
 **Two deployment modes:**
 
@@ -124,13 +134,27 @@ development.
 
 - Always use type annotations for function parameters and return values.
 - Prefer native types (`dict[str, str]`, `list[int]`) over `typing.Dict`, `typing.List`.
-- Use `Final` for constants. Use `@dataclass(frozen=True)` for immutable data containers.
+- Use `Final` for constants. Use `@dataclass(frozen=True)` for immutable data containers when named fields and a stable
+  shape add real clarity; do not introduce a dataclass for tiny internal-only plumbing.
 - Always annotate empty containers: `names: list[str] = []` not `names = []`.
 
 ### Docstrings
 
 Add Google-style docstrings for all public functions and methods. Include: one-line summary, optional details, Example
 with `>>>` for doctests, Args, Returns, and Raises. Docstrings should be Sphinx-compatible.
+
+Separate independent statements in docstrings with blank lines. Each distinct idea (purpose, preconditions, side
+effects, caveats) should be its own line. For example:
+
+```python
+# Bad
+"""Computes the foo property of the baz object. Requires baz to be fooable."""
+
+# Good
+"""Computes the foo property of the baz object.
+Requires baz to be fooable.
+"""
+```
 
 ### Logging
 
@@ -205,6 +229,15 @@ class TestMyComponent(TestCase):
 Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
 `tests/test_assets/configs/`.
 
-## Pre-Submit Checklist & Formatting
+## Plan Documents
 
-See [.claude/formatting.md](.claude/formatting.md) for pre-submit checklist and formatting details.
+Plan documents live in `docs/plans/` and must be date-prefixed using the format `YYYYMMDD-<short-description>.md` (e.g.,
+`20260324-add-foo-factory.md`). Use today's date at the time of creation.
+
+## Additional instructions
+
+- For a pre-submit checklist and formatting see .claude/formatting.md
+
+- For general development and branch naming conventions see .claude/development.md
+
+- When migrating code, make sure to migrate any doc comments or diagrams over to the new code.

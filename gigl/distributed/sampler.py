@@ -4,17 +4,10 @@ import torch
 from graphlearn_torch.sampler import NodeSamplerInput
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.utils.share_memory import share_memory
 
 POSITIVE_LABEL_METADATA_KEY: Final[str] = "gigl_positive_labels."
 NEGATIVE_LABEL_METADATA_KEY: Final[str] = "gigl_negative_labels."
-
-
-def metadata_key_with_prefix(key: str) -> str:
-    """Prefixes the key with "#META
-    Do this as GLT also does this.
-    https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L714
-    """
-    return f"#META.{key}"
 
 
 class ABLPNodeSamplerInput(NodeSamplerInput):
@@ -70,5 +63,13 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
             },
         )
 
-    def __repr__(self) -> str:
-        return f"ABLPNodeSamplerInput(\n\tnode={self.node},\n\tinput_type={self.input_type},\n\tpositive_label_by_edge_types={self._positive_label_by_edge_types},\n\tnegative_label_by_edge_types={self._negative_label_by_edge_types}\n)"
+    def __str__(self) -> str:
+        return f"ABLPNodeSamplerInput(input_type: {self.input_type}, positive_label_edge_types: {list(self._positive_label_by_edge_types.keys())}, negative_label_edge_types: {list(self._negative_label_by_edge_types.keys())})"
+
+    def share_memory(self) -> "ABLPNodeSamplerInput":
+        share_memory(self.node)
+        for edge_type in self._positive_label_by_edge_types:
+            share_memory(self._positive_label_by_edge_types[edge_type])
+        for edge_type in self._negative_label_by_edge_types:
+            share_memory(self._negative_label_by_edge_types[edge_type])
+        return self
