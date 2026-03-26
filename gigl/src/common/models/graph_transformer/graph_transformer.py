@@ -517,6 +517,15 @@ class GraphTransformerEncoder(nn.Module):
                 "{None, 'sinusoidal'}, "
                 f"got '{sequence_positional_encoding_type}'"
             )
+        if (
+            sequence_construction_method == "khop"
+            and sequence_positional_encoding_type is not None
+        ):
+            raise ValueError(
+                "sequence_positional_encoding_type requires "
+                "sequence_construction_method='ppr' because khop sequences do not "
+                "enforce a stable token order."
+            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []

@@ -485,6 +485,19 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             )
         )
 
+    def test_khop_sequence_construction_rejects_sequence_position_encoding(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "sequence_positional_encoding_type requires "
+            "sequence_construction_method='ppr'",
+        ):
+            self._create_encoder(
+                sequence_construction_method="khop",
+                sequence_positional_encoding_type="sinusoidal",
+            )
+
     def test_forward_supports_ppr_sequence_construction(self) -> None:
         data = _create_user_graph_with_ppr_edges()
 
