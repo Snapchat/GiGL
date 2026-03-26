@@ -52,9 +52,6 @@ from gigl.types.graph import (
 
 logger = Logger()
 
-# When using CPU based inference/training, we default cpu threads for neighborloading on top of the per process parallelism.
-DEFAULT_NUM_CPU_THREADS = 2
-
 
 # We don't see logs for graph store mode for whatever reason.
 # TOOD(#442): Revert this once the GCP issues are resolved.
@@ -241,6 +238,7 @@ class DistNeighborLoader(BaseDistLoader):
                 input_nodes=input_nodes,
                 dataset=dataset,
                 num_workers=num_workers,
+                worker_concurrency=worker_concurrency,
                 prefetch_size=prefetch_size,
                 channel_size=channel_size,
             )
@@ -311,6 +309,7 @@ class DistNeighborLoader(BaseDistLoader):
         ],
         dataset: RemoteDistDataset,
         num_workers: int,
+        worker_concurrency: int,
         prefetch_size: int,
         channel_size: str,
     ) -> tuple[list[NodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema]:
@@ -334,28 +333,20 @@ class DistNeighborLoader(BaseDistLoader):
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
 
-        # Get sampling ports for compute-storage connections.
-        # One port per compute process (not per compute node) so that each
-        # process gets its own server-side sampling worker group.
-        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.compute_cluster_world_size
-        )
-        sampling_port = sampling_ports[compute_rank]
-
         worker_key = f"compute_rank_{compute_rank}_worker_{self._instance_count}"
         logger.info(f"Rank {compute_rank} worker key: {worker_key}")
-        worker_options = RemoteDistSamplingWorkerOptions(
-            server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for i in range(num_workers)],
-            master_addr=dataset.cluster_info.storage_cluster_master_ip,
-            buffer_size=channel_size,
-            master_port=sampling_port,
+        worker_options = BaseDistLoader.create_graph_store_worker_options(
+            dataset=dataset,
+            compute_rank=compute_rank,
             worker_key=worker_key,
+            num_workers=num_workers,
+            worker_concurrency=worker_concurrency,
+            channel_size=channel_size,
             prefetch_size=prefetch_size,
         )
         logger.info(
-            f"Rank {torch.distributed.get_rank()}! init for sampling rpc: {f'tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}'}"
+            f"Rank {torch.distributed.get_rank()}! init for sampling rpc: "
+            f"tcp://{worker_options.master_addr}:{worker_options.master_port}"
         )
 
         # Setup input data for the dataloader.
@@ -494,38 +485,14 @@ class DistNeighborLoader(BaseDistLoader):
 
         input_data = NodeSamplerInput(node=curr_process_nodes, input_type=node_type)
 
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader, setting up RPC and worker groups to minimize
-        # the memory overhead and CPU contention.
-        logger.info(
-            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} using device: {device}"
-        )
-        should_use_cpu_workers = device.type == "cpu"
-        if should_use_cpu_workers and num_cpu_threads is None:
-            logger.info(
-                "Using CPU workers, but found num_cpu_threads to be None. "
-                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
-            )
-            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
-
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
-
-        gigl.distributed.utils.init_neighbor_loader_worker(
+        BaseDistLoader.initialize_colocated_sampling_worker(
+            local_rank=local_rank,
+            local_world_size=local_world_size,
+            node_rank=node_rank,
+            node_world_size=node_world_size,
             master_ip_address=master_ip_address,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
             device=device,
-            should_use_cpu_workers=should_use_cpu_workers,
-            # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
-        )
-        logger.info(
-            f"Finished initializing neighbor loader worker:  {local_rank}/{local_world_size}"
         )
 
         # Sets up worker options for the dataloader
@@ -534,22 +501,12 @@ class DistNeighborLoader(BaseDistLoader):
         )
         dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
 
-        worker_options = MpDistSamplingWorkerOptions(
+        worker_options = BaseDistLoader.create_colocated_worker_options(
+            dataset_num_partitions=dataset.num_partitions,
             num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
-            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
-            # need to be connected. Thus, we need master ip address and master port to
-            # initate the connection.
-            # Note that different groups of workers are independent, and thus
-            # the sampling processes in different groups should be independent, and should
-            # use different master ports.
-            master_addr=master_ip_address,
+            master_ip_address=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
-            # Load testing show that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(dataset.num_partitions, 16),
-            rpc_timeout=600,
             channel_size=channel_size,
             pin_memory=device.type == "cuda",
         )

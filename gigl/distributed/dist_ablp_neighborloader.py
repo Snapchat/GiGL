@@ -21,7 +21,6 @@ from gigl.distributed.dist_ppr_sampler import (
     PPR_WEIGHT_METADATA_KEY,
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler import (
@@ -331,6 +330,7 @@ class DistABLPLoader(BaseDistLoader):
                 dataset=dataset,
                 num_workers=num_workers,
                 worker_concurrency=worker_concurrency,
+                channel_size=channel_size,
                 prefetch_size=prefetch_size,
             )
 
@@ -546,38 +546,14 @@ class DistABLPLoader(BaseDistLoader):
             negative_label_by_edge_types=negative_labels_by_label_edge_type,
         )
 
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader,
-        # setting up RPC and worker groups to minimize the memory overhead and CPU contention.
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
-        logger.info(
-            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} "
-            f"using device: {device} on port {neighbor_loader_port_for_current_rank}."
-        )
-        should_use_cpu_workers = device.type == "cpu"
-        if should_use_cpu_workers and num_cpu_threads is None:
-            logger.info(
-                "Using CPU workers, but found num_cpu_threads to be None. "
-                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
-            )
-            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
-
-        gigl.distributed.utils.init_neighbor_loader_worker(
+        BaseDistLoader.initialize_colocated_sampling_worker(
+            local_rank=local_rank,
+            local_world_size=local_world_size,
+            node_rank=node_rank,
+            node_world_size=node_world_size,
             master_ip_address=master_ip_address,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
             device=device,
-            should_use_cpu_workers=should_use_cpu_workers,
-            # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
-        )
-        logger.info(
-            f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
         )
 
         # Sets up worker options for the dataloader
@@ -585,22 +561,12 @@ class DistABLPLoader(BaseDistLoader):
             num_ports=local_world_size
         )
         dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
-        worker_options = MpDistSamplingWorkerOptions(
+        worker_options = BaseDistLoader.create_colocated_worker_options(
+            dataset_num_partitions=dataset.num_partitions,
             num_workers=num_workers,
-            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
-            # need to be connected. Thus, we need master ip address and master port to
-            # initate the connection.
-            # Note that different groups of workers are independent, and thus
-            # the sampling processes in different groups should be independent, and should
-            # use different master ports.
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
-            master_addr=master_ip_address,
+            master_ip_address=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
-            # Load testing shows that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(dataset.num_partitions, 16),
-            rpc_timeout=600,
             channel_size=channel_size,
             pin_memory=device.type == "cuda",
         )
@@ -624,8 +590,9 @@ class DistABLPLoader(BaseDistLoader):
         input_nodes: dict[int, ABLPInputNodes],
         dataset: RemoteDistDataset,
         num_workers: int,
-        worker_concurrency: int = 4,
-        prefetch_size: int = 4,
+        worker_concurrency: int,
+        channel_size: str,
+        prefetch_size: int,
     ) -> tuple[
         list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema
     ]:
@@ -638,9 +605,9 @@ class DistABLPLoader(BaseDistLoader):
                 labels with explicit node type and edge type information.
             dataset: The RemoteDistDataset to sample from.
             num_workers: Number of sampling workers.
-            worker_concurrency: Max sampling concurrency per worker. (default: ``4``).
+            worker_concurrency: Max sampling concurrency per worker.
+            channel_size: Size of the remote shared-memory buffer.
             prefetch_size: Max prefetched sampled messages per server on client side.
-                (default: ``4``).
 
         Returns:
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).
@@ -649,31 +616,22 @@ class DistABLPLoader(BaseDistLoader):
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
-
-        # Get sampling ports for compute-storage connections.
-        # One port per compute process (not per compute node) so that each
-        # process gets its own server-side sampling worker group.
-        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.compute_cluster_world_size
-        )
-        sampling_port = sampling_ports[compute_rank]
         worker_key = (
             f"compute_ablp_loader_rank_{compute_rank}_worker_{self._instance_count}"
         )
         logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
-        worker_options = RemoteDistSamplingWorkerOptions(
-            server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
-            worker_concurrency=worker_concurrency,
-            master_addr=dataset.cluster_info.storage_cluster_master_ip,
-            master_port=sampling_port,
+        worker_options = BaseDistLoader.create_graph_store_worker_options(
+            dataset=dataset,
+            compute_rank=compute_rank,
             worker_key=worker_key,
+            num_workers=num_workers,
+            worker_concurrency=worker_concurrency,
+            channel_size=channel_size,
             prefetch_size=prefetch_size,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: "
-            f"tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}"
+            f"tcp://{worker_options.master_addr}:{worker_options.master_port}"
         )
 
         # Validate server ranks
