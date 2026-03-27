@@ -74,6 +74,9 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 import argparse
 import ast
 import os
+import resource
+import time
+from collections.abc import Mapping
 from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
@@ -82,6 +85,7 @@ import torch
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.os_utils import import_obj
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
@@ -91,6 +95,52 @@ from gigl.env.distributed import GraphStoreInfo
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
 logger = Logger()
+
+
+def log_fd_state(context: str) -> None:
+    try:
+        soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (OSError, ValueError):
+        soft_limit, hard_limit = -1, -1
+    try:
+        open_fds = len(os.listdir("/proc/self/fd"))
+    except OSError:
+        open_fds = -1
+
+
+def _precompute_graph_col_counts(dataset: DistDataset) -> None:
+    graph_partition = dataset.graph
+    if graph_partition is None:
+        logger.info(
+            "Skipping parent-side graph.col_count precompute because the dataset has no graph partition"
+        )
+        return
+
+    if isinstance(graph_partition, Mapping):
+        graph_items = [
+            (str(edge_type), graph) for edge_type, graph in graph_partition.items()
+        ]
+    else:
+        graph_items = [("homogeneous", graph_partition)]
+
+    logger.info(
+        f"Precomputing parent-side graph.col_count for {len(graph_items)} local graph partition(s)"
+    )
+    total_start_time = time.perf_counter()
+    for graph_key, graph in graph_items:
+        graph_start_time = time.perf_counter()
+        col_count = graph.col_count
+        logger.info(
+            "Precomputed parent-side graph.col_count "
+            f"graph_partition={graph_key} "
+            f"row_count={graph.topo.row_count} "
+            f"edge_count={graph.topo.edge_count} "
+            f"col_count={col_count} "
+            f"elapsed_s={time.perf_counter() - graph_start_time:.3f}"
+        )
+    logger.info(
+        f"Completed parent-side graph.col_count precompute in {time.perf_counter() - total_start_time:.3f}s"
+    )
 
 
 def storage_node_process(
@@ -157,6 +207,7 @@ def storage_node_process(
     logger.info(
         f"Storage node {storage_rank} / {cluster_info.num_storage_nodes} process group initialized"
     )
+    log_fd_state("before_build_storage_dataset")
 
     dataset = build_storage_dataset(
         task_config_uri=task_config_uri,
@@ -166,10 +217,13 @@ def storage_node_process(
         should_load_tensors_in_parallel=should_load_tf_records_in_parallel,
         ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
+    _precompute_graph_col_counts(dataset)
+    log_fd_state("after_build_storage_dataset")
 
     logger.info(f"Number of server sessions: {num_server_sessions}")
 
     torch.distributed.destroy_process_group()
+    log_fd_state("before_run_storage_server")
 
     run_storage_server(
         storage_rank=storage_rank,
@@ -190,6 +244,12 @@ if __name__ == "__main__":
     parser.add_argument("--num_server_sessions", type=int, required=True)
     parser.add_argument(
         "--should_load_tf_records_in_parallel", type=str, default="True"
+    )
+    parser.add_argument(
+        "--tf_record_uri_pattern",
+        type=str,
+        default=r".*-of-.*\.tfrecord(\.gz)?$",
+        help="Regex pattern used to match TFRecord files under the preprocessed asset directories.",
     )
     # Splitter configuration: use import_obj to dynamically load a splitter class.
     # This is needed for training (where the dataset needs train/val/test splits) but not for inference.
@@ -214,10 +274,11 @@ if __name__ == "__main__":
         help="Percentage of edges to select as self-supervised labels. "
         "Must be None if supervised edge labels are provided in advance.",
     )
-    parser.add_argument("--num_rpc_threads", type=int, default=16)
+    parser.add_argument("--num_rpc_threads", type=int, default=100)
     parser.add_argument("--rpc_timeout", type=int, default=None)
     args = parser.parse_args()
     logger.info(f"Running storage node with arguments: {args}")
+    log_fd_state("storage_main_startup")
 
     # Build splitter from args if provided.
     # We use ast.literal_eval instead of json.loads so that Python tuples (e.g. for EdgeType)
@@ -256,6 +317,7 @@ if __name__ == "__main__":
         should_load_tf_records_in_parallel=bool(
             strtobool(args.should_load_tf_records_in_parallel)
         ),
+        tf_record_uri_pattern=args.tf_record_uri_pattern,
         num_rpc_threads=args.num_rpc_threads,
         rpc_timeout=args.rpc_timeout,
     )

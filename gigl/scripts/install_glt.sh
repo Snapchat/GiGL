@@ -3,6 +3,9 @@
 set -e
 set -x
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GLT_PATCH_FILE="${SCRIPT_DIR}/../third_party/graphlearn_torch/patches/0001-add-optional-col-count.patch"
+
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
     return $?
@@ -44,9 +47,9 @@ then
     # * https://github.com/alibaba/graphlearn-for-pytorch/pull/153
     # * https://github.com/alibaba/graphlearn-for-pytorch/pull/151
     # Thus, checking out a specific commit instead of a tagged version.
-    git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
+    git clone https://github.com/kmontemayor2-sc/graphlearn-for-pytorch.git \
         && cd graphlearn-for-pytorch \
-        && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
+        && git checkout c012442 \
         && git submodule update --init \
         && bash install_dependencies.sh
     if has_cuda_driver;

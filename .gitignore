@@ -37,6 +37,9 @@ graphlearn_torch/
 graphlearn_torch.egg-info/
 .git/
 .ipynb_checkpoints/
+!gigl/third_party/graphlearn_torch/
+!gigl/third_party/graphlearn_torch/patches/
+!gigl/third_party/graphlearn_torch/patches/*.patch
 
 # Ignore downloaded fossa files.
 fossa

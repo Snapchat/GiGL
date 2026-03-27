@@ -31,6 +31,7 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
 COPY gigl/scripts gigl/scripts
+COPY gigl/third_party gigl/third_party
 
 RUN bash ./requirements/install_py_deps.sh
 

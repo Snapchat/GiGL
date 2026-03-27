@@ -574,6 +574,14 @@ class DistDataset(glt.distributed.DistDataset):
             graph_mode="CPU",
             directed=True,
         )
+        graph = self.graph
+        if graph is None:
+            raise ValueError("Graph is not initialized")
+        if isinstance(graph, Graph):
+            logger.info(f"Graph has {graph.col_count} columns")
+        else:
+            for edge_type, graph in graph.items():
+                logger.info(f"Edge type {edge_type} has {graph.col_count} columns")
 
         if isinstance(partitioned_edge_index, Mapping):
             logger.info(

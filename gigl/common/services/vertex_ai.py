@@ -141,7 +141,11 @@ class VertexAIService:
         """The GCP project that is being used for this service."""
         return self._project
 
-    def launch_job(self, job_config: VertexAiJobConfig) -> aiplatform.CustomJob:
+    def launch_job(
+        self,
+        job_config: VertexAiJobConfig,
+        wait_for_completion: bool = True,
+    ) -> aiplatform.CustomJob:
         """
         Launch a Vertex AI CustomJob.
         See the docs for more info.
@@ -217,12 +221,17 @@ class VertexAIService:
                 f"Running Vertex AI job with timeout {job_config.timeout_s} seconds"
             )
 
-        return self._submit_job(worker_pool_specs, job_config)
+        return self._submit_job(
+            worker_pool_specs,
+            job_config,
+            wait_for_completion=wait_for_completion,
+        )
 
     def launch_graph_store_job(
         self,
         compute_pool_job_config: VertexAiJobConfig,
         storage_pool_job_config: VertexAiJobConfig,
+        wait_for_completion: bool = True,
     ) -> aiplatform.CustomJob:
         """Launch a Vertex AI Graph Store job.
 
@@ -285,14 +294,19 @@ class VertexAIService:
         )
         worker_pool_specs.append(worker_spec)
 
-        return self._submit_job(worker_pool_specs, compute_pool_job_config)
+        return self._submit_job(
+            worker_pool_specs,
+            compute_pool_job_config,
+            wait_for_completion=wait_for_completion,
+        )
 
     def _submit_job(
         self,
         worker_pool_specs: Union[list[WorkerPoolSpec], list[dict]],
         job_config: VertexAiJobConfig,
+        wait_for_completion: bool = True,
     ) -> aiplatform.CustomJob:
-        """Submit a job to Vertex AI and wait for it to complete."""
+        """Submit a job to Vertex AI and optionally wait for completion."""
         job = aiplatform.CustomJob(
             display_name=job_config.job_name,
             worker_pool_specs=worker_pool_specs,
@@ -315,7 +329,8 @@ class VertexAIService:
         logger.info(
             f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
-        job.wait_for_completion()
+        if wait_for_completion:
+            job.wait_for_completion()
         return job
 
     def run_pipeline(

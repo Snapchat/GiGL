@@ -28,6 +28,184 @@ class SamplingClusterSetup(Enum):
     GRAPH_STORE = "graph_store"
 
 
+class ShardStrategy(Enum):
+    """Strategy for sharding node IDs across compute nodes.
+
+    Controls how data from storage servers is distributed to compute nodes.
+    Both strategies produce the same total coverage (every node appears on
+    exactly one compute node), but differ in which servers each compute node
+    communicates with.
+
+    Attributes:
+        ROUND_ROBIN: Each compute node gets a slice of nodes from every server.
+            Server-side sharding via rank/world_size. This is the current default.
+        CONTIGUOUS: Assign entire servers to compute nodes. Each compute node
+            only gets nodes from its assigned servers, with empty tensors for
+            the rest. Boundary servers are split fractionally when servers
+            don't divide evenly across compute nodes.
+
+    Examples:
+        **2 storage nodes, 2 compute nodes** (even split):
+
+        Suppose each server holds 10 node IDs::
+
+            Server 0: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+            Server 1: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+        ``ROUND_ROBIN`` — every compute node gets a slice from *every* server::
+
+            Compute 0 (rank=0, world_size=2):
+                {0: [0,1,2,3,4],  1: [10,11,12,13,14]}
+            Compute 1 (rank=1, world_size=2):
+                {0: [5,6,7,8,9],  1: [15,16,17,18,19]}
+
+        ``CONTIGUOUS`` — each compute node gets *entire* servers::
+
+            Compute 0 (rank=0, world_size=2):
+                {0: [0,1,2,3,4,5,6,7,8,9],  1: []}        # all of server 0
+            Compute 1 (rank=1, world_size=2):
+                {0: [],  1: [10,11,12,13,14,15,16,17,18,19]}  # all of server 1
+
+        **3 storage nodes, 2 compute nodes** (fractional boundary):
+
+        Server 1 is split at the boundary — compute 0 gets the first half,
+        compute 1 gets the second half::
+
+            Server 0: [0..9],  Server 1: [10..19],  Server 2: [20..29]
+
+            Compute 0 (rank=0): {0: [0..9], 1: [10..14], 2: []}
+            Compute 1 (rank=1): {0: [],     1: [15..19], 2: [20..29]}
+
+    See Also:
+        :func:`compute_server_assignments` for the assignment algorithm.
+    """
+
+    ROUND_ROBIN = "round_robin"
+    CONTIGUOUS = "contiguous"
+
+
+@dataclass(frozen=True)
+class ServerSlice:
+    """A compute node's ownership of a single server's nodes.
+
+    Fractions are represented as exact rationals (numerator, denominator)
+    to avoid floating-point boundary errors. For a server with N nodes,
+    the slice is ``tensor[N * start_num // start_den : N * end_num // end_den]``.
+
+    Args:
+        server_rank: The rank of the storage server.
+        start_num: Numerator of the start fraction.
+        start_den: Denominator of the start fraction.
+        end_num: Numerator of the end fraction.
+        end_den: Denominator of the end fraction.
+    """
+
+    server_rank: int
+    start_num: int
+    start_den: int
+    end_num: int
+    end_den: int
+
+    def slice_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Slice a 1D tensor according to this assignment's rational bounds.
+
+        Uses integer division (N * num // den) for exact, deterministic
+        index computation. Returns a ``.clone()`` for partial slices to avoid
+        retaining full backing storage when used with ``share_memory_()``.
+
+        Args:
+            tensor: A 1D tensor of node IDs from the server.
+
+        Returns:
+            The sliced portion of the tensor.
+        """
+        total = len(tensor)
+        start_idx = total * self.start_num // self.start_den
+        end_idx = total * self.end_num // self.end_den
+        if start_idx == 0 and end_idx == total:
+            return tensor
+        return tensor[start_idx:end_idx].clone()
+
+
+def compute_server_assignments(
+    num_servers: int,
+    num_compute_nodes: int,
+    compute_rank: int,
+) -> dict[int, ServerSlice]:
+    """Compute which servers (and what fraction) a compute node owns.
+
+    Uses integer arithmetic throughout. Compute rank R owns the server
+    range ``[R * S / C, (R+1) * S / C)`` where boundaries are rational
+    numbers with denominator C. For each server s in ``[0, S)``, the overlap
+    with this range determines the ServerSlice fractions.
+
+    Only servers with non-zero overlap are included in the returned dict.
+
+    Args:
+        num_servers: Total number of storage servers (S).
+        num_compute_nodes: Total number of compute nodes (C).
+        compute_rank: Rank of the current compute node (R).
+
+    Returns:
+        A dict mapping server rank to the ``ServerSlice`` describing the
+        fraction of that server owned by this compute node.
+
+    Raises:
+        ValueError: If any argument is invalid (negative values,
+            rank >= num_compute_nodes, or zero servers/compute nodes).
+
+    Examples:
+        >>> compute_server_assignments(num_servers=4, num_compute_nodes=2, compute_rank=0)
+        {0: ServerSlice(server_rank=0, ...), 1: ServerSlice(server_rank=1, ...)}
+
+        >>> compute_server_assignments(num_servers=3, num_compute_nodes=2, compute_rank=1)
+        {1: ServerSlice(server_rank=1, ...), 2: ServerSlice(server_rank=2, ...)}
+    """
+    if num_servers <= 0:
+        raise ValueError(f"num_servers must be positive, got {num_servers}")
+    if num_compute_nodes <= 0:
+        raise ValueError(f"num_compute_nodes must be positive, got {num_compute_nodes}")
+    if compute_rank < 0 or compute_rank >= num_compute_nodes:
+        raise ValueError(
+            f"compute_rank must be in [0, {num_compute_nodes}), got {compute_rank}"
+        )
+
+    S = num_servers
+    C = num_compute_nodes
+    R = compute_rank
+
+    # Segment boundaries (as numerators with denominator C):
+    # start = R * S, end = (R + 1) * S
+    seg_start = R * S
+    seg_end = (R + 1) * S
+
+    assignments: dict[int, ServerSlice] = {}
+    for s in range(S):
+        # Server s spans [s * C, (s + 1) * C) in numerator-space with denominator C
+        server_start = s * C
+        server_end = (s + 1) * C
+
+        overlap_start = max(seg_start, server_start)
+        overlap_end = min(seg_end, server_end)
+
+        if overlap_start >= overlap_end:
+            continue
+
+        # Fraction of server s: [(overlap_start - s*C) / C, (overlap_end - s*C) / C)
+        start_num = overlap_start - server_start
+        end_num = overlap_end - server_start
+
+        assignments[s] = ServerSlice(
+            server_rank=s,
+            start_num=start_num,
+            start_den=C,
+            end_num=end_num,
+            end_den=C,
+        )
+
+    return assignments
+
+
 @dataclass(frozen=True)
 class DatasetSchema:
     """
