@@ -259,9 +259,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
         # computation on GiglDistDataset would fail there.  Computing here —
         # where torch.distributed IS initialized — lets the tensor be shared
         # to workers via IPC.
-        degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = (
-            None
-        )
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None
         if isinstance(self._sampler_options, PPRSamplerOptions):
             assert isinstance(self.data, GiglDistDataset)
             degree_tensors = self.data.degree_tensor
@@ -553,10 +553,7 @@ def _shared_sampling_worker_loop(
         )
 
     def _on_batch_done(channel_id: int, epoch: int) -> None:
-        nonlocal \
-            worker_inflight_batches, \
-            batches_completed_total, \
-            epochs_completed_total
+        nonlocal worker_inflight_batches, batches_completed_total, epochs_completed_total
         route_key_to_remove: Optional[str] = None
         epoch_done = False
         with state_lock:
@@ -802,16 +799,16 @@ def _shared_sampling_worker_loop(
                         if total_batches == 0:
                             epoch_done = True
                         else:
-                            active_epochs_by_channel[start_cmd.channel_id] = (
-                                ActiveEpochState(
-                                    channel_id=start_cmd.channel_id,
-                                    epoch=start_cmd.epoch,
-                                    input_len=len(local_input),
-                                    batch_size=sampling_config.batch_size,
-                                    drop_last=sampling_config.drop_last,
-                                    seeds_index=start_cmd.seeds_index,
-                                    total_batches=total_batches,
-                                )
+                            active_epochs_by_channel[
+                                start_cmd.channel_id
+                            ] = ActiveEpochState(
+                                channel_id=start_cmd.channel_id,
+                                epoch=start_cmd.epoch,
+                                input_len=len(local_input),
+                                batch_size=sampling_config.batch_size,
+                                drop_last=sampling_config.drop_last,
+                                seeds_index=start_cmd.seeds_index,
+                                total_batches=total_batches,
                             )
                             _enqueue_channel_if_runnable_locked(start_cmd.channel_id)
                     logger.info(

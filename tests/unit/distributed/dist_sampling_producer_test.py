@@ -1,8 +1,8 @@
-from collections import defaultdict
 import queue
 import threading
 import time
 import unittest
+from collections import defaultdict
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
@@ -12,8 +12,8 @@ import torch.multiprocessing as mp
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
 from gigl.distributed.dist_sampling_producer import (
-    ActiveEpochState,
     EPOCH_DONE_EVENT,
+    ActiveEpochState,
     RegisterInputCmd,
     SharedDistSamplingBackend,
     SharedMpCommand,
