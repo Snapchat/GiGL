@@ -30,7 +30,7 @@ logger = Logger()
 
 
 class PostProcessor:
-    def _run_post_process(
+    def __run_post_process(
         self,
         gbml_config_pb: gbml_config_pb2.GbmlConfig,
         applied_task_identifier: AppliedTaskIdentifier,
@@ -66,7 +66,7 @@ class PostProcessor:
                 EvalMetricsCollection
             ] = post_processor.run_post_process(gbml_config_pb=gbml_config_pb)
             if post_processor_metrics is not None:
-                self._write_post_processor_metrics_to_uri(
+                self.__write_post_processor_metrics_to_uri(
                     model_eval_metrics=post_processor_metrics,
                     gbml_config_pb=gbml_config_pb,
                 )
@@ -87,7 +87,7 @@ class PostProcessor:
             )
             gcs_utils.delete_files_in_bucket_dir(gcs_path=temp_dir_gcs_path)
 
-    def _write_post_processor_metrics_to_uri(
+    def __write_post_processor_metrics_to_uri(
         self,
         model_eval_metrics: EvalMetricsCollection,
         gbml_config_pb: gbml_config_pb2.GbmlConfig,
@@ -106,7 +106,7 @@ class PostProcessor:
         )
         logger.info(f"Wrote eval metrics to {post_processor_log_metrics_uri.uri}.")
 
-    def _should_run_unenumeration(
+    def __should_run_unenumeration(
         self, gbml_config_wrapper: GbmlConfigPbWrapper
     ) -> bool:
         """
@@ -114,7 +114,7 @@ class PostProcessor:
         """
         return gbml_config_wrapper.should_use_glt_backend
 
-    def _run(
+    def __run(
         self,
         applied_task_identifier: AppliedTaskIdentifier,
         task_config_uri: Uri,
@@ -124,7 +124,7 @@ class PostProcessor:
                 gbml_config_uri=task_config_uri
             )
         )
-        if self._should_run_unenumeration(gbml_config_wrapper=gbml_config_wrapper):
+        if self.__should_run_unenumeration(gbml_config_wrapper=gbml_config_wrapper):
             logger.info(f"Running unenumeration for inferred assets in post processor")
             unenumerate_all_inferred_bq_assets(
                 gbml_config_pb_wrapper=gbml_config_wrapper
@@ -133,7 +133,7 @@ class PostProcessor:
                 f"Finished running unenumeration for inferred assets in post processor"
             )
 
-        self._run_post_process(
+        self.__run_post_process(
             gbml_config_pb=gbml_config_wrapper.gbml_config_pb,
             applied_task_identifier=applied_task_identifier,
         )
@@ -150,7 +150,7 @@ class PostProcessor:
         resource_config_uri: Uri,
     ):
         try:
-            return self._run(
+            return self.__run(
                 applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
             )

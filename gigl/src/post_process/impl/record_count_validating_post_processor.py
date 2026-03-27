@@ -3,6 +3,7 @@ from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
+from gigl.src.common.utils.output_record_validation import validate_node_output_records
 from gigl.src.post_process.lib.base_post_processor import BasePostProcessor
 from snapchat.research.gbml import gbml_config_pb2
 
@@ -10,9 +11,10 @@ logger = Logger()
 
 
 class RecordCountValidatingPostProcessor(BasePostProcessor):
-    """
-        Post processor that extends PostProcessor with record count validation.
+    """Post processor that validates output BQ tables have matching record counts.
 
+    For each node type in the inference output, checks that embeddings and/or
+    predictions tables have the same row count as the enumerated node IDs table.
 
     Only applicable for the GLT backend path.
     """
@@ -38,13 +40,8 @@ class RecordCountValidatingPostProcessor(BasePostProcessor):
     ) -> None:
         """Validates that output BQ tables have matching record counts.
 
-        For each node type in the inference output, checks that:
-        1. The enumerated_node_ids_bq_table exists.
-        2. The embeddings table (if configured) exists and has the same row count.
-        3. The predictions table (if configured) exists and has the same row count.
-        4. At least one of embeddings or predictions is configured.
-
-        All errors are collected and reported together before raising.
+        Extracts inference output metadata from the config wrapper and delegates
+        to validate_node_output_records for the actual validation.
 
         Args:
             gbml_config_wrapper: The GbmlConfig wrapper with access to all metadata.
@@ -60,8 +57,6 @@ class RecordCountValidatingPostProcessor(BasePostProcessor):
             resource_config = get_resource_config()
             bq_utils = BqUtils(project=resource_config.project)
 
-        validation_errors: list[str] = []
-
         inference_output_map = (
             gbml_config_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
         )
@@ -72,6 +67,10 @@ class RecordCountValidatingPostProcessor(BasePostProcessor):
             gbml_config_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata
         )
 
+        expected_count_tables: dict[str, str] = {}
+        embeddings_tables: dict[str, str] = {}
+        predictions_tables: dict[str, str] = {}
+
         for node_type, inference_output in inference_output_map.items():
             condensed_node_type = node_type_to_condensed[NodeType(node_type)]
             node_metadata = (
@@ -79,73 +78,18 @@ class RecordCountValidatingPostProcessor(BasePostProcessor):
                     int(condensed_node_type)
                 ]
             )
-            enumerated_table = node_metadata.enumerated_node_ids_bq_table
+            expected_count_tables[
+                node_type
+            ] = node_metadata.enumerated_node_ids_bq_table
 
-            if not enumerated_table:
-                validation_errors.append(
-                    f"[{node_type}] No enumerated_node_ids_bq_table configured."
-                )
-                continue
+            if inference_output.embeddings_path:
+                embeddings_tables[node_type] = inference_output.embeddings_path
+            if inference_output.predictions_path:
+                predictions_tables[node_type] = inference_output.predictions_path
 
-            if not bq_utils.does_bq_table_exist(enumerated_table):
-                validation_errors.append(
-                    f"[{node_type}] enumerated_node_ids_bq_table does not exist: {enumerated_table}"
-                )
-                continue
-
-            expected_count = bq_utils.count_number_of_rows_in_bq_table(enumerated_table)
-            logger.info(
-                f"[{node_type}] enumerated_node_ids_bq_table ({enumerated_table}) has {expected_count} rows."
-            )
-
-            # Validate embeddings
-            embeddings_path = inference_output.embeddings_path
-            if embeddings_path:
-                if not bq_utils.does_bq_table_exist(embeddings_path):
-                    validation_errors.append(
-                        f"[{node_type}] Embeddings table does not exist: {embeddings_path}"
-                    )
-                else:
-                    actual = bq_utils.count_number_of_rows_in_bq_table(embeddings_path)
-                    logger.info(
-                        f"[{node_type}] Embeddings table ({embeddings_path}) has {actual} rows."
-                    )
-                    if actual != expected_count:
-                        validation_errors.append(
-                            f"[{node_type}] Embeddings row count mismatch: "
-                            f"expected {expected_count}, got {actual} "
-                            f"(table: {embeddings_path})"
-                        )
-
-            # Validate predictions
-            predictions_path = inference_output.predictions_path
-            if predictions_path:
-                if not bq_utils.does_bq_table_exist(predictions_path):
-                    validation_errors.append(
-                        f"[{node_type}] Predictions table does not exist: {predictions_path}"
-                    )
-                else:
-                    actual = bq_utils.count_number_of_rows_in_bq_table(predictions_path)
-                    logger.info(
-                        f"[{node_type}] Predictions table ({predictions_path}) has {actual} rows."
-                    )
-                    if actual != expected_count:
-                        validation_errors.append(
-                            f"[{node_type}] Predictions row count mismatch: "
-                            f"expected {expected_count}, got {actual} "
-                            f"(table: {predictions_path})"
-                        )
-
-            if not embeddings_path and not predictions_path:
-                validation_errors.append(
-                    f"[{node_type}] Neither embeddings_path nor predictions_path is set."
-                )
-
-        if validation_errors:
-            error_summary = "\n".join(validation_errors)
-            raise ValueError(
-                f"Record count validation failed with {len(validation_errors)} error(s):\n"
-                f"{error_summary}"
-            )
-
-        logger.info("All record count validations passed.")
+        validate_node_output_records(
+            bq_utils=bq_utils,
+            expected_count_tables=expected_count_tables,
+            embeddings_tables=embeddings_tables,
+            predictions_tables=predictions_tables,
+        )
