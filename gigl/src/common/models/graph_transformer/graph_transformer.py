@@ -411,16 +411,25 @@ class GraphTransformerEncoder(nn.Module):
             names used as additive attention bias for sequence keys. Sparse
             graph-level attributes are looked up from ``data`` and the reserved
             name ``"ppr_weight"`` resolves to PPR edge weights in PPR mode.
+            Example: ``['hop_distance', 'ppr_weight']`` where ``hop_distance``
+            is a sparse matrix attribute on ``data`` and ``ppr_weight`` is
+            extracted from PPR edge weights.
         anchor_based_input_attr_names: List of anchor-relative attribute names
             used as token-aligned input features. Sparse graph-level attributes
             are looked up from ``data`` and ``"ppr_weight"`` resolves to PPR
             edge weights in PPR mode. These are projected to ``hid_dim`` and
             added to the sequence tokens after sequence construction.
+            Example: ``['hop_distance', 'ppr_weight']`` for continuous features,
+            or ``['hop_distance']`` when ``hop_distance`` will be embedded via
+            ``anchor_based_input_embedding_dict``.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
             embedded contributions are added to the sequence tokens. Padding is
             masked out using the sequence valid mask.
+            Example: ``nn.ModuleDict({'hop_distance': nn.Embedding(10, hid_dim)})``
+            to embed hop distances 0-9 into ``hid_dim``-dimensional vectors.
+            The embedding output dimension must match ``hid_dim``.
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
