@@ -472,10 +472,21 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
 
         self.assertEqual(anchor_bias.shape, (2, 4, 2))
-        self.assertEqual(token_input.shape, (2, 4, 2))
         self.assertTrue(torch.allclose(anchor_bias[0], expected_anchor_0))
         self.assertTrue(torch.allclose(anchor_bias[1], expected_anchor_1))
-        self.assertTrue(torch.allclose(token_input, anchor_bias))
+        self.assertEqual(set(token_input.keys()), {"hop_distance", "ppr_weight"})
+        self.assertTrue(
+            torch.allclose(
+                token_input["hop_distance"],
+                anchor_bias[..., 0:1],
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                token_input["ppr_weight"],
+                anchor_bias[..., 1:2],
+            )
+        )
         self.assertTrue(
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )

@@ -57,7 +57,7 @@ Example Usage:
     >>> # attention_bias_data['anchor_bias']: (batch_size, max_seq_len, 1)
 """
 
-from typing import Literal, Optional
+from typing import Literal, Optional, TypedDict
 
 import torch
 from torch import Tensor
@@ -65,7 +65,15 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
-SequenceAuxiliaryData = dict[str, Optional[Tensor]]
+TokenInputData = dict[str, Tensor]
+
+
+class SequenceAuxiliaryData(TypedDict):
+    anchor_bias: Optional[Tensor]
+    pairwise_bias: Optional[Tensor]
+    token_input: Optional[TokenInputData]
+
+
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 
 
@@ -135,8 +143,8 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
-                ``"token_input"`` shaped
-                ``(batch, seq, num_token_input_attrs)`` or None
+                ``"token_input"`` as a dict mapping attribute name to a
+                ``(batch, seq, 1)`` tensor, or None
 
     Raises:
         ValueError: If node types have different feature dimensions.
@@ -311,7 +319,7 @@ def heterodata_to_graph_transformer_input(
         requested_anchor_attr_names=anchor_bias_attr_names,
         ppr_weight_sequences=ppr_weight_sequences,
     )
-    token_input_features = _compose_anchor_feature_tensor(
+    token_input_features = _compose_anchor_feature_dict(
         anchor_relative_feature_sequences=anchor_relative_feature_sequences,
         available_anchor_attr_names=anchor_matrix_attr_names,
         requested_anchor_attr_names=anchor_input_attr_names,
@@ -415,6 +423,45 @@ def _compose_anchor_feature_tensor(
         )
 
     return torch.cat(feature_parts, dim=-1)
+
+
+def _compose_anchor_feature_dict(
+    anchor_relative_feature_sequences: Optional[Tensor],
+    available_anchor_attr_names: list[str],
+    requested_anchor_attr_names: list[str],
+    ppr_weight_sequences: Optional[Tensor],
+) -> Optional[TokenInputData]:
+    if not requested_anchor_attr_names:
+        return None
+
+    feature_dict: TokenInputData = {}
+    feature_index_by_name = {
+        attr_name: idx for idx, attr_name in enumerate(available_anchor_attr_names)
+    }
+
+    for attr_name in requested_anchor_attr_names:
+        if attr_name == PPR_WEIGHT_FEATURE_NAME:
+            if ppr_weight_sequences is None:
+                raise ValueError(
+                    f"Requested '{PPR_WEIGHT_FEATURE_NAME}' but it was not computed."
+                )
+            feature_dict[attr_name] = ppr_weight_sequences
+            continue
+
+        if anchor_relative_feature_sequences is None:
+            raise ValueError(
+                "Anchor-relative features were requested but not computed."
+            )
+        if attr_name not in feature_index_by_name:
+            raise ValueError(
+                f"Anchor-relative feature '{attr_name}' was requested but not found."
+            )
+        feature_idx = feature_index_by_name[attr_name]
+        feature_dict[attr_name] = anchor_relative_feature_sequences[
+            ..., feature_idx : feature_idx + 1
+        ]
+
+    return feature_dict
 
 
 def _build_sequence_layout_from_sparse_neighbors(
