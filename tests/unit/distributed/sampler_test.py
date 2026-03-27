@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import torch
 
 from gigl.distributed.dist_neighbor_sampler import (
@@ -175,9 +177,11 @@ class TestDistNeighborSamplerAblpPreparation(TestCase):
             input_type=_USER,
         )
 
-        self.assertEqual(set(sample_loop_inputs.nodes_to_sample.keys()), {_USER})
+        nodes_to_sample = sample_loop_inputs.nodes_to_sample
+        assert isinstance(nodes_to_sample, Mapping)
+        self.assertEqual(set(nodes_to_sample.keys()), {_USER})
         self.assert_tensor_equality(
-            sample_loop_inputs.nodes_to_sample[_USER],
+            nodes_to_sample[_USER],
             torch.tensor([10, 11, 12, 13, 14]),
         )
         self.assert_tensor_equality(
@@ -212,12 +216,14 @@ class TestDistNeighborSamplerAblpPreparation(TestCase):
             input_type=_USER,
         )
 
-        self.assertEqual(set(sample_loop_inputs.nodes_to_sample.keys()), {_USER, _ITEM})
+        nodes_to_sample = sample_loop_inputs.nodes_to_sample
+        assert isinstance(nodes_to_sample, Mapping)
+        self.assertEqual(set(nodes_to_sample.keys()), {_USER, _ITEM})
         self.assert_tensor_equality(
-            sample_loop_inputs.nodes_to_sample[_USER],
+            nodes_to_sample[_USER],
             torch.tensor([4, 5]),
         )
         self.assert_tensor_equality(
-            sample_loop_inputs.nodes_to_sample[_ITEM],
+            nodes_to_sample[_ITEM],
             torch.tensor([20, 21, 22]),
         )

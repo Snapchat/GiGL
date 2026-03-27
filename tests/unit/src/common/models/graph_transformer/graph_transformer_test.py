@@ -1,8 +1,11 @@
 """Tests for GraphTransformerEncoder."""
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 from absl.testing import absltest
+from torch import Tensor
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.models.graph_transformer.graph_transformer import (
@@ -541,22 +544,21 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 device=self._device,
             )
             assert encoder._sequence_positional_encoding_table is not None
-            original_position_table = (
-                encoder._sequence_positional_encoding_table.detach().clone()
-            )
+            position_table = cast(Tensor, encoder._sequence_positional_encoding_table)
+            original_position_table = torch.clone(position_table)
 
             embeddings_with_position_encoding = encoder(
                 data=data,
                 anchor_node_type=self._node_type,
                 device=self._device,
             )
-            encoder._sequence_positional_encoding_table.zero_()
+            position_table.zero_()
             embeddings_without_position_encoding = encoder(
                 data=data,
                 anchor_node_type=self._node_type,
                 device=self._device,
             )
-            encoder._sequence_positional_encoding_table.copy_(original_position_table)
+            position_table.copy_(original_position_table)
 
         self.assertEqual(embeddings_with_position_encoding.shape, (3, 6))
         self.assertFalse(torch.isnan(embeddings_with_position_encoding).any())

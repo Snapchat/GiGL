@@ -825,15 +825,16 @@ class GraphTransformerEncoder(nn.Module):
             )
         if self._sequence_positional_encoding_table is None:
             raise ValueError("Sequence positional encoding table is not initialized.")
+        position_table = cast(Tensor, self._sequence_positional_encoding_table)
 
         seq_len = sequences.size(1)
-        if seq_len > self._sequence_positional_encoding_table.size(0):
+        if seq_len > position_table.size(0):
             raise ValueError(
                 f"Sequence length {seq_len} exceeds configured max_seq_len "
-                f"{self._sequence_positional_encoding_table.size(0)}."
+                f"{position_table.size(0)}."
             )
 
-        position_encoding = self._sequence_positional_encoding_table[:seq_len]
+        position_encoding = position_table[:seq_len]
         position_encoding = position_encoding.to(
             device=sequences.device,
             dtype=sequences.dtype,
