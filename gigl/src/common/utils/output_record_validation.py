@@ -4,18 +4,13 @@ from gigl.src.common.utils.bq import BqUtils
 logger = Logger()
 
 
-def _collect_table_row_count_errors(
+def _check_table_row_count(
     bq_utils: BqUtils,
     table_path: str,
     expected_count: int,
     label: str,
-) -> list[str]:
+) -> str | None:
     """Checks that a BQ table exists and has the expected row count.
-
-    Returns a list of error strings (empty if valid).
-
-    Same checks as validate_bq_table_row_count but returns errors instead of
-    raising, so callers can accumulate errors across multiple tables.
 
     Note: uses BqUtils.does_bq_table_exist() which returns False for any
     exception (not just NotFound). Permission errors and transient failures
@@ -29,22 +24,21 @@ def _collect_table_row_count_errors(
             (e.g. "[paper] Embeddings").
 
     Returns:
-        A list of error message strings. Empty if the table exists and has
-        the expected row count.
+        An error message string if validation fails, or None if valid.
     """
     if not bq_utils.does_bq_table_exist(table_path):
-        return [f"{label} table does not exist: {table_path}"]
+        return f"{label} table does not exist: {table_path}"
 
     actual = bq_utils.count_number_of_rows_in_bq_table(table_path)
     logger.info(f"{label} table ({table_path}) has {actual} rows.")
     if actual != expected_count:
-        return [
+        return (
             f"{label} row count mismatch: "
             f"expected {expected_count}, got {actual} "
             f"(table: {table_path})"
-        ]
+        )
 
-    return []
+    return None
 
 
 def validate_bq_table_row_count(
@@ -70,14 +64,14 @@ def validate_bq_table_row_count(
         ValueError: If the table does not exist or the row count does not
             match.
     """
-    errors = _collect_table_row_count_errors(
+    error = _check_table_row_count(
         bq_utils=bq_utils,
         table_path=table_path,
         expected_count=expected_count,
         label=label,
     )
-    if errors:
-        raise ValueError(errors[0])
+    if error is not None:
+        raise ValueError(error)
 
 
 def validate_node_output_records(
@@ -115,9 +109,9 @@ def validate_node_output_records(
     embeddings_tables = embeddings_tables or {}
     predictions_tables = predictions_tables or {}
 
-    unexpected_keys: set[str] = set()
-    unexpected_keys.update(embeddings_tables.keys() - expected_count_tables.keys())
-    unexpected_keys.update(predictions_tables.keys() - expected_count_tables.keys())
+    unexpected_keys = (
+        embeddings_tables.keys() | predictions_tables.keys()
+    ) - expected_count_tables.keys()
     if unexpected_keys:
         raise ValueError(
             f"Output tables reference node types not in expected_count_tables: "
@@ -148,24 +142,24 @@ def validate_node_output_records(
         has_predictions = node_type in predictions_tables
 
         if has_embeddings:
-            validation_errors.extend(
-                _collect_table_row_count_errors(
-                    bq_utils=bq_utils,
-                    table_path=embeddings_tables[node_type],
-                    expected_count=expected_count,
-                    label=f"[{node_type}] Embeddings",
-                )
+            error = _check_table_row_count(
+                bq_utils=bq_utils,
+                table_path=embeddings_tables[node_type],
+                expected_count=expected_count,
+                label=f"[{node_type}] Embeddings",
             )
+            if error is not None:
+                validation_errors.append(error)
 
         if has_predictions:
-            validation_errors.extend(
-                _collect_table_row_count_errors(
-                    bq_utils=bq_utils,
-                    table_path=predictions_tables[node_type],
-                    expected_count=expected_count,
-                    label=f"[{node_type}] Predictions",
-                )
+            error = _check_table_row_count(
+                bq_utils=bq_utils,
+                table_path=predictions_tables[node_type],
+                expected_count=expected_count,
+                label=f"[{node_type}] Predictions",
             )
+            if error is not None:
+                validation_errors.append(error)
 
         if not has_embeddings and not has_predictions:
             validation_errors.append(
