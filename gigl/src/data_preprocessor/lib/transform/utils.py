@@ -253,6 +253,9 @@ def get_load_data_and_transform_pipeline_component(
         applied_task_identifier=applied_task_identifier,
         job_name_suffix=job_name_suffix,
         component=GiGLComponents.DataPreprocessor,
+        timeout_seconds=data_preprocessor_config.timeout
+        if data_preprocessor_config.timeout
+        else None,
         num_workers=data_preprocessor_config.num_workers,
         max_num_workers=data_preprocessor_config.max_num_workers,
         machine_type=data_preprocessor_config.machine_type,

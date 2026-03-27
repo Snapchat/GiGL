@@ -1,4 +1,3 @@
-import ast
 from collections import abc, defaultdict
 from itertools import count
 from typing import Callable, Optional, Union
@@ -17,23 +16,34 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
-from gigl.distributed.distributed_neighborloader import DEFAULT_NUM_CPU_THREADS
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
-    metadata_key_with_prefix,
+)
+from gigl.distributed.sampler_options import (
+    PPRSamplerOptions,
+    SamplerOptions,
+    resolve_sampler_options,
 )
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
+    attach_ppr_outputs,
+    extract_edge_type_metadata,
+    extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
+    strip_non_ppr_edge_types,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -79,9 +89,11 @@ class DistABLPLoader(BaseDistLoader):
         prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
+        max_concurrent_producer_inits: Optional[int] = None,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        sampler_options: Optional[SamplerOptions] = None,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
@@ -142,6 +154,7 @@ class DistABLPLoader(BaseDistLoader):
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
                 the amount of neighbors to sample for each individual edge type.
+                If ``KHopNeighborSamplerOptions`` is also provided, they must match.
             input_nodes: Indices of seed nodes to start sampling from.
                 For Colocated mode: `torch.Tensor` or `tuple[NodeType, torch.Tensor]`.
                     If set to `None` for homogeneous settings, all nodes will be considered.
@@ -152,7 +165,7 @@ class DistABLPLoader(BaseDistLoader):
                 For Graph Store mode: `dict[int, ABLPInputNodes]`
                     Maps server_rank to an ABLPInputNodes dataclass containing anchor nodes,
                     positive labels, and negative labels with explicit node type and edge type info.
-                    This is the return type of `RemoteDistDataset.get_ablp_input()`.
+                    This is the return type of `RemoteDistDataset.fetch_ablp_input()`.
             supervision_edge_type (Optional[Union[EdgeType, list[EdgeType]]]):
                 The edge type(s) to use for supervision.
                 For Colocated mode: Must be None iff the dataset is labeled homogeneous.
@@ -182,14 +195,24 @@ class DistABLPLoader(BaseDistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader. At large scales,
-                it is recommended to set this value to be between 60 and 120 seconds -- otherwise multiple processes may
-                attempt to initialize dataloaders at overlapping times, which can cause CPU memory OOM.
+            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader.
+                In colocated mode, each process sleeps ``local_rank * process_start_gap_seconds``
+                before initializing. In graph store mode, leader ranks are grouped into batches
+                of ``max_concurrent_producer_inits`` and each batch sleeps
+                ``batch_index * process_start_gap_seconds`` before dispatching RPCs.
+            max_concurrent_producer_inits (int): Maximum number of leader ranks that may
+                dispatch create-producer RPCs concurrently in graph store mode. Leaders are
+                grouped into batches of this size; each batch is staggered by
+                ``process_start_gap_seconds``. Only applies to graph store mode.
+                Defaults to ``None`` (no staggering).
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            sampler_options (Optional[SamplerOptions]): Controls which sampler class is
+                instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument
+                to instantiate the sampler.
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
@@ -204,6 +227,8 @@ class DistABLPLoader(BaseDistLoader):
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
+
+        sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
         # Determine sampling cluster setup based on dataset type
         if isinstance(dataset, RemoteDistDataset):
@@ -231,6 +256,10 @@ class DistABLPLoader(BaseDistLoader):
             if prefetch_size is not None:
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
+                )
+            if max_concurrent_producer_inits is not None:
+                raise ValueError(
+                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
                 )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
@@ -308,6 +337,7 @@ class DistABLPLoader(BaseDistLoader):
                 dataset=dataset,
                 num_workers=num_workers,
                 worker_concurrency=worker_concurrency,
+                channel_size=channel_size,
                 prefetch_size=prefetch_size,
             )
 
@@ -330,23 +360,24 @@ class DistABLPLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the sampler: a pre-constructed producer for colocated mode,
+        # Build the producer: a pre-constructed producer for colocated mode,
         # or an RPC callable for graph store mode.
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            sampler: Union[
-                DistABLPSamplingProducer, Callable[..., int]
-            ] = DistABLPSamplingProducer(
-                dataset,
-                sampler_input,
-                sampling_config,
-                worker_options,
-                channel,
+            producer: Union[
+                DistSamplingProducer, Callable[..., int]
+            ] = DistSamplingProducer(
+                data=dataset,
+                sampler_input=sampler_input,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                channel=channel,
+                sampler_options=sampler_options,
             )
         else:
-            sampler = DistServer.create_sampling_ablp_producer
+            producer = DistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -358,9 +389,11 @@ class DistABLPLoader(BaseDistLoader):
             sampling_config=sampling_config,
             device=device,
             runtime=runtime,
-            sampler=sampler,
+            producer=producer,
+            sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
             background_collation_queue_size=background_collation_queue_size,
+            max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
 
     def _setup_for_colocated(
@@ -521,38 +554,14 @@ class DistABLPLoader(BaseDistLoader):
             negative_label_by_edge_types=negative_labels_by_label_edge_type,
         )
 
-        # Sets up processes and torch device for initializing the GLT DistNeighborLoader,
-        # setting up RPC and worker groups to minimize the memory overhead and CPU contention.
-        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
-        logger.info(
-            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} "
-            f"using device: {device} on port {neighbor_loader_port_for_current_rank}."
-        )
-        should_use_cpu_workers = device.type == "cpu"
-        if should_use_cpu_workers and num_cpu_threads is None:
-            logger.info(
-                "Using CPU workers, but found num_cpu_threads to be None. "
-                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
-            )
-            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
-
-        gigl.distributed.utils.init_neighbor_loader_worker(
+        BaseDistLoader.initialize_colocated_sampling_worker(
+            local_rank=local_rank,
+            local_world_size=local_world_size,
+            node_rank=node_rank,
+            node_world_size=node_world_size,
             master_ip_address=master_ip_address,
-            local_process_rank=local_rank,
-            local_process_world_size=local_world_size,
-            rank=node_rank,
-            world_size=node_world_size,
-            master_worker_port=neighbor_loader_port_for_current_rank,
             device=device,
-            should_use_cpu_workers=should_use_cpu_workers,
-            # Lever to explore tuning for CPU based inference
             num_cpu_threads=num_cpu_threads,
-        )
-        logger.info(
-            f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
         )
 
         # Sets up worker options for the dataloader
@@ -560,22 +569,12 @@ class DistABLPLoader(BaseDistLoader):
             num_ports=local_world_size
         )
         dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
-        worker_options = MpDistSamplingWorkerOptions(
+        worker_options = BaseDistLoader.create_colocated_worker_options(
+            dataset_num_partitions=dataset.num_partitions,
             num_workers=num_workers,
-            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
-            # need to be connected. Thus, we need master ip address and master port to
-            # initate the connection.
-            # Note that different groups of workers are independent, and thus
-            # the sampling processes in different groups should be independent, and should
-            # use different master ports.
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
             worker_concurrency=worker_concurrency,
-            master_addr=master_ip_address,
+            master_ip_address=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
-            # Load testing shows that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(dataset.num_partitions, 16),
-            rpc_timeout=600,
             channel_size=channel_size,
             pin_memory=device.type == "cuda",
         )
@@ -599,8 +598,9 @@ class DistABLPLoader(BaseDistLoader):
         input_nodes: dict[int, ABLPInputNodes],
         dataset: RemoteDistDataset,
         num_workers: int,
-        worker_concurrency: int = 4,
-        prefetch_size: int = 4,
+        worker_concurrency: int,
+        channel_size: str,
+        prefetch_size: int,
     ) -> tuple[
         list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema
     ]:
@@ -608,45 +608,38 @@ class DistABLPLoader(BaseDistLoader):
         Setup method for Graph Store mode.
 
         Args:
-            input_nodes: ABLP input from RemoteDistDataset.get_ablp_input().
+            input_nodes: ABLP input from RemoteDistDataset.fetch_ablp_input().
                 Maps server_rank to ABLPInputNodes containing anchor nodes, positive/negative
                 labels with explicit node type and edge type information.
             dataset: The RemoteDistDataset to sample from.
             num_workers: Number of sampling workers.
-            worker_concurrency: Max sampling concurrency per worker. (default: ``4``).
+            worker_concurrency: Max sampling concurrency per worker.
+            channel_size: Size of the remote shared-memory buffer.
             prefetch_size: Max prefetched sampled messages per server on client side.
-                (default: ``4``).
 
         Returns:
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).
         """
-        node_feature_info = dataset.get_node_feature_info()
-        edge_feature_info = dataset.get_edge_feature_info()
-        edge_types = dataset.get_edge_types()
-        node_rank = dataset.cluster_info.compute_node_rank
-
-        # Get sampling ports for compute-storage connections.
-        sampling_ports = dataset.get_free_ports_on_storage_cluster(
-            num_ports=dataset.cluster_info.num_compute_nodes
-        )
-        sampling_port = sampling_ports[node_rank]
+        node_feature_info = dataset.fetch_node_feature_info()
+        edge_feature_info = dataset.fetch_edge_feature_info()
+        edge_types = dataset.fetch_edge_types()
+        compute_rank = torch.distributed.get_rank()
         worker_key = (
-            f"compute_ablp_loader_rank_{node_rank}_worker_{self._instance_count}"
+            f"compute_ablp_loader_rank_{compute_rank}_worker_{self._instance_count}"
         )
-        logger.info(f"rank: {torch.distributed.get_rank()}, worker_key: {worker_key}")
-        worker_options = RemoteDistSamplingWorkerOptions(
-            server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
-            num_workers=num_workers,
-            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
-            worker_concurrency=worker_concurrency,
-            master_addr=dataset.cluster_info.storage_cluster_master_ip,
-            master_port=sampling_port,
+        logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
+        worker_options = BaseDistLoader.create_graph_store_worker_options(
+            dataset=dataset,
+            compute_rank=compute_rank,
             worker_key=worker_key,
+            num_workers=num_workers,
+            worker_concurrency=worker_concurrency,
+            channel_size=channel_size,
             prefetch_size=prefetch_size,
         )
         logger.info(
             f"Rank {torch.distributed.get_rank()}! init for sampling rpc: "
-            f"tcp://{dataset.cluster_info.storage_cluster_master_ip}:{sampling_port}"
+            f"tcp://{worker_options.master_addr}:{worker_options.master_port}"
         )
 
         # Validate server ranks
@@ -753,76 +746,8 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                edge_dir=dataset.get_edge_dir(),
+                edge_dir=dataset.fetch_edge_dir(),
             ),
-        )
-
-    def _get_labels(
-        self, msg: SampleMessage
-    ) -> tuple[
-        SampleMessage,
-        dict[EdgeType, torch.Tensor],
-        dict[EdgeType, torch.Tensor],
-    ]:
-        # TODO (mkolodner-sc): Remove the need to modify metadata once GLT's `to_hetero_data` function is fixed
-        f"""
-        Gets the labels from the output SampleMessage and removes them from the metadata. We need to remove the labels from GLT's metadata since the
-        `to_hetero_data` function strangely assumes that we are doing edge-based sampling if the metadata is not empty at the time of
-        building the HeteroData object.
-
-        Args:
-            msg (SampleMessage): All possible results from a sampler, including subgraph data, features, and used defined metadata
-        Returns:
-            SampleMessage: Updated sample messsage with the label fields removed
-            dict[EdgeType, torch.Tensor]: Dict[positive label edge type, label ID tensor],
-                where the ith row  of the tensor corresponds to the ith anchor node ID.
-            dict[EdgeType, torch.Tensor]: Dict[negative label edge type, label ID tensor],
-                where the ith row  of the tensor corresponds to the ith anchor node ID.
-                May be empty if no negative labels are present.
-        """
-        metadata: dict[str, torch.Tensor] = {}
-        positive_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        negative_labels_by_label_edge_type: dict[EdgeType, torch.Tensor] = {}
-        # We update metadata with sepcial POSITIVE_LABEL_METADATA_KEY and NEGATIVE_LABEL_METADATA_KEY keys
-        # in gigl/distributed/dist_neighbor_sampler.py.
-        # We need to encode the tuples as strings because GLT requires the keys to be strings.
-        # As such, we decode the strings back into tuples,
-        # And then pop those keys out of the metadata as they are not needed otherwise.
-        # If edge_dir is "in", we need to reverse the edge type because GLT swaps src/dst for edge_dir = "out".
-        # NOTE: GLT *prepends* the keys with "#META."
-        positive_label_metadata_key_prefix = metadata_key_with_prefix(
-            POSITIVE_LABEL_METADATA_KEY
-        )
-        negative_label_metadata_key_prefix = metadata_key_with_prefix(
-            NEGATIVE_LABEL_METADATA_KEY
-        )
-        for k in list(msg.keys()):
-            if k.startswith(positive_label_metadata_key_prefix):
-                edge_type_str = k[len(positive_label_metadata_key_prefix) :]
-                edge_type = ast.literal_eval(edge_type_str)
-                if self.edge_dir == "in":
-                    edge_type = reverse_edge_type(edge_type)
-                positive_labels_by_label_edge_type[edge_type] = msg[k].to(
-                    self.to_device
-                )
-                del msg[k]
-            elif k.startswith(negative_label_metadata_key_prefix):
-                edge_type_str = k[len(negative_label_metadata_key_prefix) :]
-                edge_type = ast.literal_eval(edge_type_str)
-                if self.edge_dir == "in":
-                    edge_type = reverse_edge_type(edge_type)
-                negative_labels_by_label_edge_type[edge_type] = msg[k].to(
-                    self.to_device
-                )
-                del msg[k]
-            elif k.startswith("#META."):
-                meta_key = str(k[len("#META.") :])
-                metadata[meta_key] = msg[k].to(self.to_device)
-                del msg[k]
-        return (
-            msg,
-            positive_labels_by_label_edge_type,
-            negative_labels_by_label_edge_type,
         )
 
     def _set_labels(
@@ -910,14 +835,39 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        msg, positive_labels, negative_labels = self._get_labels(msg)
-        data = super()._collate_fn(msg)
+        # extract_metadata separates #META. keys from the message to work
+        # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
+        # pulls out labels by prefix.
+        # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
+        metadata, stripped_msg = extract_metadata(msg, self.to_device)
+
+        data = super()._collate_fn(stripped_msg)
+
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
             edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
+
+        matched, metadata = extract_edge_type_metadata(
+            metadata=metadata,
+            prefixes=[POSITIVE_LABEL_METADATA_KEY, NEGATIVE_LABEL_METADATA_KEY],
+        )
+        positive_labels = matched[POSITIVE_LABEL_METADATA_KEY]
+        negative_labels = matched[NEGATIVE_LABEL_METADATA_KEY]
+        # When edge_dir="in", GLT internally swaps src/dst on all edge types during sampling,
+        # so the sampler encodes label edge types in their reversed (incoming) form.
+        # We reverse them back here to restore the original outward edge type that
+        # _set_labels and downstream code expect.
+        if self.edge_dir == "in":
+            positive_labels = {
+                reverse_edge_type(et): v for et, v in positive_labels.items()
+            }
+            negative_labels = {
+                reverse_edge_type(et): v for et, v in negative_labels.items()
+            }
+
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
         if self._is_homogeneous_with_labeled_edge_type:
@@ -926,5 +876,22 @@ class DistABLPLoader(BaseDistLoader):
                     f"Expected 1 supervision edge type, got {len(self._supervision_edge_types)}"
                 )
             data = labeled_to_homogeneous(self._supervision_edge_types[0], data)
+
         data = self._set_labels(data, positive_labels, negative_labels)
+
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            matched_ppr, metadata = extract_edge_type_metadata(
+                metadata=metadata,
+                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+            )
+            ppr_edge_indices = matched_ppr[PPR_EDGE_INDEX_METADATA_KEY]
+            ppr_weights = matched_ppr[PPR_WEIGHT_METADATA_KEY]
+            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
+            if isinstance(data, HeteroData):
+                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
+
+        # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
+        # data object so downstream code can access them via attribute lookup.
+        for key, value in metadata.items():
+            data[key] = value
         return data

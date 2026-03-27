@@ -23,7 +23,7 @@ This file (graph store mode):
   - Uses `RemoteDistDataset` to connect to a remote graph store cluster
   - Uses `init_compute_process` to initialize the compute node connection to storage
   - Obtains cluster topology via `get_graph_store_info()` which returns `GraphStoreInfo`
-  - Uses `mp_sharing_dict` for efficient tensor sharing between local processes
+  - Each process fetches its own shard of data from the storage cluster
 
 Standard mode (`heterogeneous_inference.py`):
   - Uses `DistDataset` with `build_dataset_from_task_config_uri` where each node loads its partition
@@ -85,7 +85,6 @@ import gc
 import os
 import sys
 import time
-from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Union
 
@@ -144,8 +143,6 @@ class InferenceProcessArgs:
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
             information about storage and compute node ranks and addresses.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
-        mp_sharing_dict (MutableMapping[str, torch.Tensor]): Shared dictionary for efficient tensor
-            sharing between local processes.
         model_state_dict_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
@@ -172,7 +169,6 @@ class InferenceProcessArgs:
 
     # Data
     inference_node_type: NodeType
-    mp_sharing_dict: MutableMapping[str, torch.Tensor]
 
     # Model
     model_state_dict_uri: Uri
@@ -226,14 +222,19 @@ def _inference_process(
     flush()
     init_compute_process(local_rank, args.cluster_info)
     dataset = RemoteDistDataset(
-        args.cluster_info, local_rank, mp_sharing_dict=args.mp_sharing_dict
+        args.cluster_info,
+        local_rank,
     )
     logger.info(
         f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
 
     # Get the node ids on the current machine for the current node type
-    input_nodes = dataset.get_node_ids(node_type=args.inference_node_type)
+    input_nodes = dataset.fetch_node_ids(
+        node_type=args.inference_node_type,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
+    )
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
     )
@@ -534,7 +535,6 @@ def _run_example_inference(
             machine_world_size=cluster_info.num_compute_nodes,
             cluster_info=cluster_info,
             inference_node_type=inference_node_type,
-            mp_sharing_dict=torch.multiprocessing.Manager().dict(),
             model_state_dict_uri=model_uri,
             hid_dim=hid_dim,
             out_dim=out_dim,

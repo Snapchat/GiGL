@@ -1,7 +1,8 @@
 """
 GiGL implementation of GLT DistServer.
 
-Main change here is that we use gigl DistAblpSamplingProducer instead of GLT DistMpSamplingProducer.
+Uses GiGL's DistSamplingProducer which supports neighbor sampling
+and ABLP (anchor-based link prediction) via the DistNeighborSampler.
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
@@ -15,9 +16,8 @@ from typing import Any, Callable, Literal, Optional, TypeVar, Union
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
-from graphlearn_torch.channel import QueueTimeoutError, ShmChannel
+from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
-    DistMpSamplingProducer,
     RemoteDistSamplingWorkerOptions,
     barrier,
     init_rpc,
@@ -33,16 +33,16 @@ from graphlearn_torch.sampler import (
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistABLPSamplingProducer
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    FeatureInfo,
-    select_label_edge_types,
-)
+from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
@@ -80,7 +80,7 @@ class DistServer:
         # The mapping from the key in worker options (such as 'train', 'test')
         # to producer id
         self._worker_key2producer_id: dict[str, int] = {}
-        self._producer_pool: dict[int, DistMpSamplingProducer] = {}
+        self._producer_pool: dict[int, DistSamplingProducer] = {}
         self._msg_buffer_pool: dict[int, ShmChannel] = {}
         self._epoch: dict[int, int] = {}  # last epoch for the producer
         # Per-producer locks that guard the lifecycle of individual producers
@@ -135,6 +135,69 @@ class DistServer:
             partition_id = self.dataset.node_pb[node_type][index]
             return partition_id
         return None
+
+    def get_node_partition_book(
+        self, node_type: Optional[NodeType]
+    ) -> Optional[PartitionBook]:
+        """
+        Gets the partition book for the specified node type.
+
+        Args:
+            node_type: The node type to look up.  Must be ``None`` for
+                homogeneous datasets and non-``None`` for heterogeneous ones.
+
+        Returns:
+            The partition book for the requested node type, or ``None`` if
+            no partition book is available.
+
+        Raises:
+            ValueError: If ``node_type`` is mismatched with the dataset type.
+        """
+        node_pb = self.dataset.node_pb
+        if isinstance(node_pb, dict):
+            if node_type is None:
+                raise ValueError(
+                    "node_type must be provided for heterogeneous dataset. "
+                    f"Available node types: {list(node_pb.keys())}"
+                )
+            return node_pb[node_type]
+        else:
+            if node_type is not None:
+                raise ValueError(
+                    f"node_type must be None for homogeneous dataset. Received: {node_type}"
+                )
+            return node_pb
+
+    def get_edge_partition_book(
+        self, edge_type: Optional[EdgeType]
+    ) -> Optional[PartitionBook]:
+        """
+        Gets the partition book for the specified edge type.
+        Args:
+            edge_type: The edge type to look up.  Must be ``None`` for
+                homogeneous datasets and non-``None`` for heterogeneous ones.
+
+        Returns:
+            The partition book for the requested edge type, or ``None`` if
+            no partition book is available.
+
+        Raises:
+            ValueError: If ``edge_type`` is mismatched with the dataset type.
+        """
+        edge_pb = self.dataset.edge_pb
+        if isinstance(edge_pb, dict):
+            if edge_type is None:
+                raise ValueError(
+                    "edge_type must be provided for heterogeneous dataset. "
+                    f"Available edge types: {list(edge_pb.keys())}"
+                )
+            return edge_pb[edge_type]
+        else:
+            if edge_type is not None:
+                raise ValueError(
+                    f"edge_type must be None for homogeneous dataset. Received: {edge_type}"
+                )
+            return edge_pb
 
     def get_node_feature(
         self, node_type: Optional[NodeType], index: torch.Tensor
@@ -213,19 +276,13 @@ class DistServer:
 
     def get_node_ids(
         self,
-        rank: Optional[int] = None,
-        world_size: Optional[int] = None,
-        split: Optional[Union[Literal["train", "val", "test"], str]] = None,
-        node_type: Optional[NodeType] = None,
+        request: FetchNodesRequest,
     ) -> torch.Tensor:
         """Get the node ids from the dataset.
 
         Args:
-            rank: The rank of the process requesting node ids. Must be provided if world_size is provided.
-            world_size: The total number of processes in the distributed setup. Must be provided if rank is provided.
-            split: The split of the dataset to get node ids from. If provided, the dataset must have
-                `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
-            node_type: The type of nodes to get node ids for. Must be provided if the dataset is heterogeneous.
+            request: The node-fetch request, including split, node type,
+                and round-robin rank/world_size.
 
         Returns:
             The node ids.
@@ -238,37 +295,51 @@ class DistServer:
                 * If the node type is provided for a homogeneous dataset
                 * If the node ids are not a dict[NodeType, torch.Tensor] when no node type is provided
 
-        Examples:
-            Suppose the dataset has 100 nodes total: train=[0..59], val=[60..79], test=[80..99].
-
-            Get all node ids (no split filtering):
-
-            >>> server.get_node_ids()
-            tensor([0, 1, 2, ..., 99])  # All 100 nodes
-
-            Get only training nodes:
-
-            >>> server.get_node_ids(split="train")
-            tensor([0, 1, 2, ..., 59])  # 60 training nodes
-
-            Shard all nodes across 4 processes (each gets ~25 nodes):
-
-            >>> server.get_node_ids(rank=0, world_size=4)
-            tensor([0, 1, 2, ..., 24])  # First 25 of all 100 nodes
-
-            Shard training nodes across 4 processes (each gets ~15 nodes):
-
-            >>> server.get_node_ids(rank=0, world_size=4, split="train")
-            tensor([0, 1, 2, ..., 14])  # First 15 of the 60 training nodes
-
             Note: When `split=None`, all nodes are queryable. This means nodes from any
             split (train, val, or test) may be returned. This is useful when you need
             to sample neighbors during inference, as neighbor nodes may belong to any split.
         """
+        request.validate()
+        return self._get_node_ids(
+            split=request.split,
+            node_type=request.node_type,
+            rank=request.rank,
+            world_size=request.world_size,
+        )
+
+    def _get_node_ids(
+        self,
+        split: Optional[Union[Literal["train", "val", "test"], str]],
+        node_type: Optional[NodeType],
+        rank: Optional[int] = None,
+        world_size: Optional[int] = None,
+    ) -> torch.Tensor:
+        """Core implementation for fetching node IDs by split, type, and sharding.
+
+        Args:
+            split: The dataset split to fetch from (``"train"``, ``"val"``,
+                ``"test"``, or ``None`` for all nodes).
+            node_type: The node type to select. Must be ``None`` for
+                homogeneous datasets.
+            rank: Round-robin rank for sharding. Must be provided together
+                with ``world_size``.
+            world_size: Total number of processes for sharding. Must be
+                provided together with ``rank``.
+
+        Returns:
+            The node IDs tensor, optionally sharded by rank.
+
+        Raises:
+            ValueError: If rank/world_size are not provided together, the
+                split is invalid, or the node type is inconsistent with
+                the dataset type (homogeneous vs. heterogeneous).
+        """
         if (rank is None) ^ (world_size is None):
             raise ValueError(
-                f"rank and world_size must be provided together. Received rank: {rank}, world_size: {world_size}"
+                "rank and world_size must be provided together. "
+                f"Received rank={rank}, world_size={world_size}"
             )
+
         if split == "train":
             nodes = self.dataset.train_node_ids
         elif split == "val":
@@ -285,7 +356,8 @@ class DistServer:
         if node_type is not None:
             if not isinstance(nodes, abc.Mapping):
                 raise ValueError(
-                    f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] (e.g. a heterogeneous dataset), got {type(nodes)}"
+                    f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] "
+                    f"(e.g. a heterogeneous dataset), got {type(nodes)}"
                 )
             nodes = nodes[node_type]
         elif not isinstance(nodes, torch.Tensor):
@@ -321,11 +393,7 @@ class DistServer:
 
     def get_ablp_input(
         self,
-        split: Union[Literal["train", "val", "test"], str],
-        rank: Optional[int] = None,
-        world_size: Optional[int] = None,
-        node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
-        supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        request: FetchABLPInputRequest,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
 
@@ -333,13 +401,8 @@ class DistServer:
         e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
 
         Args:
-            split: The split to get the training input for.
-            rank: The rank of the process requesting the training input. Defaults to None, in which case all nodes are returned.
-                Must be provided if world_size is provided.
-            world_size: The total number of processes in the distributed setup. Defaults to None, in which case all nodes are returned.
-                Must be provided if rank is provided.
-            node_type: The type of nodes to retrieve. Defaults to the default homogeneous node type.
-            supervision_edge_type: The edge type to use for the supervision. Defaults to the default homogeneous edge type.
+            request: The ABLP fetch request, including split, node type,
+                supervision edge type, and round-robin rank/world_size.
 
         Returns:
             A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
@@ -350,50 +413,20 @@ class DistServer:
         Raises:
             ValueError: If the split is invalid.
         """
-        anchors = self.get_node_ids(
-            split=split, rank=rank, world_size=world_size, node_type=node_type
+        request.validate()
+        anchors = self._get_node_ids(
+            split=request.split,
+            node_type=request.node_type,
+            rank=request.rank,
+            world_size=request.world_size,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
-            supervision_edge_type, self.dataset.get_edge_types()
+            request.supervision_edge_type, self.dataset.get_edge_types()
         )
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             self.dataset, anchors, positive_label_edge_type, negative_label_edge_type
         )
         return anchors, positive_labels, negative_labels
-
-    def create_sampling_ablp_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-    ) -> int:
-        r"""Create and initialize an instance of ``DistABLPSamplingProducer`` with
-        a group of subprocesses for distributed sampling.
-
-        Args:
-          sampler_input (NodeSamplerInput or EdgeSamplerInput): The input data
-            for sampling.
-          sampling_config (SamplingConfig): Configuration of sampling meta info.
-          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
-            remote sampling workers by this server.
-
-        Returns:
-          A unique id of created sampling producer on this server.
-        """
-
-        if not isinstance(sampler_input, ABLPNodeSamplerInput):
-            raise ValueError(
-                f"Sampler input must be an instance of ABLPNodeSamplerInput. Received: {type(sampler_input)}"
-            )
-
-        return self._create_producer(
-            sampler_input=sampler_input,
-            sampling_config=sampling_config,
-            worker_options=worker_options,
-            producer_cls=DistABLPSamplingProducer,
-        )
 
     def create_sampling_producer(
         self,
@@ -402,40 +435,13 @@ class DistServer:
         ],
         sampling_config: SamplingConfig,
         worker_options: RemoteDistSamplingWorkerOptions,
+        sampler_options: SamplerOptions,
     ) -> int:
-        r"""Create and initialize an instance of ``DistSamplingProducer`` with
+        """Create and initialize an instance of ``DistSamplingProducer`` with
         a group of subprocesses for distributed sampling.
 
-        Args:
-          sampler_input (NodeSamplerInput or EdgeSamplerInput): The input data
-            for sampling.
-          sampling_config (SamplingConfig): Configuration of sampling meta info.
-          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
-            remote sampling workers by this server.
-
-        Returns:
-          A unique id of created sampling producer on this server.
-        """
-        return self._create_producer(
-            sampler_input=sampler_input,
-            sampling_config=sampling_config,
-            worker_options=worker_options,
-            producer_cls=DistMpSamplingProducer,
-        )
-
-    def _create_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        producer_cls: type[Union[DistABLPSamplingProducer, DistMpSamplingProducer]],
-    ) -> int:
-        r"""Shared logic to create and initialize a sampling producer.
-
-        Converts remote sampler inputs to local, creates a ``ShmChannel`` buffer,
-        instantiates the given ``producer_cls``, and registers it in the internal pools.
+        Supports both standard ``NodeSamplerInput`` and ``ABLPNodeSamplerInput``
+        through the unified ``DistNeighborSampler``.
 
         Args:
           sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,
@@ -443,20 +449,29 @@ class DistServer:
           sampling_config (SamplingConfig): Configuration of sampling meta info.
           worker_options (RemoteDistSamplingWorkerOptions): Options for launching
             remote sampling workers by this server.
-          producer_cls: The producer class to instantiate
-            (``DistABLPSamplingProducer`` or ``DistMpSamplingProducer``).
+          sampler_options (SamplerOptions): Controls which sampler class
+            is instantiated.
 
         Returns:
           int: A unique id of created sampling producer on this server.
         """
+
+        request_start_time = time.monotonic()
         if isinstance(sampler_input, RemoteSamplerInput):
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
         with self._lock:
             producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
             if producer_id is None:
+                logger.info(
+                    f"Creating new producer for worker key {worker_options.worker_key}"
+                )
                 producer_id = self._cur_producer_idx
                 self._cur_producer_idx += 1
+            else:
+                logger.info(
+                    f"Reusing producer for worker key {worker_options.worker_key}, producer id {producer_id}"
+                )
             producer_lock = self._producer_lock.get(producer_id, None)
             if producer_lock is None:
                 producer_lock = threading.RLock()
@@ -464,16 +479,36 @@ class DistServer:
                 self._worker_key2producer_id[worker_options.worker_key] = producer_id
         with producer_lock:
             if producer_id not in self._producer_pool:
+                logger.info(
+                    f"Creating new producer pool entry for producer id {producer_id}"
+                )
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
-                producer = producer_cls(
-                    self.dataset, sampler_input, sampling_config, worker_options, buffer
+                producer = DistSamplingProducer(
+                    data=self.dataset,
+                    sampler_input=sampler_input,
+                    sampling_config=sampling_config,
+                    worker_options=worker_options,
+                    channel=buffer,
+                    sampler_options=sampler_options,
                 )
+                producer_start_time = time.monotonic()
                 producer.init()
+                logger.info(
+                    f"Producer {producer_id} initialized in {time.monotonic() - producer_start_time:.2f}s"
+                )
                 self._producer_pool[producer_id] = producer
                 self._msg_buffer_pool[producer_id] = buffer
                 self._epoch[producer_id] = -1
+            else:
+                logger.info(
+                    f"Reusing producer pool entry for producer id {producer_id}"
+                )
+        request_end_time = time.monotonic()
+        logger.info(
+            f"Request to create producer for worker key {worker_options.worker_key} took {request_end_time - request_start_time:.2f}s"
+        )
         return producer_id
 
     def destroy_sampling_producer(self, producer_id: int) -> None:
@@ -502,7 +537,7 @@ class DistServer:
 
     def fetch_one_sampled_message(
         self, producer_id: int
-    ) -> tuple[Optional[bytes], bool]:
+    ) -> tuple[Optional[SampleMessage], bool]:
         r"""Fetch a sampled message from the buffer of a specific sampling
         producer with its producer id.
         """
