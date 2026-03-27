@@ -13,7 +13,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, TypeVar, Union
 
 import torch
 from graphlearn_torch.channel import ShmChannel
@@ -57,6 +57,8 @@ from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 logger = Logger()
 
 DEFAULT_NUM_CPU_THREADS = 2
+
+T = TypeVar("T")
 
 
 # We don't see logs for graph store mode for whatever reason.
@@ -142,12 +144,12 @@ class BaseDistLoader(DistLoader):
         should_cleanup_distributed_context: bool = False
 
         if context:
-            assert (
-                local_process_world_size is not None
-            ), "context: DistributedContext provided, so local_process_world_size must be provided."
-            assert (
-                local_process_rank is not None
-            ), "context: DistributedContext provided, so local_process_rank must be provided."
+            assert local_process_world_size is not None, (
+                "context: DistributedContext provided, so local_process_world_size must be provided."
+            )
+            assert local_process_rank is not None, (
+                "context: DistributedContext provided, so local_process_rank must be provided."
+            )
 
             master_ip_address = context.main_worker_ip_address
             node_world_size = context.global_world_size
@@ -604,8 +606,7 @@ class BaseDistLoader(DistLoader):
             )
         if not ctx.is_client():
             raise RuntimeError(
-                f"'{self.__class__.__name__}': must be used on a client "
-                f"worker process."
+                f"'{self.__class__.__name__}': must be used on a client worker process."
             )
 
         # Move input to CPU before sending to server
@@ -707,53 +708,34 @@ class BaseDistLoader(DistLoader):
         max_concurrent_producer_inits: int,
     ) -> list[int]:
         backend_key = self._build_graph_store_backend_key()
-        all_backend_keys: list[Optional[str]] = [None] * runtime.world_size
-        torch.distributed.all_gather_object(all_backend_keys, backend_key)
-        (
-            leader_rank,
-            is_leader,
-            my_batch,
-            num_batches,
-            stagger_sleep_seconds,
-            group_size,
-        ) = self._compute_group_leader(
+        worker_options = self.worker_options
+        assert isinstance(worker_options, RemoteDistSamplingWorkerOptions)
+
+        def _issue_backend_init_rpcs() -> list[int]:
+            rpc_futures: list[torch.futures.Future[int]] = []
+            for server_rank in self._server_rank_list:
+                rpc_futures.append(
+                    async_request_server(
+                        server_rank,
+                        DistServer.init_sampling_backend,
+                        InitSamplingBackendOpts(
+                            backend_key=backend_key,
+                            worker_options=worker_options,
+                            sampler_options=self._sampler_options,
+                            sampling_config=self.sampling_config,
+                        ),
+                    )
+                )
+            return [future.wait() for future in rpc_futures]
+
+        return self._dispatch_grouped_graph_store_phase(
+            runtime=runtime,
             my_key=backend_key,
-            all_keys=all_backend_keys,
-            rank=runtime.rank,
+            key_name="backend_key",
             process_start_gap_seconds=process_start_gap_seconds,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
+            issue_phase_rpcs=_issue_backend_init_rpcs,
         )
-        logger.info(
-            f"rank={runtime.rank} backend_key={backend_key} is_leader={is_leader} "
-            f"leader_rank={leader_rank} group_size={group_size} "
-            f"batch={my_batch}/{num_batches} stagger_sleep={stagger_sleep_seconds:.1f}s"
-        )
-        if is_leader and stagger_sleep_seconds > 0:
-            time.sleep(stagger_sleep_seconds)
-
-        backend_id_list: list[int] = []
-        if is_leader:
-            rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
-            worker_options = self.worker_options
-            assert isinstance(worker_options, RemoteDistSamplingWorkerOptions)
-            for server_rank in self._server_rank_list:
-                fut = async_request_server(
-                    server_rank,
-                    DistServer.init_sampling_backend,
-                    InitSamplingBackendOpts(
-                        backend_key=backend_key,
-                        worker_options=worker_options,
-                        sampler_options=self._sampler_options,
-                        sampling_config=self.sampling_config,
-                    ),
-                )
-                rpc_futures.append((server_rank, fut))
-            for _server_rank, fut in rpc_futures:
-                backend_id_list.append(fut.wait())
-
-        all_backend_ids: list[list[int]] = [[] for _ in range(runtime.world_size)]
-        torch.distributed.all_gather_object(all_backend_ids, backend_id_list)
-        return all_backend_ids[leader_rank]
 
     def _register_graph_store_sampling_inputs(
         self,
@@ -765,8 +747,49 @@ class BaseDistLoader(DistLoader):
         worker_options = self.worker_options
         assert isinstance(worker_options, RemoteDistSamplingWorkerOptions)
         my_worker_key = worker_options.worker_key
-        all_worker_keys: list[Optional[str]] = [None] * runtime.world_size
-        torch.distributed.all_gather_object(all_worker_keys, my_worker_key)
+
+        def _issue_input_registration_rpcs() -> list[int]:
+            rpc_futures: list[torch.futures.Future[int]] = []
+            for server_rank, backend_id, inp_data in zip(
+                self._server_rank_list, backend_id_list, self._input_data_list
+            ):
+                rpc_futures.append(
+                    async_request_server(
+                        server_rank,
+                        DistServer.register_sampling_input,
+                        RegisterBackendOpts(
+                            backend_id=backend_id,
+                            worker_key=my_worker_key,
+                            sampler_input=inp_data,
+                            sampling_config=self.sampling_config,
+                            buffer_capacity=worker_options.buffer_capacity,
+                            buffer_size=worker_options.buffer_size,
+                        ),
+                    )
+                )
+            return [future.wait() for future in rpc_futures]
+
+        return self._dispatch_grouped_graph_store_phase(
+            runtime=runtime,
+            my_key=my_worker_key,
+            key_name="worker_key",
+            process_start_gap_seconds=process_start_gap_seconds,
+            max_concurrent_producer_inits=max_concurrent_producer_inits,
+            issue_phase_rpcs=_issue_input_registration_rpcs,
+        )
+
+    def _dispatch_grouped_graph_store_phase(
+        self,
+        *,
+        runtime: DistributedRuntimeInfo,
+        my_key: str,
+        key_name: str,
+        process_start_gap_seconds: float,
+        max_concurrent_producer_inits: int,
+        issue_phase_rpcs: Callable[[], list[T]],
+    ) -> list[T]:
+        all_keys: list[Optional[str]] = [None] * runtime.world_size
+        torch.distributed.all_gather_object(all_keys, my_key)
         (
             leader_rank,
             is_leader,
@@ -775,45 +798,27 @@ class BaseDistLoader(DistLoader):
             stagger_sleep_seconds,
             group_size,
         ) = self._compute_group_leader(
-            my_key=my_worker_key,
-            all_keys=all_worker_keys,
+            my_key=my_key,
+            all_keys=all_keys,
             rank=runtime.rank,
             process_start_gap_seconds=process_start_gap_seconds,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
         logger.info(
-            f"rank={runtime.rank} worker_key={my_worker_key} is_leader={is_leader} "
+            f"rank={runtime.rank} {key_name}={my_key} is_leader={is_leader} "
             f"leader_rank={leader_rank} group_size={group_size} "
             f"batch={my_batch}/{num_batches} stagger_sleep={stagger_sleep_seconds:.1f}s"
         )
         if is_leader and stagger_sleep_seconds > 0:
             time.sleep(stagger_sleep_seconds)
 
-        channel_id_list: list[int] = []
+        results: list[T] = []
         if is_leader:
-            rpc_futures: list[tuple[int, torch.futures.Future[int]]] = []
-            for server_rank, backend_id, inp_data in zip(
-                self._server_rank_list, backend_id_list, self._input_data_list
-            ):
-                fut = async_request_server(
-                    server_rank,
-                    DistServer.register_sampling_input,
-                    RegisterBackendOpts(
-                        backend_id=backend_id,
-                        worker_key=my_worker_key,
-                        sampler_input=inp_data,
-                        sampling_config=self.sampling_config,
-                        buffer_capacity=worker_options.buffer_capacity,
-                        buffer_size=worker_options.buffer_size,
-                    ),
-                )
-                rpc_futures.append((server_rank, fut))
-            for _server_rank, fut in rpc_futures:
-                channel_id_list.append(fut.wait())
+            results = issue_phase_rpcs()
 
-        all_channel_ids: list[list[int]] = [[] for _ in range(runtime.world_size)]
-        torch.distributed.all_gather_object(all_channel_ids, channel_id_list)
-        return all_channel_ids[leader_rank]
+        gathered_results: list[list[T]] = [[] for _ in range(runtime.world_size)]
+        torch.distributed.all_gather_object(gathered_results, results)
+        return gathered_results[leader_rank]
 
     def _sampler_input_has_batches(self, sampler_input: NodeSamplerInput) -> bool:
         input_len = len(sampler_input)

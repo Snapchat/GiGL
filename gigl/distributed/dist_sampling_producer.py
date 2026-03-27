@@ -259,9 +259,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
         # computation on GiglDistDataset would fail there.  Computing here —
         # where torch.distributed IS initialized — lets the tensor be shared
         # to workers via IPC.
-        degree_tensors: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        ] = None
+        degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = (
+            None
+        )
         if isinstance(self._sampler_options, PPRSamplerOptions):
             assert isinstance(self.data, GiglDistDataset)
             degree_tensors = self.data.degree_tensor
@@ -319,24 +319,10 @@ class SharedMpCommand(Enum):
 
 
 EPOCH_DONE_EVENT = "EPOCH_DONE"
-TASK_DEQUEUED_EVENT = "TASK_DEQUEUED"
 SCHEDULER_TICK_SECS = 0.05
 SCHEDULER_STATE_LOG_INTERVAL_SECS = 10.0
 SCHEDULER_STATE_MAX_CHANNELS = 6
 SCHEDULER_SLOW_SUBMIT_SECS = 1.0
-
-
-def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[int]:
-    if command == SharedMpCommand.REGISTER_INPUT:
-        assert isinstance(payload, RegisterInputCmd)
-        return payload.channel_id
-    if command == SharedMpCommand.START_EPOCH:
-        assert isinstance(payload, StartEpochCmd)
-        return payload.channel_id
-    if command == SharedMpCommand.UNREGISTER_INPUT:
-        assert isinstance(payload, int)
-        return payload
-    return None
 
 
 @dataclass(frozen=True)
@@ -567,7 +553,10 @@ def _shared_sampling_worker_loop(
         )
 
     def _on_batch_done(channel_id: int, epoch: int) -> None:
-        nonlocal worker_inflight_batches, batches_completed_total, epochs_completed_total
+        nonlocal \
+            worker_inflight_batches, \
+            batches_completed_total, \
+            epochs_completed_total
         route_key_to_remove: Optional[str] = None
         epoch_done = False
         with state_lock:
@@ -759,14 +748,6 @@ def _shared_sampling_worker_loop(
             def _handle_command(command: SharedMpCommand, payload: object) -> bool:
                 assert dist_sampler is not None
                 nonlocal worker_inflight_batches
-                event_queue.put(
-                    (
-                        TASK_DEQUEUED_EVENT,
-                        rank,
-                        command.name,
-                        _command_channel_id(command, payload),
-                    )
-                )
 
                 if command == SharedMpCommand.REGISTER_INPUT:
                     register_cmd = cast(RegisterInputCmd, payload)
@@ -821,16 +802,16 @@ def _shared_sampling_worker_loop(
                         if total_batches == 0:
                             epoch_done = True
                         else:
-                            active_epochs_by_channel[
-                                start_cmd.channel_id
-                            ] = ActiveEpochState(
-                                channel_id=start_cmd.channel_id,
-                                epoch=start_cmd.epoch,
-                                input_len=len(local_input),
-                                batch_size=sampling_config.batch_size,
-                                drop_last=sampling_config.drop_last,
-                                seeds_index=start_cmd.seeds_index,
-                                total_batches=total_batches,
+                            active_epochs_by_channel[start_cmd.channel_id] = (
+                                ActiveEpochState(
+                                    channel_id=start_cmd.channel_id,
+                                    epoch=start_cmd.epoch,
+                                    input_len=len(local_input),
+                                    batch_size=sampling_config.batch_size,
+                                    drop_last=sampling_config.drop_last,
+                                    seeds_index=start_cmd.seeds_index,
+                                    total_batches=total_batches,
+                                )
                             )
                             _enqueue_channel_if_runnable_locked(start_cmd.channel_id)
                     logger.info(
@@ -942,10 +923,7 @@ class SharedDistSamplingBackend:
         self._channel_input_sizes: dict[int, list[int]] = {}
         self._channel_epoch: dict[int, int] = {}
         self._completed_workers: dict[tuple[int, int], set[int]] = defaultdict(set)
-        self._queued_task_counts_by_worker: dict[int, dict[str, int]] = defaultdict(
-            dict
-        )
-        self._task_queue_maxsize = 0  # unbounded
+        self._task_queue_maxsize = 0  # Unbounded worker command queues.
 
     def init_backend(self) -> None:
         with self._lock:
@@ -982,55 +960,6 @@ class SharedDistSamplingBackend:
             barrier.wait()
             self._initialized = True
 
-    @staticmethod
-    def _safe_qsize(queue_: mp.Queue) -> Optional[int]:
-        try:
-            return queue_.qsize()
-        except (AttributeError, NotImplementedError, OSError):
-            return None
-
-    def _snapshot_queue_counts(self, worker_rank: int) -> dict[str, int]:
-        return dict(self._queued_task_counts_by_worker.get(worker_rank, {}))
-
-    def describe_channel(self, channel_id: int) -> dict[str, object]:
-        self._drain_events()
-        with self._lock:
-            epoch = self._channel_epoch.get(channel_id)
-            if epoch is None:
-                return {
-                    "channel_id": channel_id,
-                    "registered": False,
-                }
-            completed_workers = sorted(
-                self._completed_workers.get((channel_id, epoch), set())
-            )
-            queue_sizes = {
-                rank: qsize
-                for rank, qsize in (
-                    (rank, self._safe_qsize(queue_))
-                    for rank, queue_ in enumerate(self._task_queues)
-                )
-                if qsize is not None
-            }
-            queued_task_counts = {
-                rank: dict(counts)
-                for rank, counts in self._queued_task_counts_by_worker.items()
-                if counts
-            }
-            return {
-                "channel_id": channel_id,
-                "registered": True,
-                "epoch": epoch,
-                "worker_input_sizes": list(
-                    self._channel_input_sizes.get(channel_id, [])
-                ),
-                "completed_workers": completed_workers,
-                "completed_worker_count": len(completed_workers),
-                "num_workers": self.num_workers,
-                "approx_queue_sizes": queue_sizes,
-                "approx_task_counts": queued_task_counts,
-            }
-
     def _enqueue_worker_command(
         self,
         worker_rank: int,
@@ -1038,46 +967,7 @@ class SharedDistSamplingBackend:
         payload: object,
     ) -> None:
         queue_ = self._task_queues[worker_rank]
-        channel_id = _command_channel_id(command, payload)
-        approx_qsize_before = self._safe_qsize(queue_)
-        with self._lock:
-            queued_counts_before = self._snapshot_queue_counts(worker_rank)
-        logger.info(
-            "task_queue enqueue_start "
-            f"worker_rank={worker_rank} command={command.name} channel_id={channel_id} "
-            f"approx_qsize={approx_qsize_before} maxsize={self._task_queue_maxsize} "
-            f"approx_contents={queued_counts_before}"
-        )
-        with self._lock:
-            worker_counts = self._queued_task_counts_by_worker.setdefault(
-                worker_rank, {}
-            )
-            worker_counts[command.name] = worker_counts.get(command.name, 0) + 1
-        enqueue_start_time = time.monotonic()
-        try:
-            queue_.put((command, payload))
-        except Exception:
-            with self._lock:
-                existing_worker_counts = self._queued_task_counts_by_worker.get(
-                    worker_rank
-                )
-                if existing_worker_counts is not None:
-                    current_count = existing_worker_counts.get(command.name, 0)
-                    if current_count <= 1:
-                        existing_worker_counts.pop(command.name, None)
-                    else:
-                        existing_worker_counts[command.name] = current_count - 1
-            raise
-        enqueue_elapsed = time.monotonic() - enqueue_start_time
-        approx_qsize_after = self._safe_qsize(queue_)
-        with self._lock:
-            queued_counts_after = self._snapshot_queue_counts(worker_rank)
-        logger.info(
-            "task_queue enqueue_done "
-            f"worker_rank={worker_rank} command={command.name} channel_id={channel_id} "
-            f"put_elapsed={enqueue_elapsed:.4f}s approx_qsize={approx_qsize_after} "
-            f"maxsize={self._task_queue_maxsize} approx_contents={queued_counts_after}"
-        )
+        queue_.put((command, payload))
 
     def _drain_events(self) -> None:
         if self._event_queue is None:
@@ -1093,19 +983,6 @@ class SharedDistSamplingBackend:
                 _, channel_id, epoch, worker_rank = event
                 with self._lock:
                     self._completed_workers[(channel_id, epoch)].add(worker_rank)
-                continue
-            if event[0] == TASK_DEQUEUED_EVENT:
-                _, worker_rank, command_name, _channel_id = event
-                with self._lock:
-                    worker_counts = self._queued_task_counts_by_worker.get(worker_rank)
-                    if worker_counts is None:
-                        continue
-                    current_count = worker_counts.get(command_name, 0)
-                    if current_count <= 1:
-                        worker_counts.pop(command_name, None)
-                    else:
-                        worker_counts[command_name] = current_count - 1
-                continue
 
     def register_input(
         self,
@@ -1187,12 +1064,6 @@ class SharedDistSamplingBackend:
                     seeds_index=seeds_index,
                 ),
             )
-        logger.info(
-            "shared_sampling_backend start_epoch "
-            f"channel_id={channel_id} epoch={epoch} "
-            f"state={self.describe_channel(channel_id)}"
-        )
-        time.sleep(0.1)
 
     def unregister_input(self, channel_id: int) -> None:
         self._drain_events()

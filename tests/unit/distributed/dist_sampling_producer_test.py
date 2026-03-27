@@ -1,16 +1,21 @@
+from collections import defaultdict
 import queue
 import threading
 import time
 import unittest
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import torch
+import torch.multiprocessing as mp
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
 from gigl.distributed.dist_sampling_producer import (
     ActiveEpochState,
+    EPOCH_DONE_EVENT,
     RegisterInputCmd,
+    SharedDistSamplingBackend,
     SharedMpCommand,
     StartEpochCmd,
     _compute_num_batches,
@@ -63,6 +68,24 @@ class _RecordingSampler:
 class DistSamplingProducerTest(unittest.TestCase):
     def setUp(self) -> None:
         _RecordingSampler.instances.clear()
+
+    def _make_shared_backend(self, num_workers: int = 2) -> SharedDistSamplingBackend:
+        backend = SharedDistSamplingBackend.__new__(SharedDistSamplingBackend)
+        backend.num_workers = num_workers
+        backend._task_queues = [
+            cast(mp.Queue, queue.Queue()) for _ in range(num_workers)
+        ]
+        backend._workers = []
+        backend._event_queue = cast(mp.Queue, queue.Queue())
+        backend._shutdown = False
+        backend._initialized = True
+        backend._lock = threading.RLock()
+        backend._channel_sampling_config = {}
+        backend._channel_input_sizes = {}
+        backend._channel_epoch = {}
+        backend._completed_workers = defaultdict(set)
+        backend._task_queue_maxsize = 0
+        return backend
 
     @staticmethod
     def _sampling_config(batch_size: int = 1) -> SamplingConfig:
@@ -156,17 +179,19 @@ class DistSamplingProducerTest(unittest.TestCase):
         )
         data = SimpleNamespace(num_partitions=1)
 
-        with patch("gigl.distributed.dist_sampling_producer.init_worker_group"), patch(
-            "gigl.distributed.dist_sampling_producer.init_rpc"
-        ), patch("gigl.distributed.dist_sampling_producer.shutdown_rpc"), patch(
-            "gigl.distributed.dist_sampling_producer._set_worker_signal_handlers"
-        ), patch(
-            "gigl.distributed.dist_sampling_producer.torch.set_num_threads"
-        ), patch(
-            "gigl.distributed.dist_sampling_producer.seed_everything"
-        ), patch(
-            "gigl.distributed.dist_sampling_producer.DistNeighborSampler",
-            _RecordingSampler,
+        with (
+            patch("gigl.distributed.dist_sampling_producer.init_worker_group"),
+            patch("gigl.distributed.dist_sampling_producer.init_rpc"),
+            patch("gigl.distributed.dist_sampling_producer.shutdown_rpc"),
+            patch(
+                "gigl.distributed.dist_sampling_producer._set_worker_signal_handlers"
+            ),
+            patch("gigl.distributed.dist_sampling_producer.torch.set_num_threads"),
+            patch("gigl.distributed.dist_sampling_producer.seed_everything"),
+            patch(
+                "gigl.distributed.dist_sampling_producer.DistNeighborSampler",
+                _RecordingSampler,
+            ),
         ):
             worker_thread = threading.Thread(
                 target=_shared_sampling_worker_loop,
@@ -207,6 +232,67 @@ class DistSamplingProducerTest(unittest.TestCase):
 
             self.assertFalse(worker_thread.is_alive())
             self.assertTrue(sampler.wait_all_called)
+
+    def test_shared_sampling_backend_start_new_epoch_is_idempotent(self) -> None:
+        backend = self._make_shared_backend(num_workers=2)
+        backend._channel_sampling_config[7] = self._sampling_config(batch_size=2)
+        backend._channel_input_sizes[7] = [3, 2]
+        backend._channel_epoch[7] = -1
+        enqueued: list[tuple[int, SharedMpCommand, StartEpochCmd]] = []
+
+        def _record_enqueue(
+            worker_rank: int,
+            command: SharedMpCommand,
+            payload: object,
+        ) -> None:
+            assert isinstance(payload, StartEpochCmd)
+            enqueued.append((worker_rank, command, payload))
+
+        with patch.object(
+            backend, "_enqueue_worker_command", side_effect=_record_enqueue
+        ):
+            backend.start_new_epoch_sampling(7, 4)
+            backend.start_new_epoch_sampling(7, 4)
+
+        self.assertEqual(backend._channel_epoch[7], 4)
+        self.assertEqual(
+            [
+                (worker_rank, command, payload.channel_id, payload.epoch)
+                for worker_rank, command, payload in enqueued
+            ],
+            [
+                (0, SharedMpCommand.START_EPOCH, 7, 4),
+                (1, SharedMpCommand.START_EPOCH, 7, 4),
+            ],
+        )
+
+    def test_tuple_keyed_completion_blocks_stale_epoch_done_events(self) -> None:
+        backend = self._make_shared_backend(num_workers=1)
+        backend._channel_sampling_config[5] = self._sampling_config(batch_size=2)
+        backend._channel_input_sizes[5] = [4]
+        backend._channel_epoch[5] = -1
+
+        with patch.object(backend, "_enqueue_worker_command"):
+            backend.start_new_epoch_sampling(5, 2)
+
+        assert backend._event_queue is not None
+        backend._event_queue.put((EPOCH_DONE_EVENT, 5, 1, 0))
+        self.assertFalse(backend.is_channel_epoch_done(5, 2))
+
+        backend._event_queue.put((EPOCH_DONE_EVENT, 5, 2, 0))
+        self.assertTrue(backend.is_channel_epoch_done(5, 2))
+        self.assertEqual(backend._completed_workers[(5, 1)], {0})
+
+    def test_drain_events_only_tracks_epoch_done_events(self) -> None:
+        backend = self._make_shared_backend(num_workers=2)
+        assert backend._event_queue is not None
+        backend._event_queue.put(("IGNORED", 9, 0, 1))
+        backend._event_queue.put((EPOCH_DONE_EVENT, 3, 6, 1))
+
+        backend._drain_events()
+
+        self.assertEqual(backend._completed_workers[(3, 6)], {1})
+        self.assertEqual(len(backend._completed_workers), 1)
 
 
 if __name__ == "__main__":

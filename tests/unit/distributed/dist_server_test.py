@@ -1,5 +1,9 @@
+from unittest.mock import Mock, patch
+
 import torch
 from absl.testing import absltest
+from graphlearn_torch.channel import QueueTimeoutError
+from graphlearn_torch.sampler import NodeSamplerInput
 
 from gigl.distributed.graph_store import dist_server
 from gigl.distributed.graph_store.messages import (
@@ -21,15 +25,262 @@ from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
 
+class _FakeSamplingBackend:
+    instances: list["_FakeSamplingBackend"] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.init_backend_calls = 0
+        self.register_calls: list[dict[str, object]] = []
+        self.unregister_calls: list[int] = []
+        self.start_epoch_calls: list[tuple[int, int]] = []
+        self.shutdown_calls = 0
+        self.epoch_done_results: list[bool] = []
+        self.is_channel_epoch_done_calls: list[tuple[int, int]] = []
+        _FakeSamplingBackend.instances.append(self)
+
+    def init_backend(self) -> None:
+        self.init_backend_calls += 1
+
+    def register_input(self, **kwargs: object) -> None:
+        self.register_calls.append(dict(kwargs))
+
+    def unregister_input(self, channel_id: int) -> None:
+        self.unregister_calls.append(channel_id)
+
+    def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
+        self.start_epoch_calls.append((channel_id, epoch))
+
+    def is_channel_epoch_done(self, channel_id: int, epoch: int) -> bool:
+        self.is_channel_epoch_done_calls.append((channel_id, epoch))
+        if self.epoch_done_results:
+            return self.epoch_done_results.pop(0)
+        return False
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
+class _FakeShmChannel:
+    def __init__(self, buffer_capacity: int, buffer_size: object) -> None:
+        self.buffer_capacity = buffer_capacity
+        self.buffer_size = buffer_size
+        self.recv_results: list[object] = []
+        self.empty_result = False
+
+    def recv(self, timeout_ms: int) -> object:
+        assert timeout_ms == 500
+        if not self.recv_results:
+            raise AssertionError("recv() called without queued fake results")
+        result = self.recv_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    def empty(self) -> bool:
+        return self.empty_result
+
+
 class TestRemoteDataset(TestCase):
     def setUp(self) -> None:
         """Reset the global dataset before each test."""
         dist_server._dist_server = None
+        _FakeSamplingBackend.instances.clear()
 
     def tearDown(self) -> None:
         """Clean up after each test."""
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
+
+    @staticmethod
+    def _make_sampling_server() -> dist_server.DistServer:
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        return dist_server.DistServer(dataset)
+
+    @staticmethod
+    def _make_backend_opts(backend_key: str) -> dist_server.InitSamplingBackendOpts:
+        return dist_server.InitSamplingBackendOpts(
+            backend_key=backend_key,
+            worker_options=Mock(name="worker_options"),
+            sampler_options=Mock(name="sampler_options"),
+            sampling_config=Mock(name="sampling_config"),
+        )
+
+    @staticmethod
+    def _make_register_opts(backend_id: int) -> dist_server.RegisterBackendOpts:
+        return dist_server.RegisterBackendOpts(
+            backend_id=backend_id,
+            worker_key=f"worker-{backend_id}",
+            sampler_input=NodeSamplerInput(
+                node=torch.arange(4, dtype=torch.long),
+                input_type="node",
+            ),
+            sampling_config=Mock(name=f"sampling_config_{backend_id}"),
+            buffer_capacity=2,
+            buffer_size="1MB",
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.dist_server.ShmChannel",
+        _FakeShmChannel,
+    )
+    @patch(
+        "gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend",
+        _FakeSamplingBackend,
+    )
+    def test_init_sampling_backend_is_idempotent_by_backend_key(self) -> None:
+        server = self._make_sampling_server()
+
+        backend_id_0 = server.init_sampling_backend(self._make_backend_opts("shared"))
+        backend_id_1 = server.init_sampling_backend(self._make_backend_opts("shared"))
+
+        self.assertEqual(backend_id_0, backend_id_1)
+        self.assertLen(_FakeSamplingBackend.instances, 1)
+        self.assertEqual(server._backend_key_to_id["shared"], backend_id_0)
+        self.assertEqual(len(server._backend_state_by_id), 1)
+        self.assertEqual(
+            _FakeSamplingBackend.instances[0].init_backend_calls,
+            2,
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.dist_server.ShmChannel",
+        _FakeShmChannel,
+    )
+    @patch(
+        "gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend",
+        _FakeSamplingBackend,
+    )
+    def test_register_sampling_input_attaches_to_expected_backend(self) -> None:
+        server = self._make_sampling_server()
+        backend_id_0 = server.init_sampling_backend(
+            self._make_backend_opts("backend-0")
+        )
+        backend_id_1 = server.init_sampling_backend(
+            self._make_backend_opts("backend-1")
+        )
+
+        channel_id = server.register_sampling_input(
+            self._make_register_opts(backend_id_1)
+        )
+
+        backend_0 = _FakeSamplingBackend.instances[0]
+        backend_1 = _FakeSamplingBackend.instances[1]
+        self.assertEqual(server._channel_state[channel_id].backend_id, backend_id_1)
+        self.assertEqual(
+            server._backend_state_by_id[backend_id_1].active_channels, {channel_id}
+        )
+        self.assertEmpty(server._backend_state_by_id[backend_id_0].active_channels)
+        self.assertEmpty(backend_0.register_calls)
+        self.assertLen(backend_1.register_calls, 1)
+        self.assertEqual(backend_1.register_calls[0]["channel_id"], channel_id)
+        self.assertEqual(
+            backend_1.register_calls[0]["worker_key"], f"worker-{backend_id_1}"
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.dist_server.ShmChannel",
+        _FakeShmChannel,
+    )
+    @patch(
+        "gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend",
+        _FakeSamplingBackend,
+    )
+    def test_destroying_last_channel_shuts_down_backend_runtime(self) -> None:
+        server = self._make_sampling_server()
+        backend_id = server.init_sampling_backend(self._make_backend_opts("shared"))
+        channel_id = server.register_sampling_input(
+            self._make_register_opts(backend_id)
+        )
+        backend = _FakeSamplingBackend.instances[0]
+
+        server.destroy_sampling_input(channel_id)
+
+        self.assertEqual(backend.unregister_calls, [channel_id])
+        self.assertEqual(backend.shutdown_calls, 1)
+        self.assertNotIn(channel_id, server._channel_state)
+        self.assertNotIn(backend_id, server._backend_state_by_id)
+        self.assertNotIn("shared", server._backend_key_to_id)
+
+    @patch(
+        "gigl.distributed.graph_store.dist_server.ShmChannel",
+        _FakeShmChannel,
+    )
+    @patch(
+        "gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend",
+        _FakeSamplingBackend,
+    )
+    def test_shutdown_works_with_backend_state_objects(self) -> None:
+        server = self._make_sampling_server()
+        backend_id_0 = server.init_sampling_backend(
+            self._make_backend_opts("backend-0")
+        )
+        _ = server.init_sampling_backend(self._make_backend_opts("backend-1"))
+        channel_id = server.register_sampling_input(
+            self._make_register_opts(backend_id_0)
+        )
+
+        server.shutdown()
+
+        backend_0 = _FakeSamplingBackend.instances[0]
+        backend_1 = _FakeSamplingBackend.instances[1]
+        self.assertEqual(backend_0.unregister_calls, [channel_id])
+        self.assertEqual(backend_0.shutdown_calls, 1)
+        self.assertEqual(backend_1.shutdown_calls, 1)
+        self.assertEmpty(server._backend_state_by_id)
+        self.assertEmpty(server._backend_key_to_id)
+
+    @patch(
+        "gigl.distributed.graph_store.dist_server.ShmChannel",
+        _FakeShmChannel,
+    )
+    @patch(
+        "gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend",
+        _FakeSamplingBackend,
+    )
+    def test_start_new_epoch_sampling_is_idempotent(self) -> None:
+        server = self._make_sampling_server()
+        backend_id = server.init_sampling_backend(self._make_backend_opts("shared"))
+        channel_id = server.register_sampling_input(
+            self._make_register_opts(backend_id)
+        )
+        backend = _FakeSamplingBackend.instances[0]
+
+        server.start_new_epoch_sampling(channel_id, 3)
+        server.start_new_epoch_sampling(channel_id, 3)
+        server.start_new_epoch_sampling(channel_id, 2)
+
+        self.assertEqual(backend.start_epoch_calls, [(channel_id, 3)])
+        self.assertEqual(server._channel_state[channel_id].epoch, 3)
+
+    @patch(
+        "gigl.distributed.graph_store.dist_server.ShmChannel",
+        _FakeShmChannel,
+    )
+    @patch(
+        "gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend",
+        _FakeSamplingBackend,
+    )
+    def test_fetch_one_sampled_message_returns_end_of_epoch(self) -> None:
+        server = self._make_sampling_server()
+        backend_id = server.init_sampling_backend(self._make_backend_opts("shared"))
+        channel_id = server.register_sampling_input(
+            self._make_register_opts(backend_id)
+        )
+        backend = _FakeSamplingBackend.instances[0]
+        channel = server._channel_state[channel_id].channel
+        assert isinstance(channel, _FakeShmChannel)
+        channel.recv_results = [QueueTimeoutError()]
+        channel.empty_result = True
+        backend.epoch_done_results = [True]
+        server.start_new_epoch_sampling(channel_id, 5)
+
+        msg, end_of_epoch = server.fetch_one_sampled_message(channel_id)
+
+        self.assertIsNone(msg)
+        self.assertTrue(end_of_epoch)
+        self.assertEqual(backend.is_channel_epoch_done_calls, [(channel_id, 5)])
 
     def test_get_node_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_node_feature_info with a heterogeneous dataset."""

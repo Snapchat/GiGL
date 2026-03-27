@@ -13,6 +13,25 @@ def _resolved_future(result) -> torch.futures.Future:
 
 
 class RemoteReceivingChannelTest(unittest.TestCase):
+    def test_reset_reapplies_active_mask(self) -> None:
+        channel = RemoteReceivingChannel(
+            server_rank=[0, 1],
+            channel_id=[10, 11],
+            prefetch_size=2,
+            active_mask=[True, False],
+        )
+        channel.server_end_of_epoch = [True, True]
+        channel.global_end_of_epoch = True
+        channel.num_request_list = [3, 4]
+        channel.num_received_list = [1, 2]
+
+        channel.reset()
+
+        self.assertEqual(channel.server_end_of_epoch, [False, True])
+        self.assertFalse(channel.global_end_of_epoch)
+        self.assertEqual(channel.num_request_list, [0, 0])
+        self.assertEqual(channel.num_received_list, [0, 0])
+
     def test_recv_skips_inactive_servers(self) -> None:
         channel = RemoteReceivingChannel(
             server_rank=[0, 1],
