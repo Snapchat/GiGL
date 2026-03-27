@@ -451,14 +451,15 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 },
             )
 
-        self.assertEqual(attn_bias.shape, (1, 2, 3, 3))
+        self.assertEqual(attn_bias.shape, (1, 2, 1, 3))
         self.assertEqual(attn_bias[0, 0, 0, 1].item(), 4.5)
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 9.0)
-        self.assertEqual(attn_bias[0, 0, 2, 2].item(), 4.25)
-        self.assertEqual(attn_bias[0, 1, 2, 2].item(), 8.5)
+        self.assertEqual(attn_bias[0, 0, 0, 2].item(), 4.25)
+        self.assertEqual(attn_bias[0, 1, 0, 2].item(), 8.5)
 
     def test_sinusoidal_sequence_positional_encoding_masks_padding(self) -> None:
         encoder = self._create_encoder(
+            sequence_construction_method="ppr",
             sequence_positional_encoding_type="sinusoidal",
         )
 
@@ -631,7 +632,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             sequence_construction_method="ppr",
             anchor_based_input_attr_names=["hop_distance", "ppr_weight"],
             anchor_based_input_embedding_dict=nn.ModuleDict(
-                {"hop_distance": nn.Embedding(8, self._hid_dim)}
+                {"hop_distance": nn.Embedding(8, 8)}
             ),
         )
         augmented_encoder.load_state_dict(base_encoder.state_dict(), strict=False)

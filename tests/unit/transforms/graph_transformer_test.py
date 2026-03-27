@@ -821,8 +821,10 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         assert pairwise_bias is not None
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
-        self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 12.0, places=5)
-        self.assertAlmostEqual(pairwise_bias[0, 0, 0, 0].item(), 1.3, places=5)
+        self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 0.0, places=5)
+        self.assertAlmostEqual(anchor_bias[0, 1, 0].item(), 1.0, places=5)
+        self.assertAlmostEqual(anchor_bias[0, 2, 0].item(), 3.0, places=5)
+        self.assertAlmostEqual(pairwise_bias[0, 0, 0, 0].item(), 0.1, places=5)
 
         invalid_pair_mask = ~(valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1))
         self.assertTrue(torch.all(pairwise_bias[..., 0][invalid_pair_mask] == 0))
