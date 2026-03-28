@@ -891,7 +891,10 @@ class GraphTransformerEncoder(nn.Module):
         valid_token_mask = valid_mask.unsqueeze(-1).to(sequences.dtype)
 
         if self._anchor_based_input_embedding_dict is not None:
-            for attr_name, embedding_layer in self._anchor_based_input_embedding_dict.items():
+            for (
+                attr_name,
+                embedding_layer,
+            ) in self._anchor_based_input_embedding_dict.items():
                 if attr_name not in token_input_features:
                     raise ValueError(
                         f"Token-input feature '{attr_name}' is missing from the "

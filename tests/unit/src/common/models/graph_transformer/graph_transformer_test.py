@@ -647,9 +647,9 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 device=self._device,
             )
             assert augmented_encoder._anchor_based_input_embedding_dict is not None
-            hop_distance_embedding = augmented_encoder._anchor_based_input_embedding_dict[
-                "hop_distance"
-            ]
+            hop_distance_embedding = (
+                augmented_encoder._anchor_based_input_embedding_dict["hop_distance"]
+            )
             assert isinstance(hop_distance_embedding, nn.Embedding)
             hop_distance_embedding.weight[...] = 0
             assert augmented_encoder._token_input_projection is not None
