@@ -23,6 +23,34 @@ from gigl.distributed.sampler import (
 from gigl.utils.data_splitters import PADDING_NODE
 
 
+def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
+    """Return unique 1-D values while preserving first-occurrence order."""
+    if nodes.dim() != 1:
+        raise ValueError(
+            f"Expected a 1-D tensor of node ids, got shape {tuple(nodes.shape)}."
+        )
+    if nodes.numel() <= 1:
+        return nodes
+
+    unique_nodes, inverse = torch.unique(nodes, sorted=False, return_inverse=True)
+    first_positions = torch.full(
+        (unique_nodes.numel(),),
+        fill_value=nodes.numel(),
+        dtype=torch.long,
+        device=nodes.device,
+    )
+    positions = torch.arange(nodes.numel(), device=nodes.device)
+    first_positions.scatter_reduce_(
+        0,
+        inverse,
+        positions,
+        reduce="amin",
+        include_self=True,
+    )
+    stable_order = torch.argsort(first_positions)
+    return unique_nodes[stable_order]
+
+
 @dataclass
 class SampleLoopInputs:
     """Inputs prepared for the neighbor sampling loop in _sample_from_nodes.
@@ -148,12 +176,12 @@ class DistNeighborSampler(GLTDistNeighborSampler):
                 f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
             ] = label_tensor
 
-        # As a perf optimization, we *could* have `nodes_to_sample` be only the
-        # unique nodes, but since torch.unique() calls a sort, we should
-        # investigate if it's worth it.
-        # TODO(kmonte, mkolodner-sc): Investigate if this is worth it.
         nodes_to_sample: dict[Union[str, NodeType], torch.Tensor] = {
-            node_type: torch.cat(seeds, dim=0).to(self.device)
+            # Keep first-occurrence order so anchor seeds remain at the front of
+            # their node type; graph-transformer paths rely on that convention.
+            node_type: _stable_unique_preserve_order(
+                torch.cat(seeds, dim=0).to(self.device)
+            )
             for node_type, seeds in input_seeds_builder.items()
         }
 
