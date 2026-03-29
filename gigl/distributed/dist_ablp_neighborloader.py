@@ -97,6 +97,7 @@ class DistABLPLoader(BaseDistLoader):
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
+        background_collation_queue_size: Optional[int] = None,
     ):
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -215,6 +216,12 @@ class DistABLPLoader(BaseDistLoader):
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
+            background_collation_queue_size (Optional[int]): If set to a positive
+                integer, enables background collation in a daemon thread. The
+                collation of sampled messages is performed in a background thread,
+                overlapping with GPU training. The value controls the maximum
+                number of pre-collated batches buffered in memory. ``None``
+                disables background collation (default behavior).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -385,6 +392,7 @@ class DistABLPLoader(BaseDistLoader):
             producer=producer,
             sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
+            background_collation_queue_size=background_collation_queue_size,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
 

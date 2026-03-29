@@ -1,4 +1,5 @@
 import sys
+import time
 from collections import abc
 from itertools import count
 from typing import Callable, Optional, Tuple, Union
@@ -92,6 +93,7 @@ class DistNeighborLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        background_collation_queue_size: Optional[int] = None,
         sampler_options: Optional[SamplerOptions] = None,
     ):
         """
@@ -166,6 +168,12 @@ class DistNeighborLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            background_collation_queue_size (Optional[int]): If set to a positive
+                integer, enables background collation in a daemon thread. The
+                collation of sampled messages is performed in a background thread,
+                overlapping with GPU training. The value controls the maximum
+                number of pre-collated batches buffered in memory. ``None``
+                disables background collation (default behavior).
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
                 instantiated. Pass ``KHopNeighborSamplerOptions`` to use the built-in sampler,
                 or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
@@ -294,6 +302,7 @@ class DistNeighborLoader(BaseDistLoader):
             producer=producer,
             sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
+            background_collation_queue_size=background_collation_queue_size,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
 
@@ -529,6 +538,7 @@ class DistNeighborLoader(BaseDistLoader):
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        t0 = time.time()
         # Extract user-defined metadata before super()._collate_fn, which
         # calls GLT's to_hetero_data.  to_hetero_data misinterprets #META. keys
         # as edge types and fails when edge_dir="out" (tries to call
@@ -536,16 +546,24 @@ class DistNeighborLoader(BaseDistLoader):
         # TODO (mkolodner-sc): Remove once GLT's to_hetero_data is fixed.
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
         data = super()._collate_fn(stripped_msg)
+        t_base = time.time()
+        self._timing.record("collate/glt_base_collate", t_base - t0)
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
             edge_feature_info=self._edge_feature_info,
             device=self.to_device,
         )
+        t_feat = time.time()
+        self._timing.record("collate/set_missing_features", t_feat - t_base)
+
         if isinstance(data, HeteroData):
             data = strip_label_edges(data)
+            t_strip = time.time()
+            self._timing.record("collate/strip_label_edges", t_strip - t_feat)
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
+            self._timing.record("collate/labeled_to_homogeneous", time.time() - t_feat)
 
         if isinstance(self._sampler_options, PPRSamplerOptions):
             matched, metadata = extract_edge_type_metadata(
@@ -562,4 +580,6 @@ class DistNeighborLoader(BaseDistLoader):
         # data object so downstream code can access them via attribute lookup.
         for key, value in metadata.items():
             data[key] = value
+
+        self._timing.record("collate/total", time.time() - t0)
         return data
