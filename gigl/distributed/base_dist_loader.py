@@ -831,14 +831,12 @@ class BaseDistLoader(DistLoader):
         memory). Then delegates to the parent _collate_fn, whose .to(device)
         calls become no-ops since tensors are already on device.
         """
-        if (
-            self.to_device is not None
-            and self.to_device.type == "cuda"
-            and isinstance(msg, dict)
-        ):
+        if self.to_device is not None and self.to_device.type == "cuda":
             for k, v in msg.items():
                 if isinstance(v, torch.Tensor) and v.device != self.to_device:
                     msg[k] = v.to(self.to_device, non_blocking=True)
+            # Synchronize the current CUDA stream to ensure all transfers are complete
+            # Since we call .to(device, non_blocking=True) on all tensors, we need to synchronize the stream to ensure all transfers are complete.
             torch.cuda.current_stream().synchronize()
         return super()._collate_fn(msg)
 
