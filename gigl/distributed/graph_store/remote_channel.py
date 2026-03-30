@@ -160,13 +160,6 @@ class RemoteReceivingChannel(ChannelBase):
                 "Received unexpected None message when end_of_epoch is False."
             )
 
-        if self._pin_memory:
-            pin_start = time.monotonic()
-            msg = self._pin_sample_message(msg)
-            pin_elapsed = time.monotonic() - pin_start
-        else:
-            pin_elapsed = 0.0
-
         self._recv_count += 1
         if self._recv_count % self._log_every_n == 0:
             logger.info(
@@ -176,24 +169,24 @@ class RemoteReceivingChannel(ChannelBase):
                 f"num_rpcs_dispatched={num_dispatched} "
                 f"queue_depth_before_get={queue_depth} "
                 f"queue_get_time={queue_get_elapsed:.4f}s "
-                f"pin_time={pin_elapsed:.4f}s"
             )
 
         return msg
 
     @staticmethod
-    def _pin_sample_message(msg: SampleMessage) -> SampleMessage:
+    def _pin_sample_message(msg: Optional[SampleMessage]) -> Optional[SampleMessage]:
         """Copy all tensors in the message to CUDA-pinned host memory.
 
         This enables faster DMA transfers when subsequently calling
         ``.to(device)`` in the collate function.
+
+        See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html# for more details on pin_memory.
         """
+        if msg is None:
+            return None
         pinned: SampleMessage = {}
         for k, v in msg.items():
-            if isinstance(v, torch.Tensor) and not v.is_pinned():
-                pinned[k] = v.pin_memory()
-            else:
-                pinned[k] = v
+            pinned[k] = v.pin_memory()
         return pinned
 
     def _all_received(self) -> bool:
@@ -209,9 +202,12 @@ class RemoteReceivingChannel(ChannelBase):
         ) -> None:
             try:
                 msg, end_of_epoch = future.wait()
+                if self._pin_memory:
+                    msg = self._pin_sample_message(msg)
                 self._queue.put((msg, end_of_epoch, local_server_idx))
             except Exception as exc:
                 logger.error("broken future of receiving remote messages: %s", exc)
+                self._queue.put((None, False, local_server_idx))
 
         def create_callback(
             local_server_idx: int,
