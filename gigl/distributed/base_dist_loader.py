@@ -831,6 +831,8 @@ class BaseDistLoader(DistLoader):
         memory). Then delegates to the parent _collate_fn, whose .to(device)
         calls become no-ops since tensors are already on device.
         """
+
+        # TODO(kmonte): Consider making the async transfers a flag if we see perf issues with them.
         if self.to_device is not None and self.to_device.type == "cuda":
             for k, v in msg.items():
                 if isinstance(v, torch.Tensor) and v.device != self.to_device:
