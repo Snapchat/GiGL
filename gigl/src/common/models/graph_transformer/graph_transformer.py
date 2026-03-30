@@ -23,6 +23,8 @@ from torch import Tensor
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
     PPR_WEIGHT_FEATURE_NAME,
+    SequenceAuxiliaryData,
+    TokenInputData,
     heterodata_to_graph_transformer_input,
 )
 
@@ -409,11 +411,25 @@ class GraphTransformerEncoder(nn.Module):
             names used as additive attention bias for sequence keys. Sparse
             graph-level attributes are looked up from ``data`` and the reserved
             name ``"ppr_weight"`` resolves to PPR edge weights in PPR mode.
+            Example: ``['hop_distance', 'ppr_weight']`` where ``hop_distance``
+            is a sparse matrix attribute on ``data`` and ``ppr_weight`` is
+            extracted from PPR edge weights.
         anchor_based_input_attr_names: List of anchor-relative attribute names
             used as token-aligned input features. Sparse graph-level attributes
             are looked up from ``data`` and ``"ppr_weight"`` resolves to PPR
             edge weights in PPR mode. These are projected to ``hid_dim`` and
             added to the sequence tokens after sequence construction.
+            Example: ``['hop_distance', 'ppr_weight']`` for continuous features,
+            or ``['hop_distance']`` when ``hop_distance`` will be embedded via
+            ``anchor_based_input_embedding_dict``.
+        anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
+            of ``anchor_based_input_attr_names`` to per-attribute embedding
+            layers. These attributes are treated as discrete indices and their
+            embedded contributions are added to the sequence tokens. Padding is
+            masked out using the sequence valid mask.
+            Example: ``nn.ModuleDict({'hop_distance': nn.Embedding(10, hid_dim)})``
+            to embed hop distances 0-9 into ``hid_dim``-dimensional vectors.
+            The embedding output dimension must match ``hid_dim``.
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
@@ -480,6 +496,7 @@ class GraphTransformerEncoder(nn.Module):
         pe_attr_names: Optional[list[str]] = None,
         anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
         anchor_based_input_attr_names: Optional[list[str]] = None,
+        anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
@@ -517,6 +534,15 @@ class GraphTransformerEncoder(nn.Module):
                 "{None, 'sinusoidal'}, "
                 f"got '{sequence_positional_encoding_type}'"
             )
+        if (
+            sequence_construction_method == "khop"
+            and sequence_positional_encoding_type is not None
+        ):
+            raise ValueError(
+                "sequence_positional_encoding_type requires "
+                "sequence_construction_method='ppr' because khop sequences do not "
+                "enforce a stable token order."
+            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
@@ -543,13 +569,30 @@ class GraphTransformerEncoder(nn.Module):
             anchor_based_attention_bias_attr_names
         )
         self._anchor_based_input_attr_names = anchor_based_input_attr_names
+        self._anchor_based_input_embedding_dict = anchor_based_input_embedding_dict
         self._pairwise_attention_bias_attr_names = pairwise_attention_bias_attr_names
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
-        # Explicit annotation so mypy can narrow past the None check below;
-        # register_buffer sets the value at runtime.
-        self._sequence_positional_encoding_table: Optional[torch.Tensor]
+        anchor_input_embedding_attr_names = (
+            set(anchor_based_input_embedding_dict.keys())
+            if anchor_based_input_embedding_dict is not None
+            else set()
+        )
+        invalid_anchor_input_embedding_attr_names = (
+            anchor_input_embedding_attr_names - set(anchor_input_attr_names)
+        )
+        if invalid_anchor_input_embedding_attr_names:
+            raise ValueError(
+                "anchor_based_input_embedding_dict keys must be a subset of "
+                "anchor_based_input_attr_names, got unexpected keys "
+                f"{sorted(invalid_anchor_input_embedding_attr_names)}."
+            )
+        self._continuous_anchor_input_attr_names = [
+            attr_name
+            for attr_name in anchor_input_attr_names
+            if attr_name not in anchor_input_embedding_attr_names
+        ]
         if self._sequence_positional_encoding_type == "sinusoidal":
             self.register_buffer(
                 "_sequence_positional_encoding_table",
@@ -587,7 +630,7 @@ class GraphTransformerEncoder(nn.Module):
             self._pe_projection = nn.LazyLinear(hid_dim, bias=False)
 
         self._token_input_projection: Optional[nn.Module] = None
-        if self._anchor_based_input_attr_names:
+        if self._continuous_anchor_input_attr_names:
             self._token_input_projection = nn.LazyLinear(hid_dim, bias=False)
 
         self._anchor_pe_attention_bias_projection: Optional[nn.Linear] = None
@@ -772,12 +815,12 @@ class GraphTransformerEncoder(nn.Module):
                 f"got {sequences.size(-1)}."
             )
 
-        token_input_features = sequence_auxiliary_data.get("token_input")
+        token_input_features = sequence_auxiliary_data["token_input"]
         if token_input_features is not None:
-            if self._token_input_projection is None:
-                raise ValueError("Token-input projection is not initialized.")
-            sequences = sequences + self._token_input_projection(
-                token_input_features.to(sequences.dtype)
+            sequences = sequences + self._build_token_input_contribution(
+                token_input_features=token_input_features,
+                sequences=sequences,
+                valid_mask=valid_mask,
             )
 
         sequence_positional_encoding = self._get_sequence_positional_encoding(
@@ -819,15 +862,16 @@ class GraphTransformerEncoder(nn.Module):
             )
         if self._sequence_positional_encoding_table is None:
             raise ValueError("Sequence positional encoding table is not initialized.")
+        position_table = cast(Tensor, self._sequence_positional_encoding_table)
 
         seq_len = sequences.size(1)
-        if seq_len > self._sequence_positional_encoding_table.size(0):
+        if seq_len > position_table.size(0):
             raise ValueError(
                 f"Sequence length {seq_len} exceeds configured max_seq_len "
-                f"{self._sequence_positional_encoding_table.size(0)}."
+                f"{position_table.size(0)}."
             )
 
-        position_encoding = self._sequence_positional_encoding_table[:seq_len]
+        position_encoding = position_table[:seq_len]
         position_encoding = position_encoding.to(
             device=sequences.device,
             dtype=sequences.dtype,
@@ -837,11 +881,66 @@ class GraphTransformerEncoder(nn.Module):
         )
         return position_encoding * valid_mask.unsqueeze(-1).to(sequences.dtype)
 
+    def _build_token_input_contribution(
+        self,
+        token_input_features: TokenInputData,
+        sequences: Tensor,
+        valid_mask: Tensor,
+    ) -> Tensor:
+        token_contribution = torch.zeros_like(sequences)
+        valid_token_mask = valid_mask.unsqueeze(-1).to(sequences.dtype)
+
+        if self._anchor_based_input_embedding_dict is not None:
+            for (
+                attr_name,
+                embedding_layer,
+            ) in self._anchor_based_input_embedding_dict.items():
+                if attr_name not in token_input_features:
+                    raise ValueError(
+                        f"Token-input feature '{attr_name}' is missing from the "
+                        "sequence auxiliary data."
+                    )
+                indices = token_input_features[attr_name]
+                if indices.size(-1) != 1:
+                    raise ValueError(
+                        f"Embedded token-input feature '{attr_name}' must have "
+                        f"shape (batch, seq, 1), got {indices.shape}."
+                    )
+                embedded_attr = embedding_layer(indices.squeeze(-1).long())
+                if embedded_attr.shape != sequences.shape:
+                    raise ValueError(
+                        f"Embedded token-input feature '{attr_name}' must produce "
+                        f"shape {sequences.shape}, got {embedded_attr.shape}."
+                    )
+                token_contribution = token_contribution + (
+                    embedded_attr.to(sequences.dtype) * valid_token_mask
+                )
+
+        if self._continuous_anchor_input_attr_names:
+            if self._token_input_projection is None:
+                raise ValueError("Token-input projection is not initialized.")
+            continuous_feature_parts: list[Tensor] = []
+            for attr_name in self._continuous_anchor_input_attr_names:
+                if attr_name not in token_input_features:
+                    raise ValueError(
+                        f"Token-input feature '{attr_name}' is missing from the "
+                        "sequence auxiliary data."
+                    )
+                continuous_feature_parts.append(token_input_features[attr_name])
+            token_contribution = token_contribution + (
+                self._token_input_projection(
+                    torch.cat(continuous_feature_parts, dim=-1).to(sequences.dtype)
+                )
+                * valid_token_mask
+            )
+
+        return token_contribution
+
     def _build_attention_bias(
         self,
         valid_mask: Tensor,
         sequences: Tensor,
-        attention_bias_data: dict[str, Optional[Tensor]],
+        attention_bias_data: SequenceAuxiliaryData,
     ) -> Tensor:
         """Build additive attention bias from padding mask and learned relative PE projections.
 

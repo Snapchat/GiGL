@@ -472,10 +472,21 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
 
         self.assertEqual(anchor_bias.shape, (2, 4, 2))
-        self.assertEqual(token_input.shape, (2, 4, 2))
         self.assertTrue(torch.allclose(anchor_bias[0], expected_anchor_0))
         self.assertTrue(torch.allclose(anchor_bias[1], expected_anchor_1))
-        self.assertTrue(torch.allclose(token_input, anchor_bias))
+        self.assertEqual(set(token_input.keys()), {"hop_distance", "ppr_weight"})
+        self.assertTrue(
+            torch.allclose(
+                token_input["hop_distance"],
+                anchor_bias[..., 0:1],
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                token_input["ppr_weight"],
+                anchor_bias[..., 1:2],
+            )
+        )
         self.assertTrue(
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
@@ -810,8 +821,10 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         assert pairwise_bias is not None
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
-        self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 12.0, places=5)
-        self.assertAlmostEqual(pairwise_bias[0, 0, 0, 0].item(), 1.3, places=5)
+        self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 0.0, places=5)
+        self.assertAlmostEqual(anchor_bias[0, 1, 0].item(), 1.0, places=5)
+        self.assertAlmostEqual(anchor_bias[0, 2, 0].item(), 3.0, places=5)
+        self.assertAlmostEqual(pairwise_bias[0, 0, 0, 0].item(), 0.1, places=5)
 
         invalid_pair_mask = ~(valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1))
         self.assertTrue(torch.all(pairwise_bias[..., 0][invalid_pair_mask] == 0))

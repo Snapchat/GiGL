@@ -1,8 +1,11 @@
 """Tests for GraphTransformerEncoder."""
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 from absl.testing import absltest
+from torch import Tensor
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.models.graph_transformer.graph_transformer import (
@@ -408,6 +411,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                             ]
                         ]
                     ),
+                    "token_input": None,
                 },
             )
 
@@ -447,14 +451,15 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 },
             )
 
-        self.assertEqual(attn_bias.shape, (1, 2, 3, 3))
+        self.assertEqual(attn_bias.shape, (1, 2, 1, 3))
         self.assertEqual(attn_bias[0, 0, 0, 1].item(), 4.5)
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 9.0)
-        self.assertEqual(attn_bias[0, 0, 2, 2].item(), 4.25)
-        self.assertEqual(attn_bias[0, 1, 2, 2].item(), 8.5)
+        self.assertEqual(attn_bias[0, 0, 0, 2].item(), 4.25)
+        self.assertEqual(attn_bias[0, 1, 0, 2].item(), 8.5)
 
     def test_sinusoidal_sequence_positional_encoding_masks_padding(self) -> None:
         encoder = self._create_encoder(
+            sequence_construction_method="ppr",
             sequence_positional_encoding_type="sinusoidal",
         )
 
@@ -484,6 +489,19 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 torch.zeros((2, 8), dtype=torch.float),
             )
         )
+
+    def test_khop_sequence_construction_rejects_sequence_position_encoding(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "sequence_positional_encoding_type requires "
+            "sequence_construction_method='ppr'",
+        ):
+            self._create_encoder(
+                sequence_construction_method="khop",
+                sequence_positional_encoding_type="sinusoidal",
+            )
 
     def test_forward_supports_ppr_sequence_construction(self) -> None:
         data = _create_user_graph_with_ppr_edges()
@@ -528,22 +546,21 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 device=self._device,
             )
             assert encoder._sequence_positional_encoding_table is not None
-            original_position_table = (
-                encoder._sequence_positional_encoding_table.detach().clone()
-            )
+            position_table = cast(Tensor, encoder._sequence_positional_encoding_table)
+            original_position_table = torch.clone(position_table)
 
             embeddings_with_position_encoding = encoder(
                 data=data,
                 anchor_node_type=self._node_type,
                 device=self._device,
             )
-            encoder._sequence_positional_encoding_table.zero_()
+            position_table[...] = 0
             embeddings_without_position_encoding = encoder(
                 data=data,
                 anchor_node_type=self._node_type,
                 device=self._device,
             )
-            encoder._sequence_positional_encoding_table.copy_(original_position_table)
+            position_table[...] = original_position_table
 
         self.assertEqual(embeddings_with_position_encoding.shape, (3, 6))
         self.assertFalse(torch.isnan(embeddings_with_position_encoding).any())
@@ -583,6 +600,61 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             assert augmented_encoder._token_input_projection is not None
             assert isinstance(augmented_encoder._token_input_projection, nn.Linear)
             augmented_encoder._token_input_projection.weight.data.zero_()
+
+            base_embeddings = base_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            augmented_embeddings = augmented_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(augmented_embeddings.shape, (3, 6))
+        self.assertTrue(
+            torch.allclose(base_embeddings, augmented_embeddings, atol=1e-6)
+        )
+
+    def test_forward_supports_mixed_embedded_and_continuous_token_input_features(
+        self,
+    ) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        base_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+        )
+        augmented_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+            anchor_based_input_attr_names=["hop_distance", "ppr_weight"],
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {"hop_distance": nn.Embedding(8, 8)}
+            ),
+        )
+        augmented_encoder.load_state_dict(base_encoder.state_dict(), strict=False)
+
+        base_encoder.eval()
+        augmented_encoder.eval()
+
+        with torch.no_grad():
+            _ = augmented_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            assert augmented_encoder._anchor_based_input_embedding_dict is not None
+            hop_distance_embedding = (
+                augmented_encoder._anchor_based_input_embedding_dict["hop_distance"]
+            )
+            assert isinstance(hop_distance_embedding, nn.Embedding)
+            hop_distance_embedding.weight[...] = 0
+            assert augmented_encoder._token_input_projection is not None
+            assert isinstance(augmented_encoder._token_input_projection, nn.Linear)
+            augmented_encoder._token_input_projection.weight[...] = 0
 
             base_embeddings = base_encoder(
                 data=data,
