@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -31,6 +31,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
 
@@ -41,6 +42,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import (
@@ -788,9 +790,11 @@ class BaseDistLoader(DistLoader):
 
         # Create remote receiving channel for cross-machine message passing
         self._channel = RemoteReceivingChannel(
-            self._server_rank_list,
-            self._producer_id_list,
-            self.worker_options.prefetch_size,
+            server_rank=self._server_rank_list,
+            channel_id=self._producer_id_list,
+            prefetch_size=self.worker_options.prefetch_size,
+            active_mask=[len(inp) > 0 for inp in self._input_data_list],
+            pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
 
         logger.info(
@@ -818,6 +822,25 @@ class BaseDistLoader(DistLoader):
                 rpc_futures.append(fut)
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        """Override GLT's _collate_fn to batch-transfer tensors with non_blocking=True.
+
+        Moves all tensors in the SampleMessage to the target device using
+        non_blocking transfers (effective when source tensors are in pinned
+        memory). Then delegates to the parent _collate_fn, whose .to(device)
+        calls become no-ops since tensors are already on device.
+        """
+        if (
+            self.to_device is not None
+            and self.to_device.type == "cuda"
+            and isinstance(msg, dict)
+        ):
+            for k, v in msg.items():
+                if isinstance(v, torch.Tensor) and v.device != self.to_device:
+                    msg[k] = v.to(self.to_device, non_blocking=True)
+            torch.cuda.current_stream().synchronize()
+        return super()._collate_fn(msg)
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
