@@ -29,7 +29,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.typing import EdgeType
+from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
@@ -60,7 +60,7 @@ def _sampling_worker_loop(
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ):
     dist_sampler = None
     try:
@@ -224,14 +224,14 @@ class DistSamplingProducer(DistMpSamplingProducer):
         # where torch.distributed IS initialized — lets the tensor be shared
         # to workers via IPC.
         degree_tensors: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         ] = None
         if isinstance(self._sampler_options, PPRSamplerOptions):
             assert isinstance(self.data, GiglDistDataset)
             degree_tensors = self.data.degree_tensor
             if isinstance(degree_tensors, dict):
                 logger.info(
-                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} edge types."
+                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} node types."
                 )
             else:
                 logger.info(

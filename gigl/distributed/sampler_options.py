@@ -56,9 +56,9 @@ class PPRSamplerOptions:
         num_neighbors_per_hop: Maximum number of neighbors fetched per node per edge
             type during PPR traversal. Set large to approximate fetching all
             neighbors.
-        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
-            to ``torch.int32``, which supports total degrees up to ~2 billion.
-            Use a larger dtype if nodes have exceptionally high aggregate degrees.
+        total_degree_dtype: Retained for backwards compatibility; currently unused.
+            Degree tensors are stored as ``int16`` and no dtype conversion is
+            applied in the sampler.
     """
 
     alpha: float = 0.5

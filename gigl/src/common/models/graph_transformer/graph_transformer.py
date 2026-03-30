@@ -547,6 +547,9 @@ class GraphTransformerEncoder(nn.Module):
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
+        # Explicit annotation so mypy can narrow past the None check below;
+        # register_buffer sets the value at runtime.
+        self._sequence_positional_encoding_table: Optional[torch.Tensor]
         if self._sequence_positional_encoding_type == "sinusoidal":
             self.register_buffer(
                 "_sequence_positional_encoding_table",
