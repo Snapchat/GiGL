@@ -75,10 +75,8 @@ import argparse
 import ast
 import os
 import resource
-from collections.abc import Mapping
-import multiprocessing.context as py_mp_context
-import os
 import time
+from collections.abc import Mapping
 from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
@@ -87,12 +85,12 @@ import torch
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.os_utils import import_obj
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
 from gigl.distributed.utils import get_graph_store_info
-from gigl.distributed.dist_dataset import DistDataset
 from gigl.env.distributed import GraphStoreInfo
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
@@ -108,6 +106,8 @@ def log_fd_state(context: str) -> None:
         open_fds = len(os.listdir("/proc/self/fd"))
     except OSError:
         open_fds = -1
+
+
 def _precompute_graph_col_counts(dataset: DistDataset) -> None:
     graph_partition = dataset.graph
     if graph_partition is None:

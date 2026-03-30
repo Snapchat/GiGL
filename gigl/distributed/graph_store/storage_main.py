@@ -6,10 +6,10 @@ TODO(kmonte): Remove this, and only expose utils.
 We keep this around so we can use the utils in tests/integration/distributed/graph_store/graph_store_integration_test.py.
 """
 import argparse
-from collections.abc import Mapping
 import multiprocessing.context as py_mp_context
 import os
 import time
+from collections.abc import Mapping
 from typing import Literal, Optional, Union
 
 import graphlearn_torch as glt

@@ -155,13 +155,9 @@ class DistSamplingProducerTest(unittest.TestCase):
         )
         data = SimpleNamespace(num_partitions=1)
 
-        with patch(
-            "gigl.distributed.dist_sampling_producer.init_worker_group"
-        ), patch(
+        with patch("gigl.distributed.dist_sampling_producer.init_worker_group"), patch(
             "gigl.distributed.dist_sampling_producer.init_rpc"
-        ), patch(
-            "gigl.distributed.dist_sampling_producer.shutdown_rpc"
-        ), patch(
+        ), patch("gigl.distributed.dist_sampling_producer.shutdown_rpc"), patch(
             "gigl.distributed.dist_sampling_producer._set_worker_signal_handlers"
         ), patch(
             "gigl.distributed.dist_sampling_producer.torch.set_num_threads"
@@ -189,16 +185,19 @@ class DistSamplingProducerTest(unittest.TestCase):
 
             deadline = time.time() + 2.0
             while time.time() < deadline:
-                if _RecordingSampler.instances and len(
-                    _RecordingSampler.instances[0].calls
-                ) >= 2:
+                if (
+                    _RecordingSampler.instances
+                    and len(_RecordingSampler.instances[0].calls) >= 2
+                ):
                     break
                 time.sleep(0.01)
 
             self.assertTrue(_RecordingSampler.instances)
             sampler = _RecordingSampler.instances[0]
             self.assertGreaterEqual(len(sampler.calls), 2)
-            self.assertEqual([channel_id for channel_id, _ in sampler.calls[:2]], [0, 1])
+            self.assertEqual(
+                [channel_id for channel_id, _ in sampler.calls[:2]], [0, 1]
+            )
             self.assertTrue(torch.equal(sampler.calls[0][1], torch.tensor([0])))
             self.assertTrue(torch.equal(sampler.calls[1][1], torch.tensor([10])))
 

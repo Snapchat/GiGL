@@ -30,7 +30,7 @@ class ShardStrategy(Enum):
     """Strategy for sharding node IDs across compute nodes.
 
     Controls how data from storage servers is distributed to compute nodes.
-    Both strategies produce the same total coverage (every node appears on
+    All strategies produce the same total coverage (every node appears on
     exactly one compute node), but differ in which servers each compute node
     communicates with.
 
@@ -41,6 +41,12 @@ class ShardStrategy(Enum):
             only gets nodes from its assigned servers, with empty tensors for
             the rest. Boundary servers are split fractionally when servers
             don't divide evenly across compute nodes.
+        NUM_SERVERS: Each compute node connects to exactly N servers (specified
+            by the ``servers_per_compute`` parameter). Virtual positions are
+            laid out as ``N * C`` slots mapped to real servers via ``v % S``.
+            Each server's data is split evenly among all compute nodes that
+            connect to it. Degenerates to ``CONTIGUOUS`` when
+            ``N = ceil(S / C)`` and to ``ROUND_ROBIN`` when ``N = S``.
 
     Examples:
         **2 storage nodes, 2 compute nodes** (even split):
@@ -74,12 +80,28 @@ class ShardStrategy(Enum):
             Compute 0 (rank=0): {0: [0..9], 1: [10..14], 2: []}
             Compute 1 (rank=1): {0: [],     1: [15..19], 2: [20..29]}
 
+        ``NUM_SERVERS`` — **6 servers, 3 compute nodes, N=4**:
+
+        ``T = N * C = 12`` virtual positions, each server has ``k = 2``
+        consumers. Each compute connects to 4 servers and gets 50% of each::
+
+            Server 0: [0..11], ..., Server 5: [60..71]   (12 nodes each)
+
+            Compute 0 (servers {0,1,2,3}):
+                {0: [0..5],  1: [12..17], 2: [24..29], 3: [36..41]}
+            Compute 1 (servers {4,5,0,1}):
+                {4: [48..53], 5: [60..65], 0: [6..11], 1: [18..23]}
+            Compute 2 (servers {2,3,4,5}):
+                {2: [30..35], 3: [42..47], 4: [54..59], 5: [66..71]}
+
     See Also:
-        :func:`compute_server_assignments` for the assignment algorithm.
+        :func:`compute_server_assignments` for the CONTIGUOUS assignment algorithm.
+        :func:`compute_num_servers_assignments` for the NUM_SERVERS assignment algorithm.
     """
 
     ROUND_ROBIN = "round_robin"
     CONTIGUOUS = "contiguous"
+    NUM_SERVERS = "num_servers"
 
 
 @dataclass(frozen=True)
@@ -199,6 +221,89 @@ def compute_server_assignments(
             start_den=C,
             end_num=end_num,
             end_den=C,
+        )
+
+    return assignments
+
+
+def compute_num_servers_assignments(
+    num_servers: int,
+    num_compute_nodes: int,
+    compute_rank: int,
+    servers_per_compute: int,
+) -> dict[int, ServerSlice]:
+    """Compute which servers (and what fraction) a compute node owns under NUM_SERVERS.
+
+    Lays out ``T = N * C`` virtual positions where position ``v`` maps to
+    real server ``v % S``. Compute rank ``R`` claims ``[R * N, (R+1) * N)``.
+    Each real server's data is split evenly among the ``k`` compute nodes
+    that connect to it, where ``k = T // S`` (or ``T // S + 1`` for the
+    first ``T % S`` servers).
+
+    Only servers with non-zero ownership are included in the returned dict.
+
+    Args:
+        num_servers: Total number of storage servers (S).
+        num_compute_nodes: Total number of compute nodes (C).
+        compute_rank: Rank of the current compute node (R).
+        servers_per_compute: Number of servers each compute node connects
+            to (N). Must satisfy ``1 <= N <= S`` and ``N * C >= S``.
+
+    Returns:
+        A dict mapping server rank to the ``ServerSlice`` describing the
+        fraction of that server owned by this compute node.
+
+    Raises:
+        ValueError: If any argument is invalid.
+
+    Examples:
+        >>> compute_num_servers_assignments(6, 3, 0, 4)
+        {0: ServerSlice(server_rank=0, ...), 1: ServerSlice(server_rank=1, ...), ...}
+    """
+    if num_servers <= 0:
+        raise ValueError(f"num_servers must be positive, got {num_servers}")
+    if num_compute_nodes <= 0:
+        raise ValueError(f"num_compute_nodes must be positive, got {num_compute_nodes}")
+    if compute_rank < 0 or compute_rank >= num_compute_nodes:
+        raise ValueError(
+            f"compute_rank must be in [0, {num_compute_nodes}), got {compute_rank}"
+        )
+    if servers_per_compute < 1 or servers_per_compute > num_servers:
+        raise ValueError(
+            f"servers_per_compute must be in [1, {num_servers}], got {servers_per_compute}"
+        )
+    if servers_per_compute * num_compute_nodes < num_servers:
+        raise ValueError(
+            f"servers_per_compute * num_compute_nodes ({servers_per_compute * num_compute_nodes}) "
+            f"must be >= num_servers ({num_servers}) for complete coverage"
+        )
+
+    S = num_servers
+    C = num_compute_nodes
+    R = compute_rank
+    N = servers_per_compute
+    T = N * C  # total virtual positions
+
+    remainder = T % S
+
+    assignments: dict[int, ServerSlice] = {}
+    for j in range(N):
+        v = R * N + j
+        s = v % S
+
+        # Total copies of server s across all virtual positions [0, T):
+        # the first `remainder` servers have one extra copy.
+        k = T // S + (1 if s < remainder else 0)
+
+        # Which copy of server s this virtual position represents.
+        copy_idx = v // S
+
+        assignments[s] = ServerSlice(
+            server_rank=s,
+            start_num=copy_idx,
+            start_den=k,
+            end_num=copy_idx + 1,
+            end_den=k,
         )
 
     return assignments

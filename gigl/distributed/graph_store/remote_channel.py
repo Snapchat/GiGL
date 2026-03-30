@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
 from collections import abc
 from typing import Callable, Optional, Union
 
@@ -17,6 +18,8 @@ from graphlearn_torch.channel import ChannelBase, SampleMessage
 
 from gigl.distributed.graph_store.compute import async_request_server
 from gigl.distributed.graph_store.dist_server import DistServer
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteReceivingChannel(ChannelBase):
@@ -29,6 +32,9 @@ class RemoteReceivingChannel(ChannelBase):
         active_mask: Optional per-server mask indicating which channels can
             produce at least one batch this epoch. Inactive servers are treated
             as already finished and are never polled.
+        pin_memory: If True, copy received tensors to CUDA-pinned host memory
+            before returning from ``recv()``. Enables faster GPU transfers via
+            DMA in the downstream collate function.
     """
 
     def __init__(
@@ -37,6 +43,7 @@ class RemoteReceivingChannel(ChannelBase):
         channel_id: Union[int, list[int]],
         prefetch_size: int = 2,
         active_mask: Optional[list[bool]] = None,
+        pin_memory: bool = False,
     ) -> None:
         self.server_rank_list = (
             list(server_rank)
@@ -73,6 +80,9 @@ class RemoteReceivingChannel(ChannelBase):
         self.queue: queue.Queue[
             tuple[Optional[SampleMessage], bool, int]
         ] = queue.Queue(maxsize=self.prefetch_size * len(self.server_rank_list))
+        self._recv_count: int = 0
+        self._log_every_n: int = 50
+        self._pin_memory = pin_memory
 
     def reset(self) -> None:
         """Reset all state to start a new epoch."""
@@ -82,6 +92,7 @@ class RemoteReceivingChannel(ChannelBase):
         self.num_request_list = [0] * len(self.server_rank_list)
         self.num_received_list = [0] * len(self.server_rank_list)
         self.global_end_of_epoch = all(self.server_end_of_epoch)
+        self._recv_count = 0
 
     def send(self, msg: SampleMessage, **kwargs: object) -> None:
         raise RuntimeError(
@@ -90,13 +101,20 @@ class RemoteReceivingChannel(ChannelBase):
         )
 
     def recv(self, **kwargs: object) -> SampleMessage:
+        request_some_elapsed = 0.0
+        num_dispatched = 0
         if self.global_end_of_epoch:
             if self._all_received():
                 raise StopIteration
         else:
-            self._request_some()
+            request_some_start = time.monotonic()
+            num_dispatched = self._request_some()
+            request_some_elapsed = time.monotonic() - request_some_start
 
+        queue_depth = self.queue.qsize()
+        queue_get_start = time.monotonic()
         msg, end_of_epoch, local_server_idx = self.queue.get()
+        queue_get_elapsed = time.monotonic() - queue_get_start
         self.num_received_list[local_server_idx] += 1
 
         # Server guarantees that when end_of_epoch is true, msg is None.
@@ -113,12 +131,50 @@ class RemoteReceivingChannel(ChannelBase):
             raise RuntimeError(
                 "Received unexpected None message when end_of_epoch is False."
             )
+
+        if self._pin_memory:
+            pin_start = time.monotonic()
+            msg = self._pin_sample_message(msg)
+            pin_elapsed = time.monotonic() - pin_start
+        else:
+            pin_elapsed = 0.0
+
+        self._recv_count += 1
+        if self._recv_count % self._log_every_n == 0:
+            logger.info(
+                "remote_channel_recv "
+                f"recv_count={self._recv_count} "
+                f"request_some_time={request_some_elapsed:.4f}s "
+                f"num_rpcs_dispatched={num_dispatched} "
+                f"queue_depth_before_get={queue_depth} "
+                f"queue_get_time={queue_get_elapsed:.4f}s "
+                f"pin_time={pin_elapsed:.4f}s"
+            )
+
         return msg
+
+    @staticmethod
+    def _pin_sample_message(msg: SampleMessage) -> SampleMessage:
+        """Copy all tensors in the message to CUDA-pinned host memory.
+
+        This enables faster DMA transfers when subsequently calling
+        ``.to(device)`` in the collate function.
+        """
+        pinned: SampleMessage = {}
+        for k, v in msg.items():
+            if isinstance(v, torch.Tensor) and not v.is_pinned():
+                pinned[k] = v.pin_memory()
+            else:
+                pinned[k] = v
+        return pinned
 
     def _all_received(self) -> bool:
         return sum(self.num_received_list) == sum(self.num_request_list)
 
-    def _request_some(self) -> None:
+    def _request_some(self) -> int:
+        """Dispatch prefetch RPCs. Returns the number of new RPCs dispatched."""
+        num_dispatched = 0
+
         def on_done(
             future: torch.futures.Future[tuple[Optional[SampleMessage], bool]],
             local_server_idx: int,
@@ -159,3 +215,6 @@ class RemoteReceivingChannel(ChannelBase):
                 )
                 future.add_done_callback(create_callback(local_server_idx))
                 self.num_request_list[local_server_idx] += 1
+                num_dispatched += 1
+
+        return num_dispatched

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import ShmChannel
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -31,6 +31,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
 
@@ -488,11 +489,18 @@ class BaseDistLoader(DistLoader):
             max_concurrent_producer_inits=max_concurrent_producer_inits,
         )
         self._channel_id_list = channel_id_list
+        use_pin_memory = (
+            self.to_device is not None and self.to_device.type == "cuda"
+        )
         self._channel = RemoteReceivingChannel(
             self._server_rank_list,
             self._channel_id_list,
             self.worker_options.prefetch_size,
             active_mask=self._remote_input_has_batches,
+            pin_memory=use_pin_memory,
+        )
+        logger.info(
+            f"RemoteReceivingChannel created with pin_memory={use_pin_memory}"
         )
 
         logger.info(
@@ -778,3 +786,73 @@ class BaseDistLoader(DistLoader):
             self._channel.reset()
         self._epoch += 1
         return self
+
+    def _collate_fn(
+        self, msg: SampleMessage
+    ) -> Union[Data, HeteroData]:
+        """Override GLT's _collate_fn to batch-transfer tensors with non_blocking=True.
+
+        Moves all tensors in the SampleMessage to the target device using
+        non_blocking transfers (effective when source tensors are in pinned
+        memory). Then delegates to the parent _collate_fn, whose .to(device)
+        calls become no-ops since tensors are already on device.
+        """
+        if (
+            self.to_device is not None
+            and self.to_device.type == "cuda"
+            and isinstance(msg, dict)
+        ):
+            for k, v in msg.items():
+                if isinstance(v, torch.Tensor) and v.device != self.to_device:
+                    msg[k] = v.to(self.to_device, non_blocking=True)
+            torch.cuda.current_stream().synchronize()
+        return super()._collate_fn(msg)
+
+    def __next__(self):  # type: ignore[override]
+        if self._num_recv == self._num_expected:
+            raise StopIteration
+
+        recv_start = time.monotonic()
+        if self._with_channel:
+            msg = self._channel.recv()
+        else:
+            msg = self._collocated_producer.sample()
+        recv_elapsed = time.monotonic() - recv_start
+
+        # Inspect raw SampleMessage before collation
+        msg_num_keys = 0
+        msg_total_bytes = 0
+        any_pinned = False
+        num_tensors = 0
+        if isinstance(msg, dict):
+            msg_num_keys = len(msg)
+            for v in msg.values():
+                if isinstance(v, torch.Tensor):
+                    num_tensors += 1
+                    msg_total_bytes += v.nelement() * v.element_size()
+                    if v.is_pinned():
+                        any_pinned = True
+
+        collate_start = time.monotonic()
+        result = self._collate_fn(msg)
+        collate_elapsed = time.monotonic() - collate_start
+
+        self._num_recv += 1
+
+        log_every = 50
+        if self._num_recv % log_every == 1 or self._num_recv <= 3:
+            logger.info(
+                "loader_next_breakdown "
+                f"batch={self._num_recv} "
+                f"recv_time={recv_elapsed:.4f}s "
+                f"collate_time={collate_elapsed:.4f}s "
+                f"total_next_time={recv_elapsed + collate_elapsed:.4f}s "
+                f"msg_keys={msg_num_keys} "
+                f"msg_tensors={num_tensors} "
+                f"msg_bytes={msg_total_bytes} "
+                f"msg_MB={msg_total_bytes / (1024 * 1024):.1f} "
+                f"is_pinned={any_pinned} "
+                f"is_remote={self._is_remote_worker}"
+            )
+
+        return result

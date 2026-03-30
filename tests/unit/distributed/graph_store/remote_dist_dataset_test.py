@@ -1208,6 +1208,319 @@ class TestRemoteDistDatasetContiguous(TestCase):
             )
 
 
+class TestRemoteDistDatasetNumServers(TestCase):
+    """Tests for fetch_node_ids and fetch_ablp_input with ShardStrategy.NUM_SERVERS."""
+
+    def tearDown(self) -> None:
+        global _test_server
+        _test_server = None
+        dist_server_module._dist_server = None
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def _make_rank_aware_async_mock(
+        self, server_data: dict[int, dict[str, torch.Tensor]]
+    ):
+        """Create an async mock that returns different node IDs per server rank."""
+
+        def _mock(server_rank, func, *args, **kwargs):
+            split = kwargs.get("split")
+            data = server_data[server_rank]
+            key = split if split is not None and split in data else "all"
+            future: torch.futures.Future = torch.futures.Future()
+            future.set_result(data[key])
+            return future
+
+        return _mock
+
+    @staticmethod
+    def _mock_request_server_homogeneous(server_rank, func, *args, **kwargs):
+        """Mock request_server that returns None for node/edge types (homogeneous)."""
+        if func == DistServer.get_node_types:
+            return None
+        if func == DistServer.get_edge_types:
+            return None
+        return _mock_request_server(server_rank, func, *args, **kwargs)
+
+    def test_n_equals_s_over_c_matches_contiguous(self):
+        """S=2, C=2, N=1: equivalent to CONTIGUOUS — each compute gets one server."""
+        server_data = {
+            0: {"all": torch.arange(10)},
+            1: {"all": torch.arange(10, 20)},
+        }
+        mock_fn = self._make_rank_aware_async_mock(server_data)
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=2)
+
+        with (
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+                side_effect=mock_fn,
+            ),
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+                side_effect=self._mock_request_server_homogeneous,
+            ),
+        ):
+            remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: server 0 fully, server 1 empty
+            result_0 = remote_dataset.fetch_node_ids(
+                rank=0,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=1,
+            )
+            self.assert_tensor_equality(result_0[0], torch.arange(10))
+            self.assertEqual(len(result_0[1]), 0)
+
+            # Rank 1: server 0 empty, server 1 fully
+            result_1 = remote_dataset.fetch_node_ids(
+                rank=1,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=1,
+            )
+            self.assertEqual(len(result_1[0]), 0)
+            self.assert_tensor_equality(result_1[1], torch.arange(10, 20))
+
+    def test_overlap_3_servers_2_compute_n2(self):
+        """S=3, C=2, N=2: overlap on server 0. T=4, servers 0 has k=2, servers 1,2 have k=1."""
+        server_data = {
+            0: {"all": torch.arange(10)},
+            1: {"all": torch.arange(10, 20)},
+            2: {"all": torch.arange(20, 30)},
+        }
+        mock_fn = self._make_rank_aware_async_mock(server_data)
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=3)
+
+        with (
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+                side_effect=mock_fn,
+            ),
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+                side_effect=self._mock_request_server_homogeneous,
+            ),
+        ):
+            remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: virtual [0,1] → servers {0,1}
+            # Server 0: k=2, copy 0 → first half. Server 1: k=1, full.
+            result_0 = remote_dataset.fetch_node_ids(
+                rank=0,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=2,
+            )
+            self.assert_tensor_equality(
+                result_0[0], torch.arange(5)
+            )  # first half of server 0
+            self.assert_tensor_equality(
+                result_0[1], torch.arange(10, 20)
+            )  # all of server 1
+            self.assertEqual(len(result_0[2]), 0)
+
+            # Rank 1: virtual [2,3] → servers {2,0}
+            # Server 2: k=1, full. Server 0: k=2, copy 1 → second half.
+            result_1 = remote_dataset.fetch_node_ids(
+                rank=1,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=2,
+            )
+            self.assert_tensor_equality(
+                result_1[0], torch.arange(5, 10)
+            )  # second half of server 0
+            self.assertEqual(len(result_1[1]), 0)
+            self.assert_tensor_equality(
+                result_1[2], torch.arange(20, 30)
+            )  # all of server 2
+
+    def test_with_split_filtering(self):
+        """NUM_SERVERS with split='train' filtering."""
+        server_data = {
+            0: {"all": torch.arange(10), "train": torch.tensor([0, 1, 2, 3])},
+            1: {"all": torch.arange(10, 20), "train": torch.tensor([10, 11, 12, 13])},
+        }
+        mock_fn = self._make_rank_aware_async_mock(server_data)
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=2)
+
+        with (
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+                side_effect=mock_fn,
+            ),
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+                side_effect=self._mock_request_server_homogeneous,
+            ),
+        ):
+            remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            result_0 = remote_dataset.fetch_node_ids(
+                rank=0,
+                world_size=2,
+                split="train",
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=1,
+            )
+            self.assert_tensor_equality(result_0[0], torch.tensor([0, 1, 2, 3]))
+            self.assertEqual(len(result_0[1]), 0)
+
+    def test_num_servers_requires_all_params(self):
+        """NUM_SERVERS without required params raises ValueError."""
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=2)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_node_ids(
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+            )
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_node_ids(
+                rank=0,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                # missing servers_per_compute
+            )
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_node_ids(
+                rank=0,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=1,
+                # missing world_size
+            )
+
+    def test_ablp_num_servers_requires_all_params(self):
+        """ABLP NUM_SERVERS without required params raises ValueError."""
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=2)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_ablp_input(
+                split="train",
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+            )
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_ablp_input(
+                split="train",
+                rank=0,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                # missing servers_per_compute
+            )
+
+    def _make_rank_aware_ablp_async_mock(
+        self,
+        server_data: dict[
+            int,
+            dict[
+                str,
+                tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]],
+            ],
+        ],
+    ):
+        """Create an async mock that returns different ABLP data per server rank."""
+
+        def _mock(server_rank, func, *args, **kwargs):
+            split = kwargs.get("split")
+            data = server_data[server_rank]
+            key = split if split is not None and split in data else "all"
+            future: torch.futures.Future = torch.futures.Future()
+            future.set_result(data[key])
+            return future
+
+        return _mock
+
+    def test_ablp_overlap_3_servers_2_compute_n2(self):
+        """ABLP NUM_SERVERS: S=3, C=2, N=2 — server 0 shared."""
+        neg_0: Optional[torch.Tensor] = torch.tensor([[4], [5], [6], [7]])
+        neg_1: Optional[torch.Tensor] = torch.tensor([[14], [15], [16], [17]])
+        neg_2: Optional[torch.Tensor] = torch.tensor([[24], [25], [26], [27]])
+        server_data = {
+            0: {
+                "train": (
+                    torch.tensor([0, 1, 2, 3]),
+                    torch.tensor([[0, 1], [1, 2], [2, 3], [3, 4]]),
+                    neg_0,
+                ),
+            },
+            1: {
+                "train": (
+                    torch.tensor([10, 11, 12, 13]),
+                    torch.tensor([[10, 11], [11, 12], [12, 13], [13, 14]]),
+                    neg_1,
+                ),
+            },
+            2: {
+                "train": (
+                    torch.tensor([20, 21, 22, 23]),
+                    torch.tensor([[20, 21], [21, 22], [22, 23], [23, 24]]),
+                    neg_2,
+                ),
+            },
+        }
+        mock_fn = self._make_rank_aware_ablp_async_mock(server_data)
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=3)
+
+        with (
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+                side_effect=mock_fn,
+            ),
+            patch(
+                "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+                side_effect=self._mock_request_server_homogeneous,
+            ),
+        ):
+            remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: servers {0,1}. Server 0: first half (k=2), Server 1: full (k=1).
+            result_0 = remote_dataset.fetch_ablp_input(
+                split="train",
+                rank=0,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=2,
+            )
+            # Server 0: first 2 of 4
+            ablp_0_s0 = result_0[0]
+            self.assert_tensor_equality(ablp_0_s0.anchor_nodes, torch.tensor([0, 1]))
+            pos_0_s0, neg_0_s0 = ablp_0_s0.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(pos_0_s0, torch.tensor([[0, 1], [1, 2]]))
+            assert neg_0_s0 is not None
+            self.assert_tensor_equality(neg_0_s0, torch.tensor([[4], [5]]))
+            # Server 1: full
+            ablp_0_s1 = result_0[1]
+            self.assert_tensor_equality(
+                ablp_0_s1.anchor_nodes, torch.tensor([10, 11, 12, 13])
+            )
+            # Server 2: empty
+            ablp_0_s2 = result_0[2]
+            self.assertEqual(len(ablp_0_s2.anchor_nodes), 0)
+
+            # Rank 1: servers {2,0}. Server 2: full (k=1), Server 0: second half (k=2).
+            result_1 = remote_dataset.fetch_ablp_input(
+                split="train",
+                rank=1,
+                world_size=2,
+                shard_strategy=ShardStrategy.NUM_SERVERS,
+                servers_per_compute=2,
+            )
+            # Server 0: last 2 of 4
+            ablp_1_s0 = result_1[0]
+            self.assert_tensor_equality(ablp_1_s0.anchor_nodes, torch.tensor([2, 3]))
+            # Server 1: empty
+            ablp_1_s1 = result_1[1]
+            self.assertEqual(len(ablp_1_s1.anchor_nodes), 0)
+            # Server 2: full
+            ablp_1_s2 = result_1[2]
+            self.assert_tensor_equality(
+                ablp_1_s2.anchor_nodes, torch.tensor([20, 21, 22, 23])
+            )
+
+
 def _test_fetch_free_ports_on_storage_cluster(
     rank: int,
     world_size: int,

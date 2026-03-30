@@ -221,7 +221,9 @@ class DistServer:
             backend_state = backend.describe_channel(channel_id)
         except Exception as exc:
             backend_state = {"describe_channel_error": str(exc)}
-        log_fn = logger.warning if total_wait_secs >= FETCH_SLOW_LOG_SECS else logger.info
+        log_fn = (
+            logger.warning if total_wait_secs >= FETCH_SLOW_LOG_SECS else logger.info
+        )
         log_fn(
             "fetch_one_sampled_message summary "
             f"channel_id={channel_id} worker_key={channel_state.worker_key} "
@@ -633,7 +635,9 @@ class DistServer:
             self._backend_refcount[opts.backend_id] = (
                 self._backend_refcount.get(opts.backend_id, 0) + 1
             )
-            logger.info(f"Registered sampling input for backend_id={opts.backend_id} worker_key={opts.worker_key} channel_id={channel_id}")
+            logger.info(
+                f"Registered sampling input for backend_id={opts.backend_id} worker_key={opts.worker_key} channel_id={channel_id}"
+            )
         try:
             backend.register_input(
                 channel_id=channel_id,
@@ -649,7 +653,9 @@ class DistServer:
                     0, self._backend_refcount.get(opts.backend_id, 0) - 1
                 )
             raise
-        logger.info(f"Registered sampling input for backend_id={opts.backend_id} worker_key={opts.worker_key} channel_id={channel_id} completed total connections={self._backend_refcount[opts.backend_id]}")
+        logger.info(
+            f"Registered sampling input for backend_id={opts.backend_id} worker_key={opts.worker_key} channel_id={channel_id} completed total connections={self._backend_refcount[opts.backend_id]}"
+        )
         return channel_id
 
     def destroy_sampling_input(self, channel_id: int) -> None:
@@ -772,9 +778,7 @@ class DistServer:
         channel_lock_wait_start_time = time.monotonic()
         try:
             with channel_state.lock:
-                channel_lock_wait_secs = (
-                    time.monotonic() - channel_lock_wait_start_time
-                )
+                channel_lock_wait_secs = time.monotonic() - channel_lock_wait_start_time
                 while True:
                     try:
                         msg = channel_state.channel.recv(timeout_ms=500)
@@ -792,7 +796,9 @@ class DistServer:
                         return msg, False
                     except QueueTimeoutError:
                         timeout_polls += 1
-                        if backend.is_channel_epoch_done(channel_id, channel_state.epoch):
+                        if backend.is_channel_epoch_done(
+                            channel_id, channel_state.epoch
+                        ):
                             if channel_state.channel.empty():
                                 total_wait_secs = time.monotonic() - request_start_time
                                 self._maybe_log_fetch_summary(

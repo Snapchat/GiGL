@@ -329,7 +329,9 @@ class DistNeighborLoader(BaseDistLoader):
         )
         sampling_port = sampling_ports[0]
 
-        worker_key = f"compute_rank_{torch.distributed.get_rank()}_worker_{self._instance_count}"
+        worker_key = (
+            f"compute_rank_{torch.distributed.get_rank()}_worker_{self._instance_count}"
+        )
         logger.info(f"Rank {torch.distributed.get_rank()} worker key: {worker_key}")
         worker_options = RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),

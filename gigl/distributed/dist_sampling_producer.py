@@ -5,7 +5,6 @@
 
 import datetime
 import queue
-import time
 import threading
 import time
 from collections import defaultdict, deque
@@ -715,9 +714,7 @@ def _shared_sampling_worker_loop(
         while keep_running:
             processed_command = False
 
-            def _handle_command(
-                command: SharedMpCommand, payload: object
-            ) -> bool:
+            def _handle_command(command: SharedMpCommand, payload: object) -> bool:
                 nonlocal worker_inflight_batches
                 event_queue.put(
                     (
@@ -781,16 +778,16 @@ def _shared_sampling_worker_loop(
                         if total_batches == 0:
                             epoch_done = True
                         else:
-                            active_epochs_by_channel[start_cmd.channel_id] = (
-                                ActiveEpochState(
-                                    channel_id=start_cmd.channel_id,
-                                    epoch=start_cmd.epoch,
-                                    input_len=len(local_input),
-                                    batch_size=sampling_config.batch_size,
-                                    drop_last=sampling_config.drop_last,
-                                    seeds_index=start_cmd.seeds_index,
-                                    total_batches=total_batches,
-                                )
+                            active_epochs_by_channel[
+                                start_cmd.channel_id
+                            ] = ActiveEpochState(
+                                channel_id=start_cmd.channel_id,
+                                epoch=start_cmd.epoch,
+                                input_len=len(local_input),
+                                batch_size=sampling_config.batch_size,
+                                drop_last=sampling_config.drop_last,
+                                seeds_index=start_cmd.seeds_index,
+                                total_batches=total_batches,
                             )
                             _enqueue_channel_if_runnable_locked(start_cmd.channel_id)
                     logger.info(
@@ -825,9 +822,7 @@ def _shared_sampling_worker_loop(
                                 state.completed_batches < state.submitted_batches
                             )
                             if not has_inflight:
-                                route_key = _clear_registered_input_locked(
-                                    channel_id
-                                )
+                                route_key = _clear_registered_input_locked(channel_id)
                         else:
                             route_key = _clear_registered_input_locked(channel_id)
                     if route_key is not None:
@@ -979,7 +974,9 @@ class SharedDistSamplingBackend:
                 "channel_id": channel_id,
                 "registered": True,
                 "epoch": epoch,
-                "worker_input_sizes": list(self._channel_input_sizes.get(channel_id, [])),
+                "worker_input_sizes": list(
+                    self._channel_input_sizes.get(channel_id, [])
+                ),
                 "completed_workers": completed_workers,
                 "completed_worker_count": len(completed_workers),
                 "num_workers": self.num_workers,

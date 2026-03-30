@@ -9,6 +9,7 @@ from torch_geometric.typing import EdgeType
 from gigl.distributed.utils.neighborloader import (
     ServerSlice,
     ShardStrategy,
+    compute_num_servers_assignments,
     compute_server_assignments,
     labeled_to_homogeneous,
     patch_fanout_for_sampling,
@@ -499,6 +500,7 @@ class TestShardStrategy(TestCase):
     def test_enum_values(self):
         self.assertEqual(ShardStrategy.ROUND_ROBIN.value, "round_robin")
         self.assertEqual(ShardStrategy.CONTIGUOUS.value, "contiguous")
+        self.assertEqual(ShardStrategy.NUM_SERVERS.value, "num_servers")
 
 
 class TestComputeServerAssignments(TestCase):
@@ -665,6 +667,256 @@ class TestComputeServerAssignments(TestCase):
         with self.assertRaises(ValueError):
             compute_server_assignments(
                 num_servers=2, num_compute_nodes=2, compute_rank=-1
+            )
+
+
+class TestComputeNumServersAssignments(TestCase):
+    """Tests for compute_num_servers_assignments."""
+
+    def test_even_split_6_servers_3_compute_n4(self):
+        """S=6, C=3, N=4: T=12, k=2 for all servers. Perfectly balanced."""
+        # Compute 0: servers {0,1,2,3}, each first half
+        a0 = compute_num_servers_assignments(
+            num_servers=6, num_compute_nodes=3, compute_rank=0, servers_per_compute=4
+        )
+        self.assertEqual(set(a0.keys()), {0, 1, 2, 3})
+        for s in range(4):
+            self.assertEqual(
+                a0[s],
+                ServerSlice(
+                    server_rank=s, start_num=0, start_den=2, end_num=1, end_den=2
+                ),
+            )
+
+        # Compute 1: servers {4,5,0,1}
+        a1 = compute_num_servers_assignments(
+            num_servers=6, num_compute_nodes=3, compute_rank=1, servers_per_compute=4
+        )
+        self.assertEqual(set(a1.keys()), {4, 5, 0, 1})
+        # Server 4,5 are first copy (0/2), server 0,1 are second copy (1/2)
+        self.assertEqual(
+            a1[4],
+            ServerSlice(server_rank=4, start_num=0, start_den=2, end_num=1, end_den=2),
+        )
+        self.assertEqual(
+            a1[5],
+            ServerSlice(server_rank=5, start_num=0, start_den=2, end_num=1, end_den=2),
+        )
+        self.assertEqual(
+            a1[0],
+            ServerSlice(server_rank=0, start_num=1, start_den=2, end_num=2, end_den=2),
+        )
+        self.assertEqual(
+            a1[1],
+            ServerSlice(server_rank=1, start_num=1, start_den=2, end_num=2, end_den=2),
+        )
+
+        # Compute 2: servers {2,3,4,5}, each second half
+        a2 = compute_num_servers_assignments(
+            num_servers=6, num_compute_nodes=3, compute_rank=2, servers_per_compute=4
+        )
+        self.assertEqual(set(a2.keys()), {2, 3, 4, 5})
+        for s in [2, 3, 4, 5]:
+            self.assertEqual(
+                a2[s],
+                ServerSlice(
+                    server_rank=s, start_num=1, start_den=2, end_num=2, end_den=2
+                ),
+            )
+
+    def test_degenerates_to_contiguous(self):
+        """S=6, C=3, N=2: equivalent to CONTIGUOUS (N = S/C)."""
+        for rank in range(3):
+            num_servers_assignments = compute_num_servers_assignments(
+                num_servers=6,
+                num_compute_nodes=3,
+                compute_rank=rank,
+                servers_per_compute=2,
+            )
+            contiguous_assignments = compute_server_assignments(
+                num_servers=6, num_compute_nodes=3, compute_rank=rank
+            )
+            self.assertEqual(
+                set(num_servers_assignments.keys()), set(contiguous_assignments.keys())
+            )
+            for s in num_servers_assignments:
+                # Both should give full ownership (start=0/1, end=1/1)
+                ns_slice = num_servers_assignments[s]
+                ct_slice = contiguous_assignments[s]
+                tensor = torch.arange(12)
+                self.assert_tensor_equality(
+                    ns_slice.slice_tensor(tensor), ct_slice.slice_tensor(tensor)
+                )
+
+    def test_degenerates_to_round_robin_like(self):
+        """S=6, C=3, N=6: every compute gets all servers at 1/3."""
+        for rank in range(3):
+            assignments = compute_num_servers_assignments(
+                num_servers=6,
+                num_compute_nodes=3,
+                compute_rank=rank,
+                servers_per_compute=6,
+            )
+            self.assertEqual(set(assignments.keys()), {0, 1, 2, 3, 4, 5})
+            for s in range(6):
+                # Each server has k=3, so each compute gets 1/3
+                self.assertEqual(assignments[s].start_den, 3)
+                actual_slice = assignments[s].slice_tensor(torch.arange(12))
+                self.assertEqual(len(actual_slice), 4)  # 12/3
+
+    def test_non_divisible_4_servers_2_compute_n3(self):
+        """S=4, C=2, N=3: T=6, servers 0,1 have k=2, servers 2,3 have k=1. Balanced."""
+        a0 = compute_num_servers_assignments(
+            num_servers=4, num_compute_nodes=2, compute_rank=0, servers_per_compute=3
+        )
+        self.assertEqual(set(a0.keys()), {0, 1, 2})
+        # Server 0,1: k=2, first half. Server 2: k=1, full.
+        self.assertEqual(
+            a0[0],
+            ServerSlice(server_rank=0, start_num=0, start_den=2, end_num=1, end_den=2),
+        )
+        self.assertEqual(
+            a0[1],
+            ServerSlice(server_rank=1, start_num=0, start_den=2, end_num=1, end_den=2),
+        )
+        self.assertEqual(
+            a0[2],
+            ServerSlice(server_rank=2, start_num=0, start_den=1, end_num=1, end_den=1),
+        )
+
+        a1 = compute_num_servers_assignments(
+            num_servers=4, num_compute_nodes=2, compute_rank=1, servers_per_compute=3
+        )
+        self.assertEqual(set(a1.keys()), {3, 0, 1})
+        self.assertEqual(
+            a1[3],
+            ServerSlice(server_rank=3, start_num=0, start_den=1, end_num=1, end_den=1),
+        )
+        self.assertEqual(
+            a1[0],
+            ServerSlice(server_rank=0, start_num=1, start_den=2, end_num=2, end_den=2),
+        )
+        self.assertEqual(
+            a1[1],
+            ServerSlice(server_rank=1, start_num=1, start_den=2, end_num=2, end_den=2),
+        )
+
+        # Verify balanced: each compute gets 2 servers worth of data
+        tensor = torch.arange(12)
+        total_0 = sum(a0[s].slice_tensor(tensor).numel() for s in a0)
+        total_1 = sum(a1[s].slice_tensor(tensor).numel() for s in a1)
+        self.assertEqual(total_0, 24)  # 6 + 6 + 12
+        self.assertEqual(total_1, 24)  # 12 + 6 + 6
+
+    def test_single_compute_gets_all(self):
+        """C=1, N=S: single compute gets all servers fully."""
+        assignments = compute_num_servers_assignments(
+            num_servers=4, num_compute_nodes=1, compute_rank=0, servers_per_compute=4
+        )
+        self.assertEqual(set(assignments.keys()), {0, 1, 2, 3})
+        for s in range(4):
+            self.assertEqual(assignments[s].start_num, 0)
+            self.assertEqual(assignments[s].end_num, 1)
+            self.assertEqual(assignments[s].end_den, 1)
+
+    def test_recombination_invariant(self):
+        """Concatenating all ranks' slices for each server reproduces the original tensor."""
+        tensor = torch.arange(12)
+        S, C, N = 6, 3, 4
+        for server in range(S):
+            slices: list[torch.Tensor] = []
+            for rank in range(C):
+                assignments = compute_num_servers_assignments(
+                    num_servers=S,
+                    num_compute_nodes=C,
+                    compute_rank=rank,
+                    servers_per_compute=N,
+                )
+                if server in assignments:
+                    slices.append(assignments[server].slice_tensor(tensor))
+            combined = torch.cat(slices)
+            self.assert_tensor_equality(combined, tensor)
+
+    def test_recombination_invariant_non_divisible(self):
+        """Non-divisible case: all slices still recombine to original."""
+        tensor = torch.arange(12)
+        S, C, N = 4, 2, 3
+        for server in range(S):
+            slices: list[torch.Tensor] = []
+            for rank in range(C):
+                assignments = compute_num_servers_assignments(
+                    num_servers=S,
+                    num_compute_nodes=C,
+                    compute_rank=rank,
+                    servers_per_compute=N,
+                )
+                if server in assignments:
+                    slices.append(assignments[server].slice_tensor(tensor))
+            combined = torch.cat(slices)
+            self.assert_tensor_equality(combined, tensor)
+
+    def test_complete_coverage(self):
+        """Every node ID appears exactly once across all compute nodes."""
+        S, C, N = 5, 3, 3
+        server_tensors = {s: torch.arange(s * 10, (s + 1) * 10) for s in range(S)}
+        all_nodes: list[torch.Tensor] = []
+        for rank in range(C):
+            assignments = compute_num_servers_assignments(
+                num_servers=S,
+                num_compute_nodes=C,
+                compute_rank=rank,
+                servers_per_compute=N,
+            )
+            for s, server_slice in assignments.items():
+                all_nodes.append(server_slice.slice_tensor(server_tensors[s]))
+        combined = torch.cat(all_nodes)
+        expected = torch.cat([server_tensors[s] for s in range(S)])
+        self.assert_tensor_equality(combined.sort().values, expected.sort().values)
+
+    def test_validation_n_exceeds_servers(self):
+        with self.assertRaises(ValueError):
+            compute_num_servers_assignments(
+                num_servers=4,
+                num_compute_nodes=2,
+                compute_rank=0,
+                servers_per_compute=5,
+            )
+
+    def test_validation_incomplete_coverage(self):
+        """N * C < S should raise ValueError."""
+        with self.assertRaises(ValueError):
+            compute_num_servers_assignments(
+                num_servers=6,
+                num_compute_nodes=2,
+                compute_rank=0,
+                servers_per_compute=2,
+            )
+
+    def test_validation_n_zero(self):
+        with self.assertRaises(ValueError):
+            compute_num_servers_assignments(
+                num_servers=4,
+                num_compute_nodes=2,
+                compute_rank=0,
+                servers_per_compute=0,
+            )
+
+    def test_validation_negative_servers(self):
+        with self.assertRaises(ValueError):
+            compute_num_servers_assignments(
+                num_servers=-1,
+                num_compute_nodes=2,
+                compute_rank=0,
+                servers_per_compute=1,
+            )
+
+    def test_validation_rank_out_of_range(self):
+        with self.assertRaises(ValueError):
+            compute_num_servers_assignments(
+                num_servers=4,
+                num_compute_nodes=2,
+                compute_rank=2,
+                servers_per_compute=2,
             )
 
 
