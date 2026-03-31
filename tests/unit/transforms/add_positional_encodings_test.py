@@ -225,8 +225,7 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         self.assertTrue(hasattr(result, "hop_distance"))
         # Total nodes: 3 users + 2 items = 5 nodes
         self.assertEqual(result.hop_distance.shape, (5, 5))
-        # Should be sparse
-        self.assertTrue(result.hop_distance.is_sparse)
+        self.assertTrue(result.hop_distance.is_sparse_csr)
 
     def test_forward_sparse_values(self):
         """Test that sparse matrix has correct values (0 for unreachable, 1-h_max for reachable)."""
@@ -256,7 +255,7 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
 
         self.assertTrue(hasattr(result, "custom_hop"))
         self.assertFalse(hasattr(result, "hop_distance"))
-        self.assertTrue(result.custom_hop.is_sparse)
+        self.assertTrue(result.custom_hop.is_sparse_csr)
 
     def test_forward_undirected(self):
         """Test forward pass with undirected graph setting."""
@@ -265,7 +264,7 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
 
         result = transform(data)
 
-        self.assertTrue(result.hop_distance.is_sparse)
+        self.assertTrue(result.hop_distance.is_sparse_csr)
         self.assertEqual(result.hop_distance.shape, (5, 5))
 
     def test_forward_empty_graph(self):
@@ -278,7 +277,7 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         result = transform(data)
 
         self.assertTrue(hasattr(result, "hop_distance"))
-        self.assertTrue(result.hop_distance.is_sparse)
+        self.assertTrue(result.hop_distance.is_sparse_csr)
         self.assertEqual(result.hop_distance.shape, (0, 0))
 
     def test_repr(self):
