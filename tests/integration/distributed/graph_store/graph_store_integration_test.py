@@ -379,26 +379,55 @@ def _run_compute_multiple_loaders_test(
         remote_dist_dataset, ablp_result, prefetch_size=2
     )
     logger.info(
-        f"Rank {rank} / {world_size} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_1 backends/channels: "
+        f"({ablp_loader_1._backend_id_list}, {ablp_loader_1._channel_id_list})"
     )
     ablp_loader_2 = _build_ablp_loader(
         remote_dist_dataset, ablp_result, prefetch_size=2
     )
     logger.info(
-        f"Rank {rank} / {world_size} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_2 backends/channels: "
+        f"({ablp_loader_2._backend_id_list}, {ablp_loader_2._channel_id_list})"
     )
     neighbor_loader_1 = _build_neighbor_loader(
         remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {rank} / {world_size} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_1 backends/channels: "
+        f"({neighbor_loader_1._backend_id_list}, {neighbor_loader_1._channel_id_list})"
     )
     neighbor_loader_2 = _build_neighbor_loader(
         remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {rank} / {world_size} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_2 backends/channels: "
+        f"({neighbor_loader_2._backend_id_list}, {neighbor_loader_2._channel_id_list})"
     )
+    gathered_ablp_loader_1_backends = [None] * world_size
+    torch.distributed.all_gather_object(
+        gathered_ablp_loader_1_backends, tuple(ablp_loader_1._backend_id_list)
+    )
+    assert all(
+        backend_ids == gathered_ablp_loader_1_backends[0]
+        for backend_ids in gathered_ablp_loader_1_backends
+    ), "All ranks should share the same backend ids for one logical loader."
+    gathered_neighbor_loader_1_backends = [None] * world_size
+    torch.distributed.all_gather_object(
+        gathered_neighbor_loader_1_backends, tuple(neighbor_loader_1._backend_id_list)
+    )
+    assert all(
+        backend_ids == gathered_neighbor_loader_1_backends[0]
+        for backend_ids in gathered_neighbor_loader_1_backends
+    ), "All ranks should share the same backend ids for one logical loader."
+    assert (
+        ablp_loader_1._backend_id_list != ablp_loader_2._backend_id_list
+    ), "Concurrent ABLP loaders must use distinct backends."
+    assert (
+        neighbor_loader_1._backend_id_list != neighbor_loader_2._backend_id_list
+    ), "Concurrent neighbor loaders must use distinct backends."
+    assert (
+        ablp_loader_1._backend_id_list != neighbor_loader_1._backend_id_list
+    ), "ABLP and neighbor loaders must not share a backend."
     logger.info(
         f"Rank {rank} / {world_size} phase 1: loading batches from 4 parallel loaders"
     )
@@ -457,9 +486,8 @@ def _run_compute_multiple_loaders_test(
         local_expected=local_expected_negative_seeds,
     )
 
-    # Shut down phase 1 loaders to free server-side producers and RPC resources
-    # before creating new loaders. This mirrors GLT's DistLoader.shutdown() which
-    # calls DistServer.destroy_sampling_producer for each remote producer.
+    # Shut down phase 1 loaders to free server-side channels and backend resources
+    # before creating new loaders.
     ablp_loader_1.shutdown()
     ablp_loader_2.shutdown()
     neighbor_loader_1.shutdown()
@@ -472,13 +500,15 @@ def _run_compute_multiple_loaders_test(
     # ------------------------------------------------------------------
     ablp_loader_3 = _build_ablp_loader(remote_dist_dataset, ablp_result)
     logger.info(
-        f"Rank {rank} / {world_size} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_3 backends/channels: "
+        f"({ablp_loader_3._backend_id_list}, {ablp_loader_3._channel_id_list})"
     )
     neighbor_loader_3 = _build_neighbor_loader(
         remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {rank} / {world_size} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_3 backends/channels: "
+        f"({neighbor_loader_3._backend_id_list}, {neighbor_loader_3._channel_id_list})"
     )
     logger.info(
         f"Rank {rank} / {world_size} phase 2: loading batches from 2 sequential loaders"

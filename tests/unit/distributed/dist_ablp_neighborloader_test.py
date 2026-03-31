@@ -1,6 +1,9 @@
 import unittest
 from collections import defaultdict
+from itertools import count
+from types import SimpleNamespace
 from typing import Literal, Optional, Union
+from unittest.mock import patch
 
 import torch
 import torch.multiprocessing as mp
@@ -10,11 +13,13 @@ from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -36,7 +41,13 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
+from gigl.utils.sampling import ABLPInputNodes
+from tests.test_assets.distributed.test_dataset import (
+    DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+    create_heterogeneous_dataset_for_ablp,
+)
 from tests.test_assets.distributed.utils import (
+    MockRemoteDistDataset,
     assert_tensor_equality,
     create_test_process_group,
 )
@@ -986,6 +997,77 @@ class DistABLPLoaderTest(TestCase):
         create_test_process_group()
         with self.assertRaises(expected_error, msg=expected_error_message):
             DistABLPLoader(**kwargs)
+
+    @patch.object(BaseDistLoader, "_init_graph_store_connections", autospec=True)
+    def test_graph_store_constructor_uses_remote_type_path(
+        self, mock_init_graph_store_connections
+    ) -> None:
+        create_test_process_group()
+        DistABLPLoader._counter = count(0)
+
+        loader = DistABLPLoader(
+            dataset=MockRemoteDistDataset(
+                num_storage_nodes=2,
+                edge_types=[_USER_TO_STORY],
+            ),
+            num_neighbors=[2, 2],
+            input_nodes={
+                0: ABLPInputNodes(
+                    anchor_nodes=torch.tensor([0]),
+                    anchor_node_type=_USER,
+                    labels={_USER_TO_STORY: (torch.tensor([[1]]), None)},
+                ),
+                1: ABLPInputNodes(
+                    anchor_nodes=torch.tensor([1]),
+                    anchor_node_type=_USER,
+                    labels={_USER_TO_STORY: (torch.tensor([[2]]), None)},
+                ),
+            },
+            pin_memory_device=torch.device("cpu"),
+        )
+
+        mock_init_graph_store_connections.assert_called_once()
+        self.assertTrue(loader._is_remote_worker)
+        self.assertEqual(
+            loader.worker_options.worker_key,
+            "dist_ablp_loader_0_compute_rank_0",
+        )
+
+    @patch.object(BaseDistLoader, "_init_colocated_connections", autospec=True)
+    @patch.object(BaseDistLoader, "initialize_colocated_sampling_worker", autospec=True)
+    @patch(
+        "graphlearn_torch.distributed.dist_sampling_producer.get_context",
+        autospec=True,
+    )
+    def test_colocated_constructor_still_uses_concrete_producer(
+        self,
+        mock_get_context,
+        _mock_initialize_colocated_sampling_worker,
+        mock_init_colocated_connections,
+    ) -> None:
+        create_test_process_group()
+        mock_get_context.return_value = SimpleNamespace(world_size=1, rank=0)
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels={0: [0], 1: [1], 2: [0], 3: [1]},
+            train_node_ids=[0, 1],
+            val_node_ids=[2],
+            test_node_ids=[3],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+
+        loader = DistABLPLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            input_nodes=(_USER, torch.tensor([0, 1])),
+            supervision_edge_type=_USER_TO_STORY,
+            pin_memory_device=torch.device("cpu"),
+        )
+
+        mock_init_colocated_connections.assert_called_once()
+        self.assertTrue(loader._is_mp_worker)
+        producer = mock_init_colocated_connections.call_args.kwargs["producer"]
+        self.assertIsInstance(producer, DistSamplingProducer)
+        loader._shutdowned = True
 
 
 if __name__ == "__main__":

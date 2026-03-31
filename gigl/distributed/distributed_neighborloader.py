@@ -1,7 +1,7 @@
 import sys
 from collections import abc
 from itertools import count
-from typing import Callable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -23,7 +23,6 @@ from gigl.distributed.dist_ppr_sampler import (
     PPR_WEIGHT_METADATA_KEY,
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import (
     PPRSamplerOptions,
@@ -262,15 +261,12 @@ class DistNeighborLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the producer: a pre-constructed producer for colocated mode,
-        # or an RPC callable for graph store mode.
+        producer: Optional[DistSamplingProducer] = None
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
             channel = BaseDistLoader.create_colocated_channel(worker_options)
-            producer: Union[
-                DistSamplingProducer, Callable[..., int]
-            ] = DistSamplingProducer(
+            producer = DistSamplingProducer(
                 data=dataset,
                 sampler_input=input_data,
                 sampling_config=sampling_config,
@@ -278,8 +274,6 @@ class DistNeighborLoader(BaseDistLoader):
                 channel=channel,
                 sampler_options=sampler_options,
             )
-        else:
-            producer = GiglDistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -333,11 +327,12 @@ class DistNeighborLoader(BaseDistLoader):
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
 
-        worker_key = f"compute_rank_{compute_rank}_worker_{self._instance_count}"
+        backend_key = f"dist_neighbor_loader_{self._instance_count}"
+        worker_key = f"{backend_key}_compute_rank_{compute_rank}"
         logger.info(f"Rank {compute_rank} worker key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
-            compute_rank=compute_rank,
+            loader_port_index=self._instance_count * 2,
             worker_key=worker_key,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,
