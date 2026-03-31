@@ -1,7 +1,8 @@
 # Significant portions of this file are taken from GraphLearn-for-PyTorch
 # (graphlearn_torch/python/distributed/dist_sampling_producer.py).
-# This version uses GiGL's DistNeighborSampler (which supports both standard
-# neighbor sampling and ABLP) instead of GLT's DistNeighborSampler.
+# This version uses GiGL's sampler hierarchy (BaseGiGLSampler subclasses:
+# DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR) instead of
+# GLT's DistNeighborSampler directly.
 
 import datetime
 import queue
