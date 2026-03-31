@@ -93,7 +93,7 @@ class RemoteReceivingChannel(ChannelBase):
         self._server_end_of_epoch = [not is_active for is_active in self._active_mask]
         self._global_end_of_epoch = all(self._server_end_of_epoch)
         self._queue: queue.Queue[
-            tuple[Optional[SampleMessage], bool, int]
+            tuple[Optional[Union[SampleMessage, Exception]], bool, int]
         ] = queue.Queue(maxsize=self._prefetch_size * len(self._server_rank_list))
         self._recv_count: int = 0
         self._log_every_n: int = 50
@@ -132,6 +132,7 @@ class RemoteReceivingChannel(ChannelBase):
 
         Raises:
             StopIteration: If the epoch ends and no messages are available.
+            Exception: If the future fails.
         """
         request_some_elapsed = 0.0
         num_dispatched = 0
@@ -170,6 +171,9 @@ class RemoteReceivingChannel(ChannelBase):
                 f"queue_get_time={queue_get_elapsed:.4f}s "
             )
 
+        if isinstance(msg, Exception):
+            raise msg
+
         return msg
 
     @staticmethod
@@ -206,7 +210,7 @@ class RemoteReceivingChannel(ChannelBase):
                 self._queue.put((msg, end_of_epoch, local_server_idx))
             except Exception as exc:
                 logger.error("broken future of receiving remote messages: %s", exc)
-                self._queue.put((None, False, local_server_idx))
+                self._queue.put((exc, False, local_server_idx))
 
         def create_callback(
             local_server_idx: int,
