@@ -239,6 +239,7 @@ class BaseDistLoader(DistLoader):
         sampler_options: SamplerOptions,
         process_start_gap_seconds: float = 60.0,
         max_concurrent_producer_inits: Optional[int] = None,
+        non_blocking_transfers: bool = True,
     ):
         if max_concurrent_producer_inits is None:
             max_concurrent_producer_inits = sys.maxsize
@@ -255,6 +256,7 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options
+        self._non_blocking_transfers = non_blocking_transfers
 
         # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
         self.input_data = sampler_input
@@ -796,9 +798,9 @@ class BaseDistLoader(DistLoader):
         )
         self._channel = RemoteReceivingChannel(
             server_rank=self._server_rank_list,
-            channel_id=self._channel_id_list,
+            channel_id=self._producer_id_list,
             prefetch_size=self.worker_options.prefetch_size,
-            active_mask=self._remote_input_has_batches,
+            active_mask=[len(inp) > 0 for inp in self._input_data_list],
             pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
         logger.info(
@@ -828,21 +830,31 @@ class BaseDistLoader(DistLoader):
         self._shutdowned = True
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        """Override GLT's _collate_fn to batch-transfer tensors with non_blocking=True.
+        """Override GLT's _collate_fn to optionally batch-transfer tensors with non_blocking=True.
 
-        Moves all tensors in the SampleMessage to the target device using
-        non_blocking transfers (effective when source tensors are in pinned
-        memory). Then delegates to the parent _collate_fn, whose .to(device)
-        calls become no-ops since tensors are already on device.
+        When ``_non_blocking_transfers`` is enabled (default), moves all tensors
+        in the SampleMessage to the target CUDA device using non-blocking copies
+        before delegating to the parent ``_collate_fn``.  This is effective when
+        source tensors reside in pinned memory, allowing host-to-device transfers
+        to overlap with other work on the default CUDA stream.
+
+        When ``_non_blocking_transfers`` is disabled, the bulk transfer is skipped
+        entirely and GLT's default (blocking) device placement is used instead.
+
+        See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+        for background on pinned memory and non-blocking transfers.
         """
-
-        # TODO(kmonte): Consider making the async transfers a flag if we see perf issues with them.
-        if self.to_device is not None and self.to_device.type == "cuda":
+        if (
+            self._non_blocking_transfers
+            and self.to_device is not None
+            and self.to_device.type == "cuda"
+        ):
             for k, v in msg.items():
                 if isinstance(v, torch.Tensor) and v.device != self.to_device:
                     msg[k] = v.to(self.to_device, non_blocking=True)
-            # Synchronize the current CUDA stream to ensure all transfers are complete
-            # Since we call .to(device, non_blocking=True) on all tensors, we need to synchronize the stream to ensure all transfers are complete.
+            # Synchronize the current CUDA stream to ensure all non-blocking
+            # transfers are complete before the parent _collate_fn processes
+            # the message.
             torch.cuda.current_stream().synchronize()
         return super()._collate_fn(msg)
 

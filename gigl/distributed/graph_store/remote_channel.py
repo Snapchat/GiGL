@@ -93,10 +93,14 @@ class RemoteReceivingChannel(ChannelBase):
         self._server_end_of_epoch = [not is_active for is_active in self._active_mask]
         self._global_end_of_epoch = all(self._server_end_of_epoch)
         self._queue: queue.Queue[
-            tuple[Optional[SampleMessage], bool, int]
+            tuple[Optional[Union[SampleMessage, Exception]], bool, int]
         ] = queue.Queue(maxsize=self._prefetch_size * len(self._server_rank_list))
         self._recv_count: int = 0
         self._log_every_n: int = 50
+        # For some reason calling `pin_memory()` with no CUDA available raises the below error:
+        # No CUDA GPUs are available
+        if not torch.cuda.is_available() and pin_memory:
+            raise ValueError("pin_memory is only supported when CUDA is available")
         self._pin_memory = pin_memory
 
     def reset(self) -> None:
@@ -128,6 +132,7 @@ class RemoteReceivingChannel(ChannelBase):
 
         Raises:
             StopIteration: If the epoch ends and no messages are available.
+            Exception: If the future fails.
         """
         request_some_elapsed = 0.0
         num_dispatched = 0
@@ -155,11 +160,6 @@ class RemoteReceivingChannel(ChannelBase):
             msg, end_of_epoch, local_server_idx = self._queue.get()
             self._num_received_list[local_server_idx] += 1
 
-        if msg is None:
-            raise RuntimeError(
-                "Received unexpected None message when end_of_epoch is False."
-            )
-
         self._recv_count += 1
         if self._recv_count % self._log_every_n == 0:
             logger.info(
@@ -170,6 +170,9 @@ class RemoteReceivingChannel(ChannelBase):
                 f"queue_depth_before_get={queue_depth} "
                 f"queue_get_time={queue_get_elapsed:.4f}s "
             )
+
+        if isinstance(msg, Exception):
+            raise msg
 
         return msg
 
@@ -207,7 +210,7 @@ class RemoteReceivingChannel(ChannelBase):
                 self._queue.put((msg, end_of_epoch, local_server_idx))
             except Exception as exc:
                 logger.error("broken future of receiving remote messages: %s", exc)
-                self._queue.put((None, False, local_server_idx))
+                self._queue.put((exc, False, local_server_idx))
 
         def create_callback(
             local_server_idx: int,
