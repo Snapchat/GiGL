@@ -155,11 +155,6 @@ class RemoteReceivingChannel(ChannelBase):
             msg, end_of_epoch, local_server_idx = self._queue.get()
             self._num_received_list[local_server_idx] += 1
 
-        if msg is None:
-            raise RuntimeError(
-                "Received unexpected None message when end_of_epoch is False."
-            )
-
         self._recv_count += 1
         if self._recv_count % self._log_every_n == 0:
             logger.info(
