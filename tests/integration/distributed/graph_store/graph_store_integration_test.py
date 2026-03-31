@@ -3,12 +3,12 @@ import multiprocessing.context as py_mp_context
 import os
 import socket
 import tempfile
-import threading
 import traceback
 import unittest
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
-from typing import Literal, Optional, Union
+from itertools import zip_longest
+from typing import Any, Literal, Optional, Union
 from unittest import mock
 
 import torch
@@ -47,6 +47,134 @@ from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import DEFAULT_TIMEOUT_SECONDS, TestCase
 
 logger = Logger()
+TEST_BATCH_SIZE = 128
+TEST_NUM_NEIGHBORS = [2, 2]
+TEST_PIN_MEMORY_DEVICE = torch.device("cpu")
+TEST_NUM_WORKERS = 2
+TEST_WORKER_CONCURRENCY = 2
+
+
+# ---------------------------------------------------------------------------
+# Tensor helpers
+# ---------------------------------------------------------------------------
+
+
+def _to_long_cpu(tensor: torch.Tensor) -> torch.Tensor:
+    """Normalize a tensor to long dtype on CPU."""
+    return tensor.detach().cpu().to(dtype=torch.long)
+
+
+def _concat_seed_tensors(tensors: list[torch.Tensor]) -> torch.Tensor:
+    """Concatenate tensors, normalizing to long CPU tensors and skipping empties."""
+    non_empty = [_to_long_cpu(t) for t in tensors if t.numel() > 0]
+    return (
+        torch.cat(non_empty, dim=0) if non_empty else torch.empty(0, dtype=torch.long)
+    )
+
+
+def _sorted_seed_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    """Sort a tensor after normalizing to long CPU."""
+    if tensor.numel() == 0:
+        return torch.empty(0, dtype=torch.long)
+    return torch.sort(_to_long_cpu(tensor)).values
+
+
+def _get_batch_seed_tensor(
+    datum: Union[Data, HeteroData], node_type: Optional[NodeType]
+) -> torch.Tensor:
+    """Extract the batch seed tensor from a Data or HeteroData object."""
+    if node_type is not None:
+        assert isinstance(datum, HeteroData)
+        batch = datum[node_type].batch
+    else:
+        assert isinstance(datum, Data)
+        batch = datum.batch
+    assert isinstance(
+        batch, torch.Tensor
+    ), f"Expected tensor batch field, got {type(batch)}"
+    return _to_long_cpu(batch)
+
+
+# ---------------------------------------------------------------------------
+# Distributed seed coverage assertion
+# ---------------------------------------------------------------------------
+
+
+def _assert_global_seed_coverage(
+    *,
+    name: str,
+    cluster_info: GraphStoreInfo,
+    local_seen: torch.Tensor,
+    local_expected: torch.Tensor,
+) -> None:
+    """Assert that all expected seeds are covered globally across ranks.
+
+    Gathers seen and expected seeds from all ranks and verifies full coverage.
+    """
+    # Gather seen seeds from all ranks
+    all_seen: list[torch.Tensor] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
+    torch.distributed.all_gather_object(all_seen, _to_long_cpu(local_seen))
+    globally_seen = _sorted_seed_tensor(_concat_seed_tensors(all_seen))
+
+    # Gather expected seeds from all ranks. In graph-store mode, input sharding is
+    # per compute process, not per compute node.
+    all_expected: list[torch.Tensor] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
+    torch.distributed.all_gather_object(all_expected, _to_long_cpu(local_expected))
+    globally_expected = _sorted_seed_tensor(_concat_seed_tensors(all_expected))
+
+    assert_tensor_equality(globally_seen, globally_expected)
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} verified {name} coverage for "
+        f"{globally_seen.numel()} seeds"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Loader builders
+# ---------------------------------------------------------------------------
+
+
+def _build_ablp_loader(
+    remote_dist_dataset: RemoteDistDataset,
+    ablp_input: dict[int, ABLPInputNodes],
+    *,
+    prefetch_size: Optional[int] = None,
+) -> DistABLPLoader:
+    """Build a DistABLPLoader with standard test parameters."""
+    return DistABLPLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=TEST_NUM_NEIGHBORS,
+        input_nodes=ablp_input,
+        pin_memory_device=TEST_PIN_MEMORY_DEVICE,
+        num_workers=TEST_NUM_WORKERS,
+        worker_concurrency=TEST_WORKER_CONCURRENCY,
+        batch_size=TEST_BATCH_SIZE,
+        prefetch_size=prefetch_size,
+    )
+
+
+def _build_neighbor_loader(
+    remote_dist_dataset: RemoteDistDataset,
+    sampler_input: dict[int, torch.Tensor],
+    *,
+    prefetch_size: Optional[int] = None,
+) -> DistNeighborLoader:
+    """Build a DistNeighborLoader with standard test parameters."""
+    return DistNeighborLoader(
+        dataset=remote_dist_dataset,
+        num_neighbors=TEST_NUM_NEIGHBORS,
+        input_nodes=sampler_input,
+        pin_memory_device=TEST_PIN_MEMORY_DEVICE,
+        num_workers=TEST_NUM_WORKERS,
+        worker_concurrency=TEST_WORKER_CONCURRENCY,
+        batch_size=TEST_BATCH_SIZE,
+        prefetch_size=prefetch_size,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Input assertions
+# ---------------------------------------------------------------------------
 
 
 def _assert_sampler_input(
@@ -54,204 +182,116 @@ def _assert_sampler_input(
     sampler_input: dict[int, torch.Tensor],
     expected_sampler_input: dict[int, list[torch.Tensor]],
 ) -> None:
-    rank_expected_sampler_input = expected_sampler_input[cluster_info.compute_node_rank]
-    for i in range(cluster_info.compute_cluster_world_size):
-        if i == torch.distributed.get_rank():
-            logger.info(
-                f"Verifying sampler input for rank {i} / {cluster_info.compute_cluster_world_size}"
-            )
-            logger.info(f"--------------------------------")
-            assert len(sampler_input) == len(rank_expected_sampler_input)
-            for j, expected in enumerate(rank_expected_sampler_input):
-                assert_tensor_equality(sampler_input[j], expected)
-            logger.info(
-                f"{i} / {cluster_info.compute_cluster_world_size} compute node rank input nodes verified"
-            )
-        torch.distributed.barrier()
-
-    torch.distributed.barrier()
+    rank_expected_sampler_input = expected_sampler_input[torch.distributed.get_rank()]
+    assert len(sampler_input) == len(rank_expected_sampler_input)
+    for server_rank, expected in enumerate(rank_expected_sampler_input):
+        assert_tensor_equality(sampler_input[server_rank], expected)
 
 
 def _assert_ablp_input(
     cluster_info: GraphStoreInfo,
     ablp_result: dict[int, ABLPInputNodes],
 ) -> None:
-    """Assert ABLP input structure and verify consistency across ranks on same compute node."""
-    for i in range(cluster_info.compute_cluster_world_size):
-        if i == torch.distributed.get_rank():
-            logger.info(
-                f"Verifying ABLP input for rank {i} / {cluster_info.compute_cluster_world_size}"
-            )
-            logger.info(f"--------------------------------")
+    """Assert the structure of the fetched ABLP input for the current rank."""
+    assert isinstance(ablp_result, dict), f"Expected dict, got {type(ablp_result)}"
+    assert (
+        len(ablp_result) == cluster_info.num_storage_nodes
+    ), f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
 
-            # Verify structure: dict mapping server_rank to ABLPInputNodes
+    for server_rank, ablp_input in ablp_result.items():
+        assert isinstance(
+            ablp_input, ABLPInputNodes
+        ), f"Expected ABLPInputNodes, got {type(ablp_input)}"
+
+        anchors = ablp_input.anchor_nodes
+        assert isinstance(
+            anchors, torch.Tensor
+        ), f"Anchors should be a tensor, got {type(anchors)}"
+        assert anchors.dim() == 1, f"Anchors should be 1D, got {anchors.dim()}D"
+
+        assert isinstance(
+            ablp_input.labels, dict
+        ), f"Labels should be a dict, got {type(ablp_input.labels)}"
+        for edge_type, (
+            positive_labels,
+            negative_labels,
+        ) in ablp_input.labels.items():
             assert isinstance(
-                ablp_result, dict
-            ), f"Expected dict, got {type(ablp_result)}"
+                positive_labels, torch.Tensor
+            ), f"Positive labels should be a tensor, got {type(positive_labels)}"
             assert (
-                len(ablp_result) == cluster_info.num_storage_nodes
-            ), f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
+                positive_labels.dim() == 2
+            ), f"Positive labels should be 2D, got {positive_labels.dim()}D"
+            assert positive_labels.shape[0] == len(
+                anchors
+            ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
 
-            for server_rank, ablp_input in ablp_result.items():
+            if negative_labels is not None:
                 assert isinstance(
-                    ablp_input, ABLPInputNodes
-                ), f"Expected ABLPInputNodes, got {type(ablp_input)}"
+                    negative_labels, torch.Tensor
+                ), f"Negative labels should be a tensor, got {type(negative_labels)}"
+                assert (
+                    negative_labels.dim() == 2
+                ), f"Negative labels should be 2D, got {negative_labels.dim()}D"
+                assert negative_labels.shape[0] == len(
+                    anchors
+                ), f"Negative labels first dim should match anchors length"
 
-                anchors = ablp_input.anchor_nodes
-                # Verify anchors shape (1D tensor)
-                assert isinstance(
-                    anchors, torch.Tensor
-                ), f"Anchors should be a tensor, got {type(anchors)}"
-                assert anchors.dim() == 1, f"Anchors should be 1D, got {anchors.dim()}D"
-                assert len(anchors) > 0, "Anchors should not be empty"
+        has_negatives = any(neg is not None for _, neg in ablp_input.labels.values())
+        logger.info(
+            f"Server rank {server_rank}: anchor_node_type={ablp_input.anchor_node_type}, "
+            f"anchors shape={anchors.shape}, labels edge types={list(ablp_input.labels.keys())}, "
+            f"has_negatives={has_negatives}"
+        )
 
-                # Verify labels: dict[EdgeType, tuple[Tensor, Optional[Tensor]]]
-                assert isinstance(
-                    ablp_input.labels, dict
-                ), f"Labels should be a dict, got {type(ablp_input.labels)}"
-                for edge_type, (
-                    positive_labels,
-                    negative_labels,
-                ) in ablp_input.labels.items():
-                    assert isinstance(
-                        positive_labels, torch.Tensor
-                    ), f"Positive labels should be a tensor, got {type(positive_labels)}"
-                    assert (
-                        positive_labels.dim() == 2
-                    ), f"Positive labels should be 2D, got {positive_labels.dim()}D"
-                    assert positive_labels.shape[0] == len(
-                        anchors
-                    ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
 
-                    # Verify negative_labels is None or has correct shape
-                    if negative_labels is not None:
-                        assert isinstance(
-                            negative_labels, torch.Tensor
-                        ), f"Negative labels should be a tensor, got {type(negative_labels)}"
-                        assert (
-                            negative_labels.dim() == 2
-                        ), f"Negative labels should be 2D, got {negative_labels.dim()}D"
-                        assert negative_labels.shape[0] == len(
-                            anchors
-                        ), f"Negative labels first dim should match anchors length"
-
-                _has_negatives = any(
-                    neg is not None for _, neg in ablp_input.labels.values()
-                )
-                logger.info(
-                    f"Server rank {server_rank}: anchor_node_type={ablp_input.anchor_node_type}, "
-                    f"anchors shape={anchors.shape}, "
-                    f"labels edge types={list(ablp_input.labels.keys())}, "
-                    f"has_negatives={_has_negatives}"
-                )
-
-            logger.info(
-                f"{i} / {cluster_info.compute_cluster_world_size} compute node rank ABLP input verified"
-            )
-        torch.distributed.barrier()
-
-    torch.distributed.barrier()
-
-    # Gather ABLP data from all ranks and verify processes on same compute_node_rank have identical data
-    first_input = ablp_result[0]
-    local_anchors = first_input.anchor_nodes
-    # Get the first (and currently only) positive/negative label tensor for comparison
-    first_pos, first_neg = next(iter(first_input.labels.values()))
-    local_positive = first_pos
-    local_negative = first_neg
-    local_data = (
-        cluster_info.compute_node_rank,
-        local_anchors.clone(),
-        local_positive.clone(),
-        local_negative.clone() if local_negative is not None else None,
-    )
-    gathered_data: list[tuple[int, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
-    torch.distributed.all_gather_object(gathered_data, local_data)
-
-    # Group by compute_node_rank and verify all processes in same group have identical ABLP input
-    my_compute_node_rank = cluster_info.compute_node_rank
-    for (
-        other_compute_node_rank,
-        other_anchors,
-        other_positive,
-        other_negative,
-    ) in gathered_data:
-        if other_compute_node_rank == my_compute_node_rank:
-            assert_tensor_equality(local_anchors, other_anchors)
-            assert_tensor_equality(local_positive, other_positive)
-            if local_negative is not None and other_negative is not None:
-                assert_tensor_equality(local_negative, other_negative)
-            else:
-                assert local_negative is None and other_negative is None, (
-                    f"Negative labels mismatch: local={local_negative is not None}, "
-                    f"other={other_negative is not None}"
-                )
-
-    torch.distributed.barrier()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} verified processes on same compute_node_rank "
-        f"({my_compute_node_rank}) have identical ABLP input"
-    )
+# ---------------------------------------------------------------------------
+# Compute test targets (run inside spawned subprocesses)
+# ---------------------------------------------------------------------------
 
 
 def _run_compute_train_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
-    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
-    """
-    Simplified compute test for training mode that only verifies ABLP input.
-    """
+    """Compute test for training mode that verifies ABLP input and seed coverage."""
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
 
-    # Test fetch_ablp_input for train split
     ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
-
     _assert_ablp_input(cluster_info, ablp_result)
 
-    ablp_loader = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-
+    ablp_loader = _build_ablp_loader(remote_dist_dataset, ablp_result)
     random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
+    )
+    random_negative_loader = _build_neighbor_loader(
+        remote_dist_dataset, random_negative_input
     )
 
-    # Test that two loaders can both be initialized and sampled from simultaneously.
-    random_negative_loader = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-    )
-    count = 0
-    for i, (ablp_batch, random_negative_batch) in enumerate(
-        zip(ablp_loader, random_negative_loader)
+    ablp_batches: list[torch.Tensor] = []
+    random_negative_batches: list[torch.Tensor] = []
+    for ablp_batch, random_negative_batch in zip_longest(
+        ablp_loader, random_negative_loader
     ):
+        assert (
+            ablp_batch is not None
+        ), "ABLP loader exhausted before random negative loader"
+        assert (
+            random_negative_batch is not None
+        ), "Random negative loader exhausted before ABLP loader"
         assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
-        # y_positive should be dict mapping local anchor idx -> local label indices
         assert isinstance(
             ablp_batch.y_positive, dict
         ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
@@ -261,173 +301,160 @@ def _run_compute_train_tests(
         else:
             assert isinstance(ablp_batch, Data)
             assert isinstance(random_negative_batch, Data)
-        count += 1
+        ablp_batches.append(_get_batch_seed_tensor(ablp_batch, node_type))
+        random_negative_batches.append(
+            _get_batch_seed_tensor(random_negative_batch, node_type)
+        )
 
-    torch.distributed.barrier()
-    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} ABLP batches")
-
-    # Verify total count across all ranks
-    count_tensor = torch.tensor(count, dtype=torch.int64)
-    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
-
-    # Calculate expected total anchors by summing across all compute nodes
-    # Each process on the same compute node has the same anchor count, so we sum
-    # across all processes and divide by num_processes_per_compute to get the true total
-    local_total_anchors = sum(
-        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
+    local_expected_anchors = _concat_seed_tensors(
+        [ablp_result[r].anchor_nodes for r in sorted(ablp_result)]
     )
-    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
-    torch.distributed.all_reduce(
-        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
+    local_expected_negative_seeds = _concat_seed_tensors(
+        [random_negative_input[r] for r in sorted(random_negative_input)]
     )
-    expected_batches = (
-        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
+    _assert_global_seed_coverage(
+        name="train ABLP loader",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(ablp_batches),
+        local_expected=local_expected_anchors,
     )
-    assert (
-        count_tensor.item() == expected_batches
-    ), f"Expected {expected_batches} total batches, got {count_tensor.item()}"
+    _assert_global_seed_coverage(
+        name="train random negative loader",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(random_negative_batches),
+        local_expected=local_expected_negative_seeds,
+    )
 
+    ablp_loader.shutdown()
+    random_negative_loader.shutdown()
     shutdown_compute_proccess()
 
 
 def _run_compute_multiple_loaders_test(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
-    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
 ) -> None:
-    """
-    Compute test that validates multiple loader instances can coexist.
+    """Compute test that validates multiple loader instances can coexist.
 
-    Phase 1: Creates two ABLP loaders + two DistNeighborLoaders and iterates them in parallel.
-    Phase 2: After shutting down phase 1 loaders (to free server-side producers and RPC
-             resources), creates one more ABLP + one DistNeighborLoader pair sequentially.
+    Phase 1: Creates two ABLP loaders + two DistNeighborLoaders and iterates them
+    in parallel.
+    Phase 2: After shutting down phase 1 loaders (to free server-side producers and
+    RPC resources), creates one more ABLP + one DistNeighborLoader pair sequentially.
     """
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
 
     ablp_result = remote_dist_dataset.fetch_ablp_input(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
-
     random_negative_input = remote_dist_dataset.fetch_node_ids(
         split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
 
-    # Calculate expected batch count (same logic as _run_compute_train_tests).
-    local_total_anchors = sum(
-        ablp_result[server_rank].anchor_nodes.shape[0] for server_rank in ablp_result
+    local_expected_anchors = _concat_seed_tensors(
+        [ablp_result[r].anchor_nodes for r in sorted(ablp_result)]
     )
-    expected_anchors_tensor = torch.tensor(local_total_anchors, dtype=torch.int64)
-    torch.distributed.all_reduce(
-        expected_anchors_tensor, op=torch.distributed.ReduceOp.SUM
-    )
-    total_negative_seeds = sum(
-        random_negative_input[server_rank].shape[0]
-        for server_rank in random_negative_input
-    )
-    total_negative_seeds_tensor = torch.tensor(total_negative_seeds, dtype=torch.int64)
-    torch.distributed.all_reduce(
-        total_negative_seeds_tensor, op=torch.distributed.ReduceOp.SUM
-    )
-    total_negative_seeds = int(total_negative_seeds_tensor.item())
-    expected_batches = int(
-        expected_anchors_tensor.item() // cluster_info.num_processes_per_compute
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+    local_expected_negative_seeds = _concat_seed_tensors(
+        [random_negative_input[r] for r in sorted(random_negative_input)]
     )
 
-    # Batch size is very critial to perf here
-    # If set to 1 (the default) we make one rpc call for each batch
-    # And the test takes upward of 30 minutes.
-    # With batch_size 128, the test takes < 10 minutes
-    batch_size = 128
     # ------------------------------------------------------------------
     # Phase 1: Two ABLP loaders + two DistNeighborLoaders in parallel
     # ------------------------------------------------------------------
     # Use prefetch_size=2 to limit concurrent fetch_one_sampled_message RPC calls
     # per server. With 4 loaders × 2 compute nodes × 2 prefetch = 16 calls,
     # matching the 16 RPC thread limit on the server.
-    ablp_loader_1 = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        prefetch_size=2,
-        batch_size=batch_size,
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    ablp_loader_1 = _build_ablp_loader(
+        remote_dist_dataset, ablp_result, prefetch_size=2
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
     )
-    ablp_loader_2 = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        prefetch_size=2,
-        batch_size=batch_size,
+    ablp_loader_2 = _build_ablp_loader(
+        remote_dist_dataset, ablp_result, prefetch_size=2
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
     )
-    neighbor_loader_1 = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        batch_size=batch_size,
+    neighbor_loader_1 = _build_neighbor_loader(
+        remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
     )
-    neighbor_loader_2 = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        batch_size=batch_size,
+    neighbor_loader_2 = _build_neighbor_loader(
+        remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 1: loading batches from 4 parallel loaders"
+        f"Rank {rank} / {world_size} phase 1: loading batches from 4 parallel loaders"
     )
-    torch.distributed.barrier()
-    for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip(
+    phase1_ablp_loader_1_batches: list[torch.Tensor] = []
+    phase1_ablp_loader_2_batches: list[torch.Tensor] = []
+    phase1_neighbor_loader_1_batches: list[torch.Tensor] = []
+    phase1_neighbor_loader_2_batches: list[torch.Tensor] = []
+    for ablp_batch_1, ablp_batch_2, neg_batch_1, neg_batch_2 in zip_longest(
         ablp_loader_1, ablp_loader_2, neighbor_loader_1, neighbor_loader_2
     ):
+        assert ablp_batch_1 is not None, "ABLP loader 1 exhausted early in phase 1"
+        assert ablp_batch_2 is not None, "ABLP loader 2 exhausted early in phase 1"
+        assert neg_batch_1 is not None, "Neighbor loader 1 exhausted early in phase 1"
+        assert neg_batch_2 is not None, "Neighbor loader 2 exhausted early in phase 1"
         assert hasattr(
             ablp_batch_1, "y_positive"
         ), "ABLP batch 1 should have y_positive"
         assert hasattr(
             ablp_batch_2, "y_positive"
         ), "ABLP batch 2 should have y_positive"
-    torch.distributed.barrier()
+        phase1_ablp_loader_1_batches.append(
+            _get_batch_seed_tensor(ablp_batch_1, node_type)
+        )
+        phase1_ablp_loader_2_batches.append(
+            _get_batch_seed_tensor(ablp_batch_2, node_type)
+        )
+        phase1_neighbor_loader_1_batches.append(
+            _get_batch_seed_tensor(neg_batch_1, node_type)
+        )
+        phase1_neighbor_loader_2_batches.append(
+            _get_batch_seed_tensor(neg_batch_2, node_type)
+        )
     logger.info("All ranks have loaded phase 1 batches")
-
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} expected batches: {expected_batches}, total negative seeds: {total_negative_seeds}"
+    _assert_global_seed_coverage(
+        name="phase 1 ABLP loader 1",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(phase1_ablp_loader_1_batches),
+        local_expected=local_expected_anchors,
+    )
+    _assert_global_seed_coverage(
+        name="phase 1 ABLP loader 2",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(phase1_ablp_loader_2_batches),
+        local_expected=local_expected_anchors,
+    )
+    _assert_global_seed_coverage(
+        name="phase 1 neighbor loader 1",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(phase1_neighbor_loader_1_batches),
+        local_expected=local_expected_negative_seeds,
+    )
+    _assert_global_seed_coverage(
+        name="phase 1 neighbor loader 2",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(phase1_neighbor_loader_2_batches),
+        local_expected=local_expected_negative_seeds,
     )
 
     # Shut down phase 1 loaders to free server-side producers and RPC resources
@@ -437,161 +464,79 @@ def _run_compute_multiple_loaders_test(
     ablp_loader_2.shutdown()
     neighbor_loader_1.shutdown()
     neighbor_loader_2.shutdown()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} shut down phase 1 loaders"
-    )
+    logger.info(f"Rank {rank} / {world_size} shut down phase 1 loaders")
     torch.distributed.barrier()
 
     # ------------------------------------------------------------------
     # Phase 2: One more ABLP + one more DistNeighborLoader (sequential)
     # ------------------------------------------------------------------
-    ablp_loader_3 = DistABLPLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=ablp_result,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        batch_size=batch_size,
+    ablp_loader_3 = _build_ablp_loader(remote_dist_dataset, ablp_result)
+    logger.info(
+        f"Rank {rank} / {world_size} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
+    )
+    neighbor_loader_3 = _build_neighbor_loader(
+        remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
-    )
-    neighbor_loader_3 = DistNeighborLoader(
-        dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        input_nodes=random_negative_input,
-        pin_memory_device=torch.device("cpu"),
-        num_workers=2,
-        worker_concurrency=2,
-        batch_size=batch_size,
+        f"Rank {rank} / {world_size} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
     )
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
+        f"Rank {rank} / {world_size} phase 2: loading batches from 2 sequential loaders"
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loading batches from 2 sequential loaders"
-    )
-    for ablp_batch_3, neg_batch_3 in zip(ablp_loader_3, neighbor_loader_3):
+    phase2_ablp_loader_3_batches: list[torch.Tensor] = []
+    phase2_neighbor_loader_3_batches: list[torch.Tensor] = []
+    for ablp_batch_3, neg_batch_3 in zip_longest(ablp_loader_3, neighbor_loader_3):
+        assert ablp_batch_3 is not None, "ABLP loader 3 exhausted early in phase 2"
+        assert neg_batch_3 is not None, "Neighbor loader 3 exhausted early in phase 2"
         assert hasattr(
             ablp_batch_3, "y_positive"
         ), "ABLP batch 3 should have y_positive"
+        phase2_ablp_loader_3_batches.append(
+            _get_batch_seed_tensor(ablp_batch_3, node_type)
+        )
+        phase2_neighbor_loader_3_batches.append(
+            _get_batch_seed_tensor(neg_batch_3, node_type)
+        )
 
     logger.info(
-        f"Rank {torch.distributed.get_rank()} / {torch.distributed.get_world_size()} phase 2: loaded batches from 2 sequential loaders"
+        f"Rank {rank} / {world_size} phase 2: loaded batches from 2 sequential loaders"
     )
+    _assert_global_seed_coverage(
+        name="phase 2 ABLP loader 3",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(phase2_ablp_loader_3_batches),
+        local_expected=local_expected_anchors,
+    )
+    _assert_global_seed_coverage(
+        name="phase 2 neighbor loader 3",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(phase2_neighbor_loader_3_batches),
+        local_expected=local_expected_negative_seeds,
+    )
+    ablp_loader_3.shutdown()
+    neighbor_loader_3.shutdown()
     torch.distributed.barrier()
 
     shutdown_compute_proccess()
 
 
-@dataclass(frozen=True)
-class ClientTrainProcessArgs:
-    """Arguments for the client training process.
-
-    Attributes:
-        client_rank: Rank of this client in the compute cluster.
-        cluster_info: Information about the distributed cluster.
-        node_type: Type of nodes to process, None for homogeneous graphs.
-        exception_dict: Shared dictionary for storing exceptions from processes.
-    """
-
-    client_rank: int
-    cluster_info: GraphStoreInfo
-    node_type: Optional[NodeType]
-    exception_dict: MutableMapping[str, str]
-
-
-def _client_train_process(args: ClientTrainProcessArgs) -> None:
-    """Client process for training mode that spawns compute train tests."""
-    logger.info(
-        f"Initializing train client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. "
-        f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
-    )
-    process_name = f"client_train_{args.client_rank}"
-    try:
-        mp_context = torch.multiprocessing.get_context("spawn")
-        manager = torch.multiprocessing.Manager()
-        mp_sharing_dict = manager.dict()
-        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
-        client_processes: list[py_mp_context.SpawnProcess] = []
-        logger.info("Starting train client processes")
-        for i in range(args.cluster_info.num_processes_per_compute):
-            client_process = mp_context.Process(
-                target=_run_compute_train_tests,
-                args=[
-                    i,  # client_rank
-                    args.cluster_info,  # cluster_info
-                    mp_sharing_dict,  # mp_sharing_dict
-                    mp_barrier,  # mp_barrier
-                    args.node_type,  # node_type
-                ],
-            )
-            client_processes.append(client_process)
-        for client_process in client_processes:
-            client_process.start()
-        for client_process in client_processes:
-            client_process.join(DEFAULT_TIMEOUT_SECONDS)
-    except Exception:
-        args.exception_dict[process_name] = traceback.format_exc()
-        raise
-
-
-def _client_multiple_loaders_process(args: ClientTrainProcessArgs) -> None:
-    """Client process for testing multiple loader instances in parallel and sequence."""
-    logger.info(
-        f"Initializing multiple loaders client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. "
-        f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
-    )
-    process_name = f"client_multiple_loaders_{args.client_rank}"
-    try:
-        mp_context = torch.multiprocessing.get_context("spawn")
-        manager = torch.multiprocessing.Manager()
-        mp_sharing_dict = manager.dict()
-        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
-        client_processes: list[py_mp_context.SpawnProcess] = []
-        logger.info("Starting multiple loaders client processes")
-        for i in range(args.cluster_info.num_processes_per_compute):
-            client_process = mp_context.Process(
-                target=_run_compute_multiple_loaders_test,
-                args=[
-                    i,  # client_rank
-                    args.cluster_info,  # cluster_info
-                    mp_sharing_dict,  # mp_sharing_dict
-                    mp_barrier,  # mp_barrier
-                    args.node_type,  # node_type
-                ],
-            )
-            client_processes.append(client_process)
-        for client_process in client_processes:
-            client_process.start()
-        for client_process in client_processes:
-            client_process.join(DEFAULT_TIMEOUT_SECONDS)
-    except Exception:
-        args.exception_dict[process_name] = traceback.format_exc()
-        raise
-
-
 def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
-    mp_sharing_dict: Optional[MutableMapping[str, torch.Tensor]],
-    mp_barrier: Optional[threading.Barrier],
     node_type: Optional[NodeType],
     expected_sampler_input: dict[int, list[torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
 ) -> None:
-    """
-    Process target for "compute" nodes.
-    Each "Client Process" (e.g. cluster_info.num_compute_nodes) will spawn as a process for each "num_processes_per_compute"
+    """Process target for "compute" nodes.
+
+    Each "Client Process" (e.g. cluster_info.num_compute_nodes) will spawn as a
+    process for each "num_processes_per_compute".
     """
     init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
 
     remote_dist_dataset = RemoteDistDataset(
         cluster_info=cluster_info,
         local_rank=client_rank,
-        mp_sharing_dict=mp_sharing_dict,
-        mp_barrier=mp_barrier,
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
@@ -625,22 +570,10 @@ def _run_compute_tests(
 
     sampler_input = remote_dist_dataset.fetch_node_ids(
         node_type=node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
     )
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
-
-    # test "simple" case where we don't have mp sharing dict too
-    simple_sampler_input = RemoteDistDataset(
-        cluster_info=cluster_info,
-        local_rank=client_rank,
-        mp_sharing_dict=None,
-    ).fetch_node_ids(
-        node_type=node_type,
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-    )
-    _assert_sampler_input(cluster_info, simple_sampler_input, expected_sampler_input)
 
     assert (
         remote_dist_dataset.fetch_edge_types() == expected_edge_types
@@ -659,77 +592,79 @@ def _run_compute_tests(
     # Test the DistNeighborLoader
     loader = DistNeighborLoader(
         dataset=remote_dist_dataset,
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
+        num_neighbors=TEST_NUM_NEIGHBORS,
+        pin_memory_device=TEST_PIN_MEMORY_DEVICE,
         input_nodes=input_nodes,
-        num_workers=2,
-        worker_concurrency=2,
+        num_workers=TEST_NUM_WORKERS,
+        worker_concurrency=TEST_WORKER_CONCURRENCY,
+        batch_size=TEST_BATCH_SIZE,
     )
-    count = 0
+    loaded_batches: list[torch.Tensor] = []
     for datum in loader:
         if node_type is not None:
             assert isinstance(datum, HeteroData)
         else:
             assert isinstance(datum, Data)
-        count += 1
-    torch.distributed.barrier()
-    logger.info(f"Rank {torch.distributed.get_rank()} loaded {count} batches")
-    # Verify that we sampled all nodes.
-    count_tensor = torch.tensor(count, dtype=torch.int64)
-    all_node_count = 0
-    for rank_expected_sampler_input in expected_sampler_input.values():
-        all_node_count += sum(len(nodes) for nodes in rank_expected_sampler_input)
-    torch.distributed.all_reduce(count_tensor, op=torch.distributed.ReduceOp.SUM)
-    assert (
-        count_tensor.item() == all_node_count
-    ), f"Expected {all_node_count} total nodes, got {count_tensor.item()}"
+        loaded_batches.append(_get_batch_seed_tensor(datum, node_type))
+
+    _assert_global_seed_coverage(
+        name="graph store neighbor loader",
+        cluster_info=cluster_info,
+        local_seen=_concat_seed_tensors(loaded_batches),
+        local_expected=_concat_seed_tensors(
+            expected_sampler_input[torch.distributed.get_rank()]
+        ),
+    )
+    loader.shutdown()
     shutdown_compute_proccess()
+
+
+# ---------------------------------------------------------------------------
+# Client / server process wrappers
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ClientProcessArgs:
-    """Arguments for the client process.
+    """Arguments for the client compute process.
 
     Attributes:
         client_rank: Rank of this client in the compute cluster.
         cluster_info: Information about the distributed cluster.
         node_type: Type of nodes to process, None for homogeneous graphs.
-        expected_sampler_input: Expected sampler input for each compute rank.
-        expected_edge_types: Expected edge types for heterogeneous graphs.
         exception_dict: Shared dictionary for storing exceptions from processes.
+        compute_target: The function each subprocess runs (e.g. _run_compute_tests).
+        compute_target_extra_args: Extra positional args appended after the common
+            (client_rank, cluster_info, node_type) args.
     """
 
     client_rank: int
     cluster_info: GraphStoreInfo
     node_type: Optional[NodeType]
-    expected_sampler_input: dict[int, list[torch.Tensor]]
-    expected_edge_types: Optional[list[EdgeType]]
     exception_dict: MutableMapping[str, str]
+    compute_target: Callable[..., None]
+    compute_target_extra_args: tuple[Any, ...] = ()
 
 
-def _client_process(args: ClientProcessArgs) -> None:
+def _client_compute_process(args: ClientProcessArgs) -> None:
+    """Client process that spawns per-GPU compute subprocesses."""
     process_name = f"client_{args.client_rank}"
     try:
         logger.info(
-            f"Initializing client node {args.client_rank} / {args.cluster_info.num_compute_nodes}. OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}, local client rank: {args.client_rank}"
+            f"Initializing client node {args.client_rank} / "
+            f"{args.cluster_info.num_compute_nodes}. "
+            f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
         )
         mp_context = torch.multiprocessing.get_context("spawn")
-        manager = torch.multiprocessing.Manager()
-        mp_sharing_dict = manager.dict()
-        mp_barrier = mp.Barrier(args.cluster_info.num_processes_per_compute)
         client_processes: list[py_mp_context.SpawnProcess] = []
-        logger.info("Starting client processes")
         for i in range(args.cluster_info.num_processes_per_compute):
             client_process = mp_context.Process(
-                target=_run_compute_tests,
+                target=args.compute_target,
                 args=[
-                    i,  # client_rank
-                    args.cluster_info,  # cluster_info
-                    mp_sharing_dict,  # mp_sharing_dict
-                    mp_barrier,  # mp_barrier
-                    args.node_type,  # node_type
-                    args.expected_sampler_input,  # expected_sampler_input
-                    args.expected_edge_types,  # expected_edge_types
+                    i,
+                    args.cluster_info,
+                    args.node_type,
+                    *args.compute_target_extra_args,
                 ],
             )
             client_processes.append(client_process)
@@ -820,21 +755,27 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
         raise
 
 
+# ---------------------------------------------------------------------------
+# Expected input helpers
+# ---------------------------------------------------------------------------
+
+
 def _get_expected_input_nodes_by_rank(
     num_nodes: int, cluster_info: GraphStoreInfo
 ) -> dict[int, list[torch.Tensor]]:
     """Get the expected sampler input for each compute rank.
 
-    We generate the expected sampler input for each compute rank by sharding the nodes across the compute ranks.
-    We then append the generated nodes to the expected sampler input for each compute rank.
-    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2:
+    We generate the expected sampler input for each global rank by sharding the nodes across the global ranks.
+    We then append the generated nodes to the expected sampler input for each global rank.
+    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2
+    (compute_cluster_world_size = 2):
     {
-    0: # compute rank 0
+    0: # global rank 0
     [
         [0, 1, 3, 4], # From storage rank 0
         [8, 9, 11, 12] # From storage rank 1
     ]
-    1: # compute rank 1
+    1: # global rank 1
     [
         [5, 6, 7, 8], # From storage rank 0
         [13, 14, 15, 16] # From storage rank 1
@@ -855,14 +796,19 @@ def _get_expected_input_nodes_by_rank(
     expected_sampler_input = collections.defaultdict(list)
     for server_rank in range(cluster_info.num_storage_nodes):
         server_nodes = get_ids_on_rank(partition_book=partition_book, rank=server_rank)
-        for compute_rank in range(cluster_info.num_compute_nodes):
+        for global_rank in range(cluster_info.compute_cluster_world_size):
             generated_nodes = shard_nodes_by_process(
                 input_nodes=server_nodes,
-                local_process_rank=compute_rank,
-                local_process_world_size=cluster_info.num_compute_nodes,
+                local_process_rank=global_rank,
+                local_process_world_size=cluster_info.compute_cluster_world_size,
             )
-            expected_sampler_input[compute_rank].append(generated_nodes)
+            expected_sampler_input[global_rank].append(generated_nodes)
     return dict(expected_sampler_input)
+
+
+# ---------------------------------------------------------------------------
+# Test class
+# ---------------------------------------------------------------------------
 
 
 class GraphStoreIntegrationTest(TestCase):
@@ -909,26 +855,30 @@ class GraphStoreIntegrationTest(TestCase):
             readiness_uri=readiness_uri,
         )
 
-    def test_graph_store_homogeneous(self):
-        # Simulating two server machine, two compute machines.
-        # Each machine has one process.
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
-        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
+    def _launch_graph_store_test(
+        self,
+        *,
+        cluster_info: GraphStoreInfo,
+        task_config_uri: Uri,
+        compute_target: Callable[..., None],
+        node_type: Optional[NodeType] = None,
+        compute_target_extra_args: tuple[Any, ...] = (),
+        server_splitter: Optional[
+            Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]
+        ] = None,
+        num_server_sessions: int = 1,
+    ) -> None:
+        """Launch a graph store integration test with the given configuration.
+
+        Spawns compute client and storage server processes, then asserts all
+        processes complete successfully.
+        """
         master_port = get_free_port()
         host_ip = socket.gethostbyname(socket.gethostname())
-        cluster_info = self._create_cluster_info()
-
-        num_cora_nodes = 2708
-        expected_sampler_input = _get_expected_input_nodes_by_rank(
-            num_cora_nodes, cluster_info
-        )
-
         ctx = mp.get_context("spawn")
-        manager = mp.Manager()
-        exception_dict = manager.dict()
+        exception_dict = mp.Manager().dict()
         launched_processes: list[py_mp_context.SpawnProcess] = []
+
         for i in range(cluster_info.num_compute_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -946,19 +896,19 @@ class GraphStoreIntegrationTest(TestCase):
                 client_args = ClientProcessArgs(
                     client_rank=i,
                     cluster_info=cluster_info,
-                    node_type=None,  # None for homogeneous dataset
-                    expected_sampler_input=expected_sampler_input,
-                    expected_edge_types=None,  # None for homogeneous dataset
+                    node_type=node_type,
                     exception_dict=exception_dict,
+                    compute_target=compute_target,
+                    compute_target_extra_args=compute_target_extra_args,
                 )
                 client_process = ctx.Process(
-                    target=_client_process,
+                    target=_client_compute_process,
                     args=[client_args],
                     name=f"client_{i}",
                 )
                 client_process.start()
                 launched_processes.append(client_process)
-        # Start server process
+
         for i in range(cluster_info.num_storage_nodes):
             with mock.patch.dict(
                 os.environ,
@@ -978,6 +928,8 @@ class GraphStoreIntegrationTest(TestCase):
                     task_config_uri=task_config_uri,
                     sample_edge_direction="in",
                     exception_dict=exception_dict,
+                    splitter=server_splitter,
+                    num_server_sessions=num_server_sessions,
                 )
                 server_process = ctx.Process(
                     target=_run_storage_main_process,
@@ -989,81 +941,40 @@ class GraphStoreIntegrationTest(TestCase):
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
 
+    def test_graph_store_homogeneous(self):
+        # Simulating two server machine, two compute machines.
+        # Each machine has one process.
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        cluster_info = self._create_cluster_info()
+        num_cora_nodes = 2708
+        expected_sampler_input = _get_expected_input_nodes_by_rank(
+            num_cora_nodes, cluster_info
+        )
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
+            compute_target=_run_compute_tests,
+            compute_target_extra_args=(expected_sampler_input, None),
+        )
+
     def test_homogeneous_training(self):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
-        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
         cluster_info = self._create_cluster_info(
             num_storage_nodes=2, num_compute_nodes=2, num_processes_per_compute=1
         )
-        master_port = get_free_port()
-        host_ip = socket.gethostbyname(socket.gethostname())
-
-        ctx = mp.get_context("spawn")
-        launched_processes: list[py_mp_context.SpawnProcess] = []
-        exception_dict = mp.Manager().dict()
-        for i in range(cluster_info.num_compute_nodes):
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "MASTER_ADDR": host_ip,
-                    "MASTER_PORT": str(master_port),
-                    "RANK": str(i),
-                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
-                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
-                        cluster_info.num_processes_per_compute
-                    ),
-                },
-                clear=False,
-            ):
-                client_train_args = ClientTrainProcessArgs(
-                    client_rank=i,
-                    cluster_info=cluster_info,
-                    node_type=None,  # None for homogeneous dataset
-                    exception_dict=exception_dict,
-                )
-                client_process = ctx.Process(
-                    target=_client_train_process,
-                    args=[client_train_args],
-                    name=f"client_train_{i}",
-                )
-                client_process.start()
-                launched_processes.append(client_process)
-        # Start server process
-        splitter = DistNodeAnchorLinkSplitter(
-            sampling_direction="in",
-            should_convert_labels_to_edges=True,
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
+            compute_target=_run_compute_train_tests,
+            server_splitter=DistNodeAnchorLinkSplitter(
+                sampling_direction="in",
+                should_convert_labels_to_edges=True,
+            ),
         )
-        for i in range(cluster_info.num_storage_nodes):
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "MASTER_ADDR": host_ip,
-                    "MASTER_PORT": str(master_port),
-                    "RANK": str(i + cluster_info.num_compute_nodes),
-                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
-                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
-                        cluster_info.num_processes_per_compute
-                    ),
-                },
-                clear=False,
-            ):
-                server_args = ServerProcessArgs(
-                    cluster_info=cluster_info,
-                    task_config_uri=task_config_uri,
-                    sample_edge_direction="in",
-                    exception_dict=exception_dict,
-                    splitter=splitter,
-                )
-                server_process = ctx.Process(
-                    target=_run_storage_main_process,
-                    args=[server_args],
-                )
-                server_process.start()
-                launched_processes.append(server_process)
-
-        self.assert_all_processes_succeed(launched_processes, exception_dict)
 
     def test_multiple_loaders_in_graph_store(self):
         """Test that multiple loader instances (2 ABLP + 2 DistNeighborLoader) can work
@@ -1072,78 +983,18 @@ class GraphStoreIntegrationTest(TestCase):
         cora_supervised_info = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
-        task_config_uri = cora_supervised_info.frozen_gbml_config_uri
-        master_port = get_free_port()
-        host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = self._create_cluster_info(
             num_storage_nodes=1, num_compute_nodes=1, num_processes_per_compute=1
         )
-
-        ctx = mp.get_context("spawn")
-        launched_processes: list[py_mp_context.SpawnProcess] = []
-        exception_dict = mp.Manager().dict()
-        for i in range(cluster_info.num_compute_nodes):
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "MASTER_ADDR": host_ip,
-                    "MASTER_PORT": str(master_port),
-                    "RANK": str(i),
-                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
-                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
-                        cluster_info.num_processes_per_compute
-                    ),
-                },
-                clear=False,
-            ):
-                client_train_args = ClientTrainProcessArgs(
-                    client_rank=i,
-                    cluster_info=cluster_info,
-                    node_type=None,
-                    exception_dict=exception_dict,
-                )
-                client_process = ctx.Process(
-                    target=_client_multiple_loaders_process,
-                    args=[client_train_args],
-                    name=f"client_multiple_loaders_{i}",
-                )
-                client_process.start()
-                launched_processes.append(client_process)
-
-        splitter = DistNodeAnchorLinkSplitter(
-            sampling_direction="in",
-            should_convert_labels_to_edges=True,
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
+            compute_target=_run_compute_multiple_loaders_test,
+            server_splitter=DistNodeAnchorLinkSplitter(
+                sampling_direction="in",
+                should_convert_labels_to_edges=True,
+            ),
         )
-        for i in range(cluster_info.num_storage_nodes):
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "MASTER_ADDR": host_ip,
-                    "MASTER_PORT": str(master_port),
-                    "RANK": str(i + cluster_info.num_compute_nodes),
-                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
-                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
-                        cluster_info.num_processes_per_compute
-                    ),
-                },
-                clear=False,
-            ):
-                server_args = ServerProcessArgs(
-                    cluster_info=cluster_info,
-                    task_config_uri=task_config_uri,
-                    sample_edge_direction="in",
-                    exception_dict=exception_dict,
-                    splitter=splitter,
-                )
-                server_process = ctx.Process(
-                    target=_run_storage_main_process,
-                    args=[server_args],
-                    name=f"server_{i}",
-                )
-                server_process.start()
-                launched_processes.append(server_process)
-
-        self.assert_all_processes_succeed(launched_processes, exception_dict)
 
     # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
     @unittest.skip("Failing on Google Cloud Build - skiping for now")
@@ -1153,13 +1004,9 @@ class GraphStoreIntegrationTest(TestCase):
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
             DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
-        task_config_uri = dblp_supervised_info.frozen_gbml_config_uri
-        master_port = get_free_port()
-        host_ip = socket.gethostbyname(socket.gethostname())
         cluster_info = self._create_cluster_info(
             num_storage_nodes=2, num_compute_nodes=2, num_processes_per_compute=2
         )
-
         num_dblp_nodes = 4057
         expected_sampler_input = _get_expected_input_nodes_by_rank(
             num_dblp_nodes, cluster_info
@@ -1169,66 +1016,10 @@ class GraphStoreIntegrationTest(TestCase):
             EdgeType(NodeType("paper"), Relation("to"), NodeType("author")),
             EdgeType(NodeType("term"), Relation("to"), NodeType("paper")),
         ]
-        ctx = mp.get_context("spawn")
-        manager = mp.Manager()
-        exception_dict = manager.dict()
-        launched_processes: list[py_mp_context.SpawnProcess] = []
-        for i in range(cluster_info.num_compute_nodes):
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "MASTER_ADDR": host_ip,
-                    "MASTER_PORT": str(master_port),
-                    "RANK": str(i),
-                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
-                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
-                        cluster_info.num_processes_per_compute
-                    ),
-                },
-                clear=False,
-            ):
-                client_args = ClientProcessArgs(
-                    client_rank=i,
-                    cluster_info=cluster_info,
-                    node_type=NodeType("author"),
-                    expected_sampler_input=expected_sampler_input,
-                    expected_edge_types=expected_edge_types,
-                    exception_dict=exception_dict,
-                )
-                client_process = ctx.Process(
-                    target=_client_process,
-                    args=[client_args],
-                    name=f"client_{i}",
-                )
-                client_process.start()
-                launched_processes.append(client_process)
-        # Start server process
-        for i in range(cluster_info.num_storage_nodes):
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "MASTER_ADDR": host_ip,
-                    "MASTER_PORT": str(master_port),
-                    "RANK": str(i + cluster_info.num_compute_nodes),
-                    "WORLD_SIZE": str(cluster_info.num_cluster_nodes),
-                    COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(
-                        cluster_info.num_processes_per_compute
-                    ),
-                },
-                clear=False,
-            ):
-                server_args = ServerProcessArgs(
-                    cluster_info=cluster_info,
-                    task_config_uri=task_config_uri,
-                    sample_edge_direction="in",
-                    exception_dict=exception_dict,
-                )
-                server_process = ctx.Process(
-                    target=_run_storage_main_process,
-                    args=[server_args],
-                    name=f"server_{i}",
-                )
-                server_process.start()
-                launched_processes.append(server_process)
-
-        self.assert_all_processes_succeed(launched_processes, exception_dict)
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=dblp_supervised_info.frozen_gbml_config_uri,
+            compute_target=_run_compute_tests,
+            node_type=NodeType("author"),
+            compute_target_extra_args=(expected_sampler_input, expected_edge_types),
+        )
