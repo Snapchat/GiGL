@@ -358,33 +358,14 @@ class DistABLPLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            channel = BaseDistLoader.create_colocated_channel(worker_options)
-            # Compute degree tensors here, before the producer is constructed and
-            # before the staggered sleep in _init_colocated_connections.  The
-            # all_reduce requires all ranks to participate simultaneously; deferring
-            # it to after the sleep would negate the stagger on worker spawning.
-            if isinstance(sampler_options, PPRSamplerOptions):
-                degree_tensors = dataset.degree_tensor
-                if isinstance(degree_tensors, dict):
-                    logger.info(
-                        f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} edge types."
-                    )
-                else:
-                    logger.info(
-                        f"Pre-computed degree tensor for PPR sampling with {degree_tensors.size(0)} nodes."
-                    )
-            else:
-                degree_tensors = None
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
-            ] = DistSamplingProducer(
-                data=dataset,
+            ] = BaseDistLoader.create_mp_producer(
+                dataset=dataset,
                 sampler_input=sampler_input,
                 sampling_config=sampling_config,
                 worker_options=worker_options,
-                channel=channel,
                 sampler_options=sampler_options,
-                degree_tensors=degree_tensors,
             )
         else:
             producer = DistServer.create_sampling_producer
