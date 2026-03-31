@@ -103,7 +103,7 @@ class DistPPRNeighborSampler(DistNeighborSampler):
         max_ppr_nodes: int = 50,
         num_neighbors_per_hop: int = 100_000,
         total_degree_dtype: torch.dtype = torch.int32,
-        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -144,45 +144,69 @@ class DistPPRNeighborSampler(DistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        # The dataset pre-aggregates degrees per node type as int16.
-        # _build_total_degree_tensors reindexes by node type with no further casting.
+        # Precompute total degree per node type: the sum of degrees across all
+        # edge types traversable from that node type.  This is a graph-level
+        # property used on every PPR iteration, so computing it once at init
+        # avoids per-node summation and cache lookups in the hot loop.
+        # TODO (mkolodner-sc): This trades memory for throughput — we
+        # materialize a tensor per node type to avoid recomputing total degree
+        # on every neighbor during sampling.  Computing it here (rather than in
+        # the dataset) also keeps the door open for edge-specific degree
+        # strategies.  If memory becomes a bottleneck, revisit this.
         self._node_type_to_total_degree: dict[
             NodeType, torch.Tensor
-        ] = self._build_total_degree_tensors(degree_tensors)
+        ] = self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
 
     def _build_total_degree_tensors(
         self,
-        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        dtype: torch.dtype,
     ) -> dict[NodeType, torch.Tensor]:
-        """Reindex pre-aggregated per-node-type degree tensors for use in the PPR loop.
+        """Build total-degree tensors by summing per-edge-type degrees for each node type.
 
-        The dataset provides degrees already summed across edge types per node type
-        (as ``int16``).  This method maps those tensors into the internal node-type
-        keying used by the sampler, with no further summation or dtype casting.
+        For homogeneous graphs, the total degree is just the single degree tensor.
+        For heterogeneous graphs, it sums degree tensors across all edge types
+        traversable from each node type, padding shorter tensors with zeros.
 
         Args:
-            degree_tensors: Per-node-type degree tensors from the dataset, already
-                aggregated across edge types.
+            degree_tensors: Per-edge-type degree tensors from the dataset.
+            dtype: Dtype for the output tensors.
 
         Returns:
-            Dict mapping node type to a 1-D degree tensor.
-
-        Raises:
-            ValueError: If a required node type is absent from ``degree_tensors``.
+            Dict mapping node type to a 1-D tensor of total degrees.
         """
+        result: dict[NodeType, torch.Tensor] = {}
+
         if self._is_homogeneous:
             assert isinstance(degree_tensors, torch.Tensor)
-            return {_PPR_HOMOGENEOUS_NODE_TYPE: degree_tensors}
+            # Single edge type: degree values fit directly in the target dtype.
+            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(dtype)
+        else:
+            assert isinstance(degree_tensors, dict)
+            dtype_max = torch.iinfo(dtype).max
+            for node_type, edge_types in self._node_type_to_edge_types.items():
+                max_len = 0
+                for et in edge_types:
+                    if et not in degree_tensors:
+                        raise ValueError(
+                            f"Edge type {et} not found in degree tensors. "
+                            f"Available: {list(degree_tensors.keys())}"
+                        )
+                    max_len = max(max_len, len(degree_tensors[et]))
 
-        assert isinstance(degree_tensors, dict)
-        result: dict[NodeType, torch.Tensor] = {}
-        for node_type in self._node_type_to_edge_types:
-            if node_type not in degree_tensors:
-                raise ValueError(
-                    f"Node type '{node_type}' not found in degree tensors. "
-                    f"Available: {list(degree_tensors.keys())}"
-                )
-            result[node_type] = degree_tensors[node_type]
+                # Each degree tensor is indexed by node ID (derived from CSR
+                # indptr), so index i in every edge type's tensor refers to
+                # the same node.  Element-wise summation gives the total degree
+                # per node across all edge types.  Shorter tensors are padded
+                # implicitly (only the first len(et_degrees) entries are added).
+                # Sum in int64: aggregate degrees are bounded by partition size
+                # and fit comfortably within int64 range in practice.
+                summed = torch.zeros(max_len, dtype=torch.int64)
+                for et in edge_types:
+                    et_degrees = degree_tensors[et]
+                    summed[: len(et_degrees)] += et_degrees.to(torch.int64)
+                result[node_type] = summed.clamp(max=dtype_max).to(dtype)
+
         return result
 
     def _get_total_degree(self, node_id: int, node_type: NodeType) -> int:

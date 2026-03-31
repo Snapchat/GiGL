@@ -60,7 +60,7 @@ class TestDegreeComputation(TestCase):
 
         dataset = create_homogeneous_dataset(edge_index=edge_index)
         assert dataset.graph is not None
-        result = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir="out")
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
@@ -68,28 +68,20 @@ class TestDegreeComputation(TestCase):
         self.assert_tensor_equality(result, expected)
 
     def test_heterogeneous_graph(self):
-        """Test degree computation for a heterogeneous graph.
-
-        Result is keyed by anchor node type (source for edge_dir="out"), not edge type.
-        Degrees are summed across all edge types sharing the same anchor node type.
-        """
+        """Test degree computation for a heterogeneous graph."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
 
         assert dataset.graph is not None
-        result = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir="out")
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
-        expected_node_types = {etype[0] for etype in edge_indices.keys()}
-        self.assertEqual(set(result.keys()), expected_node_types)
+        self.assertEqual(set(result.keys()), set(edge_indices.keys()))
 
-        # For the default test data each source node type maps to exactly one edge type,
-        # so per-node-type degrees equal per-edge-type degrees.
         for edge_type, edge_index in edge_indices.items():
-            src_node_type = edge_type[0]
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assert_tensor_equality(result[src_node_type], expected)
+            self.assert_tensor_equality(result[edge_type], expected)
 
     def test_heterogeneous_graph_with_missing_topology(self):
         """Test that edge types with missing topology get empty tensors.
@@ -121,18 +113,16 @@ class TestDegreeComputation(TestCase):
         # Manually set one graph's topology to None to test the edge case
         dataset.graph[edge_type_without_topo].topo = None
 
-        result = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir="out")
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
-        # Keys are source node types (anchor for edge_dir="out"), not edge types.
-        expected_node_types = {etype[0] for etype in edge_types}
-        self.assertEqual(set(result.keys()), expected_node_types)
+        self.assertEqual(set(result.keys()), set(edge_types))
 
-        # Edge type with topology: anchor node type should have computed degrees.
-        self.assert_tensor_equality(result[edge_type_with_topo[0]], expected_degrees)
+        # Edge type with topology should have computed degrees
+        self.assert_tensor_equality(result[edge_type_with_topo], expected_degrees)
 
-        # Edge type without topology: anchor node type should have empty tensor.
-        self.assertEqual(result[edge_type_without_topo[0]].numel(), 0)
+        # Edge type without topology should have empty tensor
+        self.assertEqual(result[edge_type_without_topo].numel(), 0)
 
 
 def _run_local_world_size_correction_homogeneous(
@@ -152,7 +142,7 @@ def _run_local_world_size_correction_homogeneous(
     try:
         dataset = create_homogeneous_dataset(edge_index=edge_index)
         assert dataset.graph is not None
-        result = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir="out")
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, torch.Tensor)
         assert_tensor_equality(result, expected_degrees)
@@ -167,10 +157,7 @@ def _run_local_world_size_correction_heterogeneous(
     edge_indices: dict,
     expected_degrees: dict,
 ) -> None:
-    """Worker function for multi-process local_world_size correction test (heterogeneous).
-
-    expected_degrees must be keyed by node type (anchor for edge_dir="out").
-    """
+    """Worker function for multi-process local_world_size correction test (heterogeneous)."""
     dist.init_process_group(
         backend="gloo",
         init_method=init_method,
@@ -180,12 +167,12 @@ def _run_local_world_size_correction_heterogeneous(
     try:
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
         assert dataset.graph is not None
-        result = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir="out")
+        result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
         assert set(result.keys()) == set(expected_degrees.keys())
-        for node_type, expected in expected_degrees.items():
-            assert_tensor_equality(result[node_type], expected)
+        for edge_type, expected in expected_degrees.items():
+            assert_tensor_equality(result[edge_type], expected)
     finally:
         dist.destroy_process_group()
 
@@ -217,16 +204,13 @@ class TestLocalWorldSizeCorrection(TestCase):
         """Test over-counting correction for heterogeneous graphs with 2 processes."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
 
-        # Build expected degrees keyed by source node type (anchor for edge_dir="out").
-        # For the default test data each source node type maps to exactly one edge type.
         expected_degrees = {}
         for edge_type, edge_index in edge_indices.items():
-            src_node_type = edge_type[0]
             num_nodes = int(edge_index[0].max().item() + 1)
             raw_degrees = _compute_expected_degrees_from_edge_index(
                 edge_index, num_nodes
             )
-            expected_degrees[src_node_type] = raw_degrees
+            expected_degrees[edge_type] = raw_degrees
 
         init_method = get_process_group_init_method()
         mp.spawn(
@@ -279,16 +263,12 @@ class TestDatasetDegreeProperty(TestCase):
         result = dataset.degree_tensor
 
         assert isinstance(result, dict)
-        # degree_tensor is keyed by node type (anchor for dataset's edge_dir="out"), not edge type.
-        expected_node_types = {etype[0] for etype in edge_indices.keys()}
-        self.assertEqual(set(result.keys()), expected_node_types)
+        self.assertEqual(set(result.keys()), set(edge_indices.keys()))
 
-        # For the default test data each source node type maps to exactly one edge type.
         for edge_type, edge_index in edge_indices.items():
-            src_node_type = edge_type[0]
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assert_tensor_equality(result[src_node_type], expected)
+            self.assert_tensor_equality(result[edge_type], expected)
 
 
 class TestHelperFunctions(TestCase):

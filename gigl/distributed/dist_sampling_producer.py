@@ -29,14 +29,13 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.typing import EdgeType, NodeType
+from graphlearn_torch.typing import EdgeType
 from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_dataset import DistDataset as GiglDistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.sampler_options import (
@@ -60,7 +59,7 @@ def _sampling_worker_loop(
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
 ):
     dist_sampler = None
     try:
@@ -212,50 +211,16 @@ class DistSamplingProducer(DistMpSamplingProducer):
         worker_options: MpDistSamplingWorkerOptions,
         channel: ChannelBase,
         sampler_options: SamplerOptions,
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
     ):
         super().__init__(data, sampler_input, sampling_config, worker_options, channel)
         self._sampler_options = sampler_options
-
-    def pre_init_collectives(self) -> None:
-        """Run distributed collectives that must complete before the staggered init sleep.
-
-        ``init()`` calls ``self.data.degree_tensor``, which triggers a
-        ``torch.distributed.all_reduce``.  Collectives require all ranks to
-        participate simultaneously.  If that collective runs inside ``init()``
-        (after the staggered sleep), every rank exits the collective at the same
-        instant and proceeds to worker spawning together, negating the stagger.
-
-        Call this before the staggered sleep so all ranks complete the collective
-        together, then the sleep staggering applies only to the expensive worker-
-        spawn step.  The result is cached on the dataset; ``init()`` reuses it
-        without re-running the collective.
-        """
-        if isinstance(self._sampler_options, PPRSamplerOptions):
-            assert isinstance(self.data, GiglDistDataset)
-            _ = self.data.degree_tensor
+        self._degree_tensors = degree_tensors
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
-        # Extract degree tensors before spawning workers.  Worker subprocesses
-        # only initialize RPC (not torch.distributed), so the lazy degree
-        # computation on GiglDistDataset would fail there.  Computing here —
-        # where torch.distributed IS initialized — lets the tensor be shared
-        # to workers via IPC.
-        degree_tensors: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-        ] = None
-        if isinstance(self._sampler_options, PPRSamplerOptions):
-            assert isinstance(self.data, GiglDistDataset)
-            degree_tensors = self.data.degree_tensor
-            if isinstance(degree_tensors, dict):
-                logger.info(
-                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} node types."
-                )
-            else:
-                logger.info(
-                    f"Pre-computed degree tensor for PPR sampling with {degree_tensors.size(0)} nodes."
-                )
-
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
@@ -284,7 +249,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self.sampling_completed_worker_count,
                     barrier,
                     self._sampler_options,
-                    degree_tensors,
+                    self._degree_tensors,
                 ),
             )
             w.daemon = True

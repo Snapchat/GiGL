@@ -78,7 +78,7 @@ class DistDataset(glt.distributed.DistDataset):
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
         degree_tensor: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
     ) -> None:
         """
@@ -104,7 +104,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
-            degree_tensor: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
+            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -141,7 +141,7 @@ class DistDataset(glt.distributed.DistDataset):
         self._edge_feature_info = edge_feature_info
 
         self._degree_tensor: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = degree_tensor
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
@@ -300,7 +300,7 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def degree_tensor(
         self,
-    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
+    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
         Lazily compute and return the degree tensor for the graph.
 
@@ -308,19 +308,15 @@ class DistDataset(glt.distributed.DistDataset):
         all-reduce to aggregate across all machines. Requires torch.distributed
         to be initialized.
 
-        For heterogeneous graphs, degrees are summed across all edge types sharing
-        the same anchor node type (determined by ``self._edge_dir``), yielding one
-        ``int16`` tensor per node type rather than one per edge type.
-
         Over-counting correction (for processes sharing the same data on the same
         machine) is handled automatically by detecting the distributed topology.
 
         The result is cached for subsequent accesses.
 
         Returns:
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]: The aggregated degree tensor.
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
                 - For homogeneous graphs: A tensor of shape [num_nodes].
-                - For heterogeneous graphs: A dict mapping NodeType to ``int16`` degree tensors.
+                - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
 
         Raises:
             RuntimeError: If torch.distributed is not initialized.
@@ -330,9 +326,7 @@ class DistDataset(glt.distributed.DistDataset):
             if self.graph is None:
                 raise ValueError("Dataset graph is None. Cannot compute degrees.")
 
-            self._degree_tensor = compute_and_broadcast_degree_tensor(
-                self.graph, edge_dir=self._edge_dir
-            )
+            self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
         return self._degree_tensor
 
     @property
@@ -863,7 +857,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
-        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -885,7 +879,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
-            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
+            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
