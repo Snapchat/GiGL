@@ -97,6 +97,10 @@ class RemoteReceivingChannel(ChannelBase):
         ] = queue.Queue(maxsize=self._prefetch_size * len(self._server_rank_list))
         self._recv_count: int = 0
         self._log_every_n: int = 50
+        # For some reason calling `pin_memory()` with no CUDA available raises the below error:
+        # No CUDA GPUs are available
+        if not torch.cuda.is_available() and pin_memory:
+            raise ValueError("pin_memory is only supported when CUDA is available")
         self._pin_memory = pin_memory
 
     def reset(self) -> None:
