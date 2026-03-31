@@ -11,7 +11,10 @@ from absl.testing import absltest
 import gigl.distributed.graph_store.dist_server as dist_server_module
 from gigl.common import LocalUri
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.graph_store.remote_dist_dataset import (
+    RemoteDistDataset,
+    _plan_storage_rank_shards_for_compute_rank,
+)
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -122,6 +125,65 @@ def _patch_remote_requests(
         yield
 
 
+def _make_sync_request_server_side_effect(
+    servers_by_rank: dict[int, DistServer]
+) -> Callable[..., Any]:
+    """Route synchronous request_server calls to the server for the requested rank."""
+
+    def _side_effect(
+        server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        return func(servers_by_rank[server_rank], *args, **kwargs)
+
+    return _side_effect
+
+
+def _make_async_request_server_side_effect(
+    servers_by_rank: dict[int, DistServer]
+) -> Callable[..., torch.futures.Future]:
+    """Route async_request_server calls to the server for the requested rank."""
+
+    def _side_effect(
+        server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> torch.futures.Future:
+        future: torch.futures.Future = torch.futures.Future()
+        future.set_result(func(servers_by_rank[server_rank], *args, **kwargs))
+        return future
+
+    return _side_effect
+
+
+def _create_ablp_server_for_anchor_ids(
+    anchor_ids: list[int],
+    include_negative_labels: bool = True,
+) -> DistServer:
+    """Create a server whose train anchors are exactly ``anchor_ids``."""
+    if not dist.is_initialized():
+        create_test_process_group()
+
+    val_anchor_id = max(anchor_ids) + 100
+    test_anchor_id = max(anchor_ids) + 101
+    all_split_anchor_ids = anchor_ids + [val_anchor_id, test_anchor_id]
+    positive_labels = {
+        anchor_id: [anchor_id * 10, anchor_id * 10 + 1]
+        for anchor_id in all_split_anchor_ids
+    }
+    negative_labels = (
+        {anchor_id: [anchor_id * 10 + 2] for anchor_id in all_split_anchor_ids}
+        if include_negative_labels
+        else None
+    )
+    dataset = create_heterogeneous_dataset_for_ablp(
+        positive_labels=positive_labels,
+        negative_labels=negative_labels,
+        train_node_ids=anchor_ids,
+        val_node_ids=[val_anchor_id],
+        test_node_ids=[test_anchor_id],
+        edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+    )
+    return DistServer(dataset)
+
+
 def _create_server_with_splits(
     edge_indices: Optional[dict] = None,
     src_node_type: NodeType = USER,
@@ -163,6 +225,131 @@ class RemoteDistDatasetTestBase(TestCase):
         dist_server_module._dist_server = None
         if dist.is_initialized():
             dist.destroy_process_group()
+
+
+class TestPlanStorageRankShards(TestCase):
+    def _assert_assignment_invariants(
+        self,
+        compute_rank_to_storage_ranks: dict[int, list[int]],
+        storage_rank_to_compute_ranks: dict[int, list[int]],
+        num_assigned_storage_ranks: int,
+    ) -> None:
+        for storage_ranks in compute_rank_to_storage_ranks.values():
+            self.assertLen(storage_ranks, num_assigned_storage_ranks)
+            self.assertLen(storage_ranks, len(set(storage_ranks)))
+
+        assignment_counts = [
+            len(storage_rank_to_compute_ranks[storage_rank])
+            for storage_rank in sorted(storage_rank_to_compute_ranks)
+        ]
+        self.assertTrue(all(count > 0 for count in assignment_counts))
+        self.assertLessEqual(max(assignment_counts) - min(assignment_counts), 1)
+
+    def test_plan_storage_rank_shards_for_c4_s4_k2(self) -> None:
+        (
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+            storage_rank_to_local_shard,
+        ) = _plan_storage_rank_shards_for_compute_rank(
+            rank=3,
+            world_size=4,
+            num_storage_nodes=4,
+            num_assigned_storage_ranks=2,
+        )
+
+        self.assertEqual(
+            compute_rank_to_storage_ranks,
+            {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3, 0]},
+        )
+        self.assertEqual(
+            storage_rank_to_compute_ranks,
+            {0: [0, 3], 1: [0, 1], 2: [1, 2], 3: [2, 3]},
+        )
+        self.assertEqual(storage_rank_to_local_shard, {3: (1, 2), 0: (1, 2)})
+        self._assert_assignment_invariants(
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+            num_assigned_storage_ranks=2,
+        )
+
+    def test_plan_storage_rank_shards_for_c5_s3_k1(self) -> None:
+        (
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+            storage_rank_to_local_shard,
+        ) = _plan_storage_rank_shards_for_compute_rank(
+            rank=4,
+            world_size=5,
+            num_storage_nodes=3,
+            num_assigned_storage_ranks=1,
+        )
+
+        self.assertEqual(
+            compute_rank_to_storage_ranks,
+            {0: [0], 1: [0], 2: [1], 3: [1], 4: [2]},
+        )
+        self.assertEqual(
+            storage_rank_to_compute_ranks,
+            {0: [0, 1], 1: [2, 3], 2: [4]},
+        )
+        self.assertEqual(storage_rank_to_local_shard, {2: (0, 1)})
+        self._assert_assignment_invariants(
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+            num_assigned_storage_ranks=1,
+        )
+
+    def test_plan_storage_rank_shards_for_c3_s5_k2(self) -> None:
+        (
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+            storage_rank_to_local_shard,
+        ) = _plan_storage_rank_shards_for_compute_rank(
+            rank=1,
+            world_size=3,
+            num_storage_nodes=5,
+            num_assigned_storage_ranks=2,
+        )
+
+        self.assertEqual(
+            compute_rank_to_storage_ranks,
+            {0: [0, 1], 1: [1, 2], 2: [3, 4]},
+        )
+        self.assertEqual(
+            storage_rank_to_compute_ranks,
+            {0: [0], 1: [0, 1], 2: [1], 3: [2], 4: [2]},
+        )
+        self.assertEqual(storage_rank_to_local_shard, {1: (1, 2), 2: (0, 1)})
+        self._assert_assignment_invariants(
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+            num_assigned_storage_ranks=2,
+        )
+
+    def test_plan_storage_rank_shards_rejects_invalid_inputs(self) -> None:
+        with self.assertRaises(ValueError):
+            _plan_storage_rank_shards_for_compute_rank(
+                rank=0,
+                world_size=0,
+                num_storage_nodes=4,
+                num_assigned_storage_ranks=1,
+            )
+
+        with self.assertRaises(ValueError):
+            _plan_storage_rank_shards_for_compute_rank(
+                rank=0,
+                world_size=4,
+                num_storage_nodes=4,
+                num_assigned_storage_ranks=0,
+            )
+
+        with self.assertRaises(ValueError):
+            _plan_storage_rank_shards_for_compute_rank(
+                rank=0,
+                world_size=2,
+                num_storage_nodes=5,
+                num_assigned_storage_ranks=2,
+            )
 
 
 @patch(
@@ -554,6 +741,139 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
             neg_labels_1,
             torch.tensor([[3], [4]]),
         )
+
+
+class TestRemoteDistDatasetAssignedStorageRanks(RemoteDistDatasetTestBase):
+    def _create_servers_by_rank(self) -> dict[int, DistServer]:
+        return {
+            0: _create_ablp_server_for_anchor_ids([0, 1, 2, 3]),
+            1: _create_ablp_server_for_anchor_ids([4, 5, 6, 7]),
+            2: _create_ablp_server_for_anchor_ids([8, 9, 10, 11]),
+            3: _create_ablp_server_for_anchor_ids([12, 13, 14, 15]),
+        }
+
+    def test_fetch_node_ids_with_num_assigned_storage_ranks(self) -> None:
+        servers_by_rank = self._create_servers_by_rank()
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=4)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with _patch_remote_requests(
+            _make_async_request_server_side_effect(servers_by_rank),
+            _make_sync_request_server_side_effect(servers_by_rank),
+        ):
+            rank_zero_result = remote_dataset.fetch_node_ids(
+                rank=0,
+                world_size=4,
+                split="train",
+                node_type=USER,
+                num_assigned_storage_ranks=2,
+            )
+
+            self.assertEqual(list(rank_zero_result.keys()), [0, 1])
+            self.assert_tensor_equality(rank_zero_result[0], torch.tensor([0, 1]))
+            self.assert_tensor_equality(rank_zero_result[1], torch.tensor([4, 5]))
+
+            all_rank_results = [
+                remote_dataset.fetch_node_ids(
+                    rank=rank,
+                    world_size=4,
+                    split="train",
+                    node_type=USER,
+                    num_assigned_storage_ranks=2,
+                )
+                for rank in range(4)
+            ]
+
+        all_anchor_nodes = torch.cat(
+            [
+                node_ids
+                for rank_result in all_rank_results
+                for _, node_ids in sorted(rank_result.items())
+            ]
+        )
+        all_anchor_nodes, _ = torch.sort(all_anchor_nodes)
+        self.assert_tensor_equality(all_anchor_nodes, torch.arange(16))
+
+    def test_fetch_ablp_input_with_num_assigned_storage_ranks(self) -> None:
+        servers_by_rank = self._create_servers_by_rank()
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=4)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with _patch_remote_requests(
+            _make_async_request_server_side_effect(servers_by_rank),
+            _make_sync_request_server_side_effect(servers_by_rank),
+        ):
+            rank_zero_result = remote_dataset.fetch_ablp_input(
+                split="train",
+                rank=0,
+                world_size=4,
+                anchor_node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+                num_assigned_storage_ranks=2,
+            )
+
+            self.assertEqual(list(rank_zero_result.keys()), [0, 1])
+            self.assert_tensor_equality(
+                rank_zero_result[0].anchor_nodes, torch.tensor([0, 1])
+            )
+            self.assert_tensor_equality(
+                rank_zero_result[1].anchor_nodes, torch.tensor([4, 5])
+            )
+
+            positive_labels_0, negative_labels_0 = rank_zero_result[0].labels[
+                USER_TO_STORY
+            ]
+            self.assert_tensor_equality(
+                positive_labels_0,
+                torch.tensor([[0, 1], [10, 11]]),
+            )
+            assert negative_labels_0 is not None
+            self.assert_tensor_equality(negative_labels_0, torch.tensor([[2], [12]]))
+
+            positive_labels_1, negative_labels_1 = rank_zero_result[1].labels[
+                USER_TO_STORY
+            ]
+            self.assert_tensor_equality(
+                positive_labels_1,
+                torch.tensor([[40, 41], [50, 51]]),
+            )
+            assert negative_labels_1 is not None
+            self.assert_tensor_equality(negative_labels_1, torch.tensor([[42], [52]]))
+
+            all_rank_results = [
+                remote_dataset.fetch_ablp_input(
+                    split="train",
+                    rank=rank,
+                    world_size=4,
+                    anchor_node_type=USER,
+                    supervision_edge_type=USER_TO_STORY,
+                    num_assigned_storage_ranks=2,
+                )
+                for rank in range(4)
+            ]
+
+        all_anchor_nodes = torch.cat(
+            [
+                ablp_input.anchor_nodes
+                for rank_result in all_rank_results
+                for _, ablp_input in sorted(rank_result.items())
+            ]
+        )
+        all_anchor_nodes, _ = torch.sort(all_anchor_nodes)
+        self.assert_tensor_equality(all_anchor_nodes, torch.arange(16))
+
+    def test_fetch_node_ids_requires_rank_and_world_size_for_num_assigned_storage_ranks(
+        self,
+    ) -> None:
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=4)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_node_ids(
+                split="train",
+                node_type=USER,
+                num_assigned_storage_ranks=1,
+            )
 
 
 class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):

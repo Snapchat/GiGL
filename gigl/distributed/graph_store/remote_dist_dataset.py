@@ -23,6 +23,67 @@ from gigl.utils.sampling import ABLPInputNodes
 logger = Logger()
 
 
+def _plan_storage_rank_shards_for_compute_rank(
+    rank: int,
+    world_size: int,
+    num_storage_nodes: int,
+    num_assigned_storage_ranks: int,
+) -> tuple[dict[int, list[int]], dict[int, list[int]], dict[int, tuple[int, int]]]:
+    """Plan storage-rank assignments and local shard ownership for one compute rank."""
+    if world_size <= 0:
+        raise ValueError(f"world_size must be > 0, received {world_size}")
+    if num_storage_nodes <= 0:
+        raise ValueError(f"num_storage_nodes must be > 0, received {num_storage_nodes}")
+    if rank < 0 or rank >= world_size:
+        raise ValueError(
+            f"rank must be in [0, world_size), received rank={rank}, world_size={world_size}"
+        )
+    if (
+        num_assigned_storage_ranks <= 0
+        or num_assigned_storage_ranks > num_storage_nodes
+    ):
+        raise ValueError(
+            "num_assigned_storage_ranks must be in [1, num_storage_nodes], "
+            f"received num_assigned_storage_ranks={num_assigned_storage_ranks}, num_storage_nodes={num_storage_nodes}"
+        )
+    if world_size * num_assigned_storage_ranks < num_storage_nodes:
+        raise ValueError(
+            "world_size * num_assigned_storage_ranks must be >= num_storage_nodes "
+            "to guarantee exact coverage. "
+            f"Received world_size={world_size}, num_assigned_storage_ranks={num_assigned_storage_ranks}, "
+            f"num_storage_nodes={num_storage_nodes}"
+        )
+
+    compute_rank_to_storage_ranks: dict[int, list[int]] = {}
+    for compute_rank in range(world_size):
+        start_storage_rank = (compute_rank * num_storage_nodes) // world_size
+        compute_rank_to_storage_ranks[compute_rank] = [
+            (start_storage_rank + offset) % num_storage_nodes
+            for offset in range(num_assigned_storage_ranks)
+        ]
+
+    storage_rank_to_compute_ranks: dict[int, list[int]] = {
+        storage_rank: [] for storage_rank in range(num_storage_nodes)
+    }
+    for compute_rank, storage_ranks in compute_rank_to_storage_ranks.items():
+        for storage_rank in storage_ranks:
+            storage_rank_to_compute_ranks[storage_rank].append(compute_rank)
+
+    storage_rank_to_local_shard: dict[int, tuple[int, int]] = {}
+    for storage_rank in compute_rank_to_storage_ranks[rank]:
+        assigned_compute_ranks = storage_rank_to_compute_ranks[storage_rank]
+        storage_rank_to_local_shard[storage_rank] = (
+            assigned_compute_ranks.index(rank),
+            len(assigned_compute_ranks),
+        )
+
+    return (
+        compute_rank_to_storage_ranks,
+        storage_rank_to_compute_ranks,
+        storage_rank_to_local_shard,
+    )
+
+
 class RemoteDistDataset:
     def __init__(
         self,
@@ -169,30 +230,77 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         node_type: Optional[NodeType] = None,
         split: Optional[Literal["train", "val", "test"]] = None,
+        num_assigned_storage_ranks: Optional[int] = None,
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
-        futures: list[torch.futures.Future[torch.Tensor]] = []
+        requested_storage_ranks: list[int]
+        requests: list[FetchNodesRequest] = []
+
+        if num_assigned_storage_ranks is not None:
+            if rank is None or world_size is None:
+                raise ValueError(
+                    "num_assigned_storage_ranks requires rank and world_size. "
+                    f"Received rank={rank}, world_size={world_size}, "
+                    f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
+                )
+            (
+                compute_rank_to_storage_ranks,
+                _,
+                storage_rank_to_local_shard,
+            ) = _plan_storage_rank_shards_for_compute_rank(
+                rank=rank,
+                world_size=world_size,
+                num_storage_nodes=self.cluster_info.num_storage_nodes,
+                num_assigned_storage_ranks=num_assigned_storage_ranks,
+            )
+            requested_storage_ranks = compute_rank_to_storage_ranks[rank]
+        else:
+            requested_storage_ranks = list(range(self.cluster_info.num_storage_nodes))
+
         node_type = self._infer_node_type_if_homogeneous_with_label_edges(node_type)
 
         logger.info(
-            f"Getting node ids for rank {rank} / {world_size} with node type {node_type} and split {split}"
+            f"Getting node ids for rank {rank} / {world_size} with node type {node_type}, "
+            f"split {split}, and num_assigned_storage_ranks {num_assigned_storage_ranks}"
         )
 
-        for server_rank in range(self.cluster_info.num_storage_nodes):
+        if num_assigned_storage_ranks is None:
+            for storage_rank in requested_storage_ranks:
+                request = FetchNodesRequest(
+                    rank=rank,
+                    world_size=world_size,
+                    split=split,
+                    node_type=node_type,
+                )
+                request.validate()
+                requests.append(request)
+        else:
+            for storage_rank in requested_storage_ranks:
+                shard_index, num_shards = storage_rank_to_local_shard[storage_rank]
+                request = FetchNodesRequest(
+                    split=split,
+                    node_type=node_type,
+                    shard_index=shard_index,
+                    num_shards=num_shards,
+                )
+                request.validate()
+                requests.append(request)
+
+        futures: list[torch.futures.Future[torch.Tensor]] = []
+        for storage_rank, request in zip(requested_storage_ranks, requests):
             futures.append(
                 async_request_server(
-                    server_rank,
+                    storage_rank,
                     DistServer.get_node_ids,
-                    FetchNodesRequest(
-                        rank=rank,
-                        world_size=world_size,
-                        split=split,
-                        node_type=node_type,
-                    ),
+                    request,
                 )
             )
-            node_ids = torch.futures.wait_all(futures)
-        return {server_rank: node_ids for server_rank, node_ids in enumerate(node_ids)}
+
+        node_ids = torch.futures.wait_all(futures)
+        return {
+            storage_rank: node_id
+            for storage_rank, node_id in zip(requested_storage_ranks, node_ids)
+        }
 
     def fetch_node_ids(
         self,
@@ -200,6 +308,7 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         split: Optional[Literal["train", "val", "test"]] = None,
         node_type: Optional[NodeType] = None,
+        num_assigned_storage_ranks: Optional[int] = None,
     ) -> dict[int, torch.Tensor]:
         """
         Fetches node ids from the storage nodes for the current compute node (machine).
@@ -215,9 +324,14 @@ class RemoteDistDataset:
                 If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
             node_type (Optional[NodeType]): The type of nodes to get.
                 Must be provided for heterogeneous datasets.
+            num_assigned_storage_ranks (Optional[int]): If provided, limit this compute rank
+                to exactly this many storage ranks while preserving exact global coverage.
+                Requires ``rank`` and ``world_size``.
 
         Returns:
-            dict[int, torch.Tensor]: A dict mapping storage rank to node ids.
+            dict[int, torch.Tensor]: A dict mapping storage rank to node ids. When
+                ``num_assigned_storage_ranks`` is set, only the assigned storage
+                ranks are returned.
 
         Examples:
             Suppose we have 2 storage nodes and 2 compute nodes, with 16 total nodes.
@@ -260,12 +374,25 @@ class RemoteDistDataset:
                 1: tensor([8, 9])   # First 2 of 4 training nodes from storage rank 1
             }
 
+            Limit a compute rank to only 1 assigned storage rank:
+
+            >>> dataset.fetch_node_ids(rank=0, world_size=4, num_assigned_storage_ranks=1)
+            {
+                0: tensor([...])  # Only storage rank 0 is queried for compute rank 0
+            }
+
         Note:
             When `split=None`, all nodes are queryable. This means nodes from any split
             (train, val, or test) may be returned. This is useful when you need to sample
             neighbors during inference, as neighbor nodes may belong to any split.
         """
-        return self._fetch_node_ids(rank, world_size, node_type, split)
+        return self._fetch_node_ids(
+            rank=rank,
+            world_size=world_size,
+            node_type=node_type,
+            split=split,
+            num_assigned_storage_ranks=num_assigned_storage_ranks,
+        )
 
     def fetch_free_ports_on_storage_cluster(self, num_ports: int) -> list[int]:
         """
@@ -312,36 +439,81 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
         supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        num_assigned_storage_ranks: Optional[int] = None,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
+        requested_storage_ranks: list[int]
+        requests: list[FetchABLPInputRequest] = []
+
+        if num_assigned_storage_ranks is not None:
+            if rank is None or world_size is None:
+                raise ValueError(
+                    "num_assigned_storage_ranks requires rank and world_size. "
+                    f"Received rank={rank}, world_size={world_size}, "
+                    f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
+                )
+            (
+                compute_rank_to_storage_ranks,
+                _,
+                storage_rank_to_local_shard,
+            ) = _plan_storage_rank_shards_for_compute_rank(
+                rank=rank,
+                world_size=world_size,
+                num_storage_nodes=self.cluster_info.num_storage_nodes,
+                num_assigned_storage_ranks=num_assigned_storage_ranks,
+            )
+            requested_storage_ranks = compute_rank_to_storage_ranks[rank]
+        else:
+            requested_storage_ranks = list(range(self.cluster_info.num_storage_nodes))
+
+        logger.info(
+            f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
+            f"split {split}, supervision edge type {supervision_edge_type}, "
+            f"and num_assigned_storage_ranks {num_assigned_storage_ranks}"
+        )
+
+        if num_assigned_storage_ranks is None:
+            for storage_rank in requested_storage_ranks:
+                request = FetchABLPInputRequest(
+                    split=split,
+                    rank=rank,
+                    world_size=world_size,
+                    node_type=node_type,
+                    supervision_edge_type=supervision_edge_type,
+                )
+                request.validate()
+                requests.append(request)
+        else:
+            for storage_rank in requested_storage_ranks:
+                shard_index, num_shards = storage_rank_to_local_shard[storage_rank]
+                request = FetchABLPInputRequest(
+                    split=split,
+                    node_type=node_type,
+                    supervision_edge_type=supervision_edge_type,
+                    shard_index=shard_index,
+                    num_shards=num_shards,
+                )
+                request.validate()
+                requests.append(request)
+
         futures: list[
             torch.futures.Future[
                 tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
             ]
         ] = []
-        logger.info(
-            f"Getting ABLP input for rank {rank} / {world_size} with node type {node_type}, "
-            f"split {split}, and supervision edge type {supervision_edge_type}"
-        )
-
-        for server_rank in range(self.cluster_info.num_storage_nodes):
+        for storage_rank, request in zip(requested_storage_ranks, requests):
             futures.append(
                 async_request_server(
-                    server_rank,
+                    storage_rank,
                     DistServer.get_ablp_input,
-                    FetchABLPInputRequest(
-                        split=split,
-                        rank=rank,
-                        world_size=world_size,
-                        node_type=node_type,
-                        supervision_edge_type=supervision_edge_type,
-                    ),
+                    request,
                 )
             )
-            ablp_inputs = torch.futures.wait_all(futures)
+
+        ablp_inputs = torch.futures.wait_all(futures)
         return {
-            server_rank: ablp_input
-            for server_rank, ablp_input in enumerate(ablp_inputs)
+            storage_rank: ablp_input
+            for storage_rank, ablp_input in zip(requested_storage_ranks, ablp_inputs)
         }
 
     # TODO(#488) - support multiple supervision edge types
@@ -352,6 +524,7 @@ class RemoteDistDataset:
         world_size: Optional[int] = None,
         anchor_node_type: Optional[NodeType] = None,
         supervision_edge_type: Optional[EdgeType] = None,
+        num_assigned_storage_ranks: Optional[int] = None,
     ) -> dict[int, ABLPInputNodes]:
         """
         Fetches ABLP (Anchor Based Link Prediction) input from the storage nodes.
@@ -379,6 +552,9 @@ class RemoteDistDataset:
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
                 Defaults to None.
+            num_assigned_storage_ranks (Optional[int]): If provided, limit this compute
+                rank to exactly this many storage ranks while preserving exact global
+                coverage. Requires ``rank`` and ``world_size``.
 
         Returns:
             dict[int, ABLPInputNodes]:
@@ -387,6 +563,8 @@ class RemoteDistDataset:
                 - anchor_nodes: 1D tensor of anchor node IDs for the split.
                 - positive_labels: Dict mapping positive label EdgeType to a 2D tensor [N, M].
                 - negative_labels: Optional dict mapping negative label EdgeType to a 2D tensor [N, M].
+                When ``num_assigned_storage_ranks`` is set, only the assigned storage
+                ranks are returned.
 
         Examples:
             Suppose we have 1 storage node with users [0, 1, 2, 3, 4] where:
@@ -430,6 +608,7 @@ class RemoteDistDataset:
             world_size=world_size,
             node_type=evaluated_anchor_node_type,
             supervision_edge_type=evaluated_supervision_edge_type,
+            num_assigned_storage_ranks=num_assigned_storage_ranks,
         )
         return {
             server_rank: ABLPInputNodes(

@@ -2,6 +2,7 @@ import torch
 from absl.testing import absltest
 
 from gigl.distributed.graph_store import dist_server
+from gigl.distributed.graph_store.dist_server import _slice_nodes_for_shard
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
@@ -164,6 +165,47 @@ class TestRemoteDataset(TestCase):
         with self.assertRaises(ValueError):
             server.get_node_ids(FetchNodesRequest(rank=None, world_size=1))
 
+    def test_get_node_ids_local_sharding(self) -> None:
+        """Test get_node_ids supports explicit local shard requests."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+
+        shard_0_nodes = server.get_node_ids(
+            FetchNodesRequest(shard_index=0, num_shards=3)
+        )
+        shard_1_nodes = server.get_node_ids(
+            FetchNodesRequest(shard_index=1, num_shards=3)
+        )
+        shard_2_nodes = server.get_node_ids(
+            FetchNodesRequest(shard_index=2, num_shards=3)
+        )
+
+        self.assert_tensor_equality(shard_0_nodes, torch.arange(4))
+        self.assert_tensor_equality(shard_1_nodes, torch.arange(4, 7))
+        self.assert_tensor_equality(shard_2_nodes, torch.arange(7, 10))
+
+    def test_get_node_ids_rejects_mixed_or_partial_sharding_modes(self) -> None:
+        """Test get_node_ids rejects invalid sharding mode combinations."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+
+        with self.assertRaises(ValueError):
+            server.get_node_ids(FetchNodesRequest(shard_index=0, num_shards=None))
+
+        with self.assertRaises(ValueError):
+            server.get_node_ids(
+                FetchNodesRequest(
+                    rank=0,
+                    world_size=2,
+                    shard_index=0,
+                    num_shards=2,
+                )
+            )
+
     def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
         """Test get_node_ids with a homogeneous dataset and a node type raises error."""
         dataset = create_homogeneous_dataset(
@@ -263,6 +305,15 @@ class TestRemoteDataset(TestCase):
 
         self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
         self.assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
+
+    def test_slice_nodes_for_shard_returns_empty_for_high_shard_indices(self) -> None:
+        """Test local shard slicing matches tensor-split semantics for empty shards."""
+        nodes = torch.tensor([0, 1])
+
+        self.assert_tensor_equality(
+            _slice_nodes_for_shard(nodes, shard_index=2, num_shards=4),
+            torch.empty(0, dtype=torch.int64),
+        )
 
     def test_get_node_ids_invalid_split(self) -> None:
         """Test get_node_ids raises ValueError with invalid split."""
@@ -533,6 +584,36 @@ class TestRemoteDataset(TestCase):
 
         # Negative labels should be None
         self.assertIsNone(neg_labels)
+
+    def test_get_ablp_input_empty_local_shard_returns_empty_labels(self) -> None:
+        """Test get_ablp_input returns empty tensors for an empty assigned shard."""
+        create_test_process_group()
+        positive_labels = {0: [0, 1], 1: [1, 2], 10: [10, 11], 11: [11, 12]}
+        negative_labels = {0: [2], 1: [3], 10: [12], 11: [13]}
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=[0, 1],
+            val_node_ids=[10],
+            test_node_ids=[11],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+        server = dist_server.DistServer(dataset)
+
+        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+            FetchABLPInputRequest(
+                split="train",
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+                shard_index=3,
+                num_shards=4,
+            )
+        )
+
+        self.assert_tensor_equality(anchor_nodes, torch.empty(0, dtype=torch.int64))
+        self.assert_tensor_equality(pos_labels, torch.empty(0, 0, dtype=torch.int64))
+        assert neg_labels is not None
+        self.assert_tensor_equality(neg_labels, torch.empty(0, 0, dtype=torch.int64))
 
 
 if __name__ == "__main__":

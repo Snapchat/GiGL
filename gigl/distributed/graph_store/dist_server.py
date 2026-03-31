@@ -54,6 +54,27 @@ logger = Logger()
 R = TypeVar("R")
 
 
+def _slice_nodes_for_shard(
+    nodes: torch.Tensor, shard_index: int, num_shards: int
+) -> torch.Tensor:
+    """Return a contiguous local shard with ``torch.tensor_split`` semantics."""
+    if num_shards <= 0:
+        raise ValueError(f"num_shards must be > 0, received {num_shards}")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError(
+            "shard_index must be in [0, num_shards). "
+            f"Received shard_index={shard_index}, num_shards={num_shards}"
+        )
+
+    num_nodes = nodes.size(0)
+    base_shard_size = num_nodes // num_shards
+    remainder = num_nodes % num_shards
+    start = shard_index * base_shard_size + min(shard_index, remainder)
+    length = base_shard_size + (1 if shard_index < remainder else 0)
+    end = start + length
+    return nodes[start:end]
+
+
 class DistServer:
     r"""A server that supports launching remote sampling workers for
     training clients.
@@ -305,6 +326,8 @@ class DistServer:
             node_type=request.node_type,
             rank=request.rank,
             world_size=request.world_size,
+            shard_index=request.shard_index,
+            num_shards=request.num_shards,
         )
 
     def _get_node_ids(
@@ -313,6 +336,8 @@ class DistServer:
         node_type: Optional[NodeType],
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
+        shard_index: Optional[int] = None,
+        num_shards: Optional[int] = None,
     ) -> torch.Tensor:
         """Core implementation for fetching node IDs by split, type, and sharding.
 
@@ -325,19 +350,33 @@ class DistServer:
                 with ``world_size``.
             world_size: Total number of processes for sharding. Must be
                 provided together with ``rank``.
+            shard_index: Local shard index for storage-rank-local sharding.
+                Must be provided together with ``num_shards``.
+            num_shards: Total number of local shards for this storage rank.
+                Must be provided together with ``shard_index``.
 
         Returns:
             The node IDs tensor, optionally sharded by rank.
 
         Raises:
-            ValueError: If rank/world_size are not provided together, the
-                split is invalid, or the node type is inconsistent with
-                the dataset type (homogeneous vs. heterogeneous).
+            ValueError: If the sharding inputs are invalid, the split is
+                invalid, or the node type is inconsistent with the dataset
+                type (homogeneous vs. heterogeneous).
         """
         if (rank is None) ^ (world_size is None):
             raise ValueError(
                 "rank and world_size must be provided together. "
                 f"Received rank={rank}, world_size={world_size}"
+            )
+        if (shard_index is None) ^ (num_shards is None):
+            raise ValueError(
+                "shard_index and num_shards must be provided together. "
+                f"Received shard_index={shard_index}, num_shards={num_shards}"
+            )
+        if rank is not None and shard_index is not None:
+            raise ValueError(
+                "rank/world_size and shard_index/num_shards are mutually exclusive. "
+                f"Received rank={rank}, world_size={world_size}, shard_index={shard_index}, num_shards={num_shards}"
             )
 
         if split == "train":
@@ -367,6 +406,8 @@ class DistServer:
 
         if rank is not None and world_size is not None:
             return shard_nodes_by_process(nodes, rank, world_size)
+        if shard_index is not None and num_shards is not None:
+            return _slice_nodes_for_shard(nodes, shard_index, num_shards)
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -419,10 +460,20 @@ class DistServer:
             node_type=request.node_type,
             rank=request.rank,
             world_size=request.world_size,
+            shard_index=request.shard_index,
+            num_shards=request.num_shards,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
         )
+        if anchors.numel() == 0:
+            empty_positive_labels = torch.empty(0, 0, dtype=torch.int64)
+            empty_negative_labels = (
+                torch.empty(0, 0, dtype=torch.int64)
+                if negative_label_edge_type is not None
+                else None
+            )
+            return anchors, empty_positive_labels, empty_negative_labels
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             self.dataset, anchors, positive_label_edge_type, negative_label_edge_type
         )
