@@ -216,6 +216,24 @@ class DistSamplingProducer(DistMpSamplingProducer):
         super().__init__(data, sampler_input, sampling_config, worker_options, channel)
         self._sampler_options = sampler_options
 
+    def pre_init_collectives(self) -> None:
+        """Run distributed collectives that must complete before the staggered init sleep.
+
+        ``init()`` calls ``self.data.degree_tensor``, which triggers a
+        ``torch.distributed.all_reduce``.  Collectives require all ranks to
+        participate simultaneously.  If that collective runs inside ``init()``
+        (after the staggered sleep), every rank exits the collective at the same
+        instant and proceeds to worker spawning together, negating the stagger.
+
+        Call this before the staggered sleep so all ranks complete the collective
+        together, then the sleep staggering applies only to the expensive worker-
+        spawn step.  The result is cached on the dataset; ``init()`` reuses it
+        without re-running the collective.
+        """
+        if isinstance(self._sampler_options, PPRSamplerOptions):
+            assert isinstance(self.data, GiglDistDataset)
+            _ = self.data.degree_tensor
+
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
         # Extract degree tensors before spawning workers.  Worker subprocesses

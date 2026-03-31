@@ -566,6 +566,13 @@ class BaseDistLoader(DistLoader):
         self._channel = producer.output_channel
         self._mp_producer = producer
 
+        # Run distributed collectives (e.g. degree tensor all_reduce for PPR)
+        # BEFORE the staggered sleep.  Collectives require all ranks to
+        # participate simultaneously; sleeping first would cause all ranks to
+        # exit the collective together and then proceed to worker spawning at
+        # the same time, nullifying the stagger.
+        producer.pre_init_collectives()
+
         # Staggered init — sleep proportional to local_rank to avoid
         # concurrent initialization spikes that cause CPU memory OOM.
         logger.info(
