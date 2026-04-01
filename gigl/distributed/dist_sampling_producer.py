@@ -1,7 +1,8 @@
 # Significant portions of this file are taken from GraphLearn-for-PyTorch
 # (graphlearn_torch/python/distributed/dist_sampling_producer.py).
-# This version uses GiGL's DistNeighborSampler (which supports both standard
-# neighbor sampling and ABLP) instead of GLT's DistNeighborSampler.
+# This version uses GiGL's sampler hierarchy (BaseGiGLSampler subclasses:
+# DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR) instead of
+# GLT's DistNeighborSampler directly.
 
 import datetime
 import queue
@@ -37,7 +38,6 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_dataset import DistDataset as GiglDistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.sampler import ABLPNodeSamplerInput
@@ -108,14 +108,13 @@ def _prepare_degree_tensors(
     """Materialize PPR degree tensors before worker spawn when required."""
     degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
     if isinstance(sampler_options, PPRSamplerOptions):
-        assert isinstance(data, GiglDistDataset)
         degree_tensors = data.degree_tensor
         if isinstance(degree_tensors, dict):
             logger.info(
                 "Pre-computed degree tensors for PPR sampling across "
                 f"{len(degree_tensors)} edge types."
             )
-        else:
+        elif degree_tensors is not None:
             logger.info(
                 "Pre-computed degree tensor for PPR sampling with "
                 f"{degree_tensors.size(0)} nodes."
@@ -257,14 +256,16 @@ class DistSamplingProducer(DistMpSamplingProducer):
         worker_options: MpDistSamplingWorkerOptions,
         channel: ChannelBase,
         sampler_options: SamplerOptions,
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
     ):
         super().__init__(data, sampler_input, sampling_config, worker_options, channel)
         self._sampler_options = sampler_options
+        self._degree_tensors = degree_tensors
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
-        degree_tensors = _prepare_degree_tensors(self.data, self._sampler_options)
-
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
@@ -293,7 +294,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self.sampling_completed_worker_count,
                     barrier,
                     self._sampler_options,
-                    degree_tensors,
+                    self._degree_tensors,
                 ),
             )
             worker.daemon = True

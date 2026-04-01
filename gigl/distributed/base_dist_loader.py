@@ -26,6 +26,7 @@ from graphlearn_torch.distributed import (
 )
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
 from graphlearn_torch.sampler import (
+    EdgeSamplerInput,
     NodeSamplerInput,
     RemoteSamplerInput,
     SamplingConfig,
@@ -49,7 +50,7 @@ from gigl.distributed.graph_store.messages import (
 )
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     patch_fanout_for_sampling,
@@ -486,6 +487,59 @@ class BaseDistLoader(DistLoader):
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
+
+    @staticmethod
+    def create_mp_producer(
+        dataset: DistDataset,
+        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+        sampler_options: SamplerOptions,
+    ) -> DistSamplingProducer:
+        """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
+
+        Creates the shared-memory channel and, for PPR sampling, pre-computes
+        degree tensors via all-reduce before constructing the producer.  The
+        all-reduce must happen here — before the staggered sleep in
+        ``_init_colocated_connections`` — so that all ranks complete the
+        collective together and the stagger applies only to worker spawning.
+
+        Args:
+            dataset: The local DistDataset for this rank.
+            sampler_input: Node or edge sampler input (ABLPNodeSamplerInput is
+                also accepted as it extends NodeSamplerInput).
+            sampling_config: Sampling configuration.
+            worker_options: Colocated worker options (must be fully configured).
+            sampler_options: Controls which sampler class is instantiated.
+
+        Returns:
+            A fully constructed DistSamplingProducer, ready to be passed to
+            ``_init_colocated_connections``.
+        """
+        channel = BaseDistLoader.create_colocated_channel(worker_options)
+        if isinstance(sampler_options, PPRSamplerOptions):
+            degree_tensors = dataset.degree_tensor
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across "
+                    f"{len(degree_tensors)} edge types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with "
+                    f"{degree_tensors.size(0)} nodes."
+                )
+        else:
+            degree_tensors = None
+        return DistSamplingProducer(
+            data=dataset,
+            sampler_input=sampler_input,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+        )
 
     @staticmethod
     def initialize_colocated_sampling_worker(
