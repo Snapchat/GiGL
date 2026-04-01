@@ -22,7 +22,7 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
-from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
+from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.types.graph import is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
@@ -48,16 +48,11 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
 )
 
 
-# TODO (mkolodner-sc): Consider introducing a BaseGiGLSampler that owns
-# shared utilities like _prepare_sample_loop_inputs, with KHopSampler and
-# PPRSampler as siblings.  Currently DistPPRNeighborSampler inherits from
-# DistNeighborSampler (the k-hop sampler), which bundles generic utilities
-# with k-hop-specific sampling logic.
+class DistPPRNeighborSampler(BaseDistNeighborSampler):
+    """Personalized PageRank (PPR) based distributed neighbor sampler.
 
-
-class DistPPRNeighborSampler(DistNeighborSampler):
-    """
-    Personalized PageRank (PPR) based neighbor sampler that inherits from GLT DistNeighborSampler.
+    Extends BaseGiGLSampler (which provides shared input preparation utilities)
+    and overrides _sample_from_nodes with PPR-based neighbor selection.
 
     Instead of uniform random sampling, this sampler uses Personalized PageRank
     (PPR) scores to select the most relevant neighbors for each seed node. PPR

@@ -63,8 +63,9 @@ GiGL extends GraphLearn-for-PyTorch (GLT) for distributed GNN training. Key clas
   labels, split metadata, and feature info
 - **`DistNeighborLoader`** (extends GLT `DistLoader`) - Standard node-based sampling loader
 - **`DistABLPLoader`** (extends GLT `DistLoader`) - Anchor-Based Link Prediction sampling loader
-- **`DistNeighborSampler`** (extends GLT `DistNeighborSampler`) - Unified sampler supporting both standard neighbor
-  sampling and ABLP with positive/negative label injection
+- **`BaseGiGLSampler`** (extends GLT `DistNeighborSampler`) - Base class with shared input preparation (ABLP support)
+- **`DistNeighborSampler`** (extends `BaseGiGLSampler`) - K-hop neighbor sampling with ABLP support
+- **`DistPPRNeighborSampler`** (extends `BaseGiGLSampler`) - PPR-based neighbor sampling with ABLP support
 
 **Two deployment modes:**
 
@@ -86,7 +87,9 @@ dataset_factory.build_dataset()  →  DistDataset (partitioned via DistPartition
 - `dist_dataset.py` - Core dataset structure with IPC serialization
 - `distributed_neighborloader.py` - DistNeighborLoader (both modes)
 - `dist_ablp_neighborloader.py` - DistABLPLoader (both modes)
-- `dist_neighbor_sampler.py` - ABLP-aware neighbor sampling
+- `base_sampler.py` - BaseGiGLSampler with shared ABLP input preparation
+- `dist_neighbor_sampler.py` - K-hop neighbor sampling (DistNeighborSampler)
+- `dist_ppr_sampler.py` - PPR-based neighbor sampling (DistPPRNeighborSampler)
 - `dataset_factory.py` - Dataset building and partitioning orchestration
 - `graph_store/dist_server.py` - Storage server for Graph Store mode
 - `graph_store/remote_dist_dataset.py` - Client-side dataset proxy
