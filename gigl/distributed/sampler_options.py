@@ -64,7 +64,7 @@ class PPRSamplerOptions:
     alpha: float = 0.5
     eps: float = 1e-4
     max_ppr_nodes: int = 50
-    num_neighbors_per_hop: int = 100_000
+    num_neighbors_per_hop: int = 1_000
     total_degree_dtype: torch.dtype = torch.int32
 
 
