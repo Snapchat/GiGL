@@ -2,7 +2,6 @@ import torch
 from absl.testing import absltest
 
 from gigl.distributed.graph_store import dist_server
-from gigl.distributed.graph_store.dist_server import _slice_nodes_for_shard
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
@@ -87,9 +86,9 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Test with world_size=1, rank=0 (should get all nodes)
+        # Test with num_splits=1, split_idx=0 (should get all nodes)
         node_ids = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=1, node_type=None)
+            FetchNodesRequest(split_idx=0, num_splits=1, node_type=None)
         )
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
@@ -104,7 +103,7 @@ class TestRemoteDataset(TestCase):
 
         # Test with USER node type
         user_node_ids = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=1, node_type=USER)
+            FetchNodesRequest(split_idx=0, num_splits=1, node_type=USER)
         )
         self.assertIsInstance(user_node_ids, torch.Tensor)
         self.assertEqual(user_node_ids.shape[0], 5)
@@ -112,99 +111,59 @@ class TestRemoteDataset(TestCase):
 
         # Test with STORY node type
         story_node_ids = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=1, node_type=STORY)
+            FetchNodesRequest(split_idx=0, num_splits=1, node_type=STORY)
         )
         self.assertIsInstance(story_node_ids, torch.Tensor)
         self.assertEqual(story_node_ids.shape[0], 5)
         self.assert_tensor_equality(story_node_ids, torch.arange(5))
 
-    def test_get_node_ids_with_multiple_ranks(self) -> None:
-        """Test get_node_ids with multiple ranks to verify sharding."""
+    def test_get_node_ids_with_multiple_splits(self) -> None:
+        """Test get_node_ids with multiple splits to verify partitioning."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
         server = dist_server.DistServer(dataset)
 
-        # Test with world_size=2
-        rank_0_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=2, node_type=None)
+        # Test with num_splits=2
+        split_0_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=0, num_splits=2, node_type=None)
         )
-        rank_1_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=1, world_size=2, node_type=None)
-        )
-
-        # Verify each rank gets different nodes
-        self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
-        self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
-
-        # Test with world_size=3 (uneven split)
-        rank_0_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=3, node_type=None)
-        )
-        rank_1_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=1, world_size=3, node_type=None)
-        )
-        rank_2_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=2, world_size=3, node_type=None)
+        split_1_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=1, num_splits=2, node_type=None)
         )
 
-        self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
-        self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
-        self.assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
+        # Verify each split gets different nodes (tensor_split semantics)
+        self.assert_tensor_equality(split_0_nodes, torch.arange(5))
+        self.assert_tensor_equality(split_1_nodes, torch.arange(5, 10))
 
-    def test_get_node_ids_rank_world_size_must_be_provided_together(self) -> None:
-        """Test get_node_ids raises ValueError when rank/world_size not provided together."""
-        dataset = create_homogeneous_dataset(
-            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        # Test with num_splits=3 (uneven split — tensor_split gives first shards extra)
+        split_0_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=0, num_splits=3, node_type=None)
         )
-        server = dist_server.DistServer(dataset)
-
-        with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=None))
-
-        with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=None, world_size=1))
-
-    def test_get_node_ids_local_sharding(self) -> None:
-        """Test get_node_ids supports explicit local shard requests."""
-        dataset = create_homogeneous_dataset(
-            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        split_1_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=1, num_splits=3, node_type=None)
         )
-        server = dist_server.DistServer(dataset)
-
-        shard_0_nodes = server.get_node_ids(
-            FetchNodesRequest(shard_index=0, num_shards=3)
-        )
-        shard_1_nodes = server.get_node_ids(
-            FetchNodesRequest(shard_index=1, num_shards=3)
-        )
-        shard_2_nodes = server.get_node_ids(
-            FetchNodesRequest(shard_index=2, num_shards=3)
+        split_2_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=2, num_splits=3, node_type=None)
         )
 
-        self.assert_tensor_equality(shard_0_nodes, torch.arange(4))
-        self.assert_tensor_equality(shard_1_nodes, torch.arange(4, 7))
-        self.assert_tensor_equality(shard_2_nodes, torch.arange(7, 10))
+        # 10 nodes / 3 splits → [4, 3, 3] (tensor_split semantics)
+        self.assert_tensor_equality(split_0_nodes, torch.arange(4))
+        self.assert_tensor_equality(split_1_nodes, torch.arange(4, 7))
+        self.assert_tensor_equality(split_2_nodes, torch.arange(7, 10))
 
-    def test_get_node_ids_rejects_mixed_or_partial_sharding_modes(self) -> None:
-        """Test get_node_ids rejects invalid sharding mode combinations."""
+    def test_get_node_ids_split_params_must_be_provided_together(self) -> None:
+        """Test get_node_ids raises ValueError when split_idx/num_splits not provided together."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
         server = dist_server.DistServer(dataset)
 
         with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(shard_index=0, num_shards=None))
+            server.get_node_ids(FetchNodesRequest(split_idx=0, num_splits=None))
 
         with self.assertRaises(ValueError):
-            server.get_node_ids(
-                FetchNodesRequest(
-                    rank=0,
-                    world_size=2,
-                    shard_index=0,
-                    num_shards=2,
-                )
-            )
+            server.get_node_ids(FetchNodesRequest(split_idx=None, num_splits=1))
 
     def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
         """Test get_node_ids with a homogeneous dataset and a node type raises error."""
@@ -213,7 +172,9 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=USER))
+            server.get_node_ids(
+                FetchNodesRequest(split_idx=0, num_splits=1, node_type=USER)
+            )
 
     def test_get_node_ids_with_heterogeneous_dataset_and_no_node_type(
         self,
@@ -224,7 +185,9 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=None))
+            server.get_node_ids(
+                FetchNodesRequest(split_idx=0, num_splits=1, node_type=None)
+            )
 
     def test_get_node_ids_with_train_split(self) -> None:
         """Test get_node_ids returns only training nodes when split='train'."""
@@ -281,8 +244,8 @@ class TestRemoteDataset(TestCase):
         )
         self.assert_tensor_equality(test_nodes, torch.tensor([4]))
 
-    def test_get_node_ids_with_split_and_sharding(self) -> None:
-        """Test get_node_ids with split and rank/world_size for sharding."""
+    def test_get_node_ids_with_split_and_partitioning(self) -> None:
+        """Test get_node_ids with split and split_idx/num_splits for partitioning."""
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
@@ -295,25 +258,17 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Train split has [0, 1, 2], shard across 2 ranks
-        rank_0_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=2, node_type=USER, split="train")
+        # Train split has [0, 1, 2], partition across 2 splits
+        # tensor_split gives first split the extra: [2, 1]
+        split_0_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=0, num_splits=2, node_type=USER, split="train")
         )
-        rank_1_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=1, world_size=2, node_type=USER, split="train")
+        split_1_nodes = server.get_node_ids(
+            FetchNodesRequest(split_idx=1, num_splits=2, node_type=USER, split="train")
         )
 
-        self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
-        self.assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
-
-    def test_slice_nodes_for_shard_returns_empty_for_high_shard_indices(self) -> None:
-        """Test local shard slicing matches tensor-split semantics for empty shards."""
-        nodes = torch.tensor([0, 1])
-
-        self.assert_tensor_equality(
-            _slice_nodes_for_shard(nodes, shard_index=2, num_shards=4),
-            torch.empty(0, dtype=torch.int64),
-        )
+        self.assert_tensor_equality(split_0_nodes, torch.tensor([0, 1]))
+        self.assert_tensor_equality(split_1_nodes, torch.tensor([2]))
 
     def test_get_node_ids_invalid_split(self) -> None:
         """Test get_node_ids raises ValueError with invalid split."""
@@ -414,8 +369,8 @@ class TestRemoteDataset(TestCase):
                 anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
                     FetchABLPInputRequest(
                         split=split,
-                        rank=0,
-                        world_size=1,
+                        split_idx=0,
+                        num_splits=1,
                         node_type=USER,
                         supervision_edge_type=USER_TO_STORY,
                     )
@@ -437,8 +392,8 @@ class TestRemoteDataset(TestCase):
                 assert neg_labels is not None
                 self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
 
-    def test_get_ablp_input_multiple_ranks(self) -> None:
-        """Test get_ablp_input with multiple ranks to verify sharding."""
+    def test_get_ablp_input_multiple_splits(self) -> None:
+        """Test get_ablp_input with multiple splits to verify partitioning."""
         create_test_process_group()
         positive_labels = {
             0: [0, 1],
@@ -466,40 +421,37 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Get training input for rank 0 of 2
-
-        # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
-        # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        # Get training input for split 0 of 2
         anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
-                rank=0,
-                world_size=2,
+                split_idx=0,
+                num_splits=2,
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
             )
         )
 
-        # Get training input for rank 1 of 2
+        # Get training input for split 1 of 2
         anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
-                rank=1,
-                world_size=2,
+                split_idx=1,
+                num_splits=2,
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
             )
         )
 
-        # Train nodes [0, 1, 2, 3] should be split across ranks
-        rank_0_user_ids = [0, 1]
-        rank_1_user_ids = [2, 3]
-        self.assert_tensor_equality(anchor_nodes_0, torch.tensor(rank_0_user_ids))
-        self.assert_tensor_equality(anchor_nodes_1, torch.tensor(rank_1_user_ids))
+        # Train nodes [0, 1, 2, 3] split across 2 → [0, 1] and [2, 3]
+        split_0_user_ids = [0, 1]
+        split_1_user_ids = [2, 3]
+        self.assert_tensor_equality(anchor_nodes_0, torch.tensor(split_0_user_ids))
+        self.assert_tensor_equality(anchor_nodes_1, torch.tensor(split_1_user_ids))
 
-        # Verify positive labels for each rank (order may vary due to CSR representation)
-        expected_positive_0 = [positive_labels[uid] for uid in rank_0_user_ids]
-        expected_positive_1 = [positive_labels[uid] for uid in rank_1_user_ids]
+        # Verify positive labels for each split (order may vary due to CSR representation)
+        expected_positive_0 = [positive_labels[uid] for uid in split_0_user_ids]
+        expected_positive_1 = [positive_labels[uid] for uid in split_1_user_ids]
         self.assert_tensor_equality(
             pos_labels_0, torch.tensor(expected_positive_0), dim=1
         )
@@ -507,9 +459,9 @@ class TestRemoteDataset(TestCase):
             pos_labels_1, torch.tensor(expected_positive_1), dim=1
         )
 
-        # Verify negative labels for each rank
-        expected_negative_0 = [negative_labels[uid] for uid in rank_0_user_ids]
-        expected_negative_1 = [negative_labels[uid] for uid in rank_1_user_ids]
+        # Verify negative labels for each split
+        expected_negative_0 = [negative_labels[uid] for uid in split_0_user_ids]
+        expected_negative_1 = [negative_labels[uid] for uid in split_1_user_ids]
         assert neg_labels_0 is not None
         assert neg_labels_1 is not None
         self.assert_tensor_equality(neg_labels_0, torch.tensor(expected_negative_0))
@@ -535,8 +487,8 @@ class TestRemoteDataset(TestCase):
             server.get_ablp_input(
                 FetchABLPInputRequest(
                     split="invalid",
-                    rank=0,
-                    world_size=1,
+                    split_idx=0,
+                    num_splits=1,
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
                 )
@@ -568,8 +520,8 @@ class TestRemoteDataset(TestCase):
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
-                rank=0,
-                world_size=1,
+                split_idx=0,
+                num_splits=1,
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
             )
@@ -605,8 +557,8 @@ class TestRemoteDataset(TestCase):
                 split="train",
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
-                shard_index=3,
-                num_shards=4,
+                split_idx=3,
+                num_splits=4,
             )
         )
 

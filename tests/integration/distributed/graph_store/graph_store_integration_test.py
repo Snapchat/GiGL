@@ -28,7 +28,6 @@ from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
@@ -809,13 +808,11 @@ def _get_expected_input_nodes_by_rank(
     ] = collections.defaultdict(dict)
     for server_rank in range(cluster_info.num_storage_nodes):
         server_nodes = get_ids_on_rank(partition_book=partition_book, rank=server_rank)
+        splits = torch.tensor_split(
+            server_nodes, cluster_info.compute_cluster_world_size
+        )
         for global_rank in range(cluster_info.compute_cluster_world_size):
-            generated_nodes = shard_nodes_by_process(
-                input_nodes=server_nodes,
-                local_process_rank=global_rank,
-                local_process_world_size=cluster_info.compute_cluster_world_size,
-            )
-            expected_sampler_input[global_rank][server_rank] = generated_nodes
+            expected_sampler_input[global_rank][server_rank] = splits[global_rank]
     return dict(expected_sampler_input)
 
 

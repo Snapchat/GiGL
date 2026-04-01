@@ -503,13 +503,14 @@ class TestRemoteDistDatasetHeterogeneous(RemoteDistDatasetTestBase):
         result = remote_dataset.fetch_node_ids(node_type=STORY)
         self.assert_tensor_equality(result[0], torch.arange(5))
 
-        # With sharding: first half of user nodes (rank 0 of 2)
+        # With sharding: first partition of user nodes (rank 0 of 2)
+        # tensor_split gives first partition the extra: [3, 2]
         result = remote_dataset.fetch_node_ids(rank=0, world_size=2, node_type=USER)
-        self.assert_tensor_equality(result[0], torch.arange(2))
+        self.assert_tensor_equality(result[0], torch.arange(3))
 
-        # With sharding: second half of user nodes (rank 1 of 2)
+        # With sharding: second partition of user nodes (rank 1 of 2)
         result = remote_dataset.fetch_node_ids(rank=1, world_size=2, node_type=USER)
-        self.assert_tensor_equality(result[0], torch.arange(2, 5))
+        self.assert_tensor_equality(result[0], torch.arange(3, 5))
 
     def test_fetch_node_partition_book_heterogeneous(self, mock_request):
         """Test fetch_node_partition_book returns per-type partition books for heterogeneous graphs."""
@@ -602,17 +603,18 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         )
 
         # With sharding: train split [0, 1, 2] across 2 ranks
+        # tensor_split gives first partition the extra: [2, 1]
         self.assert_tensor_equality(
             remote_dataset.fetch_node_ids(
                 rank=0, world_size=2, node_type=USER, split="train"
             )[0],
-            torch.tensor([0]),
+            torch.tensor([0, 1]),
         )
         self.assert_tensor_equality(
             remote_dataset.fetch_node_ids(
                 rank=1, world_size=2, node_type=USER, split="train"
             )[0],
-            torch.tensor([1, 2]),
+            torch.tensor([2]),
         )
 
     @patch(
@@ -706,17 +708,17 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         self.assertIsInstance(ablp_0, ABLPInputNodes)
         self.assertEqual(ablp_0.anchor_node_type, USER)
 
-        # Rank 0 should get node 0
-        self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0]))
+        # Rank 0 should get nodes 0, 1 (tensor_split gives first partition the extra)
+        self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1]))
         pos_labels_0, neg_labels_0 = ablp_0.labels[USER_TO_STORY]
         self.assert_tensor_equality(
             pos_labels_0,
-            torch.tensor([[0, 1]]),
+            torch.tensor([[0, 1], [1, 2]]),
         )
         assert neg_labels_0 is not None
         self.assert_tensor_equality(
             neg_labels_0,
-            torch.tensor([[2]]),
+            torch.tensor([[2], [3]]),
         )
 
         result_rank1 = remote_dataset.fetch_ablp_input(
@@ -729,17 +731,17 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         ablp_1 = result_rank1[0]
         self.assertIsInstance(ablp_1, ABLPInputNodes)
 
-        # Rank 1 should get nodes 1, 2
-        self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([1, 2]))
+        # Rank 1 should get node 2
+        self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([2]))
         pos_labels_1, neg_labels_1 = ablp_1.labels[USER_TO_STORY]
         self.assert_tensor_equality(
             pos_labels_1,
-            torch.tensor([[1, 2], [2, 3]]),
+            torch.tensor([[2, 3]]),
         )
         assert neg_labels_1 is not None
         self.assert_tensor_equality(
             neg_labels_1,
-            torch.tensor([[3], [4]]),
+            torch.tensor([[4]]),
         )
 
 

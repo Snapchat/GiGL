@@ -29,7 +29,37 @@ def _plan_storage_rank_shards_for_compute_rank(
     num_storage_nodes: int,
     num_assigned_storage_ranks: int,
 ) -> tuple[dict[int, list[int]], dict[int, list[int]], dict[int, tuple[int, int]]]:
-    """Plan storage-rank assignments and local shard ownership for one compute rank."""
+    """Plan which storage ranks a compute rank contacts and its local shard within each.
+
+    Each compute rank is assigned ``num_assigned_storage_ranks`` storage ranks
+    using a round-robin scheme starting from an evenly-spaced offset
+    (``compute_rank * num_storage_nodes // world_size``).
+
+    The reverse mapping tells us how many compute ranks share each storage rank.
+    For the given ``rank``, its local shard within a shared storage rank is its
+    position in the sorted list of compute ranks assigned to that storage rank.
+
+    The constraint ``world_size * num_assigned_storage_ranks >= num_storage_nodes``
+    guarantees that every storage rank is contacted by at least one compute rank,
+    ensuring exact global coverage.
+
+    Args:
+        rank: The current compute rank.
+        world_size: Total number of compute ranks.
+        num_storage_nodes: Total number of storage nodes in the cluster.
+        num_assigned_storage_ranks: Number of storage ranks each compute rank contacts.
+
+    Returns:
+        A 3-tuple:
+            - compute_rank_to_storage_ranks: Maps every compute rank to its assigned storage ranks.
+            - storage_rank_to_compute_ranks: Maps every storage rank to the compute ranks that contact it.
+            - storage_rank_to_local_shard: For the given ``rank`` only, maps each assigned storage rank
+              to ``(shard_index, num_shards)`` where ``shard_index`` is this rank's position among
+              the compute ranks sharing that storage rank.
+
+    Raises:
+        ValueError: If arguments are out of range or coverage cannot be guaranteed.
+    """
     if world_size <= 0:
         raise ValueError(f"world_size must be > 0, received {world_size}")
     if num_storage_nodes <= 0:
@@ -49,7 +79,7 @@ def _plan_storage_rank_shards_for_compute_rank(
     if world_size * num_assigned_storage_ranks < num_storage_nodes:
         raise ValueError(
             "world_size * num_assigned_storage_ranks must be >= num_storage_nodes "
-            "to guarantee exact coverage. "
+            "to guarantee all storage nodes are sampled from. "
             f"Received world_size={world_size}, num_assigned_storage_ranks={num_assigned_storage_ranks}, "
             f"num_storage_nodes={num_storage_nodes}"
         )
@@ -267,8 +297,8 @@ class RemoteDistDataset:
         if num_assigned_storage_ranks is None:
             for storage_rank in requested_storage_ranks:
                 request = FetchNodesRequest(
-                    rank=rank,
-                    world_size=world_size,
+                    split_idx=rank,
+                    num_splits=world_size,
                     split=split,
                     node_type=node_type,
                 )
@@ -280,8 +310,8 @@ class RemoteDistDataset:
                 request = FetchNodesRequest(
                     split=split,
                     node_type=node_type,
-                    shard_index=shard_index,
-                    num_shards=num_shards,
+                    split_idx=shard_index,
+                    num_splits=num_shards,
                 )
                 request.validate()
                 requests.append(request)
@@ -327,6 +357,13 @@ class RemoteDistDataset:
             num_assigned_storage_ranks (Optional[int]): If provided, limit this compute rank
                 to exactly this many storage ranks while preserving exact global coverage.
                 Requires ``rank`` and ``world_size``.
+
+                Must satisfy ``world_size * num_assigned_storage_ranks >= num_storage_nodes``
+                to guarantee all storage nodes are sampled from.
+
+                Typical values are 1-4. Lower values reduce cross-cluster network fanout
+                at the cost of potentially less balanced data distribution per compute rank.
+                ``None`` (the default) contacts all storage nodes.
 
         Returns:
             dict[int, torch.Tensor]: A dict mapping storage rank to node ids. When
@@ -490,8 +527,8 @@ class RemoteDistDataset:
             for storage_rank in requested_storage_ranks:
                 request = FetchABLPInputRequest(
                     split=split,
-                    rank=rank,
-                    world_size=world_size,
+                    split_idx=rank,
+                    num_splits=world_size,
                     node_type=node_type,
                     supervision_edge_type=supervision_edge_type,
                 )
@@ -504,8 +541,8 @@ class RemoteDistDataset:
                     split=split,
                     node_type=node_type,
                     supervision_edge_type=supervision_edge_type,
-                    shard_index=shard_index,
-                    num_shards=num_shards,
+                    split_idx=shard_index,
+                    num_splits=num_shards,
                 )
                 request.validate()
                 requests.append(request)

@@ -40,7 +40,6 @@ from gigl.distributed.graph_store.messages import (
 )
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -52,27 +51,6 @@ r""" Interval (in seconds) to check exit status of server.
 logger = Logger()
 
 R = TypeVar("R")
-
-
-def _slice_nodes_for_shard(
-    nodes: torch.Tensor, shard_index: int, num_shards: int
-) -> torch.Tensor:
-    """Return a contiguous local shard with ``torch.tensor_split`` semantics."""
-    if num_shards <= 0:
-        raise ValueError(f"num_shards must be > 0, received {num_shards}")
-    if shard_index < 0 or shard_index >= num_shards:
-        raise ValueError(
-            "shard_index must be in [0, num_shards). "
-            f"Received shard_index={shard_index}, num_shards={num_shards}"
-        )
-
-    num_nodes = nodes.size(0)
-    base_shard_size = num_nodes // num_shards
-    remainder = num_nodes % num_shards
-    start = shard_index * base_shard_size + min(shard_index, remainder)
-    length = base_shard_size + (1 if shard_index < remainder else 0)
-    end = start + length
-    return nodes[start:end]
 
 
 class DistServer:
@@ -303,14 +281,14 @@ class DistServer:
 
         Args:
             request: The node-fetch request, including split, node type,
-                and round-robin rank/world_size.
+                and optional split_idx/num_splits for partitioning.
 
         Returns:
             The node ids.
 
         Raises:
             ValueError:
-                * If the rank and world_size are not provided together
+                * If split_idx and num_splits are not provided together
                 * If the split is invalid
                 * If the node ids are not a torch.Tensor or a dict[NodeType, torch.Tensor]
                 * If the node type is provided for a homogeneous dataset
@@ -324,59 +302,41 @@ class DistServer:
         return self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            rank=request.rank,
-            world_size=request.world_size,
-            shard_index=request.shard_index,
-            num_shards=request.num_shards,
+            split_idx=request.split_idx,
+            num_splits=request.num_splits,
         )
 
     def _get_node_ids(
         self,
         split: Optional[Union[Literal["train", "val", "test"], str]],
         node_type: Optional[NodeType],
-        rank: Optional[int] = None,
-        world_size: Optional[int] = None,
-        shard_index: Optional[int] = None,
-        num_shards: Optional[int] = None,
+        split_idx: Optional[int] = None,
+        num_splits: Optional[int] = None,
     ) -> torch.Tensor:
-        """Core implementation for fetching node IDs by split, type, and sharding.
+        """Core implementation for fetching node IDs by split, type, and partitioning.
 
         Args:
             split: The dataset split to fetch from (``"train"``, ``"val"``,
                 ``"test"``, or ``None`` for all nodes).
             node_type: The node type to select. Must be ``None`` for
                 homogeneous datasets.
-            rank: Round-robin rank for sharding. Must be provided together
-                with ``world_size``.
-            world_size: Total number of processes for sharding. Must be
-                provided together with ``rank``.
-            shard_index: Local shard index for storage-rank-local sharding.
-                Must be provided together with ``num_shards``.
-            num_shards: Total number of local shards for this storage rank.
-                Must be provided together with ``shard_index``.
+            split_idx: Which partition to return (0-indexed). Must be
+                provided together with ``num_splits``.
+            num_splits: Total number of partitions. Must be provided
+                together with ``split_idx``.
 
         Returns:
-            The node IDs tensor, optionally sharded by rank.
+            The node IDs tensor, optionally partitioned.
 
         Raises:
-            ValueError: If the sharding inputs are invalid, the split is
+            ValueError: If the split parameters are invalid, the split is
                 invalid, or the node type is inconsistent with the dataset
                 type (homogeneous vs. heterogeneous).
         """
-        if (rank is None) ^ (world_size is None):
+        if (split_idx is None) ^ (num_splits is None):
             raise ValueError(
-                "rank and world_size must be provided together. "
-                f"Received rank={rank}, world_size={world_size}"
-            )
-        if (shard_index is None) ^ (num_shards is None):
-            raise ValueError(
-                "shard_index and num_shards must be provided together. "
-                f"Received shard_index={shard_index}, num_shards={num_shards}"
-            )
-        if rank is not None and shard_index is not None:
-            raise ValueError(
-                "rank/world_size and shard_index/num_shards are mutually exclusive. "
-                f"Received rank={rank}, world_size={world_size}, shard_index={shard_index}, num_shards={num_shards}"
+                "split_idx and num_splits must be provided together. "
+                f"Received split_idx={split_idx}, num_splits={num_splits}"
             )
 
         if split == "train":
@@ -404,10 +364,8 @@ class DistServer:
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
             )
 
-        if rank is not None and world_size is not None:
-            return shard_nodes_by_process(nodes, rank, world_size)
-        if shard_index is not None and num_shards is not None:
-            return _slice_nodes_for_shard(nodes, shard_index, num_shards)
+        if split_idx is not None and num_splits is not None:
+            return torch.tensor_split(nodes, num_splits)[split_idx]
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -436,17 +394,15 @@ class DistServer:
         self,
         request: FetchABLPInputRequest,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
-
-        Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
-        e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        """Get the ABLP (Anchor Based Link Prediction) input for distributed processing.
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and round-robin rank/world_size.
+                supervision edge type, and optional split_idx/num_splits
+                for partitioning.
 
         Returns:
-            A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
+            A tuple containing the anchor nodes, the positive labels, and the negative labels.
             The positive labels are of shape [N, M], where N is the number of anchor nodes and M is the number of positive labels.
             The negative labels are of shape [N, M], where N is the number of anchor nodes and M is the number of negative labels.
             The negative labels may be None if no negative labels are available.
@@ -458,14 +414,14 @@ class DistServer:
         anchors = self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            rank=request.rank,
-            world_size=request.world_size,
-            shard_index=request.shard_index,
-            num_shards=request.num_shards,
+            split_idx=request.split_idx,
+            num_splits=request.num_splits,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
         )
+        # When num_splits > num_nodes, tensor_split produces empty partitions.
+        # Guard prevents get_labels_for_anchor_nodes from failing on empty input.
         if anchors.numel() == 0:
             empty_positive_labels = torch.empty(0, 0, dtype=torch.int64)
             empty_negative_labels = (
