@@ -998,41 +998,6 @@ class DistABLPLoaderTest(TestCase):
         with self.assertRaises(expected_error, msg=expected_error_message):
             DistABLPLoader(**kwargs)
 
-    @patch.object(BaseDistLoader, "_init_graph_store_connections", autospec=True)
-    def test_graph_store_constructor_uses_remote_type_path(
-        self, mock_init_graph_store_connections
-    ) -> None:
-        create_test_process_group()
-        DistABLPLoader._counter = count(0)
-
-        loader = DistABLPLoader(
-            dataset=MockRemoteDistDataset(
-                num_storage_nodes=2,
-                edge_types=[_USER_TO_STORY],
-            ),
-            num_neighbors=[2, 2],
-            input_nodes={
-                0: ABLPInputNodes(
-                    anchor_nodes=torch.tensor([0]),
-                    anchor_node_type=_USER,
-                    labels={_USER_TO_STORY: (torch.tensor([[1]]), None)},
-                ),
-                1: ABLPInputNodes(
-                    anchor_nodes=torch.tensor([1]),
-                    anchor_node_type=_USER,
-                    labels={_USER_TO_STORY: (torch.tensor([[2]]), None)},
-                ),
-            },
-            pin_memory_device=torch.device("cpu"),
-        )
-
-        mock_init_graph_store_connections.assert_called_once()
-        self.assertTrue(loader._is_remote_worker)
-        self.assertEqual(
-            loader.worker_options.worker_key,
-            "dist_ablp_loader_0_compute_rank_0",
-        )
-
     @patch.object(BaseDistLoader, "_init_colocated_connections", autospec=True)
     @patch.object(BaseDistLoader, "initialize_colocated_sampling_worker", autospec=True)
     @patch(

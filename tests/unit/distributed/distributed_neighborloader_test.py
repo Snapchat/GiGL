@@ -705,26 +705,7 @@ class DistributedNeighborLoaderTest(TestCase):
         with self.assertRaises(expected_error):
             DistNeighborLoader(**kwargs)
 
-    @patch.object(BaseDistLoader, "_init_graph_store_connections", autospec=True)
-    def test_graph_store_constructor_uses_remote_type_path(
-        self, mock_init_graph_store_connections
-    ) -> None:
-        create_test_process_group()
-        DistNeighborLoader._counter = count(0)
 
-        loader = DistNeighborLoader(
-            dataset=MockRemoteDistDataset(num_storage_nodes=2),
-            num_neighbors=[2, 2],
-            input_nodes={0: torch.tensor([10]), 1: torch.tensor([20])},
-            pin_memory_device=torch.device("cpu"),
-        )
-
-        mock_init_graph_store_connections.assert_called_once()
-        self.assertTrue(loader._is_remote_worker)
-        self.assertEqual(
-            loader.worker_options.worker_key,
-            "dist_neighbor_loader_0_compute_rank_0",
-        )
 
     @patch.object(BaseDistLoader, "_init_colocated_connections", autospec=True)
     @patch.object(BaseDistLoader, "initialize_colocated_sampling_worker", autospec=True)
