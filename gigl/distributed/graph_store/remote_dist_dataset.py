@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Literal, Optional, Union, cast
 
 import torch
@@ -23,12 +24,26 @@ from gigl.utils.sampling import ABLPInputNodes
 logger = Logger()
 
 
+@dataclass(frozen=True)
+class StorageRankShardAssignment:
+    """Describes how a compute rank should shard data from a single storage rank.
+
+    Args:
+        rank: This compute rank's shard index among the compute ranks sharing
+            the storage rank (0-indexed).
+        world_size: Total number of compute ranks sharing the storage rank.
+    """
+
+    rank: int
+    world_size: int
+
+
 def _plan_storage_rank_shards_for_compute_rank(
     rank: int,
     world_size: int,
     num_storage_nodes: int,
     num_assigned_storage_ranks: int,
-) -> tuple[dict[int, list[int]], dict[int, list[int]], dict[int, tuple[int, int]]]:
+) -> dict[int, StorageRankShardAssignment]:
     """Plan which storage ranks a compute rank contacts and its local shard within each.
 
     Each compute rank is assigned ``num_assigned_storage_ranks`` storage ranks
@@ -50,12 +65,9 @@ def _plan_storage_rank_shards_for_compute_rank(
         num_assigned_storage_ranks: Number of storage ranks each compute rank contacts.
 
     Returns:
-        A 3-tuple:
-            - compute_rank_to_storage_ranks: Maps every compute rank to its assigned storage ranks.
-            - storage_rank_to_compute_ranks: Maps every storage rank to the compute ranks that contact it.
-            - storage_rank_to_local_shard: For the given ``rank`` only, maps each assigned storage rank
-              to ``(shard_index, num_shards)`` where ``shard_index`` is this rank's position among
-              the compute ranks sharing that storage rank.
+        A dict mapping each assigned storage rank to a
+        :class:`StorageRankShardAssignment` describing this compute rank's
+        shard within that storage rank.
 
     Raises:
         ValueError: If arguments are out of range or coverage cannot be guaranteed.
@@ -99,19 +111,15 @@ def _plan_storage_rank_shards_for_compute_rank(
         for storage_rank in storage_ranks:
             storage_rank_to_compute_ranks[storage_rank].append(compute_rank)
 
-    storage_rank_to_local_shard: dict[int, tuple[int, int]] = {}
+    result: dict[int, StorageRankShardAssignment] = {}
     for storage_rank in compute_rank_to_storage_ranks[rank]:
         assigned_compute_ranks = storage_rank_to_compute_ranks[storage_rank]
-        storage_rank_to_local_shard[storage_rank] = (
-            assigned_compute_ranks.index(rank),
-            len(assigned_compute_ranks),
+        result[storage_rank] = StorageRankShardAssignment(
+            rank=assigned_compute_ranks.index(rank),
+            world_size=len(assigned_compute_ranks),
         )
 
-    return (
-        compute_rank_to_storage_ranks,
-        storage_rank_to_compute_ranks,
-        storage_rank_to_local_shard,
-    )
+    return result
 
 
 class RemoteDistDataset:
@@ -273,17 +281,13 @@ class RemoteDistDataset:
                     f"Received rank={rank}, world_size={world_size}, "
                     f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
                 )
-            (
-                compute_rank_to_storage_ranks,
-                _,
-                storage_rank_to_local_shard,
-            ) = _plan_storage_rank_shards_for_compute_rank(
+            shard_assignments = _plan_storage_rank_shards_for_compute_rank(
                 rank=rank,
                 world_size=world_size,
                 num_storage_nodes=self.cluster_info.num_storage_nodes,
                 num_assigned_storage_ranks=num_assigned_storage_ranks,
             )
-            requested_storage_ranks = compute_rank_to_storage_ranks[rank]
+            requested_storage_ranks = list(shard_assignments.keys())
         else:
             requested_storage_ranks = list(range(self.cluster_info.num_storage_nodes))
 
@@ -306,12 +310,12 @@ class RemoteDistDataset:
                 requests.append(request)
         else:
             for storage_rank in requested_storage_ranks:
-                shard_index, num_shards = storage_rank_to_local_shard[storage_rank]
+                assignment = shard_assignments[storage_rank]
                 request = FetchNodesRequest(
                     split=split,
                     node_type=node_type,
-                    rank=shard_index,
-                    world_size=num_shards,
+                    rank=assignment.rank,
+                    world_size=assignment.world_size,
                 )
                 request.validate()
                 requests.append(request)
@@ -503,17 +507,13 @@ class RemoteDistDataset:
                     f"Received rank={rank}, world_size={world_size}, "
                     f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
                 )
-            (
-                compute_rank_to_storage_ranks,
-                _,
-                storage_rank_to_local_shard,
-            ) = _plan_storage_rank_shards_for_compute_rank(
+            shard_assignments = _plan_storage_rank_shards_for_compute_rank(
                 rank=rank,
                 world_size=world_size,
                 num_storage_nodes=self.cluster_info.num_storage_nodes,
                 num_assigned_storage_ranks=num_assigned_storage_ranks,
             )
-            requested_storage_ranks = compute_rank_to_storage_ranks[rank]
+            requested_storage_ranks = list(shard_assignments.keys())
         else:
             requested_storage_ranks = list(range(self.cluster_info.num_storage_nodes))
 
@@ -536,13 +536,13 @@ class RemoteDistDataset:
                 requests.append(request)
         else:
             for storage_rank in requested_storage_ranks:
-                shard_index, num_shards = storage_rank_to_local_shard[storage_rank]
+                assignment = shard_assignments[storage_rank]
                 request = FetchABLPInputRequest(
                     split=split,
                     node_type=node_type,
                     supervision_edge_type=supervision_edge_type,
-                    rank=shard_index,
-                    world_size=num_shards,
+                    rank=assignment.rank,
+                    world_size=assignment.world_size,
                 )
                 request.validate()
                 requests.append(request)

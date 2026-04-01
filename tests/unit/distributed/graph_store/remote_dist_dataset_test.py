@@ -13,6 +13,7 @@ from gigl.common import LocalUri
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
 from gigl.distributed.graph_store.remote_dist_dataset import (
     RemoteDistDataset,
+    StorageRankShardAssignment,
     _plan_storage_rank_shards_for_compute_rank,
 )
 from gigl.env.distributed import GraphStoreInfo
@@ -228,12 +229,45 @@ class RemoteDistDatasetTestBase(TestCase):
 
 
 class TestPlanStorageRankShards(TestCase):
+    @staticmethod
+    def _build_full_mappings(
+        world_size: int,
+        num_storage_nodes: int,
+        num_assigned_storage_ranks: int,
+    ) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
+        """Build the full compute-to-storage and storage-to-compute mappings for invariant checks."""
+        compute_rank_to_storage_ranks: dict[int, list[int]] = {}
+        for compute_rank in range(world_size):
+            result = _plan_storage_rank_shards_for_compute_rank(
+                rank=compute_rank,
+                world_size=world_size,
+                num_storage_nodes=num_storage_nodes,
+                num_assigned_storage_ranks=num_assigned_storage_ranks,
+            )
+            compute_rank_to_storage_ranks[compute_rank] = list(result.keys())
+
+        storage_rank_to_compute_ranks: dict[int, list[int]] = {
+            s: [] for s in range(num_storage_nodes)
+        }
+        for cr, srs in compute_rank_to_storage_ranks.items():
+            for sr in srs:
+                storage_rank_to_compute_ranks[sr].append(cr)
+
+        return compute_rank_to_storage_ranks, storage_rank_to_compute_ranks
+
     def _assert_assignment_invariants(
         self,
-        compute_rank_to_storage_ranks: dict[int, list[int]],
-        storage_rank_to_compute_ranks: dict[int, list[int]],
+        world_size: int,
+        num_storage_nodes: int,
         num_assigned_storage_ranks: int,
     ) -> None:
+        (
+            compute_rank_to_storage_ranks,
+            storage_rank_to_compute_ranks,
+        ) = self._build_full_mappings(
+            world_size, num_storage_nodes, num_assigned_storage_ranks
+        )
+
         for storage_ranks in compute_rank_to_storage_ranks.values():
             self.assertLen(storage_ranks, num_assigned_storage_ranks)
             self.assertLen(storage_ranks, len(set(storage_ranks)))
@@ -246,84 +280,60 @@ class TestPlanStorageRankShards(TestCase):
         self.assertLessEqual(max(assignment_counts) - min(assignment_counts), 1)
 
     def test_plan_storage_rank_shards_for_c4_s4_k2(self) -> None:
-        (
-            compute_rank_to_storage_ranks,
-            storage_rank_to_compute_ranks,
-            storage_rank_to_local_shard,
-        ) = _plan_storage_rank_shards_for_compute_rank(
+        result = _plan_storage_rank_shards_for_compute_rank(
             rank=3,
             world_size=4,
             num_storage_nodes=4,
             num_assigned_storage_ranks=2,
         )
 
+        self.assertEqual(list(result.keys()), [3, 0])
         self.assertEqual(
-            compute_rank_to_storage_ranks,
-            {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3, 0]},
+            result,
+            {
+                3: StorageRankShardAssignment(rank=1, world_size=2),
+                0: StorageRankShardAssignment(rank=1, world_size=2),
+            },
         )
-        self.assertEqual(
-            storage_rank_to_compute_ranks,
-            {0: [0, 3], 1: [0, 1], 2: [1, 2], 3: [2, 3]},
-        )
-        self.assertEqual(storage_rank_to_local_shard, {3: (1, 2), 0: (1, 2)})
         self._assert_assignment_invariants(
-            compute_rank_to_storage_ranks,
-            storage_rank_to_compute_ranks,
-            num_assigned_storage_ranks=2,
+            world_size=4, num_storage_nodes=4, num_assigned_storage_ranks=2
         )
 
     def test_plan_storage_rank_shards_for_c5_s3_k1(self) -> None:
-        (
-            compute_rank_to_storage_ranks,
-            storage_rank_to_compute_ranks,
-            storage_rank_to_local_shard,
-        ) = _plan_storage_rank_shards_for_compute_rank(
+        result = _plan_storage_rank_shards_for_compute_rank(
             rank=4,
             world_size=5,
             num_storage_nodes=3,
             num_assigned_storage_ranks=1,
         )
 
+        self.assertEqual(list(result.keys()), [2])
         self.assertEqual(
-            compute_rank_to_storage_ranks,
-            {0: [0], 1: [0], 2: [1], 3: [1], 4: [2]},
+            result,
+            {2: StorageRankShardAssignment(rank=0, world_size=1)},
         )
-        self.assertEqual(
-            storage_rank_to_compute_ranks,
-            {0: [0, 1], 1: [2, 3], 2: [4]},
-        )
-        self.assertEqual(storage_rank_to_local_shard, {2: (0, 1)})
         self._assert_assignment_invariants(
-            compute_rank_to_storage_ranks,
-            storage_rank_to_compute_ranks,
-            num_assigned_storage_ranks=1,
+            world_size=5, num_storage_nodes=3, num_assigned_storage_ranks=1
         )
 
     def test_plan_storage_rank_shards_for_c3_s5_k2(self) -> None:
-        (
-            compute_rank_to_storage_ranks,
-            storage_rank_to_compute_ranks,
-            storage_rank_to_local_shard,
-        ) = _plan_storage_rank_shards_for_compute_rank(
+        result = _plan_storage_rank_shards_for_compute_rank(
             rank=1,
             world_size=3,
             num_storage_nodes=5,
             num_assigned_storage_ranks=2,
         )
 
+        self.assertEqual(list(result.keys()), [1, 2])
         self.assertEqual(
-            compute_rank_to_storage_ranks,
-            {0: [0, 1], 1: [1, 2], 2: [3, 4]},
+            result,
+            {
+                1: StorageRankShardAssignment(rank=1, world_size=2),
+                2: StorageRankShardAssignment(rank=0, world_size=1),
+            },
         )
-        self.assertEqual(
-            storage_rank_to_compute_ranks,
-            {0: [0], 1: [0, 1], 2: [1], 3: [2], 4: [2]},
-        )
-        self.assertEqual(storage_rank_to_local_shard, {1: (1, 2), 2: (0, 1)})
         self._assert_assignment_invariants(
-            compute_rank_to_storage_ranks,
-            storage_rank_to_compute_ranks,
-            num_assigned_storage_ranks=2,
+            world_size=3, num_storage_nodes=5, num_assigned_storage_ranks=2
         )
 
     def test_plan_storage_rank_shards_rejects_invalid_inputs(self) -> None:
