@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
+from parameterized import param, parameterized
 
 import gigl.distributed.graph_store.dist_server as dist_server_module
 from gigl.common import LocalUri
@@ -279,86 +280,104 @@ class TestPlanStorageRankShards(TestCase):
         self.assertTrue(all(count > 0 for count in assignment_counts))
         self.assertLessEqual(max(assignment_counts) - min(assignment_counts), 1)
 
-    def test_plan_storage_rank_shards_for_c4_s4_k2(self) -> None:
+    @parameterized.expand(
+        [
+            param(
+                "c4_s4_k2",
+                rank=3,
+                world_size=4,
+                num_storage_nodes=4,
+                num_assigned_storage_ranks=2,
+                expected={
+                    3: StorageRankShardAssignment(rank=1, world_size=2),
+                    0: StorageRankShardAssignment(rank=1, world_size=2),
+                },
+            ),
+            param(
+                "c5_s3_k1",
+                rank=4,
+                world_size=5,
+                num_storage_nodes=3,
+                num_assigned_storage_ranks=1,
+                expected={
+                    2: StorageRankShardAssignment(rank=0, world_size=1),
+                },
+            ),
+            param(
+                "c3_s5_k2",
+                rank=1,
+                world_size=3,
+                num_storage_nodes=5,
+                num_assigned_storage_ranks=2,
+                expected={
+                    1: StorageRankShardAssignment(rank=1, world_size=2),
+                    2: StorageRankShardAssignment(rank=0, world_size=1),
+                },
+            ),
+        ]
+    )
+    def test_plan_storage_rank_shards(
+        self,
+        _: str,
+        rank: int,
+        world_size: int,
+        num_storage_nodes: int,
+        num_assigned_storage_ranks: int,
+        expected: dict[int, StorageRankShardAssignment],
+    ) -> None:
         result = _plan_storage_rank_shards_for_compute_rank(
-            rank=3,
-            world_size=4,
-            num_storage_nodes=4,
-            num_assigned_storage_ranks=2,
+            rank=rank,
+            world_size=world_size,
+            num_storage_nodes=num_storage_nodes,
+            num_assigned_storage_ranks=num_assigned_storage_ranks,
         )
 
-        self.assertEqual(list(result.keys()), [3, 0])
-        self.assertEqual(
-            result,
-            {
-                3: StorageRankShardAssignment(rank=1, world_size=2),
-                0: StorageRankShardAssignment(rank=1, world_size=2),
-            },
-        )
+        self.assertEqual(result, expected)
         self._assert_assignment_invariants(
-            world_size=4, num_storage_nodes=4, num_assigned_storage_ranks=2
+            world_size=world_size,
+            num_storage_nodes=num_storage_nodes,
+            num_assigned_storage_ranks=num_assigned_storage_ranks,
         )
 
-    def test_plan_storage_rank_shards_for_c5_s3_k1(self) -> None:
-        result = _plan_storage_rank_shards_for_compute_rank(
-            rank=4,
-            world_size=5,
-            num_storage_nodes=3,
-            num_assigned_storage_ranks=1,
-        )
-
-        self.assertEqual(list(result.keys()), [2])
-        self.assertEqual(
-            result,
-            {2: StorageRankShardAssignment(rank=0, world_size=1)},
-        )
-        self._assert_assignment_invariants(
-            world_size=5, num_storage_nodes=3, num_assigned_storage_ranks=1
-        )
-
-    def test_plan_storage_rank_shards_for_c3_s5_k2(self) -> None:
-        result = _plan_storage_rank_shards_for_compute_rank(
-            rank=1,
-            world_size=3,
-            num_storage_nodes=5,
-            num_assigned_storage_ranks=2,
-        )
-
-        self.assertEqual(list(result.keys()), [1, 2])
-        self.assertEqual(
-            result,
-            {
-                1: StorageRankShardAssignment(rank=1, world_size=2),
-                2: StorageRankShardAssignment(rank=0, world_size=1),
-            },
-        )
-        self._assert_assignment_invariants(
-            world_size=3, num_storage_nodes=5, num_assigned_storage_ranks=2
-        )
-
-    def test_plan_storage_rank_shards_rejects_invalid_inputs(self) -> None:
-        with self.assertRaises(ValueError):
-            _plan_storage_rank_shards_for_compute_rank(
+    @parameterized.expand(
+        [
+            param(
+                "world_size_zero",
                 rank=0,
                 world_size=0,
                 num_storage_nodes=4,
                 num_assigned_storage_ranks=1,
-            )
-
-        with self.assertRaises(ValueError):
-            _plan_storage_rank_shards_for_compute_rank(
+            ),
+            param(
+                "num_assigned_zero",
                 rank=0,
                 world_size=4,
                 num_storage_nodes=4,
                 num_assigned_storage_ranks=0,
-            )
-
-        with self.assertRaises(ValueError):
-            _plan_storage_rank_shards_for_compute_rank(
+            ),
+            param(
+                "insufficient_coverage",
                 rank=0,
                 world_size=2,
                 num_storage_nodes=5,
                 num_assigned_storage_ranks=2,
+            ),
+        ]
+    )
+    def test_plan_storage_rank_shards_rejects_invalid_inputs(
+        self,
+        _: str,
+        rank: int,
+        world_size: int,
+        num_storage_nodes: int,
+        num_assigned_storage_ranks: int,
+    ) -> None:
+        with self.assertRaises(ValueError):
+            _plan_storage_rank_shards_for_compute_rank(
+                rank=rank,
+                world_size=world_size,
+                num_storage_nodes=num_storage_nodes,
+                num_assigned_storage_ranks=num_assigned_storage_ranks,
             )
 
 
