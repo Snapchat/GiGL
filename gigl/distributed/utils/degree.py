@@ -32,6 +32,7 @@ from torch_geometric.typing import EdgeType
 from gigl.common.logger import Logger
 from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
+from gigl.types.graph import is_label_edge_type
 
 logger = Logger()
 
@@ -50,11 +51,14 @@ def compute_and_broadcast_degree_tensor(
 
     Args:
         graph: A Graph (homogeneous) or dict[EdgeType, Graph] (heterogeneous).
+            For heterogeneous graphs, label edge types are automatically excluded
+            from the computation — they are supervision edges and should not
+            contribute to node degree for graph traversal algorithms like PPR.
 
     Returns:
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
             - For homogeneous graphs: A tensor of shape [num_nodes].
-            - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
+            - For heterogeneous graphs: A dict mapping non-label EdgeType to degree tensors.
 
     Raises:
         RuntimeError: If torch.distributed is not initialized.
@@ -76,6 +80,10 @@ def compute_and_broadcast_degree_tensor(
     else:
         local_dict: dict[EdgeType, torch.Tensor] = {}
         for edge_type, edge_graph in graph.items():
+            # Label edge types are supervision edges and should not contribute
+            # to node degree for graph traversal algorithms like PPR.
+            if is_label_edge_type(edge_type):
+                continue
             topo = edge_graph.topo
             if topo is None or topo.indptr is None:
                 logger.warning(
