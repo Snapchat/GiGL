@@ -297,8 +297,8 @@ class RemoteDistDataset:
         if num_assigned_storage_ranks is None:
             for storage_rank in requested_storage_ranks:
                 request = FetchNodesRequest(
-                    split_idx=rank,
-                    num_splits=world_size,
+                    rank=rank,
+                    world_size=world_size,
                     split=split,
                     node_type=node_type,
                 )
@@ -310,8 +310,8 @@ class RemoteDistDataset:
                 request = FetchNodesRequest(
                     split=split,
                     node_type=node_type,
-                    split_idx=shard_index,
-                    num_splits=num_shards,
+                    rank=shard_index,
+                    world_size=num_shards,
                 )
                 request.validate()
                 requests.append(request)
@@ -527,8 +527,8 @@ class RemoteDistDataset:
             for storage_rank in requested_storage_ranks:
                 request = FetchABLPInputRequest(
                     split=split,
-                    split_idx=rank,
-                    num_splits=world_size,
+                    rank=rank,
+                    world_size=world_size,
                     node_type=node_type,
                     supervision_edge_type=supervision_edge_type,
                 )
@@ -541,8 +541,8 @@ class RemoteDistDataset:
                     split=split,
                     node_type=node_type,
                     supervision_edge_type=supervision_edge_type,
-                    split_idx=shard_index,
-                    num_splits=num_shards,
+                    rank=shard_index,
+                    world_size=num_shards,
                 )
                 request.validate()
                 requests.append(request)

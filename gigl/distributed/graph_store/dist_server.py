@@ -281,14 +281,14 @@ class DistServer:
 
         Args:
             request: The node-fetch request, including split, node type,
-                and optional split_idx/num_splits for partitioning.
+                and optional rank/world_size for partitioning.
 
         Returns:
             The node ids.
 
         Raises:
             ValueError:
-                * If split_idx and num_splits are not provided together
+                * If rank and world_size are not provided together
                 * If the split is invalid
                 * If the node ids are not a torch.Tensor or a dict[NodeType, torch.Tensor]
                 * If the node type is provided for a homogeneous dataset
@@ -302,16 +302,16 @@ class DistServer:
         return self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            split_idx=request.split_idx,
-            num_splits=request.num_splits,
+            rank=request.rank,
+            world_size=request.world_size,
         )
 
     def _get_node_ids(
         self,
         split: Optional[Union[Literal["train", "val", "test"], str]],
         node_type: Optional[NodeType],
-        split_idx: Optional[int] = None,
-        num_splits: Optional[int] = None,
+        rank: Optional[int] = None,
+        world_size: Optional[int] = None,
     ) -> torch.Tensor:
         """Core implementation for fetching node IDs by split, type, and partitioning.
 
@@ -320,10 +320,10 @@ class DistServer:
                 ``"test"``, or ``None`` for all nodes).
             node_type: The node type to select. Must be ``None`` for
                 homogeneous datasets.
-            split_idx: Which partition to return (0-indexed). Must be
-                provided together with ``num_splits``.
-            num_splits: Total number of partitions. Must be provided
-                together with ``split_idx``.
+            rank: Which partition to return (0-indexed). Must be
+                provided together with ``world_size``.
+            world_size: Total number of partitions. Must be provided
+                together with ``rank``.
 
         Returns:
             The node IDs tensor, optionally partitioned.
@@ -333,10 +333,10 @@ class DistServer:
                 invalid, or the node type is inconsistent with the dataset
                 type (homogeneous vs. heterogeneous).
         """
-        if (split_idx is None) ^ (num_splits is None):
+        if (rank is None) ^ (world_size is None):
             raise ValueError(
-                "split_idx and num_splits must be provided together. "
-                f"Received split_idx={split_idx}, num_splits={num_splits}"
+                "rank and world_size must be provided together. "
+                f"Received rank={rank}, world_size={world_size}"
             )
 
         if split == "train":
@@ -364,8 +364,8 @@ class DistServer:
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
             )
 
-        if split_idx is not None and num_splits is not None:
-            return torch.tensor_split(nodes, num_splits)[split_idx]
+        if rank is not None and world_size is not None:
+            return torch.tensor_split(nodes, world_size)[rank]
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -398,8 +398,8 @@ class DistServer:
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and optional split_idx/num_splits
-                for partitioning.
+                supervision edge type, and optional rank/world_size for
+                partitioning.
 
         Returns:
             A tuple containing the anchor nodes, the positive labels, and the negative labels.
@@ -414,13 +414,13 @@ class DistServer:
         anchors = self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            split_idx=request.split_idx,
-            num_splits=request.num_splits,
+            rank=request.rank,
+            world_size=request.world_size,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
         )
-        # When num_splits > num_nodes, tensor_split produces empty partitions.
+        # When world_size > num_nodes, tensor_split produces empty partitions.
         # Guard prevents get_labels_for_anchor_nodes from failing on empty input.
         if anchors.numel() == 0:
             empty_positive_labels = torch.empty(0, 0, dtype=torch.int64)
