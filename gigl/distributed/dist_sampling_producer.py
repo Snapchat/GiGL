@@ -37,7 +37,6 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_dataset import DistDataset as GiglDistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.sampler_options import (
@@ -213,32 +212,16 @@ class DistSamplingProducer(DistMpSamplingProducer):
         worker_options: MpDistSamplingWorkerOptions,
         channel: ChannelBase,
         sampler_options: SamplerOptions,
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
     ):
         super().__init__(data, sampler_input, sampling_config, worker_options, channel)
         self._sampler_options = sampler_options
+        self._degree_tensors = degree_tensors
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
-        # Extract degree tensors before spawning workers.  Worker subprocesses
-        # only initialize RPC (not torch.distributed), so the lazy degree
-        # computation on GiglDistDataset would fail there.  Computing here —
-        # where torch.distributed IS initialized — lets the tensor be shared
-        # to workers via IPC.
-        degree_tensors: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        ] = None
-        if isinstance(self._sampler_options, PPRSamplerOptions):
-            assert isinstance(self.data, GiglDistDataset)
-            degree_tensors = self.data.degree_tensor
-            if isinstance(degree_tensors, dict):
-                logger.info(
-                    f"Pre-computed degree tensors for PPR sampling across {len(degree_tensors)} edge types."
-                )
-            else:
-                logger.info(
-                    f"Pre-computed degree tensor for PPR sampling with {degree_tensors.size(0)} nodes."
-                )
-
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
@@ -267,7 +250,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self.sampling_completed_worker_count,
                     barrier,
                     self._sampler_options,
-                    degree_tensors,
+                    self._degree_tensors,
                 ),
             )
             w.daemon = True
