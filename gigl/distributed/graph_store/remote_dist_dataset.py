@@ -50,10 +50,6 @@ def _plan_storage_rank_shards_for_compute_rank(
     using a round-robin scheme starting from an evenly-spaced offset
     (``compute_rank * num_storage_nodes // world_size``).
 
-    The reverse mapping tells us how many compute ranks share each storage rank.
-    For the given ``rank``, its local shard within a shared storage rank is its
-    position in the sorted list of compute ranks assigned to that storage rank.
-
     The constraint ``world_size * num_assigned_storage_ranks >= num_storage_nodes``
     guarantees that every storage rank is contacted by at least one compute rank,
     ensuring exact global coverage.
