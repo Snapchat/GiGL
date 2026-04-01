@@ -420,16 +420,6 @@ class DistServer:
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
         )
-        # When world_size > num_nodes, tensor_split produces empty partitions.
-        # Guard prevents get_labels_for_anchor_nodes from failing on empty input.
-        if anchors.numel() == 0:
-            empty_positive_labels = torch.empty(0, 0, dtype=torch.int64)
-            empty_negative_labels = (
-                torch.empty(0, 0, dtype=torch.int64)
-                if negative_label_edge_type is not None
-                else None
-            )
-            return anchors, empty_positive_labels, empty_negative_labels
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             self.dataset, anchors, positive_label_edge_type, negative_label_edge_type
         )

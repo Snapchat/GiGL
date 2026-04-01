@@ -271,8 +271,6 @@ class RemoteDistDataset:
         num_assigned_storage_ranks: Optional[int] = None,
     ) -> dict[int, torch.Tensor]:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
-        requested_storage_ranks: list[int]
-        requests: list[FetchNodesRequest] = []
 
         if num_assigned_storage_ranks is not None:
             if rank is None or world_size is None:
@@ -287,7 +285,7 @@ class RemoteDistDataset:
                 num_storage_nodes=self.cluster_info.num_storage_nodes,
                 num_assigned_storage_ranks=num_assigned_storage_ranks,
             )
-            requested_storage_ranks = list(shard_assignments.keys())
+            requested_storage_ranks: list[int] = list(shard_assignments.keys())
         else:
             requested_storage_ranks = list(range(self.cluster_info.num_storage_nodes))
 
@@ -298,6 +296,7 @@ class RemoteDistDataset:
             f"split {split}, and num_assigned_storage_ranks {num_assigned_storage_ranks}"
         )
 
+        requests: list[FetchNodesRequest] = []
         if num_assigned_storage_ranks is None:
             for storage_rank in requested_storage_ranks:
                 request = FetchNodesRequest(
@@ -366,7 +365,7 @@ class RemoteDistDataset:
                 to guarantee all storage nodes are sampled from.
 
                 Typical values are 1-4. Lower values reduce cross-cluster network fanout
-                at the cost of potentially less balanced data distribution per compute rank.
+                at the cost of potentially starving compute ranks if there are more storage nodes than the number of compute ranks.
                 ``None`` (the default) contacts all storage nodes.
 
         Returns:
@@ -603,10 +602,16 @@ class RemoteDistDataset:
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
                 Defaults to None.
-            num_assigned_storage_ranks (Optional[int]): If provided, limit this compute
-                rank to exactly this many storage ranks while preserving exact global
-                coverage. Requires ``rank`` and ``world_size``.
+            num_assigned_storage_ranks (Optional[int]): If provided, limit this compute rank
+                to exactly this many storage ranks while preserving exact global coverage.
+                Requires ``rank`` and ``world_size``.
 
+                Must satisfy ``world_size * num_assigned_storage_ranks >= num_storage_nodes``
+                to guarantee all storage nodes are sampled from.
+
+                Typical values are 1-4. Lower values reduce cross-cluster network fanout
+                at the cost of potentially starving compute ranks if there are more storage nodes than the number of compute ranks.
+                ``None`` (the default) contacts all storage nodes.
         Returns:
             dict[int, ABLPInputNodes]:
                 A dict mapping storage rank to an ABLPInputNodes containing:
