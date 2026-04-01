@@ -374,11 +374,25 @@ class RemoteDistDataset:
                 1: tensor([8, 9])   # First 2 of 4 training nodes from storage rank 1
             }
 
-            Limit a compute rank to only 1 assigned storage rank:
+            Limit each compute rank to 1 assigned storage rank (4 compute ranks, 2 storage nodes).
+            Ranks 0-1 are assigned to storage 0; ranks 2-3 are assigned to storage 1.
+            Each storage node's data is contiguously split among its assigned compute ranks:
 
             >>> dataset.fetch_node_ids(rank=0, world_size=4, num_assigned_storage_ranks=1)
             {
-                0: tensor([...])  # Only storage rank 0 is queried for compute rank 0
+                0: tensor([0, 1, 2, 3])       # Storage 0, shard 0 of 2
+            }
+            >>> dataset.fetch_node_ids(rank=1, world_size=4, num_assigned_storage_ranks=1)
+            {
+                0: tensor([4, 5, 6, 7])       # Storage 0, shard 1 of 2
+            }
+            >>> dataset.fetch_node_ids(rank=2, world_size=4, num_assigned_storage_ranks=1)
+            {
+                1: tensor([8, 9, 10, 11])     # Storage 1, shard 0 of 2
+            }
+            >>> dataset.fetch_node_ids(rank=3, world_size=4, num_assigned_storage_ranks=1)
+            {
+                1: tensor([12, 13, 14, 15])   # Storage 1, shard 1 of 2
             }
 
         Note:
@@ -584,6 +598,37 @@ class RemoteDistDataset:
             }
 
             For labeled homogeneous graphs, anchor_node_type will be DEFAULT_HOMOGENEOUS_NODE_TYPE.
+
+            Limit each compute rank to 1 assigned storage rank (2 compute ranks, 2 storage nodes).
+            Suppose we have 2 storage nodes with train anchors and labels:
+
+                Storage rank 0: train anchors=[0, 1, 2]
+                Storage rank 1: train anchors=[3, 4]
+
+            >>> dataset.fetch_ablp_input(
+            ...     split="train", rank=0, world_size=2,
+            ...     anchor_node_type=USER, supervision_edge_type=USER_TO_ITEM,
+            ...     num_assigned_storage_ranks=1,
+            ... )
+            {
+                0: ABLPInputNodes(
+                    anchor_nodes=tensor([0, 1, 2]),
+                    labels={("user", "to_positive", "item"): (pos_labels, neg_labels)},
+                    anchor_node_type="user",
+                )
+            }
+            >>> dataset.fetch_ablp_input(
+            ...     split="train", rank=1, world_size=2,
+            ...     anchor_node_type=USER, supervision_edge_type=USER_TO_ITEM,
+            ...     num_assigned_storage_ranks=1,
+            ... )
+            {
+                1: ABLPInputNodes(
+                    anchor_nodes=tensor([3, 4]),
+                    labels={("user", "to_positive", "item"): (pos_labels, neg_labels)},
+                    anchor_node_type="user",
+                )
+            }
 
         """
 
