@@ -276,15 +276,13 @@ class DistNeighborLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            channel = BaseDistLoader.create_colocated_channel(worker_options)
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
-            ] = DistSamplingProducer(
-                data=dataset,
+            ] = BaseDistLoader.create_mp_producer(
+                dataset=dataset,
                 sampler_input=input_data,
                 sampling_config=sampling_config,
                 worker_options=worker_options,
-                channel=channel,
                 sampler_options=sampler_options,
             )
         else:

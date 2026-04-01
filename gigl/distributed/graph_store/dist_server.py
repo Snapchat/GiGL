@@ -39,7 +39,7 @@ from gigl.distributed.graph_store.messages import (
     FetchNodesRequest,
 )
 from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
@@ -485,6 +485,16 @@ class DistServer:
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
+                # Degree tensors for PPR must be computed before constructing
+                # the producer.  The all_reduce inside degree_tensor requires
+                # all ranks to participate simultaneously and cannot run inside
+                # worker subprocesses (which only initialize RPC, not
+                # torch.distributed).
+                degree_tensors = (
+                    self.dataset.degree_tensor
+                    if isinstance(sampler_options, PPRSamplerOptions)
+                    else None
+                )
                 producer = DistSamplingProducer(
                     data=self.dataset,
                     sampler_input=sampler_input,
@@ -492,6 +502,7 @@ class DistServer:
                     worker_options=worker_options,
                     channel=buffer,
                     sampler_options=sampler_options,
+                    degree_tensors=degree_tensors,
                 )
                 producer_start_time = time.monotonic()
                 producer.init()
