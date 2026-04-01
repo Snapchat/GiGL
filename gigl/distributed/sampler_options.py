@@ -1,7 +1,7 @@
-"""Sampler option types for configuring which sampler class to use in distributed loading.
+"""Sampler option types for configuring which BaseGiGLSampler subclass to use in distributed loading.
 
-Provides ``KHopNeighborSamplerOptions`` for using GiGL's built-in ``DistNeighborSampler``,
-and ``PPRSamplerOptions`` for PPR-based sampling using ``DistPPRNeighborSampler``.
+Provides ``KHopNeighborSamplerOptions`` for k-hop sampling via ``DistNeighborSampler``,
+and ``PPRSamplerOptions`` for PPR-based sampling via ``DistPPRNeighborSampler``.
 
 Frozen dataclasses so they are safe to pickle across RPC boundaries
 (required for Graph Store mode).
@@ -20,7 +20,7 @@ logger = Logger()
 
 @dataclass(frozen=True)
 class KHopNeighborSamplerOptions:
-    """Default sampler options using GiGL's DistNeighborSampler.
+    """Sampler options for k-hop neighbor sampling via DistNeighborSampler.
 
     Attributes:
         num_neighbors: Fanout per hop, either a flat list (homogeneous) or a

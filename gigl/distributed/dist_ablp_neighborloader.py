@@ -97,6 +97,7 @@ class DistABLPLoader(BaseDistLoader):
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
+        non_blocking_transfers: bool = True,
     ):
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -215,6 +216,14 @@ class DistABLPLoader(BaseDistLoader):
             context (deprecated - will be removed soon) (Optional[DistributedContext]): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon) (int): The total number of processes within a node.
+            non_blocking_transfers (bool): If True (default), batch-transfers all
+                sampled tensors to the target CUDA device using non-blocking copies
+                before collation, which can overlap data transfer with computation
+                when source tensors reside in pinned memory.  If False, the bulk
+                transfer is skipped and GLT's default (blocking) device placement
+                is used instead.
+                See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+                for background on pinned memory and non-blocking transfers.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -384,6 +393,7 @@ class DistABLPLoader(BaseDistLoader):
             sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
+            non_blocking_transfers=non_blocking_transfers,
         )
 
     def _setup_for_colocated(
