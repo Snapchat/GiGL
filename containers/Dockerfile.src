@@ -15,8 +15,10 @@ COPY uv.lock uv.lock
 COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY deployment deployment
 COPY gigl gigl
+COPY scripts scripts
 COPY snapchat snapchat
 COPY tests tests
 COPY examples examples
 
 RUN uv pip install -e .
+RUN uv run python scripts/build_cpp_extensions.py build_ext --inplace
