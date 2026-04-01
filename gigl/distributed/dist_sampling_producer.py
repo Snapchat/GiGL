@@ -126,7 +126,12 @@ def _compute_num_batches(input_len: int, batch_size: int, drop_last: bool) -> in
 
 
 def _epoch_batch_indices(state: ActiveEpochState) -> Optional[torch.Tensor]:
-    """Return the next batch of indices for an active epoch."""
+    """Return the next batch of indices for an active epoch.
+
+    Returns the index tensor for the next batch, or None if no more batches
+    should be submitted (epoch cancelled, all batches already submitted, or
+    incomplete final batch with drop_last=True).
+    """
     if state.cancelled or state.submitted_batches >= state.total_batches:
         return None
 
@@ -160,13 +165,6 @@ def _compute_worker_seeds_ranges(
         index_ranges.append((start, end))
         start = end
     return index_ranges
-
-
-def _slice_sampler_input(
-    sampler_input: SamplerInput, start: int, end: int
-) -> SamplerInput:
-    """Slice a sampler input by a half-open index range."""
-    return sampler_input[torch.arange(start, end, dtype=torch.long)]
 
 
 def _create_dist_sampler(
@@ -374,7 +372,26 @@ def _shared_sampling_worker_loop(
     sampler_options: SamplerOptions,
     degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
 ) -> None:
-    """Run one shared graph-store worker that schedules many input channels."""
+    """Run one shared graph-store worker that schedules many input channels.
+
+    Each worker subprocess runs this function as a fair-queued batch scheduler.
+    Multiple input channels (each representing one compute rank's data stream)
+    share the same sampling worker processes and graph data.
+
+    Algorithm:
+        1. Initialize RPC, sampler infrastructure, and signal the parent via barrier.
+        2. Enter the main event loop which alternates between:
+           a. Draining all pending commands from ``task_queue`` (register/unregister
+              channels, start epochs, stop).
+           b. Submitting batches round-robin from ``runnable_channels`` — a FIFO
+              queue of channels that have pending work. Each channel gets one batch
+              submitted per round to prevent starvation.
+           c. If no commands were processed and no batches submitted, blocking on
+              ``task_queue`` with a short timeout to avoid busy-waiting.
+        3. Completion callbacks from the sampler update per-channel state and emit
+           ``EPOCH_DONE_EVENT`` to ``event_queue`` when all batches for an epoch
+           are finished.
+    """
     samplers: dict[int, SamplerRuntime] = {}
     channels: dict[int, ChannelBase] = {}
     inputs: dict[int, SamplerInput] = {}
@@ -389,7 +406,10 @@ def _shared_sampling_worker_loop(
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
 
+    # --- Scheduler helper functions ---
+
     def _enqueue_channel_if_runnable_locked(channel_id: int) -> None:
+        """Add channel to the fair-queue if it has pending batches."""
         state = active_epochs_by_channel.get(channel_id)
         if state is None:
             return
@@ -624,8 +644,10 @@ def _shared_sampling_worker_loop(
         )
         mp_barrier.wait()
 
+        # --- Main event loop ---
         keep_running = True
         while keep_running:
+            # Phase 1: Drain all pending commands without blocking.
             processed_command = False
             while keep_running:
                 try:
@@ -635,10 +657,13 @@ def _shared_sampling_worker_loop(
                 processed_command = True
                 keep_running = _handle_command(command, payload)
 
+            # Phase 2: Submit batches round-robin from runnable channels.
             made_progress = _pump_runnable_channels()
             _maybe_log_scheduler_state("steady_state")
             if not keep_running:
                 break
+
+            # Phase 3: If idle (no commands, no batches), block until next command.
             if not (processed_command or made_progress):
                 try:
                     command, payload = task_queue.get(timeout=SCHEDULER_TICK_SECS)
@@ -817,8 +842,11 @@ class SharedDistSamplingBackend:
             sampling_config = self._channel_sampling_config[channel_id]
             if self._channel_epoch[channel_id] >= epoch:
                 return
+            previous_epoch = self._channel_epoch[channel_id]
             self._channel_epoch[channel_id] = epoch
             self._completed_workers.pop((channel_id, epoch), None)
+            if previous_epoch >= 0:
+                self._completed_workers.pop((channel_id, previous_epoch), None)
             input_len = sum(self._channel_input_sizes[channel_id])
             worker_ranges = self._channel_worker_seeds_ranges[channel_id]
             if sampling_config.shuffle:
@@ -862,6 +890,9 @@ class SharedDistSamplingBackend:
             self._channel_worker_seeds_ranges.pop(channel_id, None)
             self._channel_shuffle_generators.pop(channel_id, None)
             self._channel_epoch.pop(channel_id, None)
+            stale_keys = [k for k in self._completed_workers if k[0] == channel_id]
+            for k in stale_keys:
+                del self._completed_workers[k]
             for worker_rank in range(self.num_workers):
                 self._enqueue_worker_command(
                     worker_rank,

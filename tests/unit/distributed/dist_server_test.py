@@ -8,6 +8,8 @@ from gigl.distributed.graph_store import dist_server
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
+    InitSamplingBackendOpts,
+    RegisterBackendOpts,
 )
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
@@ -578,7 +580,7 @@ class TestDistServerSampling(TestCase):
         runtime = mock_backend_cls.return_value
 
         backend_id_1 = self.server.init_sampling_backend(
-            dist_server.InitSamplingBackendOpts(
+            InitSamplingBackendOpts(
                 backend_key="neighbor_loader_0",
                 worker_options=self.worker_options,
                 sampler_options=self.sampler_options,
@@ -586,7 +588,7 @@ class TestDistServerSampling(TestCase):
             )
         )
         backend_id_2 = self.server.init_sampling_backend(
-            dist_server.InitSamplingBackendOpts(
+            InitSamplingBackendOpts(
                 backend_key="neighbor_loader_0",
                 worker_options=self.worker_options,
                 sampler_options=self.sampler_options,
@@ -607,7 +609,7 @@ class TestDistServerSampling(TestCase):
     ) -> None:
         runtime = mock_backend_cls.return_value
         backend_id = self.server.init_sampling_backend(
-            dist_server.InitSamplingBackendOpts(
+            InitSamplingBackendOpts(
                 backend_key="neighbor_loader_0",
                 worker_options=self.worker_options,
                 sampler_options=self.sampler_options,
@@ -616,7 +618,7 @@ class TestDistServerSampling(TestCase):
         )
 
         channel_id = self.server.register_sampling_input(
-            dist_server.RegisterBackendOpts(
+            RegisterBackendOpts(
                 backend_id=backend_id,
                 worker_key="neighbor_loader_0_compute_rank_0",
                 sampler_input=MagicMock(),
@@ -639,7 +641,7 @@ class TestDistServerSampling(TestCase):
     ) -> None:
         runtime = mock_backend_cls.return_value
         backend_id = self.server.init_sampling_backend(
-            dist_server.InitSamplingBackendOpts(
+            InitSamplingBackendOpts(
                 backend_key="neighbor_loader_0",
                 worker_options=self.worker_options,
                 sampler_options=self.sampler_options,
@@ -647,7 +649,7 @@ class TestDistServerSampling(TestCase):
             )
         )
         channel_id = self.server.register_sampling_input(
-            dist_server.RegisterBackendOpts(
+            RegisterBackendOpts(
                 backend_id=backend_id,
                 worker_key="neighbor_loader_0_compute_rank_0",
                 sampler_input=MagicMock(),
@@ -676,7 +678,7 @@ class TestDistServerSampling(TestCase):
     ) -> None:
         runtime = mock_backend_cls.return_value
         backend_id = self.server.init_sampling_backend(
-            dist_server.InitSamplingBackendOpts(
+            InitSamplingBackendOpts(
                 backend_key="neighbor_loader_0",
                 worker_options=self.worker_options,
                 sampler_options=self.sampler_options,
@@ -684,7 +686,7 @@ class TestDistServerSampling(TestCase):
             )
         )
         channel_id = self.server.register_sampling_input(
-            dist_server.RegisterBackendOpts(
+            RegisterBackendOpts(
                 backend_id=backend_id,
                 worker_key="neighbor_loader_0_compute_rank_0",
                 sampler_input=MagicMock(),

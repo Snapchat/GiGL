@@ -13,6 +13,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from itertools import count
 from typing import Callable, Optional, TypeVar, Union
 
 import torch
@@ -41,8 +42,8 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.compute import async_request_server
-from gigl.distributed.graph_store.dist_server import (
-    DistServer,
+from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.messages import (
     InitSamplingBackendOpts,
     RegisterBackendOpts,
 )
@@ -94,6 +95,69 @@ class GroupLeaderInfo:
     group_size: int
 
 
+def _compute_group_leader(
+    my_key: str,
+    all_keys: list[Optional[str]],
+    rank: int,
+    process_start_gap_seconds: float,
+    max_concurrent_producer_inits: int,
+) -> GroupLeaderInfo:
+    """Compute leader election and stagger information for one key group."""
+    key_to_ranks: dict[str, list[int]] = defaultdict(list)
+    for other_rank, key in enumerate(all_keys):
+        assert key is not None, f"Rank {other_rank} did not provide a key."
+        key_to_ranks[key].append(other_rank)
+
+    leader_rank = min(key_to_ranks[my_key])
+    unique_keys = sorted(key_to_ranks.keys())
+    my_key_index = unique_keys.index(my_key)
+    num_batches = math.ceil(len(unique_keys) / max_concurrent_producer_inits)
+    my_batch = my_key_index // max_concurrent_producer_inits
+    stagger_sleep = my_batch * process_start_gap_seconds
+    return GroupLeaderInfo(
+        leader_rank=leader_rank,
+        is_leader=rank == leader_rank,
+        my_batch=my_batch,
+        num_batches=num_batches,
+        stagger_sleep=stagger_sleep,
+        group_size=len(key_to_ranks[my_key]),
+    )
+
+
+def _dispatch_grouped_graph_store_phase(
+    *,
+    my_key: str,
+    runtime: DistributedRuntimeInfo,
+    process_start_gap_seconds: float,
+    max_concurrent_producer_inits: int,
+    issue_phase_rpcs: Callable[[], list[T]],
+) -> list[T]:
+    """Run one grouped graph-store RPC phase under leader election."""
+    all_keys: list[Optional[str]] = [None] * runtime.world_size
+    torch.distributed.all_gather_object(all_keys, my_key)
+    group_info = _compute_group_leader(
+        my_key=my_key,
+        all_keys=all_keys,
+        rank=runtime.rank,
+        process_start_gap_seconds=process_start_gap_seconds,
+        max_concurrent_producer_inits=max_concurrent_producer_inits,
+    )
+    logger.info(
+        f"rank={runtime.rank} phase_key={my_key} "
+        f"is_leader={group_info.is_leader} leader_rank={group_info.leader_rank} "
+        f"group_size={group_info.group_size} "
+        f"batch={group_info.my_batch}/{group_info.num_batches} "
+        f"stagger_sleep={group_info.stagger_sleep:.1f}s"
+    )
+    _flush()
+    if group_info.is_leader and group_info.stagger_sleep > 0:
+        time.sleep(group_info.stagger_sleep)
+    results = issue_phase_rpcs() if group_info.is_leader else []
+    all_results: list[list[T]] = [[] for _ in range(runtime.world_size)]
+    torch.distributed.all_gather_object(all_results, results)
+    return all_results[group_info.leader_rank]
+
+
 class BaseDistLoader(DistLoader):
     """Base class for GiGL distributed loaders.
 
@@ -133,6 +197,8 @@ class BaseDistLoader(DistLoader):
             Only applies to graph store mode. Defaults to ``None``
             (no staggering).
     """
+
+    _global_loader_counter = count(0)
 
     @staticmethod
     def resolve_runtime(
@@ -608,76 +674,6 @@ class BaseDistLoader(DistLoader):
         time.sleep(process_start_gap_seconds * runtime.local_rank)
         self._mp_producer.init()
 
-    @staticmethod
-    def _compute_group_leader(
-        my_key: str,
-        all_keys: list[Optional[str]],
-        rank: int,
-        process_start_gap_seconds: float,
-        max_concurrent_producer_inits: int,
-    ) -> GroupLeaderInfo:
-        """Compute leader election and stagger information for one key group."""
-        key_to_ranks: dict[str, list[int]] = defaultdict(list)
-        for other_rank, key in enumerate(all_keys):
-            assert key is not None, f"Rank {other_rank} did not provide a key."
-            key_to_ranks[key].append(other_rank)
-
-        leader_rank = min(key_to_ranks[my_key])
-        unique_keys = sorted(key_to_ranks.keys())
-        my_key_index = unique_keys.index(my_key)
-        num_batches = math.ceil(len(unique_keys) / max_concurrent_producer_inits)
-        my_batch = my_key_index // max_concurrent_producer_inits
-        stagger_sleep = my_batch * process_start_gap_seconds
-        return GroupLeaderInfo(
-            leader_rank=leader_rank,
-            is_leader=rank == leader_rank,
-            my_batch=my_batch,
-            num_batches=num_batches,
-            stagger_sleep=stagger_sleep,
-            group_size=len(key_to_ranks[my_key]),
-        )
-
-    @staticmethod
-    def _dispatch_grouped_graph_store_phase(
-        *,
-        my_key: str,
-        runtime: DistributedRuntimeInfo,
-        process_start_gap_seconds: float,
-        max_concurrent_producer_inits: int,
-        issue_phase_rpcs: Callable[[], list[T]],
-    ) -> list[T]:
-        """Run one grouped graph-store RPC phase under leader election."""
-        all_keys: list[Optional[str]] = [None] * runtime.world_size
-        torch.distributed.all_gather_object(all_keys, my_key)
-        group_info = BaseDistLoader._compute_group_leader(
-            my_key=my_key,
-            all_keys=all_keys,
-            rank=runtime.rank,
-            process_start_gap_seconds=process_start_gap_seconds,
-            max_concurrent_producer_inits=max_concurrent_producer_inits,
-        )
-        logger.info(
-            f"rank={runtime.rank} phase_key={my_key} "
-            f"is_leader={group_info.is_leader} leader_rank={group_info.leader_rank} "
-            f"group_size={group_info.group_size} "
-            f"batch={group_info.my_batch}/{group_info.num_batches} "
-            f"stagger_sleep={group_info.stagger_sleep:.1f}s"
-        )
-        _flush()
-        if group_info.is_leader and group_info.stagger_sleep > 0:
-            time.sleep(group_info.stagger_sleep)
-        results = issue_phase_rpcs() if group_info.is_leader else []
-        all_results: list[list[T]] = [[] for _ in range(runtime.world_size)]
-        torch.distributed.all_gather_object(all_results, results)
-        return all_results[group_info.leader_rank]
-
-    def _build_graph_store_backend_key(self) -> str:
-        """Build a loader-scoped backend key shared across all ranks."""
-        worker_key = self.worker_options.worker_key
-        if "_compute_rank_" not in worker_key:
-            return worker_key
-        return worker_key.split("_compute_rank_", 1)[0]
-
     def _init_graph_store_sampling_backends(
         self,
         runtime: DistributedRuntimeInfo,
@@ -685,29 +681,26 @@ class BaseDistLoader(DistLoader):
         max_concurrent_producer_inits: int,
     ) -> list[int]:
         """Initialize or reuse one shared backend per storage server."""
-        backend_key = self._build_graph_store_backend_key()
+        backend_key = self._backend_key
 
         def issue_rpcs() -> list[int]:
-            futures: list[tuple[int, torch.futures.Future[int]]] = []
+            futures: list[torch.futures.Future[int]] = []
             for server_rank in self._server_rank_list:
                 futures.append(
-                    (
+                    async_request_server(
                         server_rank,
-                        async_request_server(
-                            server_rank,
-                            DistServer.init_sampling_backend,
-                            InitSamplingBackendOpts(
-                                backend_key=backend_key,
-                                worker_options=self.worker_options,
-                                sampler_options=self._sampler_options,
-                                sampling_config=self.sampling_config,
-                            ),
+                        DistServer.init_sampling_backend,
+                        InitSamplingBackendOpts(
+                            backend_key=backend_key,
+                            worker_options=self.worker_options,
+                            sampler_options=self._sampler_options,
+                            sampling_config=self.sampling_config,
                         ),
                     )
                 )
-            return [future.wait() for _, future in futures]
+            return [future.wait() for future in futures]
 
-        return self._dispatch_grouped_graph_store_phase(
+        return _dispatch_grouped_graph_store_phase(
             my_key=backend_key,
             runtime=runtime,
             process_start_gap_seconds=process_start_gap_seconds,
@@ -748,7 +741,7 @@ class BaseDistLoader(DistLoader):
                 )
             return [future.wait() for future in futures]
 
-        return self._dispatch_grouped_graph_store_phase(
+        return _dispatch_grouped_graph_store_phase(
             my_key=worker_key,
             runtime=runtime,
             process_start_gap_seconds=process_start_gap_seconds,
@@ -798,9 +791,9 @@ class BaseDistLoader(DistLoader):
         )
         self._channel = RemoteReceivingChannel(
             server_rank=self._server_rank_list,
-            channel_id=self._producer_id_list,
+            channel_id=self._channel_id_list,
             prefetch_size=self.worker_options.prefetch_size,
-            active_mask=[len(inp) > 0 for inp in self._input_data_list],
+            active_mask=self._remote_input_has_batches,
             pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
         logger.info(

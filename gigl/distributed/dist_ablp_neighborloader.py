@@ -1,5 +1,4 @@
 from collections import abc, defaultdict
-from itertools import count
 from typing import Optional, Union
 
 import torch
@@ -63,11 +62,6 @@ logger = Logger()
 
 
 class DistABLPLoader(BaseDistLoader):
-    # Counts instantiations of this class, per process.
-    # This is needed so we can generate unique worker key for each instance, for graph store mode.
-    # NOTE: This is per-class, not per-instance.
-    _counter = count(0)
-
     def __init__(
         self,
         dataset: Union[DistDataset, RemoteDistDataset],
@@ -265,7 +259,7 @@ class DistABLPLoader(BaseDistLoader):
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
-        self._instance_count = next(self._counter)
+        self._instance_count = next(BaseDistLoader._global_loader_counter)
 
         # Resolve distributed context
         runtime = BaseDistLoader.resolve_runtime(
@@ -620,12 +614,12 @@ class DistABLPLoader(BaseDistLoader):
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
-        backend_key = f"dist_ablp_loader_{self._instance_count}"
-        worker_key = f"{backend_key}_compute_rank_{compute_rank}"
+        self._backend_key = f"dist_ablp_loader_{self._instance_count}"
+        worker_key = f"{self._backend_key}_compute_rank_{compute_rank}"
         logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
-            loader_port_index=self._instance_count * 2 + 1,
+            loader_port_index=self._instance_count,
             worker_key=worker_key,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,

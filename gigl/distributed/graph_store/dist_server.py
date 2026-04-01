@@ -17,19 +17,9 @@ from typing import Any, Callable, Literal, Optional, TypeVar, Union
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
 from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
-from graphlearn_torch.distributed import (
-    RemoteDistSamplingWorkerOptions,
-    barrier,
-    init_rpc,
-    shutdown_rpc,
-)
+from graphlearn_torch.distributed import barrier, init_rpc, shutdown_rpc
 from graphlearn_torch.partition import PartitionBook
-from graphlearn_torch.sampler import (
-    EdgeSamplerInput,
-    NodeSamplerInput,
-    RemoteSamplerInput,
-    SamplingConfig,
-)
+from graphlearn_torch.sampler import RemoteSamplerInput
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
@@ -37,9 +27,9 @@ from gigl.distributed.dist_sampling_producer import SharedDistSamplingBackend
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
+    InitSamplingBackendOpts,
+    RegisterBackendOpts,
 )
-from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
@@ -53,26 +43,6 @@ FETCH_SLOW_LOG_SECS = 1.0
 logger = Logger()
 
 R = TypeVar("R")
-
-
-@dataclass(frozen=True)
-class InitSamplingBackendOpts:
-    backend_key: str
-    worker_options: RemoteDistSamplingWorkerOptions
-    sampler_options: SamplerOptions
-    sampling_config: SamplingConfig
-
-
-@dataclass(frozen=True)
-class RegisterBackendOpts:
-    backend_id: int
-    worker_key: str
-    sampler_input: Union[
-        NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-    ]
-    sampling_config: SamplingConfig
-    buffer_capacity: int
-    buffer_size: Union[int, str]
 
 
 @dataclass
@@ -90,6 +60,7 @@ class SamplingBackendState:
     backend_key: str
     runtime: SharedDistSamplingBackend
     active_channels: set[int] = field(default_factory=set)
+    lock: threading.RLock = field(default_factory=threading.RLock)
 
 
 class DistServer:
@@ -105,7 +76,7 @@ class DistServer:
         data and feature data, along with distributed patition books.
     """
 
-    def __init__(self, dataset: DistDataset) -> None:
+    def __init__(self, dataset: DistDataset, log_every_n: int = 50) -> None:
         self.dataset = dataset
         self._lock = threading.RLock()
         self._exit = False
@@ -114,6 +85,10 @@ class DistServer:
         self._backend_key_to_id: dict[str, int] = {}
         self._backend_state_by_id: dict[int, SamplingBackendState] = {}
         self._channel_state: dict[int, ChannelState] = {}
+        self._log_every_n = log_every_n
+        self._fetch_count: int = 0
+        self._fetch_total_elapsed: float = 0.0
+        self._fetch_slow_count: int = 0
 
     def shutdown(self) -> None:
         with self._lock:
@@ -122,7 +97,14 @@ class DistServer:
             self._backend_state_by_id.clear()
             self._channel_state.clear()
         for backend_state in backends:
-            backend_state.runtime.shutdown()
+            try:
+                backend_state.runtime.shutdown()
+            except Exception:
+                logger.warning(
+                    f"Failed to shut down backend backend_id={backend_state.backend_id} "
+                    f"backend_key={backend_state.backend_key}",
+                    exc_info=True,
+                )
 
     def wait_for_exit(self) -> None:
         r"""Block until the exit flag been set to ``True``."""
@@ -479,6 +461,7 @@ class DistServer:
             )
             self._backend_key_to_id[opts.backend_key] = backend_id
             self._backend_state_by_id[backend_id] = backend_state
+        init_start_time = time.monotonic()
         try:
             backend_state.runtime.init_backend()
         except Exception:
@@ -486,9 +469,12 @@ class DistServer:
                 self._backend_key_to_id.pop(opts.backend_key, None)
                 self._backend_state_by_id.pop(backend_id, None)
             raise
+        init_elapsed = time.monotonic() - init_start_time
+        total_elapsed = time.monotonic() - request_start_time
         logger.info(
             f"Initialized sampling backend backend_key={opts.backend_key} "
-            f"backend_id={backend_id} in {time.monotonic() - request_start_time:.2f}s"
+            f"backend_id={backend_id} "
+            f"init_backend={init_elapsed:.2f}s total={total_elapsed:.2f}s"
         )
         return backend_id
 
@@ -513,7 +499,7 @@ class DistServer:
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
         try:
-            with channel_state.lock:
+            with backend_state.lock:
                 backend_state.runtime.register_input(
                     channel_id=channel_id,
                     worker_key=opts.worker_key,
@@ -545,7 +531,7 @@ class DistServer:
         if backend_state is None:
             return
 
-        with channel_state.lock:
+        with backend_state.lock:
             backend_state.runtime.unregister_input(channel_id)
 
         should_shutdown_backend = False
@@ -563,10 +549,15 @@ class DistServer:
         with self._lock:
             channel_state = self._channel_state.get(channel_id)
             if channel_state is None:
-                return
+                raise RuntimeError(
+                    f"start_new_epoch_sampling: channel_id={channel_id} not found"
+                )
             backend_state = self._backend_state_by_id.get(channel_state.backend_id)
         if backend_state is None:
-            return
+            raise RuntimeError(
+                f"start_new_epoch_sampling: backend for channel_id={channel_id} "
+                f"backend_id={channel_state.backend_id} not found"
+            )
 
         with channel_state.lock:
             if channel_state.epoch >= epoch:
@@ -577,6 +568,23 @@ class DistServer:
                 f"epoch={epoch}"
             )
             backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+
+    def _log_fetch_stats_if_due(self, elapsed: float) -> None:
+        """Accumulate fetch timing and log aggregated stats every log_every_n calls."""
+        self._fetch_count += 1
+        self._fetch_total_elapsed += elapsed
+        if elapsed >= FETCH_SLOW_LOG_SECS:
+            self._fetch_slow_count += 1
+        if self._fetch_count >= self._log_every_n:
+            avg_elapsed = self._fetch_total_elapsed / self._fetch_count
+            logger.info(
+                f"fetch_one_sampled_message stats: "
+                f"avg_elapsed={avg_elapsed:.3f}s "
+                f"slow_count={self._fetch_slow_count}/{self._fetch_count}"
+            )
+            self._fetch_count = 0
+            self._fetch_total_elapsed = 0.0
+            self._fetch_slow_count = 0
 
     def fetch_one_sampled_message(
         self, channel_id: int
@@ -595,12 +603,7 @@ class DistServer:
             while True:
                 try:
                     msg = channel_state.channel.recv(timeout_ms=100)
-                    if time.monotonic() - request_start_time >= FETCH_SLOW_LOG_SECS:
-                        logger.info(
-                            f"fetch_one_sampled_message slow channel_id={channel_id} "
-                            f"epoch={channel_state.epoch} "
-                            f"elapsed_secs={time.monotonic() - request_start_time:.2f}"
-                        )
+                    self._log_fetch_stats_if_due(time.monotonic() - request_start_time)
                     return msg, False
                 except QueueTimeoutError:
                     if (
@@ -609,12 +612,9 @@ class DistServer:
                         )
                         and channel_state.channel.empty()
                     ):
-                        if time.monotonic() - request_start_time >= FETCH_SLOW_LOG_SECS:
-                            logger.info(
-                                f"fetch_one_sampled_message done channel_id={channel_id} "
-                                f"epoch={channel_state.epoch} "
-                                f"elapsed_secs={time.monotonic() - request_start_time:.2f}"
-                            )
+                        self._log_fetch_stats_if_due(
+                            time.monotonic() - request_start_time
+                        )
                         return None, True
 
 
