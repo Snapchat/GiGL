@@ -10,13 +10,13 @@ Usage::
 
 from pathlib import Path
 
-from setuptools import setup
+from setuptools import Extension, setup
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 _CSRC_DIR = Path("gigl/csrc")
 
 
-def find_cpp_extensions() -> list[CppExtension]:
+def find_cpp_extensions() -> list[Extension]:
     """Auto-discover pybind11 extension modules under ``gigl/csrc/``.
 
     Following PyTorch's csrc convention, only files named ``python_*.cpp`` are
