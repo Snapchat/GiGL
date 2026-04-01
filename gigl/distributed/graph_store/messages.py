@@ -17,8 +17,8 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 
 @dataclass(frozen=True)
-class InitSamplingBackendOpts:
-    """Options for initializing a shared sampling backend on a storage server."""
+class InitSamplingBackendRequest:
+    """Request to initialize a shared sampling backend on a storage server."""
 
     backend_key: str
     worker_options: RemoteDistSamplingWorkerOptions
@@ -27,8 +27,8 @@ class InitSamplingBackendOpts:
 
 
 @dataclass(frozen=True)
-class RegisterBackendOpts:
-    """Options for registering one compute-rank input channel on a backend."""
+class RegisterBackendRequest:
+    """Request to register one compute-rank input channel on a backend."""
 
     backend_id: int
     worker_key: str

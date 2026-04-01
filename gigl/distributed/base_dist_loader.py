@@ -44,8 +44,8 @@ from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.compute import async_request_server
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.messages import (
-    InitSamplingBackendOpts,
-    RegisterBackendOpts,
+    InitSamplingBackendRequest,
+    RegisterBackendRequest,
 )
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -370,6 +370,7 @@ class BaseDistLoader(DistLoader):
             if not self.drop_last and self._input_len % self.batch_size != 0:
                 self._num_expected += 1
 
+            self._remote_input_has_batches: list[bool] = []
             self._shutdowned = False
             self._init_colocated_connections(
                 dataset=dataset,
@@ -589,7 +590,6 @@ class BaseDistLoader(DistLoader):
     def create_graph_store_worker_options(
         *,
         dataset: RemoteDistDataset,
-        loader_port_index: int,
         worker_key: str,
         num_workers: int,
         worker_concurrency: int,
@@ -600,8 +600,6 @@ class BaseDistLoader(DistLoader):
 
         Args:
             dataset: Remote dataset proxy used to discover storage-cluster topology.
-            loader_port_index: Loader-scoped index used to select a shared storage-side
-                sampling worker-group port for this loader instantiation.
             worker_key: Unique key used by the storage cluster to deduplicate producers.
             num_workers: Number of sampling worker processes.
             worker_concurrency: Max sampling concurrency per worker.
@@ -611,10 +609,8 @@ class BaseDistLoader(DistLoader):
         Returns:
             Fully configured worker options for graph-store sampling.
         """
-        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
-            num_ports=loader_port_index + 1
-        )
-        sampling_port = sampling_ports[loader_port_index]
+        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(num_ports=1)
+        sampling_port = sampling_ports[0]
         return RemoteDistSamplingWorkerOptions(
             server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
             num_workers=num_workers,
@@ -690,7 +686,7 @@ class BaseDistLoader(DistLoader):
                     async_request_server(
                         server_rank,
                         DistServer.init_sampling_backend,
-                        InitSamplingBackendOpts(
+                        InitSamplingBackendRequest(
                             backend_key=backend_key,
                             worker_options=self.worker_options,
                             sampler_options=self._sampler_options,
@@ -716,6 +712,15 @@ class BaseDistLoader(DistLoader):
         max_concurrent_producer_inits: int,
     ) -> list[int]:
         """Register this compute rank's inputs on existing shared backends."""
+        assert (
+            len(self._server_rank_list)
+            == len(backend_id_list)
+            == len(self._input_data_list)
+        ), (
+            f"Mismatched lengths: server_rank_list={len(self._server_rank_list)}, "
+            f"backend_id_list={len(backend_id_list)}, "
+            f"input_data_list={len(self._input_data_list)}"
+        )
         worker_key = self.worker_options.worker_key
 
         def issue_rpcs() -> list[int]:
@@ -729,7 +734,7 @@ class BaseDistLoader(DistLoader):
                     async_request_server(
                         server_rank,
                         DistServer.register_sampling_input,
-                        RegisterBackendOpts(
+                        RegisterBackendRequest(
                             backend_id=backend_id,
                             worker_key=worker_key,
                             sampler_input=input_data,
@@ -761,7 +766,28 @@ class BaseDistLoader(DistLoader):
         process_start_gap_seconds: float = 60.0,
         max_concurrent_producer_inits: int = sys.maxsize,
     ) -> None:
-        """Initialize graph-store mode with shared backends and per-rank channels."""
+        """Initialize graph-store mode with shared backends and per-rank channels.
+
+        Sets two parallel lists indexed by storage server:
+
+        - ``_backend_id_list``: one backend per storage server, shared across all
+          compute ranks using the same loader instance (keyed by ``_backend_key``).
+          Use this when the operation targets the backend itself (e.g.
+          ``init_sampling_backend``).
+
+        - ``_channel_id_list``: one channel per storage server, unique to this
+          compute rank.  Use this for per-rank operations (e.g.
+          ``start_new_epoch_sampling``, ``fetch_one_sampled_message``,
+          ``destroy_sampling_input``).
+
+        Example with 2 storage servers and 4 compute ranks sharing one
+        DistNeighborLoader:
+            backend_id_list = [0, 1]        # same for all 4 ranks
+            channel_id_list = [0, 1]        # rank 0
+            channel_id_list = [2, 3]        # rank 1
+            channel_id_list = [4, 5]        # rank 2
+            channel_id_list = [6, 7]        # rank 3
+        """
         ctx = get_context()
         if ctx is None:
             raise RuntimeError(

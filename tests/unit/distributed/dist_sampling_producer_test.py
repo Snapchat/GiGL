@@ -6,7 +6,7 @@ import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
-from gigl.distributed.dist_sampling_producer import (
+from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     EPOCH_DONE_EVENT,
     ActiveEpochState,
     SharedDistSamplingBackend,
@@ -94,9 +94,11 @@ class DistSamplingProducerTest(TestCase):
             [(0, 2), (2, 4), (4, 7)],
         )
 
-    @patch("gigl.distributed.dist_sampling_producer.get_context")
-    @patch("gigl.distributed.dist_sampling_producer.mp.get_context")
-    @patch("gigl.distributed.dist_sampling_producer._prepare_degree_tensors")
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.get_context")
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.mp.get_context")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer._prepare_degree_tensors"
+    )
     def test_init_backend_prepares_worker_options(
         self,
         mock_prepare_degree_tensors: MagicMock,

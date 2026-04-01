@@ -619,7 +619,6 @@ class DistABLPLoader(BaseDistLoader):
         logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
-            loader_port_index=self._instance_count,
             worker_key=worker_key,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,

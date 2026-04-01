@@ -23,12 +23,14 @@ from graphlearn_torch.sampler import RemoteSamplerInput
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import SharedDistSamplingBackend
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
-    InitSamplingBackendOpts,
-    RegisterBackendOpts,
+    InitSamplingBackendRequest,
+    RegisterBackendRequest,
+)
+from gigl.distributed.graph_store.shared_dist_sampling_producer import (
+    SharedDistSamplingBackend,
 )
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -440,7 +442,7 @@ class DistServer:
         )
         return anchors, positive_labels, negative_labels
 
-    def init_sampling_backend(self, opts: InitSamplingBackendOpts) -> int:
+    def init_sampling_backend(self, opts: InitSamplingBackendRequest) -> int:
         """Create or reuse a shared sampling backend for one loader instance."""
         request_start_time = time.monotonic()
         with self._lock:
@@ -478,7 +480,7 @@ class DistServer:
         )
         return backend_id
 
-    def register_sampling_input(self, opts: RegisterBackendOpts) -> int:
+    def register_sampling_input(self, opts: RegisterBackendRequest) -> int:
         """Register one compute-rank input channel on an existing backend."""
         request_start_time = time.monotonic()
         with self._lock:

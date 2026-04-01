@@ -336,7 +336,6 @@ class DistNeighborLoader(BaseDistLoader):
         logger.info(f"Rank {compute_rank} worker key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
-            loader_port_index=self._instance_count,
             worker_key=worker_key,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,
