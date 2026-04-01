@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -31,6 +31,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
 
@@ -41,6 +42,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.neighborloader import (
@@ -221,6 +223,7 @@ class BaseDistLoader(DistLoader):
         sampler_options: SamplerOptions,
         process_start_gap_seconds: float = 60.0,
         max_concurrent_producer_inits: Optional[int] = None,
+        non_blocking_transfers: bool = True,
     ):
         if max_concurrent_producer_inits is None:
             max_concurrent_producer_inits = sys.maxsize
@@ -237,6 +240,7 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options
+        self._non_blocking_transfers = non_blocking_transfers
 
         # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
         self.input_data = sampler_input
@@ -788,9 +792,11 @@ class BaseDistLoader(DistLoader):
 
         # Create remote receiving channel for cross-machine message passing
         self._channel = RemoteReceivingChannel(
-            self._server_rank_list,
-            self._producer_id_list,
-            self.worker_options.prefetch_size,
+            server_rank=self._server_rank_list,
+            channel_id=self._producer_id_list,
+            prefetch_size=self.worker_options.prefetch_size,
+            active_mask=[len(inp) > 0 for inp in self._input_data_list],
+            pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
 
         logger.info(
@@ -818,6 +824,35 @@ class BaseDistLoader(DistLoader):
                 rpc_futures.append(fut)
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        """Override GLT's _collate_fn to optionally batch-transfer tensors with non_blocking=True.
+
+        When ``_non_blocking_transfers`` is enabled (default), moves all tensors
+        in the SampleMessage to the target CUDA device using non-blocking copies
+        before delegating to the parent ``_collate_fn``.  This is effective when
+        source tensors reside in pinned memory, allowing host-to-device transfers
+        to overlap with other work on the default CUDA stream.
+
+        When ``_non_blocking_transfers`` is disabled, the bulk transfer is skipped
+        entirely and GLT's default (blocking) device placement is used instead.
+
+        See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+        for background on pinned memory and non-blocking transfers.
+        """
+        if (
+            self._non_blocking_transfers
+            and self.to_device is not None
+            and self.to_device.type == "cuda"
+        ):
+            for k, v in msg.items():
+                if isinstance(v, torch.Tensor) and v.device != self.to_device:
+                    msg[k] = v.to(self.to_device, non_blocking=True)
+            # Synchronize the current CUDA stream to ensure all non-blocking
+            # transfers are complete before the parent _collate_fn processes
+            # the message.
+            torch.cuda.current_stream().synchronize()
+        return super()._collate_fn(msg)
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
