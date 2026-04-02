@@ -66,6 +66,15 @@ class SamplingBackendState:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
+@dataclass
+class _ChannelFetchStats:
+    """Per-channel fetch timing stats for ``fetch_one_sampled_message``."""
+
+    fetch_count: int = 0
+    fetch_total_elapsed: float = 0.0
+    fetch_slow_count: int = 0
+
+
 class DistServer:
     r"""A server that supports launching remote sampling workers for
     training clients.
@@ -89,9 +98,7 @@ class DistServer:
         self._backend_state_by_id: dict[int, SamplingBackendState] = {}
         self._channel_state: dict[int, ChannelState] = {}
         self._log_every_n = log_every_n
-        self._fetch_count: int = 0
-        self._fetch_total_elapsed: float = 0.0
-        self._fetch_slow_count: int = 0
+        self._fetch_stats: dict[int, _ChannelFetchStats] = {}
 
     def shutdown(self) -> None:
         with self._lock:
@@ -526,6 +533,7 @@ class DistServer:
 
     def destroy_sampling_input(self, channel_id: int) -> None:
         """Destroy one registered sampling channel and maybe its backend."""
+        self._fetch_stats.pop(channel_id, None)
         with self._lock:
             channel_state = self._channel_state.pop(channel_id, None)
             if channel_state is None:
@@ -562,32 +570,41 @@ class DistServer:
                 f"backend_id={channel_state.backend_id} not found"
             )
 
-        with channel_state.lock:
-            if channel_state.epoch >= epoch:
-                return
-            channel_state.epoch = epoch
-            logger.info(
-                f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
-                f"epoch={epoch}"
-            )
-            backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+        if channel_state.epoch >= epoch:
+            return
+        channel_state.epoch = epoch
+        logger.info(
+            f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
+            f"epoch={epoch}"
+        )
+        backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
 
-    def _log_fetch_stats_if_due(self, elapsed: float) -> None:
-        """Accumulate fetch timing and log aggregated stats every log_every_n calls."""
-        self._fetch_count += 1
-        self._fetch_total_elapsed += elapsed
+    def _log_fetch_stats_if_due(
+        self, channel_id: int, worker_key: str, elapsed: float
+    ) -> None:
+        """Accumulate per-channel fetch timing and log aggregated stats every ``log_every_n`` calls.
+
+        Stats are keyed by ``channel_id`` so each channel's RPC thread updates
+        its own counters without contention.
+        """
+        stats = self._fetch_stats.get(channel_id)
+        if stats is None:
+            stats = _ChannelFetchStats()
+            self._fetch_stats[channel_id] = stats
+        stats.fetch_count += 1
+        stats.fetch_total_elapsed += elapsed
         if elapsed >= FETCH_SLOW_LOG_SECS:
-            self._fetch_slow_count += 1
-        if self._fetch_count >= self._log_every_n:
-            avg_elapsed = self._fetch_total_elapsed / self._fetch_count
+            stats.fetch_slow_count += 1
+        if stats.fetch_count >= self._log_every_n:
+            avg_elapsed = stats.fetch_total_elapsed / stats.fetch_count
             logger.info(
-                f"fetch_one_sampled_message stats: "
+                f"fetch_one_sampled_message stats: worker_key={worker_key} "
                 f"avg_elapsed={avg_elapsed:.3f}s "
-                f"slow_count={self._fetch_slow_count}/{self._fetch_count}"
+                f"slow_count={stats.fetch_slow_count}/{stats.fetch_count}"
             )
-            self._fetch_count = 0
-            self._fetch_total_elapsed = 0.0
-            self._fetch_slow_count = 0
+            stats.fetch_count = 0
+            stats.fetch_total_elapsed = 0.0
+            stats.fetch_slow_count = 0
 
     def fetch_one_sampled_message(
         self, channel_id: int
@@ -606,7 +623,11 @@ class DistServer:
             while True:
                 try:
                     msg = channel_state.channel.recv(timeout_ms=100)
-                    self._log_fetch_stats_if_due(time.monotonic() - request_start_time)
+                    self._log_fetch_stats_if_due(
+                        channel_id,
+                        channel_state.worker_key,
+                        time.monotonic() - request_start_time,
+                    )
                     return msg, False
                 except QueueTimeoutError:
                     if (
@@ -616,7 +637,9 @@ class DistServer:
                         and channel_state.channel.empty()
                     ):
                         self._log_fetch_stats_if_due(
-                            time.monotonic() - request_start_time
+                            channel_id,
+                            channel_state.worker_key,
+                            time.monotonic() - request_start_time,
                         )
                         return None, True
 

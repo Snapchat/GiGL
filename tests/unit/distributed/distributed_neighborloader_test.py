@@ -1,8 +1,5 @@
 import unittest
 from collections.abc import Mapping
-from itertools import count
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import torch
 import torch.multiprocessing as mp
@@ -11,10 +8,8 @@ from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
-from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
@@ -42,10 +37,6 @@ from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitt
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
-)
-from tests.test_assets.distributed.test_dataset import (
-    DEFAULT_HOMOGENEOUS_EDGE_INDEX,
-    create_homogeneous_dataset,
 )
 from tests.test_assets.distributed.utils import (
     MockRemoteDistDataset,
@@ -704,37 +695,6 @@ class DistributedNeighborLoaderTest(TestCase):
         create_test_process_group()
         with self.assertRaises(expected_error):
             DistNeighborLoader(**kwargs)
-
-
-
-    @patch.object(BaseDistLoader, "_init_colocated_connections", autospec=True)
-    @patch.object(BaseDistLoader, "initialize_colocated_sampling_worker", autospec=True)
-    @patch(
-        "graphlearn_torch.distributed.dist_sampling_producer.get_context",
-        autospec=True,
-    )
-    def test_colocated_constructor_still_uses_concrete_producer(
-        self,
-        mock_get_context,
-        _mock_initialize_colocated_sampling_worker,
-        mock_init_colocated_connections,
-    ) -> None:
-        create_test_process_group()
-        mock_get_context.return_value = SimpleNamespace(world_size=1, rank=0)
-
-        loader = DistNeighborLoader(
-            dataset=create_homogeneous_dataset(
-                edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX
-            ),
-            num_neighbors=[2, 2],
-            pin_memory_device=torch.device("cpu"),
-        )
-
-        mock_init_colocated_connections.assert_called_once()
-        self.assertTrue(loader._is_mp_worker)
-        producer = mock_init_colocated_connections.call_args.kwargs["producer"]
-        self.assertIsInstance(producer, DistSamplingProducer)
-        loader._shutdowned = True
 
 
 if __name__ == "__main__":

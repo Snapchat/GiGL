@@ -216,6 +216,14 @@ def _shared_sampling_worker_loop(
         runnable_set.add(channel_id)
 
     def _clear_registered_input_locked(channel_id: int) -> None:
+        """Remove a channel's registration and clean up all associated state.
+
+        If the channel still has in-flight batches (submitted but not yet
+        completed), marks it for deferred removal instead of cleaning up
+        immediately.
+        ``_on_batch_done`` will finish the cleanup once the last in-flight
+        batch completes.
+        """
         state = active_epochs_by_channel.get(channel_id)
         if state is not None and state.completed_batches < state.submitted_batches:
             removing.add(channel_id)
@@ -235,6 +243,10 @@ def _shared_sampling_worker_loop(
         removing.discard(channel_id)
 
     def _format_scheduler_state_locked() -> str:
+        """Format a human-readable snapshot of the scheduler for logging.
+
+        Must be called while holding ``state_lock``.
+        """
         channel_ids = sorted(channels.keys())
         preview = channel_ids[:SCHEDULER_STATE_MAX_CHANNELS]
         previews: list[str] = []
@@ -259,6 +271,12 @@ def _shared_sampling_worker_loop(
         )
 
     def _maybe_log_scheduler_state(reason: str, force: bool = False) -> None:
+        """Log scheduler state at most once per ``SCHEDULER_STATE_LOG_INTERVAL_SECS``.
+
+        Args:
+            reason: Short tag included in the log line (e.g. "start_epoch").
+            force: If True, log regardless of the time-based throttle.
+        """
         nonlocal last_state_log_time
         now = time.monotonic()
         if not force and now - last_state_log_time < SCHEDULER_STATE_LOG_INTERVAL_SECS:
@@ -272,6 +290,14 @@ def _shared_sampling_worker_loop(
         last_state_log_time = now
 
     def _on_batch_done(channel_id: int, epoch: int) -> None:
+        """Sampler completion callback — invoked from sampler worker threads.
+
+        Updates the channel's completed-batch counter.
+        When all batches for the epoch are done, emits ``EPOCH_DONE_EVENT``
+        to ``event_queue``.
+        If the channel is pending removal, finishes cleanup via
+        ``_clear_registered_input_locked``.
+        """
         with state_lock:
             state = active_epochs_by_channel.get(channel_id)
             if state is None or state.epoch != epoch:
@@ -287,6 +313,13 @@ def _shared_sampling_worker_loop(
                 _clear_registered_input_locked(channel_id)
 
     def _submit_one_batch(channel_id: int) -> bool:
+        """Submit the next batch for a channel to its sampler.
+
+        Re-enqueues the channel into ``runnable_channels`` if more batches
+        remain.
+        Returns True if a batch was submitted, False if the channel had no
+        pending work.
+        """
         with state_lock:
             state = active_epochs_by_channel.get(channel_id)
             if state is None:
@@ -297,12 +330,15 @@ def _shared_sampling_worker_loop(
             state.submitted_batches += 1
             cfg = cfgs[channel_id]
             sampler = samplers[channel_id]
-            sampler_input = inputs[channel_id][batch_indices]
+            channel_input = inputs[channel_id]
+            current_epoch = state.epoch
             if state.submitted_batches < state.total_batches and not state.cancelled:
                 runnable_channels.append(channel_id)
                 runnable_set.add(channel_id)
 
-        callback = lambda _: _on_batch_done(channel_id, state.epoch)
+        sampler_input = channel_input[batch_indices]
+
+        callback = lambda _: _on_batch_done(channel_id, current_epoch)
         if cfg.sampling_type == SamplingType.NODE:
             sampler.sample_from_nodes(
                 cast(NodeSamplerInput, sampler_input), callback=callback
@@ -318,6 +354,10 @@ def _shared_sampling_worker_loop(
         return True
 
     def _pump_runnable_channels() -> bool:
+        """Submit one batch per runnable channel in round-robin order.
+
+        Returns True if at least one batch was submitted.
+        """
         made_progress = False
         with state_lock:
             num_candidates = len(runnable_channels)
@@ -331,6 +371,10 @@ def _shared_sampling_worker_loop(
         return made_progress
 
     def _handle_command(command: SharedMpCommand, payload: object) -> bool:
+        """Dispatch one command from the task queue.
+
+        Returns True to keep running, False on ``STOP``.
+        """
         channel_id = _command_channel_id(command, payload)
         if command == SharedMpCommand.REGISTER_INPUT:
             register = cast(RegisterInputCmd, payload)
@@ -639,9 +683,13 @@ class SharedDistSamplingBackend:
                 return
             previous_epoch = self._channel_epoch[channel_id]
             self._channel_epoch[channel_id] = epoch
-            self._completed_workers.pop((channel_id, epoch), None)
-            if previous_epoch >= 0:
-                self._completed_workers.pop((channel_id, previous_epoch), None)
+            stale_keys = [
+                k
+                for k in self._completed_workers
+                if k[0] == channel_id and k[1] <= epoch
+            ]
+            for k in stale_keys:
+                del self._completed_workers[k]
             input_len = sum(self._channel_input_sizes[channel_id])
             worker_ranges = self._channel_worker_seeds_ranges[channel_id]
             if sampling_config.shuffle:
@@ -692,7 +740,7 @@ class SharedDistSamplingBackend:
                 self._enqueue_worker_command(
                     worker_rank,
                     SharedMpCommand.UNREGISTER_INPUT,
-                    StartEpochCmd(channel_id=channel_id, epoch=-1, seeds_index=None),
+                    channel_id,
                 )
 
     def is_channel_epoch_done(self, channel_id: int, epoch: int) -> bool:

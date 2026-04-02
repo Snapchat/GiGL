@@ -324,6 +324,8 @@ class BaseDistLoader(DistLoader):
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers
+        if not hasattr(self, "_backend_key"):
+            self._backend_key: Optional[str] = None
 
         # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
         self.input_data = sampler_input
@@ -731,6 +733,11 @@ class BaseDistLoader(DistLoader):
         max_concurrent_producer_inits: int,
     ) -> list[int]:
         """Initialize or reuse one shared backend per storage server."""
+        if self._backend_key is None:
+            raise RuntimeError(
+                f"{type(self).__name__} did not set _backend_key. "
+                "Subclasses must set self._backend_key in _setup_for_graph_store()."
+            )
         backend_key = self._backend_key
 
         def issue_rpcs() -> list[int]:
