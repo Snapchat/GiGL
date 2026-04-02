@@ -63,8 +63,9 @@ GiGL extends GraphLearn-for-PyTorch (GLT) for distributed GNN training. Key clas
   labels, split metadata, and feature info
 - **`DistNeighborLoader`** (extends GLT `DistLoader`) - Standard node-based sampling loader
 - **`DistABLPLoader`** (extends GLT `DistLoader`) - Anchor-Based Link Prediction sampling loader
-- **`DistNeighborSampler`** (extends GLT `DistNeighborSampler`) - Unified sampler supporting both standard neighbor
-  sampling and ABLP with positive/negative label injection
+- **`BaseGiGLSampler`** (extends GLT `DistNeighborSampler`) - Base class with shared input preparation (ABLP support)
+- **`DistNeighborSampler`** (extends `BaseGiGLSampler`) - K-hop neighbor sampling with ABLP support
+- **`DistPPRNeighborSampler`** (extends `BaseGiGLSampler`) - PPR-based neighbor sampling with ABLP support
 
 **Two deployment modes:**
 
@@ -86,7 +87,9 @@ dataset_factory.build_dataset()  →  DistDataset (partitioned via DistPartition
 - `dist_dataset.py` - Core dataset structure with IPC serialization
 - `distributed_neighborloader.py` - DistNeighborLoader (both modes)
 - `dist_ablp_neighborloader.py` - DistABLPLoader (both modes)
-- `dist_neighbor_sampler.py` - ABLP-aware neighbor sampling
+- `base_sampler.py` - BaseGiGLSampler with shared ABLP input preparation
+- `dist_neighbor_sampler.py` - K-hop neighbor sampling (DistNeighborSampler)
+- `dist_ppr_sampler.py` - PPR-based neighbor sampling (DistPPRNeighborSampler)
 - `dataset_factory.py` - Dataset building and partitioning orchestration
 - `graph_store/dist_server.py` - Storage server for Graph Store mode
 - `graph_store/remote_dist_dataset.py` - Client-side dataset proxy
@@ -195,7 +198,7 @@ Use `tests.test_assets.test_case.TestCase` as the base class, **NOT** `unittest.
 
 - **Unit tests**: `tests/unit/` - Fast, isolated tests
 - **Integration tests**: `tests/integration/` - Component interaction tests, require cloud resources
-- **E2E tests**: Defined in `testing/e2e_tests/e2e_tests.yaml`
+- **E2E tests**: Defined in `tests/e2e_tests/e2e_tests.yaml`
 - **Test assets**: `tests/test_assets/` (configs in `configs/`, test graphs in `small_graph/`)
 
 ### Test Structure
@@ -229,10 +232,29 @@ class TestMyComponent(TestCase):
 Mock external services using `unittest.mock` (`Mock`, `patch`, `MagicMock`). Create minimal test configs in
 `tests/test_assets/configs/`.
 
+### Fixing Broken Tests
+
+Before changing a broken test, understand both the intent of the test and what caused the breakage. The correct fix
+depends on context:
+
+- **Update expected values** when the production code changed intentionally and the test's old expectations are now
+  stale (e.g., a function's output format changed by design).
+- **Update the testing strategy** when the test was testing the wrong thing, or the code change reveals that the test's
+  approach no longer makes sense (e.g., mocking internals that were refactored away).
+- **Fix the production code** when the test is correct and the breakage reveals an actual bug.
+- **Fix test infrastructure** when the failure is in setup, fixtures, mocks, or environment configuration rather than in
+  the code under test (e.g., a mock that no longer matches the interface it doubles, or a missing cloud resource).
+
+Do not blindly make tests pass. Read the test, read the diff that broke it, and choose the appropriate fix.
+
 ## Plan Documents
 
 Plan documents live in `docs/plans/` and must be date-prefixed using the format `YYYYMMDD-<short-description>.md` (e.g.,
 `20260324-add-foo-factory.md`). Use today's date at the time of creation.
+
+Ground every claim in a plan with a concrete reference: file paths with line numbers (e.g., `foo.py:42`), API
+signatures, log output, or test results. Do not assert that code behaves a certain way without pointing to the evidence.
+If a plan references a function, class, or config value, include where it is defined so readers can verify.
 
 ## Additional instructions
 

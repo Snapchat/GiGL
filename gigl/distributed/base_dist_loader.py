@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -26,11 +26,13 @@ from graphlearn_torch.distributed import (
 from graphlearn_torch.distributed.dist_client import async_request_server
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
 from graphlearn_torch.sampler import (
+    EdgeSamplerInput,
     NodeSamplerInput,
     RemoteSamplerInput,
     SamplingConfig,
     SamplingType,
 )
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
 
@@ -41,8 +43,9 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     patch_fanout_for_sampling,
@@ -50,6 +53,8 @@ from gigl.distributed.utils.neighborloader import (
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 
 logger = Logger()
+
+DEFAULT_NUM_CPU_THREADS = 2
 
 
 # We don't see logs for graph store mode for whatever reason.
@@ -219,6 +224,7 @@ class BaseDistLoader(DistLoader):
         sampler_options: SamplerOptions,
         process_start_gap_seconds: float = 60.0,
         max_concurrent_producer_inits: Optional[int] = None,
+        non_blocking_transfers: bool = True,
     ):
         if max_concurrent_producer_inits is None:
             max_concurrent_producer_inits = sys.maxsize
@@ -235,6 +241,7 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options
+        self._non_blocking_transfers = non_blocking_transfers
 
         # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
         self.input_data = sampler_input
@@ -385,6 +392,199 @@ class BaseDistLoader(DistLoader):
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
+
+    @staticmethod
+    def create_mp_producer(
+        dataset: DistDataset,
+        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+        sampler_options: SamplerOptions,
+    ) -> DistSamplingProducer:
+        """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
+
+        Creates the shared-memory channel and, for PPR sampling, pre-computes
+        degree tensors via all-reduce before constructing the producer.  The
+        all-reduce must happen here — before the staggered sleep in
+        ``_init_colocated_connections`` — so that all ranks complete the
+        collective together and the stagger applies only to worker spawning.
+
+        Args:
+            dataset: The local DistDataset for this rank.
+            sampler_input: Node or edge sampler input (ABLPNodeSamplerInput is
+                also accepted as it extends NodeSamplerInput).
+            sampling_config: Sampling configuration.
+            worker_options: Colocated worker options (must be fully configured).
+            sampler_options: Controls which sampler class is instantiated.
+
+        Returns:
+            A fully constructed DistSamplingProducer, ready to be passed to
+            ``_init_colocated_connections``.
+        """
+        channel = BaseDistLoader.create_colocated_channel(worker_options)
+        if isinstance(sampler_options, PPRSamplerOptions):
+            degree_tensors = dataset.degree_tensor
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across "
+                    f"{len(degree_tensors)} edge types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with "
+                    f"{degree_tensors.size(0)} nodes."
+                )
+        else:
+            degree_tensors = None
+        return DistSamplingProducer(
+            data=dataset,
+            sampler_input=sampler_input,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+        )
+
+    @staticmethod
+    def initialize_colocated_sampling_worker(
+        *,
+        local_rank: int,
+        local_world_size: int,
+        node_rank: int,
+        node_world_size: int,
+        master_ip_address: str,
+        device: torch.device,
+        num_cpu_threads: Optional[int],
+    ) -> None:
+        """Initialize the colocated GLT worker group for the current process.
+
+        Args:
+            local_rank: Local rank of the current process on this machine.
+            local_world_size: Total number of local processes on this machine.
+            node_rank: Rank of the current machine.
+            node_world_size: Total number of machines in the cluster.
+            master_ip_address: Master node IP address used for worker-group setup.
+            device: Device assigned to this loader process.
+            num_cpu_threads: Optional PyTorch CPU thread count override.
+        """
+        neighbor_loader_ports = gigl.distributed.utils.get_free_ports_from_master_node(
+            num_ports=local_world_size
+        )
+        neighbor_loader_port_for_current_rank = neighbor_loader_ports[local_rank]
+        logger.info(
+            f"Initializing neighbor loader worker in process: {local_rank}/{local_world_size} "
+            f"using device: {device} on port {neighbor_loader_port_for_current_rank}."
+        )
+
+        should_use_cpu_workers = device.type == "cpu"
+        if should_use_cpu_workers and num_cpu_threads is None:
+            logger.info(
+                "Using CPU workers, but found num_cpu_threads to be None. "
+                f"Will default setting num_cpu_threads to {DEFAULT_NUM_CPU_THREADS}."
+            )
+            num_cpu_threads = DEFAULT_NUM_CPU_THREADS
+
+        gigl.distributed.utils.init_neighbor_loader_worker(
+            master_ip_address=master_ip_address,
+            local_process_rank=local_rank,
+            local_process_world_size=local_world_size,
+            rank=node_rank,
+            world_size=node_world_size,
+            master_worker_port=neighbor_loader_port_for_current_rank,
+            device=device,
+            should_use_cpu_workers=should_use_cpu_workers,
+            num_cpu_threads=num_cpu_threads,
+        )
+        logger.info(
+            f"Finished initializing neighbor loader worker: {local_rank}/{local_world_size}"
+        )
+
+    @staticmethod
+    def create_colocated_worker_options(
+        *,
+        dataset_num_partitions: int,
+        num_workers: int,
+        worker_concurrency: int,
+        master_ip_address: str,
+        master_port: int,
+        channel_size: str,
+        pin_memory: bool,
+    ) -> MpDistSamplingWorkerOptions:
+        """Create worker options for colocated sampling workers.
+
+        Args:
+            dataset_num_partitions: Number of graph partitions in the colocated dataset.
+            num_workers: Number of sampling worker processes.
+            worker_concurrency: Max sampling concurrency per worker.
+            master_ip_address: Master node IP address used by GLT RPC.
+            master_port: Port for the GLT sampling worker group.
+            channel_size: Shared-memory channel size.
+            pin_memory: Whether the output channel should be pinned.
+
+        Returns:
+            Fully configured worker options for colocated sampling.
+        """
+        return MpDistSamplingWorkerOptions(
+            num_workers=num_workers,
+            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+            worker_concurrency=worker_concurrency,
+            # Each worker will spawn several sampling workers, and all sampling workers spawned by workers in one group
+            # need to be connected. Thus, we need master ip address and master port to
+            # initate the connection.
+            # Note that different groups of workers are independent, and thus
+            # the sampling processes in different groups should be independent, and should
+            # use different master ports.
+            master_addr=master_ip_address,
+            master_port=master_port,
+            # Load testing shows that when num_rpc_threads exceed 16, the performance
+            # will degrade.
+            num_rpc_threads=min(dataset_num_partitions, 16),
+            rpc_timeout=600,
+            channel_size=channel_size,
+            pin_memory=pin_memory,
+        )
+
+    @staticmethod
+    def create_graph_store_worker_options(
+        *,
+        dataset: RemoteDistDataset,
+        compute_rank: int,
+        worker_key: str,
+        num_workers: int,
+        worker_concurrency: int,
+        channel_size: str,
+        prefetch_size: int,
+    ) -> RemoteDistSamplingWorkerOptions:
+        """Create worker options for graph-store sampling workers.
+
+        Args:
+            dataset: Remote dataset proxy used to discover storage-cluster topology.
+            compute_rank: Global compute-process rank for the current process.
+            worker_key: Unique key used by the storage cluster to deduplicate producers.
+            num_workers: Number of sampling worker processes.
+            worker_concurrency: Max sampling concurrency per worker.
+            channel_size: Remote shared-memory buffer size.
+            prefetch_size: Max prefetched messages per storage server.
+
+        Returns:
+            Fully configured worker options for graph-store sampling.
+        """
+        sampling_ports = dataset.fetch_free_ports_on_storage_cluster(
+            num_ports=dataset.cluster_info.compute_cluster_world_size
+        )
+        sampling_port = sampling_ports[compute_rank]
+        return RemoteDistSamplingWorkerOptions(
+            server_rank=list(range(dataset.cluster_info.num_storage_nodes)),
+            num_workers=num_workers,
+            worker_devices=[torch.device("cpu") for _ in range(num_workers)],
+            worker_concurrency=worker_concurrency,
+            master_addr=dataset.cluster_info.storage_cluster_master_ip,
+            buffer_size=channel_size,
+            master_port=sampling_port,
+            worker_key=worker_key,
+            prefetch_size=prefetch_size,
+        )
 
     def _init_colocated_connections(
         self,
@@ -646,9 +846,11 @@ class BaseDistLoader(DistLoader):
 
         # Create remote receiving channel for cross-machine message passing
         self._channel = RemoteReceivingChannel(
-            self._server_rank_list,
-            self._producer_id_list,
-            self.worker_options.prefetch_size,
+            server_rank=self._server_rank_list,
+            channel_id=self._producer_id_list,
+            prefetch_size=self.worker_options.prefetch_size,
+            active_mask=[len(inp) > 0 for inp in self._input_data_list],
+            pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
 
         logger.info(
@@ -676,6 +878,35 @@ class BaseDistLoader(DistLoader):
                 rpc_futures.append(fut)
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        """Override GLT's _collate_fn to optionally batch-transfer tensors with non_blocking=True.
+
+        When ``_non_blocking_transfers`` is enabled (default), moves all tensors
+        in the SampleMessage to the target CUDA device using non-blocking copies
+        before delegating to the parent ``_collate_fn``.  This is effective when
+        source tensors reside in pinned memory, allowing host-to-device transfers
+        to overlap with other work on the default CUDA stream.
+
+        When ``_non_blocking_transfers`` is disabled, the bulk transfer is skipped
+        entirely and GLT's default (blocking) device placement is used instead.
+
+        See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+        for background on pinned memory and non-blocking transfers.
+        """
+        if (
+            self._non_blocking_transfers
+            and self.to_device is not None
+            and self.to_device.type == "cuda"
+        ):
+            for k, v in msg.items():
+                if isinstance(v, torch.Tensor) and v.device != self.to_device:
+                    msg[k] = v.to(self.to_device, non_blocking=True)
+            # Synchronize the current CUDA stream to ensure all non-blocking
+            # transfers are complete before the parent _collate_fn processes
+            # the message.
+            torch.cuda.current_stream().synchronize()
+        return super()._collate_fn(msg)
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:

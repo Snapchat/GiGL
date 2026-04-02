@@ -612,6 +612,9 @@ def get_labels_for_anchor_nodes(
         raise ValueError(
             "The dataset must be heterogeneous to select labels for anchor nodes."
         )
+    if node_ids.numel() == 0:
+        empty = torch.empty((0, 0), dtype=torch.int64)
+        return empty, empty if negative_label_edge_type is not None else None
     positive_node_topo = dataset.graph[positive_label_edge_type].topo
     if negative_label_edge_type is not None:
         negative_node_topo = dataset.graph[negative_label_edge_type].topo
