@@ -93,6 +93,7 @@ class DistNeighborLoader(BaseDistLoader):
         shuffle: bool = False,
         drop_last: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
+        non_blocking_transfers: bool = True,
     ):
         """
         Distributed Neighbor Loader.
@@ -170,6 +171,14 @@ class DistNeighborLoader(BaseDistLoader):
                 instantiated. Pass ``KHopNeighborSamplerOptions`` to use the built-in sampler,
                 or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
                 If ``None``, defaults to ``KHopNeighborSamplerOptions(num_neighbors)``.
+            non_blocking_transfers (bool): If True (default), batch-transfers all
+                sampled tensors to the target CUDA device using non-blocking copies
+                before collation, which can overlap data transfer with computation
+                when source tensors reside in pinned memory.  If False, the bulk
+                transfer is skipped and GLT's default (blocking) device placement
+                is used instead.
+                See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+                for background on pinned memory and non-blocking transfers.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -267,15 +276,13 @@ class DistNeighborLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            channel = BaseDistLoader.create_colocated_channel(worker_options)
             producer: Union[
                 DistSamplingProducer, Callable[..., int]
-            ] = DistSamplingProducer(
-                data=dataset,
+            ] = BaseDistLoader.create_mp_producer(
+                dataset=dataset,
                 sampler_input=input_data,
                 sampling_config=sampling_config,
                 worker_options=worker_options,
-                channel=channel,
                 sampler_options=sampler_options,
             )
         else:
@@ -295,6 +302,7 @@ class DistNeighborLoader(BaseDistLoader):
             sampler_options=sampler_options,
             process_start_gap_seconds=process_start_gap_seconds,
             max_concurrent_producer_inits=max_concurrent_producer_inits,
+            non_blocking_transfers=non_blocking_transfers,
         )
 
     def _setup_for_graph_store(

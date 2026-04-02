@@ -1,9 +1,11 @@
 from collections.abc import Mapping
 
 import torch
+from graphlearn_torch.sampler import NodeSamplerInput
 
-from gigl.distributed.dist_neighbor_sampler import (
-    DistNeighborSampler,
+from gigl.distributed.base_sampler import (
+    BaseDistNeighborSampler,
+    SampleLoopInputs,
     _stable_unique_preserve_order,
 )
 from gigl.distributed.sampler import (
@@ -140,14 +142,15 @@ class TestABLPNodeSamplerInput(TestCase):
         )
 
 
-def _build_sampler_stub(edge_dir: str = "out") -> DistNeighborSampler:
-    sampler = DistNeighborSampler.__new__(DistNeighborSampler)
+def _build_sampler_stub(edge_dir: str = "out") -> BaseDistNeighborSampler:
+    """Build a minimal BaseGiGLSampler stub for testing shared utilities."""
+    sampler = BaseDistNeighborSampler.__new__(BaseDistNeighborSampler)
     sampler.device = torch.device("cpu")
     sampler.edge_dir = edge_dir
     return sampler
 
 
-class TestDistNeighborSamplerAblpPreparation(TestCase):
+class TestBaseGiGLSamplerPreparation(TestCase):
     def test_stable_unique_preserves_first_occurrence_order(self) -> None:
         self.assert_tensor_equality(
             _stable_unique_preserve_order(torch.tensor([7, 3, 7, 5, 3, 9])),
@@ -227,3 +230,34 @@ class TestDistNeighborSamplerAblpPreparation(TestCase):
             nodes_to_sample[_ITEM],
             torch.tensor([20, 21, 22]),
         )
+
+    def test_prepare_sample_loop_inputs_homogeneous(self) -> None:
+        """Standard NodeSamplerInput with no input_type returns a tensor."""
+        sampler = _build_sampler_stub()
+        inputs = NodeSamplerInput(
+            node=torch.tensor([10, 20, 30]),
+            input_type=None,
+        )
+
+        result = sampler._prepare_sample_loop_inputs(inputs)
+
+        self.assertIsInstance(result, SampleLoopInputs)
+        assert isinstance(result.nodes_to_sample, torch.Tensor)
+        self.assert_tensor_equality(result.nodes_to_sample, torch.tensor([10, 20, 30]))
+        self.assertEqual(result.metadata, {})
+
+    def test_prepare_sample_loop_inputs_heterogeneous(self) -> None:
+        """Standard NodeSamplerInput with input_type returns a dict."""
+        sampler = _build_sampler_stub()
+        inputs = NodeSamplerInput(
+            node=torch.tensor([1, 2]),
+            input_type=_USER,
+        )
+
+        result = sampler._prepare_sample_loop_inputs(inputs)
+
+        self.assertIsInstance(result, SampleLoopInputs)
+        assert isinstance(result.nodes_to_sample, Mapping)
+        self.assertEqual(set(result.nodes_to_sample.keys()), {_USER})
+        self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))
+        self.assertEqual(result.metadata, {})

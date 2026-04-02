@@ -664,6 +664,42 @@ class TestDataSplitters(TestCase):
         assert_close(positive, expected_positive, rtol=0, atol=0)
         self.assertIsNone(negative)
 
+    def test_get_labels_for_anchor_nodes_empty_input(self):
+        edges = torch.tensor(
+            [
+                [9, 10, 10, 10, 11, 11, 12, 12, 10],
+                [8, 10, 11, 15, 12, 13, 10, 11, 7],
+            ]
+        )
+        ds = Dataset()
+        ds.init_graph(
+            edge_index=to_heterogeneous_edge(edges),
+            edge_ids=to_heterogeneous_edge(torch.arange(edges.shape[1])),
+            graph_mode="CPU",
+        )
+
+        empty_node_ids = torch.tensor([], dtype=torch.int64)
+
+        # Without negative labels
+        positive, negative = get_labels_for_anchor_nodes(
+            dataset=ds,
+            node_ids=empty_node_ids,
+            positive_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+        self.assertEqual(positive.shape, (0, 0))
+        self.assertIsNone(negative)
+
+        # With negative labels
+        positive, negative = get_labels_for_anchor_nodes(
+            dataset=ds,
+            node_ids=empty_node_ids,
+            positive_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            negative_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+        self.assertEqual(positive.shape, (0, 0))
+        assert negative is not None
+        self.assertEqual(negative.shape, (0, 0))
+
     def test_get_labels_for_anchor_nodes_heterogeneous(self):
         a_to_b = EdgeType(_NODE_A, _TO, _NODE_B)
         a_to_c = EdgeType(_NODE_A, _TO, _NODE_C)

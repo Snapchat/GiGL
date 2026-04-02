@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Union
 
 import torch
-from graphlearn_torch.channel import RemoteReceivingChannel, ShmChannel
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -26,11 +26,13 @@ from graphlearn_torch.distributed import (
 from graphlearn_torch.distributed.dist_client import async_request_server
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
 from graphlearn_torch.sampler import (
+    EdgeSamplerInput,
     NodeSamplerInput,
     RemoteSamplerInput,
     SamplingConfig,
     SamplingType,
 )
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
 
@@ -41,8 +43,9 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.dist_server import DistServer
+from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     patch_fanout_for_sampling,
@@ -221,6 +224,7 @@ class BaseDistLoader(DistLoader):
         sampler_options: SamplerOptions,
         process_start_gap_seconds: float = 60.0,
         max_concurrent_producer_inits: Optional[int] = None,
+        non_blocking_transfers: bool = True,
     ):
         if max_concurrent_producer_inits is None:
             max_concurrent_producer_inits = sys.maxsize
@@ -237,6 +241,7 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options
+        self._non_blocking_transfers = non_blocking_transfers
 
         # --- Attributes shared by both modes (mirrors GLT DistLoader.__init__) ---
         self.input_data = sampler_input
@@ -387,6 +392,59 @@ class BaseDistLoader(DistLoader):
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
+
+    @staticmethod
+    def create_mp_producer(
+        dataset: DistDataset,
+        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+        sampler_options: SamplerOptions,
+    ) -> DistSamplingProducer:
+        """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
+
+        Creates the shared-memory channel and, for PPR sampling, pre-computes
+        degree tensors via all-reduce before constructing the producer.  The
+        all-reduce must happen here — before the staggered sleep in
+        ``_init_colocated_connections`` — so that all ranks complete the
+        collective together and the stagger applies only to worker spawning.
+
+        Args:
+            dataset: The local DistDataset for this rank.
+            sampler_input: Node or edge sampler input (ABLPNodeSamplerInput is
+                also accepted as it extends NodeSamplerInput).
+            sampling_config: Sampling configuration.
+            worker_options: Colocated worker options (must be fully configured).
+            sampler_options: Controls which sampler class is instantiated.
+
+        Returns:
+            A fully constructed DistSamplingProducer, ready to be passed to
+            ``_init_colocated_connections``.
+        """
+        channel = BaseDistLoader.create_colocated_channel(worker_options)
+        if isinstance(sampler_options, PPRSamplerOptions):
+            degree_tensors = dataset.degree_tensor
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across "
+                    f"{len(degree_tensors)} edge types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with "
+                    f"{degree_tensors.size(0)} nodes."
+                )
+        else:
+            degree_tensors = None
+        return DistSamplingProducer(
+            data=dataset,
+            sampler_input=sampler_input,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+        )
 
     @staticmethod
     def initialize_colocated_sampling_worker(
@@ -788,9 +846,11 @@ class BaseDistLoader(DistLoader):
 
         # Create remote receiving channel for cross-machine message passing
         self._channel = RemoteReceivingChannel(
-            self._server_rank_list,
-            self._producer_id_list,
-            self.worker_options.prefetch_size,
+            server_rank=self._server_rank_list,
+            channel_id=self._producer_id_list,
+            prefetch_size=self.worker_options.prefetch_size,
+            active_mask=[len(inp) > 0 for inp in self._input_data_list],
+            pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
 
         logger.info(
@@ -818,6 +878,35 @@ class BaseDistLoader(DistLoader):
                 rpc_futures.append(fut)
             torch.futures.wait_all(rpc_futures)
         self._shutdowned = True
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        """Override GLT's _collate_fn to optionally batch-transfer tensors with non_blocking=True.
+
+        When ``_non_blocking_transfers`` is enabled (default), moves all tensors
+        in the SampleMessage to the target CUDA device using non-blocking copies
+        before delegating to the parent ``_collate_fn``.  This is effective when
+        source tensors reside in pinned memory, allowing host-to-device transfers
+        to overlap with other work on the default CUDA stream.
+
+        When ``_non_blocking_transfers`` is disabled, the bulk transfer is skipped
+        entirely and GLT's default (blocking) device placement is used instead.
+
+        See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+        for background on pinned memory and non-blocking transfers.
+        """
+        if (
+            self._non_blocking_transfers
+            and self.to_device is not None
+            and self.to_device.type == "cuda"
+        ):
+            for k, v in msg.items():
+                if isinstance(v, torch.Tensor) and v.device != self.to_device:
+                    msg[k] = v.to(self.to_device, non_blocking=True)
+            # Synchronize the current CUDA stream to ensure all non-blocking
+            # transfers are complete before the parent _collate_fn processes
+            # the message.
+            torch.cuda.current_stream().synchronize()
+        return super()._collate_fn(msg)
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
