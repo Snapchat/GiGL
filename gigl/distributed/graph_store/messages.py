@@ -1,9 +1,43 @@
-"""RPC request messages for graph-store fetch operations."""
+"""RPC request messages for graph-store operations."""
 
 from dataclasses import dataclass
 from typing import Literal, Optional, Union
 
+from graphlearn_torch.distributed import RemoteDistSamplingWorkerOptions
+from graphlearn_torch.sampler import (
+    EdgeSamplerInput,
+    NodeSamplerInput,
+    RemoteSamplerInput,
+    SamplingConfig,
+)
+
+from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
+
+
+@dataclass(frozen=True)
+class InitSamplingBackendRequest:
+    """Request to initialize a shared sampling backend on a storage server."""
+
+    backend_key: str
+    worker_options: RemoteDistSamplingWorkerOptions
+    sampler_options: SamplerOptions
+    sampling_config: SamplingConfig
+
+
+@dataclass(frozen=True)
+class RegisterBackendRequest:
+    """Request to register one compute-rank input channel on a backend."""
+
+    backend_id: int
+    worker_key: str
+    sampler_input: Union[
+        NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
+    ]
+    sampling_config: SamplingConfig
+    buffer_capacity: int
+    buffer_size: Union[int, str]
 
 
 @dataclass(frozen=True)

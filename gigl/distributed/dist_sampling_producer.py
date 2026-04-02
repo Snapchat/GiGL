@@ -16,6 +16,7 @@ from graphlearn_torch.distributed import (
     DistDataset,
     DistMpSamplingProducer,
     MpDistSamplingWorkerOptions,
+    RemoteDistSamplingWorkerOptions,
     init_rpc,
     init_worker_group,
     shutdown_rpc,
@@ -39,6 +40,7 @@ from torch.utils.data.dataset import Dataset
 from gigl.common.logger import Logger
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
+from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import (
     KHopNeighborSamplerOptions,
     PPRSamplerOptions,
@@ -46,6 +48,78 @@ from gigl.distributed.sampler_options import (
 )
 
 logger = Logger()
+
+SamplerInput = Union[NodeSamplerInput, EdgeSamplerInput, ABLPNodeSamplerInput]
+SamplerRuntime = Union[DistNeighborSampler, DistPPRNeighborSampler]
+
+
+def _create_dist_sampler(
+    *,
+    data: DistDataset,
+    sampling_config: SamplingConfig,
+    worker_options: Union[MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions],
+    channel: ChannelBase,
+    sampler_options: SamplerOptions,
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    current_device: torch.device,
+) -> SamplerRuntime:
+    """Create a GiGL sampler runtime for one channel on one worker."""
+    shared_sampler_args = (
+        data,
+        sampling_config.num_neighbors,
+        sampling_config.with_edge,
+        sampling_config.with_neg,
+        sampling_config.with_weight,
+        sampling_config.edge_dir,
+        sampling_config.collect_features,
+        channel,
+        worker_options.use_all2all,
+        worker_options.worker_concurrency,
+        current_device,
+    )
+    if isinstance(sampler_options, KHopNeighborSamplerOptions):
+        sampler: SamplerRuntime = DistNeighborSampler(
+            *shared_sampler_args,
+            seed=sampling_config.seed,
+        )
+    elif isinstance(sampler_options, PPRSamplerOptions):
+        assert degree_tensors is not None
+        sampler = DistPPRNeighborSampler(
+            *shared_sampler_args,
+            seed=sampling_config.seed,
+            alpha=sampler_options.alpha,
+            eps=sampler_options.eps,
+            max_ppr_nodes=sampler_options.max_ppr_nodes,
+            num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
+            total_degree_dtype=sampler_options.total_degree_dtype,
+            degree_tensors=degree_tensors,
+        )
+    else:
+        raise NotImplementedError(
+            f"Unsupported sampler options type: {type(sampler_options)}"
+        )
+    return sampler
+
+
+def _prepare_degree_tensors(
+    data: DistDataset,
+    sampler_options: SamplerOptions,
+) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
+    """Materialize PPR degree tensors before worker spawn when required."""
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
+    if isinstance(sampler_options, PPRSamplerOptions):
+        degree_tensors = data.degree_tensor
+        if isinstance(degree_tensors, dict):
+            logger.info(
+                "Pre-computed degree tensors for PPR sampling across "
+                f"{len(degree_tensors)} edge types."
+            )
+        elif degree_tensors is not None:
+            logger.info(
+                "Pre-computed degree tensor for PPR sampling with "
+                f"{degree_tensors.size(0)} nodes."
+            )
+    return degree_tensors
 
 
 def _sampling_worker_loop(
@@ -100,42 +174,15 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Shared args for all sampler types (positional args to DistNeighborSampler.__init__)
-        shared_sampler_args = (
-            data,
-            sampling_config.num_neighbors,
-            sampling_config.with_edge,
-            sampling_config.with_neg,
-            sampling_config.with_weight,
-            sampling_config.edge_dir,
-            sampling_config.collect_features,
-            channel,
-            worker_options.use_all2all,
-            worker_options.worker_concurrency,
-            current_device,
+        dist_sampler = _create_dist_sampler(
+            data=data,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+            current_device=current_device,
         )
-
-        if isinstance(sampler_options, KHopNeighborSamplerOptions):
-            dist_sampler = DistNeighborSampler(
-                *shared_sampler_args,
-                seed=sampling_config.seed,
-            )
-        elif isinstance(sampler_options, PPRSamplerOptions):
-            assert degree_tensors is not None
-            dist_sampler = DistPPRNeighborSampler(
-                *shared_sampler_args,
-                seed=sampling_config.seed,
-                alpha=sampler_options.alpha,
-                eps=sampler_options.eps,
-                max_ppr_nodes=sampler_options.max_ppr_nodes,
-                num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
-                total_degree_dtype=sampler_options.total_degree_dtype,
-                degree_tensors=degree_tensors,
-            )
-        else:
-            raise NotImplementedError(
-                f"Unsupported sampler options type: {type(sampler_options)}"
-            )
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
@@ -186,16 +233,13 @@ def _sampling_worker_loop(
                 dist_sampler.wait_all()
 
                 with sampling_completed_worker_count.get_lock():
-                    sampling_completed_worker_count.value += (
-                        1  # non-atomic, lock is necessary
-                    )
+                    sampling_completed_worker_count.value += 1
 
             elif command == MpCommand.STOP:
                 keep_running = False
             else:
                 raise RuntimeError("Unknown command type")
     except KeyboardInterrupt:
-        # Main process will raise KeyboardInterrupt anyways.
         pass
 
     if dist_sampler is not None:
@@ -236,7 +280,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                 self.num_workers * self.worker_options.worker_concurrency
             )
             self._task_queues.append(task_queue)
-            w = mp_context.Process(
+            worker = mp_context.Process(
                 target=_sampling_worker_loop,
                 args=(
                     rank,
@@ -253,7 +297,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self._degree_tensors,
                 ),
             )
-            w.daemon = True
-            w.start()
-            self._workers.append(w)
+            worker.daemon = True
+            worker.start()
+            self._workers.append(worker)
         barrier.wait()
