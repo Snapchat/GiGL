@@ -11,36 +11,28 @@ Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_
 import logging
 import threading
 import time
-import warnings
 from collections import abc
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional, TypeVar, Union
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
 from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
-from graphlearn_torch.distributed import (
-    RemoteDistSamplingWorkerOptions,
-    barrier,
-    init_rpc,
-    shutdown_rpc,
-)
+from graphlearn_torch.distributed import barrier, init_rpc, shutdown_rpc
 from graphlearn_torch.partition import PartitionBook
-from graphlearn_torch.sampler import (
-    EdgeSamplerInput,
-    NodeSamplerInput,
-    RemoteSamplerInput,
-    SamplingConfig,
-)
+from graphlearn_torch.sampler import RemoteSamplerInput
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
+    InitSamplingBackendRequest,
+    RegisterBackendRequest,
 )
-from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.graph_store.shared_dist_sampling_producer import (
+    SharedDistSamplingBackend,
+)
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
@@ -49,10 +41,38 @@ from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
 """
+FETCH_SLOW_LOG_SECS = 1.0
 
 logger = Logger()
 
 R = TypeVar("R")
+
+
+@dataclass
+class ChannelState:
+    backend_id: int
+    worker_key: str
+    channel: ShmChannel
+    epoch: int = -1
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
+class SamplingBackendState:
+    backend_id: int
+    backend_key: str
+    runtime: SharedDistSamplingBackend
+    active_channels: set[int] = field(default_factory=set)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
+class _ChannelFetchStats:
+    """Per-channel fetch timing stats for ``fetch_one_sampled_message``."""
+
+    fetch_count: int = 0
+    fetch_total_elapsed: float = 0.0
+    fetch_slow_count: int = 0
 
 
 class DistServer:
@@ -68,32 +88,33 @@ class DistServer:
         data and feature data, along with distributed patition books.
     """
 
-    def __init__(self, dataset: DistDataset) -> None:
+    def __init__(self, dataset: DistDataset, log_every_n: int = 50) -> None:
         self.dataset = dataset
-        # Top-level lock used to safely allocate producer IDs and create per-producer
-        # locks. We need this because _producer_lock entries don't exist until a
-        # producer is first requested, so concurrent calls for the same worker_key
-        # could race on creating the entry. Once a per-producer lock exists, callers
-        # use it directly without holding _lock.
         self._lock = threading.RLock()
         self._exit = False
-        self._cur_producer_idx = 0  # auto incremental index (same as producer count)
-        # The mapping from the key in worker options (such as 'train', 'test')
-        # to producer id
-        self._worker_key2producer_id: dict[str, int] = {}
-        self._producer_pool: dict[int, DistSamplingProducer] = {}
-        self._msg_buffer_pool: dict[int, ShmChannel] = {}
-        self._epoch: dict[int, int] = {}  # last epoch for the producer
-        # Per-producer locks that guard the lifecycle of individual producers
-        # (creation, epoch transitions, destruction). This avoids holding the
-        # top-level _lock during expensive operations like producer init.
-        self._producer_lock: dict[int, threading.RLock] = {}
+        self._next_backend_id = 0
+        self._next_channel_id = 0
+        self._backend_key_to_id: dict[str, int] = {}
+        self._backend_state_by_id: dict[int, SamplingBackendState] = {}
+        self._channel_state: dict[int, ChannelState] = {}
+        self._log_every_n = log_every_n
+        self._fetch_stats: dict[int, _ChannelFetchStats] = {}
 
     def shutdown(self) -> None:
-        for producer_id in list(self._producer_pool.keys()):
-            self.destroy_sampling_producer(producer_id)
-        assert len(self._producer_pool) == 0
-        assert len(self._msg_buffer_pool) == 0
+        with self._lock:
+            backends = list(self._backend_state_by_id.values())
+            self._backend_key_to_id.clear()
+            self._backend_state_by_id.clear()
+            self._channel_state.clear()
+        for backend_state in backends:
+            try:
+                backend_state.runtime.shutdown()
+            except Exception:
+                logger.warning(
+                    f"Failed to shut down backend backend_id={backend_state.backend_id} "
+                    f"backend_key={backend_state.backend_key}",
+                    exc_info=True,
+                )
 
     def wait_for_exit(self) -> None:
         r"""Block until the exit flag been set to ``True``."""
@@ -429,145 +450,198 @@ class DistServer:
         )
         return anchors, positive_labels, negative_labels
 
-    def create_sampling_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        sampler_options: SamplerOptions,
-    ) -> int:
-        """Create and initialize an instance of ``DistSamplingProducer`` with
-        a group of subprocesses for distributed sampling.
-
-        Supports both standard ``NodeSamplerInput`` and ``ABLPNodeSamplerInput``
-        through ``BaseGiGLSampler`` subclasses (``DistNeighborSampler`` for k-hop,
-        ``DistPPRNeighborSampler`` for PPR).
-
-        Args:
-          sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,
-            or ABLPNodeSamplerInput): The input data for sampling.
-          sampling_config (SamplingConfig): Configuration of sampling meta info.
-          worker_options (RemoteDistSamplingWorkerOptions): Options for launching
-            remote sampling workers by this server.
-          sampler_options (SamplerOptions): Controls which sampler class
-            is instantiated.
-
-        Returns:
-          int: A unique id of created sampling producer on this server.
-        """
-
+    def init_sampling_backend(self, opts: InitSamplingBackendRequest) -> int:
+        """Create or reuse a shared sampling backend for one loader instance."""
         request_start_time = time.monotonic()
+        with self._lock:
+            backend_id = self._backend_key_to_id.get(opts.backend_key)
+            if backend_id is not None:
+                return backend_id
+            backend_id = self._next_backend_id
+            self._next_backend_id += 1
+            backend_state = SamplingBackendState(
+                backend_id=backend_id,
+                backend_key=opts.backend_key,
+                runtime=SharedDistSamplingBackend(
+                    data=self.dataset,
+                    worker_options=opts.worker_options,
+                    sampling_config=opts.sampling_config,
+                    sampler_options=opts.sampler_options,
+                ),
+            )
+            self._backend_key_to_id[opts.backend_key] = backend_id
+            self._backend_state_by_id[backend_id] = backend_state
+        init_start_time = time.monotonic()
+        try:
+            backend_state.runtime.init_backend()
+        except Exception:
+            with self._lock:
+                self._backend_key_to_id.pop(opts.backend_key, None)
+                self._backend_state_by_id.pop(backend_id, None)
+            raise
+        init_elapsed = time.monotonic() - init_start_time
+        total_elapsed = time.monotonic() - request_start_time
+        logger.info(
+            f"Initialized sampling backend backend_key={opts.backend_key} "
+            f"backend_id={backend_id} "
+            f"init_backend={init_elapsed:.2f}s total={total_elapsed:.2f}s"
+        )
+        return backend_id
+
+    def register_sampling_input(self, opts: RegisterBackendRequest) -> int:
+        """Register one compute-rank input channel on an existing backend."""
+        request_start_time = time.monotonic()
+        with self._lock:
+            backend_state = self._backend_state_by_id[opts.backend_id]
+            channel_id = self._next_channel_id
+            self._next_channel_id += 1
+            channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
+            channel_state = ChannelState(
+                backend_id=opts.backend_id,
+                worker_key=opts.worker_key,
+                channel=channel,
+            )
+            self._channel_state[channel_id] = channel_state
+            backend_state.active_channels.add(channel_id)
+
+        sampler_input = opts.sampler_input
         if isinstance(sampler_input, RemoteSamplerInput):
             sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
-        with self._lock:
-            producer_id = self._worker_key2producer_id.get(worker_options.worker_key)
-            if producer_id is None:
-                logger.info(
-                    f"Creating new producer for worker key {worker_options.worker_key}"
-                )
-                producer_id = self._cur_producer_idx
-                self._cur_producer_idx += 1
-            else:
-                logger.info(
-                    f"Reusing producer for worker key {worker_options.worker_key}, producer id {producer_id}"
-                )
-            producer_lock = self._producer_lock.get(producer_id, None)
-            if producer_lock is None:
-                producer_lock = threading.RLock()
-                self._producer_lock[producer_id] = producer_lock
-                self._worker_key2producer_id[worker_options.worker_key] = producer_id
-        with producer_lock:
-            if producer_id not in self._producer_pool:
-                logger.info(
-                    f"Creating new producer pool entry for producer id {producer_id}"
-                )
-                buffer = ShmChannel(
-                    worker_options.buffer_capacity, worker_options.buffer_size
-                )
-                # Degree tensors for PPR must be computed before constructing
-                # the producer.  The all_reduce inside degree_tensor requires
-                # all ranks to participate simultaneously and cannot run inside
-                # worker subprocesses (which only initialize RPC, not
-                # torch.distributed).
-                degree_tensors = (
-                    self.dataset.degree_tensor
-                    if isinstance(sampler_options, PPRSamplerOptions)
-                    else None
-                )
-                producer = DistSamplingProducer(
-                    data=self.dataset,
+        try:
+            with backend_state.lock:
+                backend_state.runtime.register_input(
+                    channel_id=channel_id,
+                    worker_key=opts.worker_key,
                     sampler_input=sampler_input,
-                    sampling_config=sampling_config,
-                    worker_options=worker_options,
-                    channel=buffer,
-                    sampler_options=sampler_options,
-                    degree_tensors=degree_tensors,
+                    sampling_config=opts.sampling_config,
+                    channel=channel,
                 )
-                producer_start_time = time.monotonic()
-                producer.init()
-                logger.info(
-                    f"Producer {producer_id} initialized in {time.monotonic() - producer_start_time:.2f}s"
-                )
-                self._producer_pool[producer_id] = producer
-                self._msg_buffer_pool[producer_id] = buffer
-                self._epoch[producer_id] = -1
-            else:
-                logger.info(
-                    f"Reusing producer pool entry for producer id {producer_id}"
-                )
-        request_end_time = time.monotonic()
+        except Exception:
+            with self._lock:
+                self._channel_state.pop(channel_id, None)
+                backend_state.active_channels.discard(channel_id)
+            raise
+
         logger.info(
-            f"Request to create producer for worker key {worker_options.worker_key} took {request_end_time - request_start_time:.2f}s"
+            f"Registered sampling input backend_id={opts.backend_id} "
+            f"channel_id={channel_id} worker_key={opts.worker_key} "
+            f"active_channels={len(backend_state.active_channels)} "
+            f"in {time.monotonic() - request_start_time:.2f}s"
         )
-        return producer_id
+        return channel_id
 
-    def destroy_sampling_producer(self, producer_id: int) -> None:
-        r"""Shutdown and destroy a sampling producer managed by this server with
-        its producer id.
-        """
-        with self._producer_lock[producer_id]:
-            producer = self._producer_pool.get(producer_id, None)
-            if producer is not None:
-                producer.shutdown()
-                self._producer_pool.pop(producer_id)
-                self._msg_buffer_pool.pop(producer_id)
-                self._epoch.pop(producer_id)
+    def destroy_sampling_input(self, channel_id: int) -> None:
+        """Destroy one registered sampling channel and maybe its backend."""
+        self._fetch_stats.pop(channel_id, None)
+        with self._lock:
+            channel_state = self._channel_state.pop(channel_id, None)
+            if channel_state is None:
+                return
+            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+        if backend_state is None:
+            return
 
-    def start_new_epoch_sampling(self, producer_id: int, epoch: int) -> None:
-        r"""Start a new epoch sampling tasks for a specific sampling producer
-        with its producer id.
+        with backend_state.lock:
+            backend_state.runtime.unregister_input(channel_id)
+
+        should_shutdown_backend = False
+        with self._lock:
+            backend_state.active_channels.discard(channel_id)
+            if not backend_state.active_channels:
+                self._backend_state_by_id.pop(backend_state.backend_id, None)
+                self._backend_key_to_id.pop(backend_state.backend_key, None)
+                should_shutdown_backend = True
+        if should_shutdown_backend:
+            backend_state.runtime.shutdown()
+
+    def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
+        """Start one new epoch on one registered channel."""
+        with self._lock:
+            channel_state = self._channel_state.get(channel_id)
+            if channel_state is None:
+                raise RuntimeError(
+                    f"start_new_epoch_sampling: channel_id={channel_id} not found"
+                )
+            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+        if backend_state is None:
+            raise RuntimeError(
+                f"start_new_epoch_sampling: backend for channel_id={channel_id} "
+                f"backend_id={channel_state.backend_id} not found"
+            )
+
+        if channel_state.epoch >= epoch:
+            return
+        channel_state.epoch = epoch
+        logger.info(
+            f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
+            f"epoch={epoch}"
+        )
+        backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+
+    def _log_fetch_stats_if_due(
+        self, channel_id: int, worker_key: str, elapsed: float
+    ) -> None:
+        """Accumulate per-channel fetch timing and log aggregated stats every ``log_every_n`` calls.
+
+        Stats are keyed by ``channel_id`` so each channel's RPC thread updates
+        its own counters without contention.
         """
-        with self._producer_lock[producer_id]:
-            cur_epoch = self._epoch[producer_id]
-            if cur_epoch < epoch:
-                self._epoch[producer_id] = epoch
-                producer = self._producer_pool.get(producer_id, None)
-                if producer is not None:
-                    producer.produce_all()
+        stats = self._fetch_stats.get(channel_id)
+        if stats is None:
+            stats = _ChannelFetchStats()
+            self._fetch_stats[channel_id] = stats
+        stats.fetch_count += 1
+        stats.fetch_total_elapsed += elapsed
+        if elapsed >= FETCH_SLOW_LOG_SECS:
+            stats.fetch_slow_count += 1
+        if stats.fetch_count >= self._log_every_n:
+            avg_elapsed = stats.fetch_total_elapsed / stats.fetch_count
+            logger.info(
+                f"fetch_one_sampled_message stats: worker_key={worker_key} "
+                f"avg_elapsed={avg_elapsed:.3f}s "
+                f"slow_count={stats.fetch_slow_count}/{stats.fetch_count}"
+            )
+            stats.fetch_count = 0
+            stats.fetch_total_elapsed = 0.0
+            stats.fetch_slow_count = 0
 
     def fetch_one_sampled_message(
-        self, producer_id: int
+        self, channel_id: int
     ) -> tuple[Optional[SampleMessage], bool]:
-        r"""Fetch a sampled message from the buffer of a specific sampling
-        producer with its producer id.
-        """
-        producer = self._producer_pool.get(producer_id, None)
-        if producer is None:
-            warnings.warn("invalid producer_id {producer_id}")
-            return None, False
-        if producer.is_all_sampling_completed_and_consumed():
+        """Fetch one sampled message from a registered channel."""
+        request_start_time = time.monotonic()
+        with self._lock:
+            channel_state = self._channel_state.get(channel_id)
+            if channel_state is None:
+                return None, True
+            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+        if backend_state is None:
             return None, True
-        buffer = self._msg_buffer_pool.get(producer_id, None)
-        while True:
-            try:
-                msg = buffer.recv(timeout_ms=500)
-                return msg, False
-            except QueueTimeoutError as e:
-                if producer.is_all_sampling_completed():
-                    return None, True
+
+        with channel_state.lock:
+            while True:
+                try:
+                    msg = channel_state.channel.recv(timeout_ms=100)
+                    self._log_fetch_stats_if_due(
+                        channel_id,
+                        channel_state.worker_key,
+                        time.monotonic() - request_start_time,
+                    )
+                    return msg, False
+                except QueueTimeoutError:
+                    if (
+                        backend_state.runtime.is_channel_epoch_done(
+                            channel_id, channel_state.epoch
+                        )
+                        and channel_state.channel.empty()
+                    ):
+                        self._log_fetch_stats_if_due(
+                            channel_id,
+                            channel_state.worker_key,
+                            time.monotonic() - request_start_time,
+                        )
+                        return None, True
 
 
 _dist_server: Optional[DistServer] = None

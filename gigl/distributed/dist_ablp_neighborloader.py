@@ -1,6 +1,6 @@
 from collections import abc, defaultdict
 from itertools import count
-from typing import Callable, Optional, Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -21,7 +21,6 @@ from gigl.distributed.dist_ppr_sampler import (
     PPR_WEIGHT_METADATA_KEY,
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
@@ -64,9 +63,6 @@ logger = Logger()
 
 
 class DistABLPLoader(BaseDistLoader):
-    # Counts instantiations of this class, per process.
-    # This is needed so we can generate unique worker key for each instance, for graph store mode.
-    # NOTE: This is per-class, not per-instance.
     _counter = count(0)
 
     def __init__(
@@ -362,22 +358,17 @@ class DistABLPLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the producer: a pre-constructed producer for colocated mode,
-        # or an RPC callable for graph store mode.
+        producer: Optional[DistSamplingProducer] = None
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            producer: Union[
-                DistSamplingProducer, Callable[..., int]
-            ] = BaseDistLoader.create_mp_producer(
+            producer = BaseDistLoader.create_mp_producer(
                 dataset=dataset,
                 sampler_input=sampler_input,
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
             )
-        else:
-            producer = DistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -624,13 +615,11 @@ class DistABLPLoader(BaseDistLoader):
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
-        worker_key = (
-            f"compute_ablp_loader_rank_{compute_rank}_worker_{self._instance_count}"
-        )
+        self._backend_key = f"dist_ablp_loader_{self._instance_count}"
+        worker_key = f"{self._backend_key}_compute_rank_{compute_rank}"
         logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
-            compute_rank=compute_rank,
             worker_key=worker_key,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,
