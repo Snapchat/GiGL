@@ -1,9 +1,59 @@
-"""RPC request messages for graph-store fetch operations."""
+"""RPC request messages for graph-store operations."""
 
 from dataclasses import dataclass
 from typing import Literal, Optional, Union
 
+from graphlearn_torch.distributed import RemoteDistSamplingWorkerOptions
+from graphlearn_torch.sampler import (
+    EdgeSamplerInput,
+    NodeSamplerInput,
+    RemoteSamplerInput,
+    SamplingConfig,
+)
+
+from gigl.distributed.sampler import ABLPNodeSamplerInput
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
+
+
+@dataclass(frozen=True)
+class InitSamplingBackendRequest:
+    """Request to initialize a shared sampling backend on a storage server.
+
+    Args:
+        backend_key: Unique key identifying this backend (e.g. ``"dist_neighbor_loader_0"``).
+        worker_options: Worker-level RPC/device configuration for the backend.
+        sampler_options: Sampler-type–specific options (k-hop or PPR).
+        sampling_config: Configuration controlling neighbor counts, batching, etc.
+    """
+
+    backend_key: str
+    worker_options: RemoteDistSamplingWorkerOptions
+    sampler_options: SamplerOptions
+    sampling_config: SamplingConfig
+
+
+@dataclass(frozen=True)
+class RegisterBackendRequest:
+    """Request to register one compute-rank input channel on a backend.
+
+    Args:
+        backend_id: The id of the backend to register on.
+        worker_key: Unique key for the worker within the backend.
+        sampler_input: The sampler input data for this channel.
+        sampling_config: Configuration controlling neighbor counts, batching, etc.
+        buffer_capacity: Maximum number of buffered messages in the output channel.
+        buffer_size: Size of each message buffer slot, or ``"auto"`` for automatic sizing.
+    """
+
+    backend_id: int
+    worker_key: str
+    sampler_input: Union[
+        NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
+    ]
+    sampling_config: SamplingConfig
+    buffer_capacity: int
+    buffer_size: Union[int, str]
 
 
 @dataclass(frozen=True)
