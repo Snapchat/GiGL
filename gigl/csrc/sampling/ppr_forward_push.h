@@ -118,4 +118,15 @@ class PPRForwardPushState {
     // Neighbor cache
     // -------------------------------------------------------------------------
     std::unordered_map<uint64_t, std::vector<int32_t>> neighbor_cache_;
+
+    // -------------------------------------------------------------------------
+    // Diagnostics (populated during the algorithm; read after convergence)
+    // -------------------------------------------------------------------------
+    // Total nodes drained (across all seeds and node types) in each drain_queue()
+    // call.  One entry per loop iteration; useful for understanding convergence speed.
+    std::vector<int32_t> nodes_drained_per_iteration_;
+
+   public:
+    // Returns nodes_drained_per_iteration_ built up across all drain_queue() calls.
+    const std::vector<int32_t>& get_nodes_drained_per_iteration() const;
 };

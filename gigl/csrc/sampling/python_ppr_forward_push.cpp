@@ -59,5 +59,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       std::vector<torch::Tensor>>())
         .def("drain_queue", drain_queue_wrapper)
         .def("push_residuals", push_residuals_wrapper)
-        .def("extract_top_k", extract_top_k_wrapper);
+        .def("extract_top_k", extract_top_k_wrapper)
+        .def("get_nodes_drained_per_iteration", &PPRForwardPushState::get_nodes_drained_per_iteration);
 }

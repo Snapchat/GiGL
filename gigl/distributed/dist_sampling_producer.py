@@ -131,6 +131,7 @@ def _sampling_worker_loop(
                 num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
                 total_degree_dtype=sampler_options.total_degree_dtype,
                 degree_tensors=degree_tensors,
+                max_fetch_iterations=sampler_options.max_fetch_iterations,
             )
         else:
             raise NotImplementedError(

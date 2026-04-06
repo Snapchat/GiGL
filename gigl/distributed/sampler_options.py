@@ -59,6 +59,12 @@ class PPRSamplerOptions:
         total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
             to ``torch.int32``, which supports total degrees up to ~2 billion.
             Use a larger dtype if nodes have exceptionally high aggregate degrees.
+        max_fetch_iterations: Maximum number of iterations that issue RPC neighbor
+            fetches. After this many fetch iterations, subsequent iterations push
+            residuals using only already-cached neighbor lists (no new RPCs).
+            The algorithm still runs to convergence — re-enqueued nodes propagate
+            through cached neighbors at negligible cost. Set to 0 (default) for
+            no fetch limit.
     """
 
     alpha: float = 0.5
@@ -66,6 +72,7 @@ class PPRSamplerOptions:
     max_ppr_nodes: int = 50
     num_neighbors_per_hop: int = 1_000
     total_degree_dtype: torch.dtype = torch.int32
+    max_fetch_iterations: int = 0
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

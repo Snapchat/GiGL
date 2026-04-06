@@ -57,6 +57,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
     std::unordered_map<int32_t, std::unordered_set<int32_t>> nodes_to_lookup;
 
+    int32_t total_drained_this_round = 0;
     for (int32_t s = 0; s < batch_size_; ++s) {
         for (int32_t nt = 0; nt < num_node_types_; ++nt) {
             if (queue_[s][nt].empty())
@@ -65,6 +66,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
             // Move the live queue into the snapshot (no data copy — O(1)).
             queued_nodes_[s][nt] = std::move(queue_[s][nt]);
             queue_[s][nt].clear();
+            total_drained_this_round += static_cast<int32_t>(queued_nodes_[s][nt].size());
             num_nodes_in_queue_ -= static_cast<int32_t>(queued_nodes_[s][nt].size());
 
             for (int32_t node_id : queued_nodes_[s][nt]) {
@@ -77,12 +79,18 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
         }
     }
 
+    nodes_drained_per_iteration_.push_back(total_drained_this_round);
+
     std::unordered_map<int32_t, torch::Tensor> result;
     for (auto& [eid, node_set] : nodes_to_lookup) {
         std::vector<int64_t> ids(node_set.begin(), node_set.end());
         result[eid] = torch::tensor(ids, torch::kLong);
     }
     return result;
+}
+
+const std::vector<int32_t>& PPRForwardPushState::get_nodes_drained_per_iteration() const {
+    return nodes_drained_per_iteration_;
 }
 
 void PPRForwardPushState::push_residuals(
@@ -135,13 +143,28 @@ void PPRForwardPushState::push_residuals(
                 ppr_scores_[s][nt][src] += res;
                 src_res[src] = 0.0;
 
-                int32_t total_deg = get_total_degree(src, nt);
-                // Destination-only nodes absorb residual but do not push further.
-                if (total_deg == 0)
+                // b. Count total fetched/cached neighbors across all edge types for
+                // this source node.  We normalise by the number of neighbors we
+                // actually retrieved, not the true degree, so residual is fully
+                // distributed among known neighbors rather than leaking to unfetched
+                // ones (which matters when num_neighbors_per_hop < true_degree).
+                int32_t total_fetched = 0;
+                for (int32_t eid : node_type_to_edge_type_ids_[nt]) {
+                    auto fi = fetched.find(pack_key(src, eid));
+                    if (fi != fetched.end()) {
+                        total_fetched += static_cast<int32_t>(fi->second.size());
+                    } else {
+                        auto ci = neighbor_cache_.find(pack_key(src, eid));
+                        if (ci != neighbor_cache_.end())
+                            total_fetched += static_cast<int32_t>(ci->second.size());
+                    }
+                }
+                // Destination-only nodes (or nodes with no fetched neighbors) absorb
+                // residual but do not push further.
+                if (total_fetched == 0)
                     continue;
 
-                // b. Distribute: each neighbor receives an equal share.
-                double res_per_nbr = one_minus_alpha_ * res / static_cast<double>(total_deg);
+                double res_per_nbr = one_minus_alpha_ * res / static_cast<double>(total_fetched);
 
                 for (int32_t eid : node_type_to_edge_type_ids_[nt]) {
                     // Invariant: fetched and neighbor_cache_ are mutually exclusive for
@@ -167,8 +190,9 @@ void PPRForwardPushState::push_residuals(
                     for (int32_t nbr : *nbr_list) {
                         residuals_[s][dst_nt][nbr] += res_per_nbr;
 
-                        double threshold = requeue_threshold_factor_ *
-                                           static_cast<double>(get_total_degree(nbr, dst_nt));
+                        double threshold =
+                            requeue_threshold_factor_ *
+                            static_cast<double>(get_total_degree(nbr, dst_nt));
 
                         if (queue_[s][dst_nt].find(nbr) == queue_[s][dst_nt].end() &&
                             residuals_[s][dst_nt][nbr] >= threshold) {
