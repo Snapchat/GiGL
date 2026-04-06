@@ -97,7 +97,7 @@ class DistSamplingProducerTest(TestCase):
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.get_context")
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.mp.get_context")
     @patch(
-        "gigl.distributed.graph_store.shared_dist_sampling_producer.prepare_degree_tensors"
+        "gigl.distributed.graph_store.shared_dist_sampling_producer._prepare_degree_tensors"
     )
     def test_init_backend_prepares_worker_options(
         self,
