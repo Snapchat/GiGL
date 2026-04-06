@@ -727,6 +727,10 @@ class TestDistServerSampling(TestCase):
         runtime_2.shutdown.assert_called_once()
         self.assertEqual(self.server._backend_state_by_id, {})
 
+    def test_create_sampling_producer_removed(self) -> None:
+        self.assertFalse(hasattr(dist_server.DistServer, "create_sampling_producer"))
+        self.assertFalse(hasattr(dist_server.DistServer, "destroy_sampling_producer"))
+
 
 if __name__ == "__main__":
     absltest.main()
