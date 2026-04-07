@@ -2,7 +2,8 @@
 GiGL implementation of GLT DistServer.
 
 Uses GiGL's DistSamplingProducer which supports neighbor sampling
-and ABLP (anchor-based link prediction) via the DistNeighborSampler.
+and ABLP (anchor-based link prediction) via BaseGiGLSampler subclasses
+(DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR).
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
@@ -40,7 +41,7 @@ from gigl.distributed.graph_store.messages import (
 )
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
@@ -447,7 +448,8 @@ class DistServer:
         a group of subprocesses for distributed sampling.
 
         Supports both standard ``NodeSamplerInput`` and ``ABLPNodeSamplerInput``
-        through the unified ``DistNeighborSampler``.
+        through ``BaseGiGLSampler`` subclasses (``DistNeighborSampler`` for k-hop,
+        ``DistPPRNeighborSampler`` for PPR).
 
         Args:
           sampler_input (NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput,
@@ -491,6 +493,16 @@ class DistServer:
                 buffer = ShmChannel(
                     worker_options.buffer_capacity, worker_options.buffer_size
                 )
+                # Degree tensors for PPR must be computed before constructing
+                # the producer.  The all_reduce inside degree_tensor requires
+                # all ranks to participate simultaneously and cannot run inside
+                # worker subprocesses (which only initialize RPC, not
+                # torch.distributed).
+                degree_tensors = (
+                    self.dataset.degree_tensor
+                    if isinstance(sampler_options, PPRSamplerOptions)
+                    else None
+                )
                 producer = DistSamplingProducer(
                     data=self.dataset,
                     sampler_input=sampler_input,
@@ -498,6 +510,7 @@ class DistServer:
                     worker_options=worker_options,
                     channel=buffer,
                     sampler_options=sampler_options,
+                    degree_tensors=degree_tensors,
                 )
                 producer_start_time = time.monotonic()
                 producer.init()

@@ -1,6 +1,18 @@
-import torch
+from collections.abc import Mapping
 
-from gigl.distributed.sampler import ABLPNodeSamplerInput
+import torch
+from graphlearn_torch.sampler import NodeSamplerInput
+
+from gigl.distributed.base_sampler import (
+    BaseDistNeighborSampler,
+    SampleLoopInputs,
+    _stable_unique_preserve_order,
+)
+from gigl.distributed.sampler import (
+    NEGATIVE_LABEL_METADATA_KEY,
+    POSITIVE_LABEL_METADATA_KEY,
+    ABLPNodeSamplerInput,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from tests.test_assets.test_case import TestCase
 
@@ -8,8 +20,10 @@ _USER = NodeType("user")
 _ITEM = NodeType("item")
 _BUYS = Relation("buys")
 _CLICKS = Relation("clicks")
+_FRIEND = Relation("friend")
 _USER_BUYS_ITEM = EdgeType(_USER, _BUYS, _ITEM)
 _USER_CLICKS_ITEM = EdgeType(_USER, _CLICKS, _ITEM)
+_USER_FRIEND_USER = EdgeType(_USER, _FRIEND, _USER)
 
 
 def _build_sampler_input(
@@ -126,3 +140,124 @@ class TestABLPNodeSamplerInput(TestCase):
         self.assertTrue(
             sampler_input.negative_label_by_edge_types[_USER_CLICKS_ITEM].is_shared()
         )
+
+
+def _build_sampler_stub(edge_dir: str = "out") -> BaseDistNeighborSampler:
+    """Build a minimal BaseGiGLSampler stub for testing shared utilities."""
+    sampler = BaseDistNeighborSampler.__new__(BaseDistNeighborSampler)
+    sampler.device = torch.device("cpu")
+    sampler.edge_dir = edge_dir
+    return sampler
+
+
+class TestBaseGiGLSamplerPreparation(TestCase):
+    def test_stable_unique_preserves_first_occurrence_order(self) -> None:
+        self.assert_tensor_equality(
+            _stable_unique_preserve_order(torch.tensor([7, 3, 7, 5, 3, 9])),
+            torch.tensor([7, 3, 5, 9]),
+        )
+
+    def test_stable_unique_requires_one_dimensional_tensor(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Expected a 1-D tensor"):
+            _stable_unique_preserve_order(torch.tensor([[1, 2], [3, 4]]))
+
+    def test_prepare_ablp_inputs_dedupes_same_type_seeds_and_keeps_anchors_first(
+        self,
+    ) -> None:
+        sampler = _build_sampler_stub(edge_dir="out")
+        positive_labels = {_USER_FRIEND_USER: torch.tensor([11, 12, -1, 13])}
+        negative_labels = {_USER_FRIEND_USER: torch.tensor([13, 14, 10, -1])}
+        sampler_input = ABLPNodeSamplerInput(
+            node=torch.tensor([10, 11, 10]),
+            input_type=_USER,
+            positive_label_by_edge_types=positive_labels,
+            negative_label_by_edge_types=negative_labels,
+        )
+
+        sample_loop_inputs = sampler._prepare_ablp_inputs(
+            inputs=sampler_input,
+            input_seeds=sampler_input.node,
+            input_type=_USER,
+        )
+
+        nodes_to_sample = sample_loop_inputs.nodes_to_sample
+        assert isinstance(nodes_to_sample, Mapping)
+        self.assertEqual(set(nodes_to_sample.keys()), {_USER})
+        self.assert_tensor_equality(
+            nodes_to_sample[_USER],
+            torch.tensor([10, 11, 12, 13, 14]),
+        )
+        self.assert_tensor_equality(
+            sample_loop_inputs.metadata[
+                f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(_USER_FRIEND_USER))}"
+            ],
+            positive_labels[_USER_FRIEND_USER],
+        )
+        self.assert_tensor_equality(
+            sample_loop_inputs.metadata[
+                f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(_USER_FRIEND_USER))}"
+            ],
+            negative_labels[_USER_FRIEND_USER],
+        )
+
+    def test_prepare_ablp_inputs_dedupes_cross_type_supervision_nodes(self) -> None:
+        sampler = _build_sampler_stub(edge_dir="out")
+        sampler_input = ABLPNodeSamplerInput(
+            node=torch.tensor([4, 5]),
+            input_type=_USER,
+            positive_label_by_edge_types={
+                _USER_BUYS_ITEM: torch.tensor([20, 21, 20, -1])
+            },
+            negative_label_by_edge_types={
+                _USER_BUYS_ITEM: torch.tensor([21, 22, -1, 20])
+            },
+        )
+
+        sample_loop_inputs = sampler._prepare_ablp_inputs(
+            inputs=sampler_input,
+            input_seeds=sampler_input.node,
+            input_type=_USER,
+        )
+
+        nodes_to_sample = sample_loop_inputs.nodes_to_sample
+        assert isinstance(nodes_to_sample, Mapping)
+        self.assertEqual(set(nodes_to_sample.keys()), {_USER, _ITEM})
+        self.assert_tensor_equality(
+            nodes_to_sample[_USER],
+            torch.tensor([4, 5]),
+        )
+        self.assert_tensor_equality(
+            nodes_to_sample[_ITEM],
+            torch.tensor([20, 21, 22]),
+        )
+
+    def test_prepare_sample_loop_inputs_homogeneous(self) -> None:
+        """Standard NodeSamplerInput with no input_type returns a tensor."""
+        sampler = _build_sampler_stub()
+        inputs = NodeSamplerInput(
+            node=torch.tensor([10, 20, 30]),
+            input_type=None,
+        )
+
+        result = sampler._prepare_sample_loop_inputs(inputs)
+
+        self.assertIsInstance(result, SampleLoopInputs)
+        assert isinstance(result.nodes_to_sample, torch.Tensor)
+        self.assert_tensor_equality(result.nodes_to_sample, torch.tensor([10, 20, 30]))
+        self.assertEqual(result.metadata, {})
+
+    def test_prepare_sample_loop_inputs_heterogeneous(self) -> None:
+        """Standard NodeSamplerInput with input_type returns a dict."""
+        sampler = _build_sampler_stub()
+        inputs = NodeSamplerInput(
+            node=torch.tensor([1, 2]),
+            input_type=_USER,
+        )
+
+        result = sampler._prepare_sample_loop_inputs(inputs)
+
+        self.assertIsInstance(result, SampleLoopInputs)
+        assert isinstance(result.nodes_to_sample, Mapping)
+        self.assertEqual(set(result.nodes_to_sample.keys()), {_USER})
+        self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))
+        self.assertEqual(result.metadata, {})
