@@ -37,13 +37,8 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
-from gigl.distributed.sampler_options import (
-    KHopNeighborSamplerOptions,
-    PPRSamplerOptions,
-    SamplerOptions,
-)
+from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.utils.dist_sampler import create_dist_sampler
 
 logger = Logger()
 
@@ -100,42 +95,15 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Shared args for all sampler types (positional args to DistNeighborSampler.__init__)
-        shared_sampler_args = (
-            data,
-            sampling_config.num_neighbors,
-            sampling_config.with_edge,
-            sampling_config.with_neg,
-            sampling_config.with_weight,
-            sampling_config.edge_dir,
-            sampling_config.collect_features,
-            channel,
-            worker_options.use_all2all,
-            worker_options.worker_concurrency,
-            current_device,
+        dist_sampler = create_dist_sampler(
+            data=data,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+            current_device=current_device,
         )
-
-        if isinstance(sampler_options, KHopNeighborSamplerOptions):
-            dist_sampler = DistNeighborSampler(
-                *shared_sampler_args,
-                seed=sampling_config.seed,
-            )
-        elif isinstance(sampler_options, PPRSamplerOptions):
-            assert degree_tensors is not None
-            dist_sampler = DistPPRNeighborSampler(
-                *shared_sampler_args,
-                seed=sampling_config.seed,
-                alpha=sampler_options.alpha,
-                eps=sampler_options.eps,
-                max_ppr_nodes=sampler_options.max_ppr_nodes,
-                num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
-                total_degree_dtype=sampler_options.total_degree_dtype,
-                degree_tensors=degree_tensors,
-            )
-        else:
-            raise NotImplementedError(
-                f"Unsupported sampler options type: {type(sampler_options)}"
-            )
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
@@ -236,7 +204,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                 self.num_workers * self.worker_options.worker_concurrency
             )
             self._task_queues.append(task_queue)
-            w = mp_context.Process(
+            worker = mp_context.Process(
                 target=_sampling_worker_loop,
                 args=(
                     rank,
@@ -253,7 +221,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self._degree_tensors,
                 ),
             )
-            w.daemon = True
-            w.start()
-            self._workers.append(w)
+            worker.daemon = True
+            worker.start()
+            self._workers.append(worker)
         barrier.wait()
