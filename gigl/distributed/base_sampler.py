@@ -1,4 +1,3 @@
-import gc
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Union
@@ -189,18 +188,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             )
             for node_type, seeds in input_seeds_builder.items()
         }
-
-        # Memory cleanup — only del loop vars if any labels were processed
-        has_labels = bool(
-            inputs.positive_label_by_edge_types or inputs.negative_label_by_edge_types
-        )
-        if has_labels:
-            del filtered_label_tensor, label_tensor
-        for value in input_seeds_builder.values():
-            value.clear()
-        input_seeds_builder.clear()
-        del input_seeds_builder
-        gc.collect()
 
         return SampleLoopInputs(
             nodes_to_sample=nodes_to_sample,
