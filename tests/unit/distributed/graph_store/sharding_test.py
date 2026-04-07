@@ -17,17 +17,17 @@ class TestComputeServerAssignments(TestCase):
                 expected_assignments={
                     0: ServerSlice(
                         server_rank=0,
-                        start_num=0,
-                        start_den=2,
-                        end_num=2,
-                        end_den=2,
+                        start_numerator=0,
+                        start_denominator=2,
+                        end_numerator=2,
+                        end_denominator=2,
                     ),
                     1: ServerSlice(
                         server_rank=1,
-                        start_num=0,
-                        start_den=2,
-                        end_num=1,
-                        end_den=2,
+                        start_numerator=0,
+                        start_denominator=2,
+                        end_numerator=1,
+                        end_denominator=2,
                     ),
                 },
             ),
@@ -37,17 +37,17 @@ class TestComputeServerAssignments(TestCase):
                 expected_assignments={
                     1: ServerSlice(
                         server_rank=1,
-                        start_num=1,
-                        start_den=2,
-                        end_num=2,
-                        end_den=2,
+                        start_numerator=1,
+                        start_denominator=2,
+                        end_numerator=2,
+                        end_denominator=2,
                     ),
                     2: ServerSlice(
                         server_rank=2,
-                        start_num=0,
-                        start_den=2,
-                        end_num=2,
-                        end_den=2,
+                        start_numerator=0,
+                        start_denominator=2,
+                        end_numerator=2,
+                        end_denominator=2,
                     ),
                 },
             ),
@@ -135,7 +135,11 @@ class TestServerSlice(TestCase):
     def test_full_tensor_returns_same_object(self) -> None:
         tensor = torch.arange(10)
         server_slice = ServerSlice(
-            server_rank=0, start_num=0, start_den=1, end_num=1, end_den=1
+            server_rank=0,
+            start_numerator=0,
+            start_denominator=1,
+            end_numerator=1,
+            end_denominator=1,
         )
         result = server_slice.slice_tensor(tensor)
         self.assertEqual(result.data_ptr(), tensor.data_ptr())
@@ -143,7 +147,11 @@ class TestServerSlice(TestCase):
     def test_partial_slice_returns_requested_range(self) -> None:
         tensor = torch.arange(10)
         server_slice = ServerSlice(
-            server_rank=0, start_num=0, start_den=2, end_num=1, end_den=2
+            server_rank=0,
+            start_numerator=0,
+            start_denominator=2,
+            end_numerator=1,
+            end_denominator=2,
         )
         result = server_slice.slice_tensor(tensor)
         self.assert_tensor_equality(result, torch.arange(5))

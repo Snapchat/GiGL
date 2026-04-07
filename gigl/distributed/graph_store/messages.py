@@ -18,6 +18,9 @@ class FetchNodesRequest:
             Must be provided together with ``rank``.
         split: The split of the dataset to get node ids from.
         node_type: The type of nodes to get node ids for.
+        server_slice: An optional :class:`~gigl.distributed.graph_store.sharding.ServerSlice`
+            describing the fraction of this server's data to return.
+            Cannot be combined with ``rank``/``world_size``.
 
     Examples:
         Fetch all nodes without sharding:
@@ -70,6 +73,9 @@ class FetchABLPInputRequest:
             Must be provided together with ``world_size``.
         world_size: The total number of processes in the distributed setup.
             Must be provided together with ``rank``.
+        server_slice: An optional :class:`~gigl.distributed.graph_store.sharding.ServerSlice`
+            describing the fraction of this server's data to return.
+            Cannot be combined with ``rank``/``world_size``.
 
     Examples:
         Fetch training ABLP input without sharding:

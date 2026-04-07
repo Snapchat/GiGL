@@ -28,22 +28,6 @@ from gigl.utils.sampling import ABLPInputNodes
 logger = Logger()
 
 
-def _validate_contiguous_args(
-    rank: Optional[int],
-    world_size: Optional[int],
-    shard_strategy: ShardStrategy,
-) -> None:
-    """Validate contiguous sharding inputs; no-op for round-robin."""
-    if shard_strategy != ShardStrategy.CONTIGUOUS:
-        return
-
-    if rank is None or world_size is None:
-        raise ValueError(
-            "Both rank and world_size must be provided when using "
-            f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
-        )
-
-
 class RemoteDistDataset:
     def __init__(
         self,
@@ -190,11 +174,19 @@ class RemoteDistDataset:
         world_size: Optional[int],
         shard_strategy: ShardStrategy,
     ) -> Optional[dict[int, ServerSlice]]:
-        """Compute contiguous server assignments when that shard strategy is requested."""
+        """Compute contiguous server assignments when that shard strategy is requested.
+
+        Returns ``None`` for ``ROUND_ROBIN``.
+        Raises ``ValueError`` for ``CONTIGUOUS`` if rank or world_size is ``None``.
+        """
         if shard_strategy != ShardStrategy.CONTIGUOUS:
             return None
 
-        assert rank is not None and world_size is not None
+        if rank is None or world_size is None:
+            raise ValueError(
+                "Both rank and world_size must be provided when using "
+                f"ShardStrategy.CONTIGUOUS. Got rank={rank}, world_size={world_size}"
+            )
         return compute_server_assignments(
             num_servers=self.cluster_info.num_storage_nodes,
             num_compute_nodes=world_size,
@@ -269,11 +261,14 @@ class RemoteDistDataset:
 
         Args:
             rank (Optional[int]): The requested shard rank.
-                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
-                expects the compute-node rank.
+                ``ROUND_ROBIN`` forwards this to the storage server.
+                ``CONTIGUOUS`` expects the compute-node rank.
+                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded
+                (useful for fetching all neighbor nodes during inference).
             world_size (Optional[int]): The requested shard world size.
-                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
-                expects the compute-node world size.
+                ``ROUND_ROBIN`` forwards this to the storage server.
+                ``CONTIGUOUS`` expects the compute-node world size.
+                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded.
             split (Optional[Literal["train", "val", "test"]]):
                 The split of the dataset to get node ids from.
                 If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
@@ -285,7 +280,8 @@ class RemoteDistDataset:
                 requested rank/world_size on the storage server.
                 ``CONTIGUOUS`` assigns storage servers to compute nodes, returning empty tensors
                 for unassigned servers.
-                If CONTIGUOUS is set, rank and world_size must be provided.
+                ``CONTIGUOUS`` always requires rank and world_size because the
+                server-to-compute-node assignment depends on them.
 
         Raises:
             ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
@@ -303,11 +299,6 @@ class RemoteDistDataset:
             (train, val, or test) may be returned. This is useful when you need to sample
             neighbors during inference, as neighbor nodes may belong to any split.
         """
-        _validate_contiguous_args(
-            rank=rank,
-            world_size=world_size,
-            shard_strategy=shard_strategy,
-        )
         assignments = self._compute_assignments_if_needed(
             rank=rank,
             world_size=world_size,
@@ -413,6 +404,7 @@ class RemoteDistDataset:
         def _empty_ablp_result() -> (
             tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
         ):
+            """Return an empty ABLP result tuple: (anchor_nodes, positive_labels, negative_labels)."""
             return (
                 torch.empty(0, dtype=torch.long),
                 torch.empty((0, 0), dtype=torch.long),
@@ -451,11 +443,13 @@ class RemoteDistDataset:
         Args:
             split (Literal["train", "val", "test"]): The split to get the input for.
             rank (Optional[int]): The requested shard rank.
-                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
-                expects the compute-node rank.
+                ``ROUND_ROBIN`` forwards this to the storage server.
+                ``CONTIGUOUS`` expects the compute-node rank.
+                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded.
             world_size (Optional[int]): The requested shard world size.
-                ``ROUND_ROBIN`` forwards this to the storage server. ``CONTIGUOUS``
-                expects the compute-node world size.
+                ``ROUND_ROBIN`` forwards this to the storage server.
+                ``CONTIGUOUS`` expects the compute-node world size.
+                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded.
             anchor_node_type (Optional[NodeType]): The type of the anchor nodes to retrieve.
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
@@ -470,7 +464,8 @@ class RemoteDistDataset:
                 requested rank/world_size on the storage server.
                 ``CONTIGUOUS`` assigns storage servers to compute nodes,
                 producing empty tensors for unassigned servers.
-                If CONTIGUOUS is set, rank and world_size must be provided.
+                ``CONTIGUOUS`` always requires rank and world_size because the
+                server-to-compute-node assignment depends on them.
 
         Returns:
             dict[int, ABLPInputNodes]:
@@ -489,12 +484,6 @@ class RemoteDistDataset:
             compute nodes.
 
         """
-        _validate_contiguous_args(
-            rank=rank,
-            world_size=world_size,
-            shard_strategy=shard_strategy,
-        )
-
         if (anchor_node_type is None) != (supervision_edge_type is None):
             raise ValueError(
                 f"anchor_node_type and supervision_edge_type must both be provided or both be None, received: "

@@ -276,10 +276,10 @@ class TestRemoteDataset(TestCase):
             FetchNodesRequest(
                 server_slice=ServerSlice(
                     server_rank=0,
-                    start_num=1,
-                    start_den=2,
-                    end_num=2,
-                    end_den=2,
+                    start_numerator=1,
+                    start_denominator=2,
+                    end_numerator=2,
+                    end_denominator=2,
                 )
             )
         )
@@ -300,10 +300,10 @@ class TestRemoteDataset(TestCase):
                     world_size=2,
                     server_slice=ServerSlice(
                         server_rank=0,
-                        start_num=0,
-                        start_den=2,
-                        end_num=1,
-                        end_den=2,
+                        start_numerator=0,
+                        start_denominator=2,
+                        end_numerator=1,
+                        end_denominator=2,
                     ),
                 )
             )
@@ -613,10 +613,10 @@ class TestRemoteDataset(TestCase):
                 supervision_edge_type=USER_TO_STORY,
                 server_slice=ServerSlice(
                     server_rank=0,
-                    start_num=1,
-                    start_den=2,
-                    end_num=2,
-                    end_den=2,
+                    start_numerator=1,
+                    start_denominator=2,
+                    end_numerator=2,
+                    end_denominator=2,
                 ),
             )
         )
@@ -649,10 +649,10 @@ class TestRemoteDataset(TestCase):
                     supervision_edge_type=USER_TO_STORY,
                     server_slice=ServerSlice(
                         server_rank=0,
-                        start_num=0,
-                        start_den=1,
-                        end_num=1,
-                        end_den=1,
+                        start_numerator=0,
+                        start_denominator=1,
+                        end_numerator=1,
+                        end_denominator=1,
                     ),
                 )
             )
