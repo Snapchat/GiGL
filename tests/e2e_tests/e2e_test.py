@@ -11,6 +11,8 @@ Arguments:
         --compiled_pipeline_path: The KFP pipeline definition to use.
         --test_spec_uri: URI to a YAML file containing test specifications.
     The following arguments are optional:
+        --test_prefix: [Optional] Prefix to prepend to all job names.
+            Example: --test_prefix=my_e2e_ produces job names like my_e2e_cora_nalp_test_on_...
         --test_names: [Optional] Test name to run from the test spec file. The value can be repeated for running multiple tests.
             If not provided, all tests in the spec files will be run.
             Example: --test_names=cora_glt_udl_test_on --test_names=cora_nalp_test_on
@@ -105,11 +107,12 @@ class E2ETestsSpec:
 def run_all_e2e_tests(
     tests: dict[str, E2ETest],
     compiled_pipeline_path: Uri,
+    test_prefix: str = "",
 ) -> None:
     orchestrator = KfpOrchestrator()
     runs_to_wait_on: list[PipelineJob] = []
     for job_name, job in tests.items():
-        full_job_name = f"{job_name}{job.name_suffix}"
+        full_job_name = f"{test_prefix}{job_name}{job.name_suffix}"
         logger.info(f"Compiling and running job: {full_job_name}")
         logger.info(
             textwrap.dedent(
@@ -163,6 +166,12 @@ if __name__ == "__main__":
         help="The compiled pipeline definition to use.",
     )
     parser.add_argument(
+        "--test_prefix",
+        type=str,
+        default="",
+        help="Prefix to prepend to all job names. Example: --test_prefix=my_e2e_ produces job names like my_e2e_cora_nalp_test_on_...",
+    )
+    parser.add_argument(
         "--test_names",
         type=str,
         default=[],
@@ -192,4 +201,5 @@ if __name__ == "__main__":
     run_all_e2e_tests(
         tests=filtered_tests,
         compiled_pipeline_path=compiled_pipeline_path,
+        test_prefix=args.test_prefix,
     )
