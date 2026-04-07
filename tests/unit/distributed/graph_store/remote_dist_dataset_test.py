@@ -283,7 +283,7 @@ class TestPlanStorageRankShards(TestCase):
     @parameterized.expand(
         [
             param(
-                "c4_s4_k2",
+                "4_compute_4_storage_2_assigned",
                 rank=3,
                 world_size=4,
                 num_storage_nodes=4,
@@ -294,7 +294,7 @@ class TestPlanStorageRankShards(TestCase):
                 },
             ),
             param(
-                "c5_s3_k1",
+                "5_compute_3_storage_1_assigned",
                 rank=4,
                 world_size=5,
                 num_storage_nodes=3,
@@ -304,7 +304,7 @@ class TestPlanStorageRankShards(TestCase):
                 },
             ),
             param(
-                "c3_s5_k2",
+                "3_compute_5_storage_2_assigned",
                 rank=1,
                 world_size=3,
                 num_storage_nodes=5,

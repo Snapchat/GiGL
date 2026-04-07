@@ -39,8 +39,8 @@ class StorageRankShardAssignment:
 
 
 def _plan_storage_rank_shards_for_compute_rank(
-    rank: int,
-    world_size: int,
+    rank: Optional[int],
+    world_size: Optional[int],
     num_storage_nodes: int,
     num_assigned_storage_ranks: int,
 ) -> dict[int, StorageRankShardAssignment]:
@@ -55,8 +55,8 @@ def _plan_storage_rank_shards_for_compute_rank(
     ensuring exact global coverage.
 
     Args:
-        rank: The current compute rank.
-        world_size: Total number of compute ranks.
+        rank: The current compute rank. Must not be ``None``.
+        world_size: Total number of compute ranks. Must not be ``None``.
         num_storage_nodes: Total number of storage nodes in the cluster.
         num_assigned_storage_ranks: Number of storage ranks each compute rank contacts.
 
@@ -66,8 +66,14 @@ def _plan_storage_rank_shards_for_compute_rank(
         shard within that storage rank.
 
     Raises:
-        ValueError: If arguments are out of range or coverage cannot be guaranteed.
+        ValueError: If arguments are out of range, ``None``, or coverage cannot be guaranteed.
     """
+    if rank is None or world_size is None:
+        raise ValueError(
+            "num_assigned_storage_ranks requires rank and world_size. "
+            f"Received rank={rank}, world_size={world_size}, "
+            f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
+        )
     if world_size <= 0:
         raise ValueError(f"world_size must be > 0, received {world_size}")
     if num_storage_nodes <= 0:
@@ -92,6 +98,8 @@ def _plan_storage_rank_shards_for_compute_rank(
             f"num_storage_nodes={num_storage_nodes}"
         )
 
+    # Assign each compute rank its storage ranks via round-robin from an evenly-spaced start.
+    # e.g. 3 compute, 4 storage, 2 assigned: {c0: [s0,s1], c1: [s1,s2], c2: [s2,s3]}
     compute_rank_to_storage_ranks: dict[int, list[int]] = {}
     for compute_rank in range(world_size):
         start_storage_rank = (compute_rank * num_storage_nodes) // world_size
@@ -100,6 +108,8 @@ def _plan_storage_rank_shards_for_compute_rank(
             for offset in range(num_assigned_storage_ranks)
         ]
 
+    # Invert the mapping to find which compute ranks share each storage rank.
+    # e.g. {s0: [c0], s1: [c0,c1], s2: [c1,c2], s3: [c2]}
     storage_rank_to_compute_ranks: dict[int, list[int]] = {
         storage_rank: [] for storage_rank in range(num_storage_nodes)
     }
@@ -107,6 +117,8 @@ def _plan_storage_rank_shards_for_compute_rank(
         for storage_rank in storage_ranks:
             storage_rank_to_compute_ranks[storage_rank].append(compute_rank)
 
+    # For this rank's assigned storage ranks, determine its shard index and shard count.
+    # e.g. rank=c1 contacts [s1,s2]: s1 shared by [c0,c1] → shard 1/2, s2 shared by [c1,c2] → shard 0/2
     result: dict[int, StorageRankShardAssignment] = {}
     for storage_rank in compute_rank_to_storage_ranks[rank]:
         assigned_compute_ranks = storage_rank_to_compute_ranks[storage_rank]
@@ -269,12 +281,6 @@ class RemoteDistDataset:
         """Fetches node ids from the storage nodes for the current compute node (machine)."""
 
         if num_assigned_storage_ranks is not None:
-            if rank is None or world_size is None:
-                raise ValueError(
-                    "num_assigned_storage_ranks requires rank and world_size. "
-                    f"Received rank={rank}, world_size={world_size}, "
-                    f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
-                )
             shard_assignments = _plan_storage_rank_shards_for_compute_rank(
                 rank=rank,
                 world_size=world_size,
@@ -293,27 +299,25 @@ class RemoteDistDataset:
         )
 
         requests: list[FetchNodesRequest] = []
-        if num_assigned_storage_ranks is None:
-            for storage_rank in requested_storage_ranks:
-                request = FetchNodesRequest(
-                    rank=rank,
-                    world_size=world_size,
-                    split=split,
-                    node_type=node_type,
-                )
-                request.validate()
-                requests.append(request)
-        else:
-            for storage_rank in requested_storage_ranks:
+        for storage_rank in requested_storage_ranks:
+            effective_rank: Optional[int]
+            effective_world_size: Optional[int]
+            if num_assigned_storage_ranks is not None:
                 assignment = shard_assignments[storage_rank]
-                request = FetchNodesRequest(
-                    split=split,
-                    node_type=node_type,
-                    rank=assignment.rank,
-                    world_size=assignment.world_size,
+                effective_rank, effective_world_size = (
+                    assignment.rank,
+                    assignment.world_size,
                 )
-                request.validate()
-                requests.append(request)
+            else:
+                effective_rank, effective_world_size = rank, world_size
+            request = FetchNodesRequest(
+                split=split,
+                node_type=node_type,
+                rank=effective_rank,
+                world_size=effective_world_size,
+            )
+            request.validate()
+            requests.append(request)
 
         futures: list[torch.futures.Future[torch.Tensor]] = []
         for storage_rank, request in zip(requested_storage_ranks, requests):
@@ -496,12 +500,6 @@ class RemoteDistDataset:
         requests: list[FetchABLPInputRequest] = []
 
         if num_assigned_storage_ranks is not None:
-            if rank is None or world_size is None:
-                raise ValueError(
-                    "num_assigned_storage_ranks requires rank and world_size. "
-                    f"Received rank={rank}, world_size={world_size}, "
-                    f"num_assigned_storage_ranks={num_assigned_storage_ranks}"
-                )
             shard_assignments = _plan_storage_rank_shards_for_compute_rank(
                 rank=rank,
                 world_size=world_size,
@@ -518,29 +516,26 @@ class RemoteDistDataset:
             f"and num_assigned_storage_ranks {num_assigned_storage_ranks}"
         )
 
-        if num_assigned_storage_ranks is None:
-            for storage_rank in requested_storage_ranks:
-                request = FetchABLPInputRequest(
-                    split=split,
-                    rank=rank,
-                    world_size=world_size,
-                    node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
-                )
-                request.validate()
-                requests.append(request)
-        else:
-            for storage_rank in requested_storage_ranks:
+        for storage_rank in requested_storage_ranks:
+            effective_rank: Optional[int]
+            effective_world_size: Optional[int]
+            if num_assigned_storage_ranks is not None:
                 assignment = shard_assignments[storage_rank]
-                request = FetchABLPInputRequest(
-                    split=split,
-                    node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
-                    rank=assignment.rank,
-                    world_size=assignment.world_size,
+                effective_rank, effective_world_size = (
+                    assignment.rank,
+                    assignment.world_size,
                 )
-                request.validate()
-                requests.append(request)
+            else:
+                effective_rank, effective_world_size = rank, world_size
+            request = FetchABLPInputRequest(
+                split=split,
+                node_type=node_type,
+                supervision_edge_type=supervision_edge_type,
+                rank=effective_rank,
+                world_size=effective_world_size,
+            )
+            request.validate()
+            requests.append(request)
 
         futures: list[
             torch.futures.Future[
