@@ -4,6 +4,58 @@ This module implements the multi-channel sampling backend used in graph-store
 mode.  A single ``SharedDistSamplingBackend`` per loader instance manages a
 pool of worker processes that service many compute-rank channels through a
 fair-queued scheduler (``_shared_sampling_worker_loop``).
+
+High-level architecture::
+
+    ┌──────────────────────────────────────────────┐
+    │      SharedDistSamplingBackend               │
+    │      (main process)                          │
+    ├──────────────────────────────────────────────┤
+    │  register_input()                            │
+    │  start_new_epoch_sampling()                  │
+    │  is_channel_epoch_done()                     │
+    │  unregister_input()                          │
+    │  shutdown()                                  │
+    └──────┬──────────────────────────────▲────────┘
+           │ task_queues                  │ event_queue
+           │ (SharedMpCommand, payload)   │ (EPOCH_DONE_EVENT,
+           │                              │  channel_id, epoch,
+           ▼                              │  worker_rank)
+    ┌──────────────────────────────────────────────┐
+    │  Worker 0 .. N-1                             │
+    │  _shared_sampling_worker_loop()              │
+    │                                              │
+    │  ┌─────────────┐  sample_from_*  ┌─────────┐│
+    │  │ Sampler      │───────────────▶│ Channel  ││
+    │  │ (per channel)│  (results)     │ (output) ││
+    │  └─────────────┘                 └─────────┘│
+    └──────────────────────────────────────────────┘
+
+Worker event-loop internals::
+
+    ┌─────────────────────────────────────────────────┐
+    │ Phase 1: Drain commands (non-blocking)          │
+    │   task_queue.get_nowait() ──▶ _handle_command() │
+    │     REGISTER_INPUT  ──▶ create sampler + state  │
+    │     START_EPOCH     ──▶ ActiveEpochState        │
+    │                          + enqueue to runnable  │
+    │     UNREGISTER_INPUT ──▶ cleanup / defer        │
+    │     STOP             ──▶ exit loop              │
+    ├─────────────────────────────────────────────────┤
+    │ Phase 2: Round-robin batch submission            │
+    │   for each channel in runnable_channels:        │
+    │     pop ──▶ _submit_one_batch()                 │
+    │            ──▶ sampler.sample_from_*()           │
+    │     if more batches: re-enqueue channel         │
+    │                                                 │
+    │   completion callback (_on_batch_done):         │
+    │     completed_batches += 1                      │
+    │     if all done ──▶ EPOCH_DONE to event_queue   │
+    ├─────────────────────────────────────────────────┤
+    │ Phase 3: Idle wait                              │
+    │   if no commands and no batches submitted:      │
+    │     task_queue.get(timeout=SCHEDULER_TICK_SECS) │
+    └─────────────────────────────────────────────────┘
 """
 
 import datetime
