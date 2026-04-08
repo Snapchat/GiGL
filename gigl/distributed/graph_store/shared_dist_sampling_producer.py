@@ -130,6 +130,23 @@ SCHEDULER_SLOW_SUBMIT_SECS = 1.0
 
 
 class SharedMpCommand(Enum):
+    """Commands sent from the backend to worker subprocesses via task queues.
+
+    Each command is paired with a payload in a ``(command, payload)`` tuple
+    placed on the per-worker ``task_queue``.
+
+    Attributes:
+        REGISTER_INPUT: Register a new channel with its sampler input,
+            sampling config, and output channel.
+            Payload: ``RegisterInputCmd``.
+        UNREGISTER_INPUT: Remove a channel and clean up its state.
+            Payload: ``int`` (the channel_id).
+        START_EPOCH: Begin sampling a new epoch for one channel.
+            Payload: ``StartEpochCmd``.
+        STOP: Shut down the worker process.
+            Payload: ``None``.
+    """
+
     REGISTER_INPUT = auto()
     UNREGISTER_INPUT = auto()
     START_EPOCH = auto()
@@ -138,6 +155,20 @@ class SharedMpCommand(Enum):
 
 @dataclass(frozen=True)
 class RegisterInputCmd:
+    """Payload for ``SharedMpCommand.REGISTER_INPUT``.
+
+    Carries everything a worker needs to set up sampling for one channel.
+
+    Attributes:
+        channel_id: Unique identifier for this channel across the backend.
+        worker_key: Routing key used to identify this channel in the worker
+            group (passed through to ``create_dist_sampler``).
+        sampler_input: The full set of seed node/edge inputs for this channel,
+            already in shared memory.
+        sampling_config: Sampling parameters (batch size, num neighbors, etc.).
+        channel: The output channel where sampled subgraphs are written.
+    """
+
     channel_id: int
     worker_key: str
     sampler_input: SamplerInput
@@ -147,6 +178,17 @@ class RegisterInputCmd:
 
 @dataclass(frozen=True)
 class StartEpochCmd:
+    """Payload for ``SharedMpCommand.START_EPOCH``.
+
+    Attributes:
+        channel_id: The channel whose epoch is starting.
+        epoch: Monotonically increasing epoch number.
+            Duplicate or stale epochs are silently ignored by the worker.
+        seeds_index: Index tensor selecting which seeds from the channel's
+            ``sampler_input`` to sample this epoch.
+            ``None`` means use the full input range.
+    """
+
     channel_id: int
     epoch: int
     seeds_index: Optional[torch.Tensor]
@@ -154,6 +196,29 @@ class StartEpochCmd:
 
 @dataclass
 class ActiveEpochState:
+    """Mutable per-channel state for an in-progress epoch inside a worker.
+
+    Created by ``_handle_command`` on ``START_EPOCH`` and removed when all
+    batches complete.
+
+    Attributes:
+        channel_id: The channel this epoch belongs to.
+        epoch: The epoch number.
+        input_len: Total number of seed indices assigned to this worker for
+            this epoch.
+        batch_size: Number of seeds per batch.
+        drop_last: If True, the final incomplete batch is skipped.
+        seeds_index: Index tensor into the channel's ``sampler_input``.
+            ``None`` means sequential indices ``[0, input_len)``.
+        total_batches: Pre-computed number of batches for this epoch.
+        submitted_batches: Number of batches submitted to the sampler so far.
+            Mutated by ``_submit_one_batch``.
+        completed_batches: Number of batches whose sampler callbacks have
+            fired.  Mutated by ``_on_batch_done``.
+        cancelled: Set to True when the channel is unregistered while batches
+            are still in flight.  Mutated by ``_clear_registered_input_locked``.
+    """
+
     channel_id: int
     epoch: int
     input_len: int
