@@ -371,6 +371,26 @@ def _shared_sampling_worker_loop(
     Multiple input channels (each representing one compute rank's data stream)
     share the same sampling worker processes and graph data.
 
+    Args:
+        rank: This worker's index within the pool (``0 .. num_workers-1``).
+        data: The distributed dataset, shared across all workers via the
+            spawn context.
+        worker_options: GLT remote sampling worker configuration (RPC
+            addresses, devices, concurrency settings).
+        task_queue: Per-worker command queue.  The backend enqueues
+            ``(SharedMpCommand, payload)`` tuples; the worker drains them
+            in Phase 1 of the event loop.
+        event_queue: Shared completion queue.  Workers emit
+            ``(EPOCH_DONE_EVENT, channel_id, epoch, worker_rank)`` tuples
+            when all batches for an epoch have completed.
+        mp_barrier: Synchronization barrier.  The worker signals it after
+            RPC initialization is complete so the parent can proceed.
+        sampler_options: GiGL sampler configuration (e.g. ``PPRSamplerOptions``
+            for PPR-based sampling).
+        degree_tensors: Pre-computed degree tensors for PPR sampling, or
+            ``None`` for non-PPR samplers.  Materialized once in the parent
+            process by ``_prepare_degree_tensors`` and shared across workers.
+
     Algorithm:
         1. Initialize RPC, sampler infrastructure, and signal the parent via barrier.
         2. Enter the main event loop which alternates between:
