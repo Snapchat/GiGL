@@ -41,7 +41,6 @@ from gigl.distributed.graph_store.messages import (
 )
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -283,14 +282,14 @@ class DistServer:
 
         Args:
             request: The node-fetch request, including split, node type,
-                and round-robin rank/world_size.
+                and optional rank/world_size for partitioning.
 
         Returns:
             The node ids.
 
         Raises:
             ValueError:
-                * If the rank and world_size are not provided together
+                * If rank and world_size are not provided together
                 * If the split is invalid
                 * If the node ids are not a torch.Tensor or a dict[NodeType, torch.Tensor]
                 * If the node type is provided for a homogeneous dataset
@@ -315,25 +314,25 @@ class DistServer:
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
     ) -> torch.Tensor:
-        """Core implementation for fetching node IDs by split, type, and sharding.
+        """Core implementation for fetching node IDs by split, type, and partitioning.
 
         Args:
             split: The dataset split to fetch from (``"train"``, ``"val"``,
                 ``"test"``, or ``None`` for all nodes).
             node_type: The node type to select. Must be ``None`` for
                 homogeneous datasets.
-            rank: Round-robin rank for sharding. Must be provided together
-                with ``world_size``.
-            world_size: Total number of processes for sharding. Must be
-                provided together with ``rank``.
+            rank: Which partition to return (0-indexed). Must be
+                provided together with ``world_size``.
+            world_size: Total number of partitions. Must be provided
+                together with ``rank``.
 
         Returns:
-            The node IDs tensor, optionally sharded by rank.
+            The node IDs tensor, optionally partitioned.
 
         Raises:
-            ValueError: If rank/world_size are not provided together, the
-                split is invalid, or the node type is inconsistent with
-                the dataset type (homogeneous vs. heterogeneous).
+            ValueError: If the split parameters are invalid, the split is
+                invalid, or the node type is inconsistent with the dataset
+                type (homogeneous vs. heterogeneous).
         """
         if (rank is None) ^ (world_size is None):
             raise ValueError(
@@ -367,7 +366,7 @@ class DistServer:
             )
 
         if rank is not None and world_size is not None:
-            return shard_nodes_by_process(nodes, rank, world_size)
+            return torch.tensor_split(nodes, world_size)[rank]
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -396,17 +395,15 @@ class DistServer:
         self,
         request: FetchABLPInputRequest,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
-
-        Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
-        e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        """Get the ABLP (Anchor Based Link Prediction) input for distributed processing.
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and round-robin rank/world_size.
+                supervision edge type, and optional rank/world_size for
+                partitioning.
 
         Returns:
-            A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
+            A tuple containing the anchor nodes, the positive labels, and the negative labels.
             The positive labels are of shape [N, M], where N is the number of anchor nodes and M is the number of positive labels.
             The negative labels are of shape [N, M], where N is the number of anchor nodes and M is the number of negative labels.
             The negative labels may be None if no negative labels are available.

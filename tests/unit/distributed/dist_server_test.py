@@ -136,7 +136,7 @@ class TestRemoteDataset(TestCase):
         self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
-        # Test with world_size=3 (uneven split)
+        # Test with world_size=3 (uneven split — tensor_split gives first ranks extra)
         rank_0_nodes = server.get_node_ids(
             FetchNodesRequest(rank=0, world_size=3, node_type=None)
         )
@@ -147,9 +147,10 @@ class TestRemoteDataset(TestCase):
             FetchNodesRequest(rank=2, world_size=3, node_type=None)
         )
 
-        self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
-        self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
-        self.assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
+        # 10 nodes / 3 ranks → [4, 3, 3] (tensor_split semantics)
+        self.assert_tensor_equality(rank_0_nodes, torch.arange(4))
+        self.assert_tensor_equality(rank_1_nodes, torch.arange(4, 7))
+        self.assert_tensor_equality(rank_2_nodes, torch.arange(7, 10))
 
     def test_get_node_ids_rank_world_size_must_be_provided_together(self) -> None:
         """Test get_node_ids raises ValueError when rank/world_size not provided together."""
@@ -254,6 +255,7 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Train split has [0, 1, 2], shard across 2 ranks
+        # tensor_split gives first rank the extra: [2, 1]
         rank_0_nodes = server.get_node_ids(
             FetchNodesRequest(rank=0, world_size=2, node_type=USER, split="train")
         )
@@ -261,8 +263,8 @@ class TestRemoteDataset(TestCase):
             FetchNodesRequest(rank=1, world_size=2, node_type=USER, split="train")
         )
 
-        self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
-        self.assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
+        self.assert_tensor_equality(rank_0_nodes, torch.tensor([0, 1]))
+        self.assert_tensor_equality(rank_1_nodes, torch.tensor([2]))
 
     def test_get_node_ids_invalid_split(self) -> None:
         """Test get_node_ids raises ValueError with invalid split."""
@@ -415,10 +417,10 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Get training input for rank 0 of 2
-
         # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
         # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+
+        # Get training input for rank 0 of 2
         anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
@@ -533,6 +535,36 @@ class TestRemoteDataset(TestCase):
 
         # Negative labels should be None
         self.assertIsNone(neg_labels)
+
+    def test_get_ablp_input_empty_local_shard_returns_empty_labels(self) -> None:
+        """Test get_ablp_input returns empty tensors for an empty assigned shard."""
+        create_test_process_group()
+        positive_labels = {0: [0, 1], 1: [1, 2], 10: [10, 11], 11: [11, 12]}
+        negative_labels = {0: [2], 1: [3], 10: [12], 11: [13]}
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=[0, 1],
+            val_node_ids=[10],
+            test_node_ids=[11],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+        server = dist_server.DistServer(dataset)
+
+        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+            FetchABLPInputRequest(
+                split="train",
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+                rank=3,
+                world_size=4,
+            )
+        )
+
+        self.assert_tensor_equality(anchor_nodes, torch.empty(0, dtype=torch.int64))
+        self.assert_tensor_equality(pos_labels, torch.empty(0, 0, dtype=torch.int64))
+        assert neg_labels is not None
+        self.assert_tensor_equality(neg_labels, torch.empty(0, 0, dtype=torch.int64))
 
 
 if __name__ == "__main__":

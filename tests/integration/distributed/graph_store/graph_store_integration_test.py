@@ -28,7 +28,6 @@ from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
@@ -180,11 +179,15 @@ def _build_neighbor_loader(
 def _assert_sampler_input(
     cluster_info: GraphStoreInfo,
     sampler_input: dict[int, torch.Tensor],
-    expected_sampler_input: dict[int, list[torch.Tensor]],
+    expected_sampler_input: dict[int, dict[int, torch.Tensor]],
 ) -> None:
     rank_expected_sampler_input = expected_sampler_input[torch.distributed.get_rank()]
-    assert len(sampler_input) == len(rank_expected_sampler_input)
-    for server_rank, expected in enumerate(rank_expected_sampler_input):
+    assert set(sampler_input) == set(rank_expected_sampler_input), (
+        f"Expected storage ranks {sorted(rank_expected_sampler_input)}, "
+        f"got {sorted(sampler_input)}"
+    )
+    for server_rank in sorted(rank_expected_sampler_input):
+        expected = rank_expected_sampler_input[server_rank]
         assert_tensor_equality(sampler_input[server_rank], expected)
 
 
@@ -524,8 +527,9 @@ def _run_compute_tests(
     client_rank: int,
     cluster_info: GraphStoreInfo,
     node_type: Optional[NodeType],
-    expected_sampler_input: dict[int, list[torch.Tensor]],
+    expected_sampler_input: dict[int, dict[int, torch.Tensor]],
     expected_edge_types: Optional[list[EdgeType]],
+    num_assigned_storage_ranks: Optional[int] = None,
 ) -> None:
     """Process target for "compute" nodes.
 
@@ -572,6 +576,7 @@ def _run_compute_tests(
         node_type=node_type,
         rank=torch.distributed.get_rank(),
         world_size=torch.distributed.get_world_size(),
+        num_assigned_storage_ranks=num_assigned_storage_ranks,
     )
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
 
@@ -612,7 +617,12 @@ def _run_compute_tests(
         cluster_info=cluster_info,
         local_seen=_concat_seed_tensors(loaded_batches),
         local_expected=_concat_seed_tensors(
-            expected_sampler_input[torch.distributed.get_rank()]
+            [
+                expected_sampler_input[torch.distributed.get_rank()][server_rank]
+                for server_rank in sorted(
+                    expected_sampler_input[torch.distributed.get_rank()]
+                )
+            ]
         ),
     )
     loader.shutdown()
@@ -762,7 +772,7 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
 
 def _get_expected_input_nodes_by_rank(
     num_nodes: int, cluster_info: GraphStoreInfo
-) -> dict[int, list[torch.Tensor]]:
+) -> dict[int, dict[int, torch.Tensor]]:
     """Get the expected sampler input for each compute rank.
 
     We generate the expected sampler input for each global rank by sharding the nodes across the global ranks.
@@ -788,22 +798,54 @@ def _get_expected_input_nodes_by_rank(
         cluster_info (GraphStoreInfo): The cluster information.
 
     Returns:
-        dict[int, list[torch.Tensor]]: The expected sampler input for each compute rank.
+        dict[int, dict[int, torch.Tensor]]: The expected sampler input for each compute rank.
     """
     partition_book = build_partition_book(
         num_entities=num_nodes, rank=0, world_size=cluster_info.num_storage_nodes
     )
-    expected_sampler_input = collections.defaultdict(list)
+    expected_sampler_input: dict[
+        int, dict[int, torch.Tensor]
+    ] = collections.defaultdict(dict)
     for server_rank in range(cluster_info.num_storage_nodes):
         server_nodes = get_ids_on_rank(partition_book=partition_book, rank=server_rank)
+        splits = torch.tensor_split(
+            server_nodes, cluster_info.compute_cluster_world_size
+        )
         for global_rank in range(cluster_info.compute_cluster_world_size):
-            generated_nodes = shard_nodes_by_process(
-                input_nodes=server_nodes,
-                local_process_rank=global_rank,
-                local_process_world_size=cluster_info.compute_cluster_world_size,
-            )
-            expected_sampler_input[global_rank].append(generated_nodes)
+            expected_sampler_input[global_rank][server_rank] = splits[global_rank]
     return dict(expected_sampler_input)
+
+
+def _get_expected_assigned_input_nodes_by_rank_for_homogeneous_graph_store_test(
+    num_nodes: int,
+    cluster_info: GraphStoreInfo,
+) -> dict[int, dict[int, torch.Tensor]]:
+    """Get expected sparse sampler input for the C=4, S=2, K=1 integration topology."""
+    if cluster_info.num_storage_nodes != 2:
+        raise ValueError(
+            "This helper only supports 2 storage nodes, "
+            f"received {cluster_info.num_storage_nodes}"
+        )
+    if cluster_info.compute_cluster_world_size != 4:
+        raise ValueError(
+            "This helper only supports compute world size 4, "
+            f"received {cluster_info.compute_cluster_world_size}"
+        )
+
+    partition_book = build_partition_book(
+        num_entities=num_nodes, rank=0, world_size=cluster_info.num_storage_nodes
+    )
+    storage_rank_zero_nodes = get_ids_on_rank(partition_book=partition_book, rank=0)
+    storage_rank_one_nodes = get_ids_on_rank(partition_book=partition_book, rank=1)
+    storage_rank_zero_shards = torch.tensor_split(storage_rank_zero_nodes, 2)
+    storage_rank_one_shards = torch.tensor_split(storage_rank_one_nodes, 2)
+
+    return {
+        0: {0: storage_rank_zero_shards[0]},
+        1: {0: storage_rank_zero_shards[1]},
+        2: {1: storage_rank_one_shards[0]},
+        3: {1: storage_rank_one_shards[1]},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -957,6 +999,24 @@ class GraphStoreIntegrationTest(TestCase):
             task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
             compute_target=_run_compute_tests,
             compute_target_extra_args=(expected_sampler_input, None),
+        )
+
+    def test_graph_store_homogeneous_with_num_assigned_storage_ranks(self):
+        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ]
+        cluster_info = self._create_cluster_info()
+        num_cora_nodes = 2708
+        expected_sampler_input = (
+            _get_expected_assigned_input_nodes_by_rank_for_homogeneous_graph_store_test(
+                num_cora_nodes, cluster_info
+            )
+        )
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=cora_supervised_info.frozen_gbml_config_uri,
+            compute_target=_run_compute_tests,
+            compute_target_extra_args=(expected_sampler_input, None, 1),
         )
 
     def test_homogeneous_training(self):

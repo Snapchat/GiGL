@@ -23,17 +23,50 @@ class TestFetchNodesRequestValidation(TestCase):
     @parameterized.expand(
         [
             param(
-                "rank_without_world_size", FetchNodesRequest(rank=0, world_size=None)
+                "rank_without_world_size",
+                FetchNodesRequest(rank=0, world_size=None),
             ),
             param(
-                "world_size_without_rank", FetchNodesRequest(rank=None, world_size=4)
+                "world_size_without_rank",
+                FetchNodesRequest(rank=None, world_size=4),
             ),
         ]
     )
-    def test_validate_fails_when_rank_world_size_mismatch(
+    def test_validate_fails_when_split_params_mismatch(
         self, _: str, request: FetchNodesRequest
     ) -> None:
         """Validation fails when only one of rank/world_size is provided."""
+        with self.assertRaises(ValueError):
+            request.validate()
+
+    @parameterized.expand(
+        [
+            param(
+                "world_size_zero",
+                FetchNodesRequest(rank=0, world_size=0),
+            ),
+            param(
+                "world_size_negative",
+                FetchNodesRequest(rank=0, world_size=-1),
+            ),
+            param(
+                "rank_negative",
+                FetchNodesRequest(rank=-1, world_size=4),
+            ),
+            param(
+                "rank_equals_world_size",
+                FetchNodesRequest(rank=4, world_size=4),
+            ),
+            param(
+                "rank_exceeds_world_size",
+                FetchNodesRequest(rank=5, world_size=4),
+            ),
+        ]
+    )
+    def test_validate_fails_when_split_params_out_of_range(
+        self, _: str, request: FetchNodesRequest
+    ) -> None:
+        """Validation fails when rank or world_size are out of valid range."""
         with self.assertRaises(ValueError):
             request.validate()
 
@@ -99,10 +132,51 @@ class TestFetchABLPRequestValidation(TestCase):
             ),
         ]
     )
-    def test_validate_fails_when_rank_world_size_mismatch(
+    def test_validate_fails_when_split_params_mismatch(
         self, _: str, request: FetchABLPInputRequest
     ) -> None:
         """Validation fails when only one of rank/world_size is provided."""
+        with self.assertRaises(ValueError):
+            request.validate()
+
+    @parameterized.expand(
+        [
+            param(
+                "world_size_zero",
+                FetchABLPInputRequest(
+                    split="train",
+                    node_type=USER,
+                    supervision_edge_type=USER_TO_STORY,
+                    rank=0,
+                    world_size=0,
+                ),
+            ),
+            param(
+                "rank_negative",
+                FetchABLPInputRequest(
+                    split="train",
+                    node_type=USER,
+                    supervision_edge_type=USER_TO_STORY,
+                    rank=-1,
+                    world_size=4,
+                ),
+            ),
+            param(
+                "rank_equals_world_size",
+                FetchABLPInputRequest(
+                    split="train",
+                    node_type=USER,
+                    supervision_edge_type=USER_TO_STORY,
+                    rank=4,
+                    world_size=4,
+                ),
+            ),
+        ]
+    )
+    def test_validate_fails_when_split_params_out_of_range(
+        self, _: str, request: FetchABLPInputRequest
+    ) -> None:
+        """Validation fails when rank or world_size are out of valid range."""
         with self.assertRaises(ValueError):
             request.validate()
 
