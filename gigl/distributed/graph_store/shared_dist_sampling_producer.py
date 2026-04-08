@@ -5,6 +5,12 @@ mode.  A single ``SharedDistSamplingBackend`` per loader instance manages a
 pool of worker processes that service many compute-rank channels through a
 fair-queued scheduler (``_shared_sampling_worker_loop``).
 
+We need this "fair-queued" scheduler to ensure that each compute rank gets a fair share of the work.
+If we didn't have this, then compute ranks with more data would starve the compute ranks with less data
+as `sample_from_*` calls would be blocked by the compute ranks with more data.
+Surprisingly, upping `worker_concurrency` does not fix this problem.
+TODO(kmonte): Look into why worker_concurrency does not fix this problem.
+
 High-level architecture::
 
     ┌──────────────────────────────────────────────┐
@@ -25,10 +31,10 @@ High-level architecture::
     │  Worker 0 .. N-1                             │
     │  _shared_sampling_worker_loop()              │
     │                                              │
-    │  ┌─────────────┐  sample_from_*  ┌─────────┐│
-    │  │ Sampler      │───────────────▶│ Channel  ││
-    │  │ (per channel)│  (results)     │ (output) ││
-    │  └─────────────┘                 └─────────┘│
+    │  ┌─────────────┐  sample_from_*  ┌─────────┐ │
+    │  │ Sampler      │───────────────▶│ Channel │ │
+    │  │ (per channel)│  (results)     │ (output)│ │
+    │  └─────────────┘                 └─────────┘ │
     └──────────────────────────────────────────────┘
 
 Worker event-loop internals::
@@ -42,10 +48,10 @@ Worker event-loop internals::
     │     UNREGISTER_INPUT ──▶ cleanup / defer        │
     │     STOP             ──▶ exit loop              │
     ├─────────────────────────────────────────────────┤
-    │ Phase 2: Round-robin batch submission            │
-    │   for each channel in runnable_channels:        │
+    │ Phase 2: Round-robin batch submission           │
+    │   for each channel in runnable_channel_ids:     │
     │     pop ──▶ _submit_one_batch()                 │
-    │            ──▶ sampler.sample_from_*()           │
+    │            ──▶ sampler.sample_from_*()          │
     │     if more batches: re-enqueue channel         │
     │                                                 │
     │   completion callback (_on_batch_done):         │
@@ -91,7 +97,7 @@ from graphlearn_torch.typing import EdgeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
-from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import (
     SamplerInput,
     SamplerRuntime,
@@ -99,42 +105,6 @@ from gigl.distributed.utils.dist_sampler import (
 )
 
 logger = Logger()
-
-
-def _prepare_degree_tensors(
-    data: DistDataset,
-    sampler_options: SamplerOptions,
-) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-    """Materialize PPR degree tensors before worker spawn when required.
-
-    Called once in the main process so that degree data is available in shared
-    memory before workers fork.  Returns ``None`` for non-PPR sampler options.
-
-    Args:
-        data: The distributed dataset whose ``degree_tensor`` property is
-            read.
-        sampler_options: Sampler configuration.  Degree tensors are only
-            materialized when this is a ``PPRSamplerOptions`` instance.
-
-    Returns:
-        A single degree tensor (homogeneous graph), a dict mapping edge types
-        to degree tensors (heterogeneous graph), or ``None`` if PPR sampling
-        is not configured.
-    """
-    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
-    if isinstance(sampler_options, PPRSamplerOptions):
-        degree_tensors = data.degree_tensor
-        if isinstance(degree_tensors, dict):
-            logger.info(
-                "Pre-computed degree tensors for PPR sampling across "
-                f"{len(degree_tensors)} edge types."
-            )
-        elif degree_tensors is not None:
-            logger.info(
-                "Pre-computed degree tensor for PPR sampling with "
-                f"{degree_tensors.size(0)} nodes."
-            )
-    return degree_tensors
 
 
 EPOCH_DONE_EVENT = "EPOCH_DONE"
@@ -396,7 +366,7 @@ def _shared_sampling_worker_loop(
         2. Enter the main event loop which alternates between:
            a. Draining all pending commands from ``task_queue`` (register/unregister
               channels, start epochs, stop).
-           b. Submitting batches round-robin from ``runnable_channels`` — a FIFO
+           b. Submitting batches round-robin from ``runnable_channel_ids`` — a FIFO
               queue of channels that have pending work. Each channel gets one batch
               submitted per round to prevent starvation.
            c. If no commands were processed and no batches submitted, blocking on
@@ -405,16 +375,16 @@ def _shared_sampling_worker_loop(
            ``EPOCH_DONE_EVENT`` to ``event_queue`` when all batches for an epoch
            are finished.
     """
-    samplers: dict[int, SamplerRuntime] = {}
-    channels: dict[int, ChannelBase] = {}
-    inputs: dict[int, SamplerInput] = {}
-    cfgs: dict[int, SamplingConfig] = {}
-    route_key_by_channel: dict[int, str] = {}
-    started_epoch: dict[int, int] = {}
-    active_epochs_by_channel: dict[int, ActiveEpochState] = {}
-    runnable_channels: deque[int] = deque()
-    runnable_set: set[int] = set()
-    removing: set[int] = set()
+    sampler_by_channel_id: dict[int, SamplerRuntime] = {}
+    output_channel_by_channel_id: dict[int, ChannelBase] = {}
+    input_by_channel_id: dict[int, SamplerInput] = {}
+    config_by_channel_id: dict[int, SamplingConfig] = {}
+    route_key_by_channel_id: dict[int, str] = {}
+    started_epoch_by_channel_id: dict[int, int] = {}
+    active_epoch_by_channel_id: dict[int, ActiveEpochState] = {}
+    runnable_channel_ids: deque[int] = deque()
+    runnable_channel_id_set: set[int] = set()
+    removing_channel_ids: set[int] = set()
     state_lock = threading.RLock()
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
@@ -423,15 +393,15 @@ def _shared_sampling_worker_loop(
 
     def _enqueue_channel_if_runnable_locked(channel_id: int) -> None:
         """Add channel to the fair-queue if it has pending batches."""
-        state = active_epochs_by_channel.get(channel_id)
+        state = active_epoch_by_channel_id.get(channel_id)
         if state is None:
             return
         if state.cancelled or state.submitted_batches >= state.total_batches:
             return
-        if channel_id in runnable_set:
+        if channel_id in runnable_channel_id_set:
             return
-        runnable_channels.append(channel_id)
-        runnable_set.add(channel_id)
+        runnable_channel_ids.append(channel_id)
+        runnable_channel_id_set.add(channel_id)
 
     def _clear_registered_input_locked(channel_id: int) -> None:
         """Remove a channel's registration and clean up all associated state.
@@ -442,34 +412,34 @@ def _shared_sampling_worker_loop(
         ``_on_batch_done`` will finish the cleanup once the last in-flight
         batch completes.
         """
-        state = active_epochs_by_channel.get(channel_id)
+        state = active_epoch_by_channel_id.get(channel_id)
         if state is not None and state.completed_batches < state.submitted_batches:
-            removing.add(channel_id)
+            removing_channel_ids.add(channel_id)
             state.cancelled = True
             return
-        sampler = samplers.pop(channel_id, None)
+        sampler = sampler_by_channel_id.pop(channel_id, None)
         if sampler is not None:
             sampler.wait_all()
             sampler.shutdown_loop()
-        channels.pop(channel_id, None)
-        inputs.pop(channel_id, None)
-        cfgs.pop(channel_id, None)
-        route_key_by_channel.pop(channel_id, None)
-        started_epoch.pop(channel_id, None)
-        active_epochs_by_channel.pop(channel_id, None)
-        runnable_set.discard(channel_id)
-        removing.discard(channel_id)
+        output_channel_by_channel_id.pop(channel_id, None)
+        input_by_channel_id.pop(channel_id, None)
+        config_by_channel_id.pop(channel_id, None)
+        route_key_by_channel_id.pop(channel_id, None)
+        started_epoch_by_channel_id.pop(channel_id, None)
+        active_epoch_by_channel_id.pop(channel_id, None)
+        runnable_channel_id_set.discard(channel_id)
+        removing_channel_ids.discard(channel_id)
 
     def _format_scheduler_state_locked() -> str:
         """Format a human-readable snapshot of the scheduler for logging.
 
         Must be called while holding ``state_lock``.
         """
-        channel_ids = sorted(channels.keys())
+        channel_ids = sorted(output_channel_by_channel_id.keys())
         preview = channel_ids[:SCHEDULER_STATE_MAX_CHANNELS]
         previews: list[str] = []
         for channel_id in preview:
-            active_epoch = active_epochs_by_channel.get(channel_id)
+            active_epoch = active_epoch_by_channel_id.get(channel_id)
             if active_epoch is None:
                 previews.append(f"{channel_id}:idle")
             else:
@@ -483,8 +453,8 @@ def _shared_sampling_worker_loop(
         if len(channel_ids) > len(preview):
             extra = f" +{len(channel_ids) - len(preview)}"
         return (
-            f"registered={len(channels)} active={len(active_epochs_by_channel)} "
-            f"runnable={len(runnable_set)} removing={len(removing)} "
+            f"registered={len(output_channel_by_channel_id)} active={len(active_epoch_by_channel_id)} "
+            f"runnable={len(runnable_channel_id_set)} removing={len(removing_channel_ids)} "
             f"channels=[{', '.join(previews)}]{extra}"
         )
 
@@ -517,15 +487,15 @@ def _shared_sampling_worker_loop(
         ``_clear_registered_input_locked``.
         """
         with state_lock:
-            state = active_epochs_by_channel.get(channel_id)
+            state = active_epoch_by_channel_id.get(channel_id)
             if state is None or state.epoch != epoch:
                 return
             state.completed_batches += 1
             if state.completed_batches == state.total_batches:
-                active_epochs_by_channel.pop(channel_id, None)
+                active_epoch_by_channel_id.pop(channel_id, None)
                 event_queue.put((EPOCH_DONE_EVENT, channel_id, epoch, rank))
             if (
-                channel_id in removing
+                channel_id in removing_channel_ids
                 and state.completed_batches == state.submitted_batches
             ):
                 _clear_registered_input_locked(channel_id)
@@ -533,26 +503,26 @@ def _shared_sampling_worker_loop(
     def _submit_one_batch(channel_id: int) -> bool:
         """Submit the next batch for a channel to its sampler.
 
-        Re-enqueues the channel into ``runnable_channels`` if more batches
+        Re-enqueues the channel into ``runnable_channel_ids`` if more batches
         remain.
         Returns True if a batch was submitted, False if the channel had no
         pending work.
         """
         with state_lock:
-            state = active_epochs_by_channel.get(channel_id)
+            state = active_epoch_by_channel_id.get(channel_id)
             if state is None:
                 return False
             batch_indices = _epoch_batch_indices(state)
             if batch_indices is None:
                 return False
             state.submitted_batches += 1
-            cfg = cfgs[channel_id]
-            sampler = samplers[channel_id]
-            channel_input = inputs[channel_id]
+            cfg = config_by_channel_id[channel_id]
+            sampler = sampler_by_channel_id[channel_id]
+            channel_input = input_by_channel_id[channel_id]
             current_epoch = state.epoch
             if state.submitted_batches < state.total_batches and not state.cancelled:
-                runnable_channels.append(channel_id)
-                runnable_set.add(channel_id)
+                runnable_channel_ids.append(channel_id)
+                runnable_channel_id_set.add(channel_id)
 
         sampler_input = channel_input[batch_indices]
 
@@ -571,20 +541,20 @@ def _shared_sampling_worker_loop(
             raise RuntimeError(f"Unsupported sampling type: {cfg.sampling_type}")
         return True
 
-    def _pump_runnable_channels() -> bool:
+    def _pump_runnable_channel_ids() -> bool:
         """Submit one batch per runnable channel in round-robin order.
 
         Returns True if at least one batch was submitted.
         """
         made_progress = False
         with state_lock:
-            num_candidates = len(runnable_channels)
+            num_candidates = len(runnable_channel_ids)
         for _ in range(num_candidates):
             with state_lock:
-                if not runnable_channels:
+                if not runnable_channel_ids:
                     break
-                channel_id = runnable_channels.popleft()
-                runnable_set.discard(channel_id)
+                channel_id = runnable_channel_ids.popleft()
+                runnable_channel_id_set.discard(channel_id)
             made_progress = _submit_one_batch(channel_id) or made_progress
         return made_progress
 
@@ -608,28 +578,28 @@ def _shared_sampling_worker_loop(
             )
             sampler.start_loop()
             with state_lock:
-                samplers[register.channel_id] = sampler
-                channels[register.channel_id] = register.channel
-                inputs[register.channel_id] = register.sampler_input
-                cfgs[register.channel_id] = register.sampling_config
-                route_key_by_channel[register.channel_id] = register.worker_key
-                started_epoch[register.channel_id] = -1
+                sampler_by_channel_id[register.channel_id] = sampler
+                output_channel_by_channel_id[register.channel_id] = register.channel
+                input_by_channel_id[register.channel_id] = register.sampler_input
+                config_by_channel_id[register.channel_id] = register.sampling_config
+                route_key_by_channel_id[register.channel_id] = register.worker_key
+                started_epoch_by_channel_id[register.channel_id] = -1
             _maybe_log_scheduler_state("register_input", force=True)
             return True
 
         if command == SharedMpCommand.START_EPOCH:
             start_epoch = cast(StartEpochCmd, payload)
             with state_lock:
-                if channel_id not in channels:
+                if channel_id not in output_channel_by_channel_id:
                     return True
-                if started_epoch.get(channel_id, -1) >= start_epoch.epoch:
+                if started_epoch_by_channel_id.get(channel_id, -1) >= start_epoch.epoch:
                     return True
-                started_epoch[channel_id] = start_epoch.epoch
-                sampling_config = cfgs[channel_id]
+                started_epoch_by_channel_id[channel_id] = start_epoch.epoch
+                sampling_config = config_by_channel_id[channel_id]
                 local_input_len = (
                     len(start_epoch.seeds_index)
                     if start_epoch.seeds_index is not None
-                    else len(inputs[channel_id])
+                    else len(input_by_channel_id[channel_id])
                 )
                 state = ActiveEpochState(
                     channel_id=channel_id,
@@ -644,9 +614,9 @@ def _shared_sampling_worker_loop(
                         sampling_config.drop_last,
                     ),
                 )
-                active_epochs_by_channel[channel_id] = state
+                active_epoch_by_channel_id[channel_id] = state
                 if state.total_batches == 0:
-                    active_epochs_by_channel.pop(channel_id, None)
+                    active_epoch_by_channel_id.pop(channel_id, None)
                     event_queue.put(
                         (EPOCH_DONE_EVENT, channel_id, start_epoch.epoch, rank)
                     )
@@ -715,7 +685,7 @@ def _shared_sampling_worker_loop(
                 keep_running = _handle_command(command, payload)
 
             # Phase 2: Submit batches round-robin from runnable channels.
-            made_progress = _pump_runnable_channels()
+            made_progress = _pump_runnable_channel_ids()
             _maybe_log_scheduler_state("steady_state")
             if not keep_running:
                 break
@@ -730,7 +700,7 @@ def _shared_sampling_worker_loop(
     except KeyboardInterrupt:
         pass
     finally:
-        for sampler in list(samplers.values()):
+        for sampler in list(sampler_by_channel_id.values()):
             sampler.wait_all()
             sampler.shutdown_loop()
         shutdown_rpc(graceful=False)
@@ -746,6 +716,7 @@ class SharedDistSamplingBackend:
         worker_options: RemoteDistSamplingWorkerOptions,
         sampling_config: SamplingConfig,
         sampler_options: SamplerOptions,
+        degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ) -> None:
         """Initialize the shared sampling backend.
 
@@ -760,6 +731,7 @@ class SharedDistSamplingBackend:
                 use the same config.
             sampler_options: GiGL sampler variant configuration (e.g.
                 ``PPRSamplerOptions`` for PPR-based sampling).
+            degree_tensors: Pre-computed degree tensors for PPR sampling (if applicable).
         """
         self.data = data
         self.worker_options = worker_options
@@ -780,6 +752,7 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
+        self._degree_tensors = degree_tensors
 
     def init_backend(self) -> None:
         """Initialize worker processes once for this backend.
@@ -792,7 +765,6 @@ class SharedDistSamplingBackend:
         The initialization sequence is:
 
         1. Assign devices and worker ranks from the GLT server context.
-        2. Pre-compute degree tensors for PPR sampling (if applicable).
         3. Spawn worker processes with per-worker task queues and a shared
            event queue.
         4. Wait on the barrier for all workers to finish RPC init.
@@ -812,10 +784,6 @@ class SharedDistSamplingBackend:
                     "SharedDistSamplingBackend.init_backend() requires a GLT server context."
                 )
             self.worker_options._set_worker_ranks(current_ctx)
-            degree_tensors = _prepare_degree_tensors(
-                self.data,
-                self._sampler_options,
-            )
             mp_context = mp.get_context("spawn")
             barrier = mp_context.Barrier(self.num_workers + 1)
             self._event_queue = mp_context.Queue()
@@ -834,7 +802,7 @@ class SharedDistSamplingBackend:
                         self._event_queue,
                         barrier,
                         self._sampler_options,
-                        degree_tensors,
+                        self._degree_tensors,
                     ),
                 )
                 worker.daemon = True
