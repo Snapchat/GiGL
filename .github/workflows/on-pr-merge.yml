@@ -23,6 +23,20 @@ jobs:
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Type Check"
+            command: "make type_check"
+          - name: "Shard 0"
+            command: "make unit_test_py_shard SHARD_INDEX=0 TOTAL_SHARDS=4"
+          - name: "Shard 1"
+            command: "make unit_test_py_shard SHARD_INDEX=1 TOTAL_SHARDS=4"
+          - name: "Shard 2"
+            command: "make unit_test_py_shard SHARD_INDEX=2 TOTAL_SHARDS=4"
+          - name: "Shard 3"
+            command: "make unit_test_py_shard SHARD_INDEX=3 TOTAL_SHARDS=4"
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
@@ -32,16 +46,16 @@ jobs:
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Python Unit Tests
-      # We use cloud run here instead of using github hosted runners because of limitation of tests
+    - name: Run Python Unit Tests (${{ matrix.name }})
+      # We use Cloud Build instead of GitHub hosted runners because of limitation of tests
       # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
       # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
       # https://github.com/tensorflow/tensorflow/issues/57104
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make unit_test_py"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
+        cmd: ${{ matrix.command }}
+        service_account: ${{ secrets.gcp_service_account_email }}
+        project: ${{ vars.GCP_PROJECT_ID }}
 
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
@@ -73,6 +87,18 @@ jobs:
   ci-integration-test:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Shard 0"
+            command: "make integration_test_shard SHARD_INDEX=0 TOTAL_SHARDS=4"
+          - name: "Shard 1"
+            command: "make integration_test_shard SHARD_INDEX=1 TOTAL_SHARDS=4"
+          - name: "Shard 2"
+            command: "make integration_test_shard SHARD_INDEX=2 TOTAL_SHARDS=4"
+          - name: "Shard 3"
+            command: "make integration_test_shard SHARD_INDEX=3 TOTAL_SHARDS=4"
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
@@ -82,12 +108,16 @@ jobs:
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.workload_identity_provider }}
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
-    - name: Run Integration Tests
+    - name: Run Integration Tests (${{ matrix.name }})
+      # We use Cloud Build instead of GitHub hosted runners because of limitation of tests
+      # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
+      # how to leverage Workload Identity Federation to read assets from GCS, et al. See:
+      # https://github.com/tensorflow/tensorflow/issues/57104
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make integration_test"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
+        cmd: ${{ matrix.command }}
+        service_account: ${{ secrets.gcp_service_account_email }}
+        project: ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
