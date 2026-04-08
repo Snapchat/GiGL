@@ -666,11 +666,12 @@ class DistABLPLoader(BaseDistLoader):
         # Extract supervision edge types and derive label edge types from the
         # ABLPInputNodes.labels dict (keyed by supervision edge type).
         self._supervision_edge_types = list(first_input.labels.keys())
-        has_negatives = any(
-            negative_labels is not None
-            for ablp_input in input_nodes.values()
-            for _, negative_labels in ablp_input.labels.values()
-        )
+        has_negatives = False
+        for ablp_input in input_nodes.values():
+            for maybe_negative_labels in ablp_input.labels.values():
+                if maybe_negative_labels is not None:
+                    has_negatives = True
+                    break
 
         self._positive_label_edge_types = [
             message_passing_to_positive_label(et) for et in self._supervision_edge_types

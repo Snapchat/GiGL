@@ -62,15 +62,15 @@ class TestComputeServerAssignments(TestCase):
         self.assertEqual(assignments, expected_assignments)
 
     def test_assignments_recombine_server_data(self) -> None:
-        tensor = torch.arange(7)
+        num_servers = 2
+        num_compute_nodes = 5
+        tensor = torch.arange(11)
         all_assignments = [
-            compute_server_assignments(
-                num_servers=2, num_compute_nodes=5, compute_rank=rank
-            )
-            for rank in range(5)
+            compute_server_assignments(num_servers, num_compute_nodes, rank)
+            for rank in range(num_compute_nodes)
         ]
 
-        for server_rank in range(2):
+        for server_rank in range(num_servers):
             combined = torch.cat(
                 [
                     assignments[server_rank].slice_tensor(tensor)
