@@ -6,6 +6,7 @@ from enum import Enum
 import torch
 
 
+# TOOD(kmonte): Look into deprecating this in favor of always using CONTIGUOUS.
 class ShardStrategy(Enum):
     """Strategies for splitting remote graph-store inputs across compute nodes.
 
@@ -109,33 +110,32 @@ class ServerSlice:
     (assignments are computed before data is fetched).
     The concrete start/end indices are resolved lazily in :meth:`slice_tensor`.
 
-    The fraction ``[start_numerator/start_denominator, end_numerator/end_denominator)``
+    The fraction ``[start_numerator/denominator, end_numerator/denominator)``
     describes the half-open interval of the server's data that this compute node owns.
 
     Args:
         server_rank: The rank of the storage server this slice refers to.
         start_numerator: Numerator of the start fraction.
-        start_denominator: Denominator of the start fraction.
         end_numerator: Numerator of the end fraction.
-        end_denominator: Denominator of the end fraction.
+        denominator: Shared denominator for both fractions (always equal to
+            ``num_compute_nodes``).
 
     Examples:
         A slice covering the full server (fraction 0/1 to 1/1):
 
-        >>> ServerSlice(server_rank=0, start_numerator=0, start_denominator=1,
-        ...             end_numerator=1, end_denominator=1)
+        >>> ServerSlice(server_rank=0, start_numerator=0, end_numerator=1,
+        ...             denominator=1)
 
         A slice covering the first half of a server (fraction 0/2 to 1/2):
 
-        >>> ServerSlice(server_rank=1, start_numerator=0, start_denominator=2,
-        ...             end_numerator=1, end_denominator=2)
+        >>> ServerSlice(server_rank=1, start_numerator=0, end_numerator=1,
+        ...             denominator=2)
     """
 
     server_rank: int
     start_numerator: int
-    start_denominator: int
     end_numerator: int
-    end_denominator: int
+    denominator: int
 
     def slice_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
         """Slice a tensor according to this server assignment.
@@ -151,8 +151,8 @@ class ServerSlice:
             The sub-tensor belonging to this compute node.
         """
         total = len(tensor)
-        start_idx = total * self.start_numerator // self.start_denominator
-        end_idx = total * self.end_numerator // self.end_denominator
+        start_idx = total * self.start_numerator // self.denominator
+        end_idx = total * self.end_numerator // self.denominator
         if start_idx == 0 and end_idx == total:
             return tensor
         return tensor[start_idx:end_idx]
@@ -192,14 +192,14 @@ def compute_server_assignments(
         With 2 servers and 2 compute nodes, each compute node gets one full server:
 
         >>> compute_server_assignments(num_servers=2, num_compute_nodes=2, compute_rank=0)
-        {0: ServerSlice(server_rank=0, start_numerator=0, start_denominator=2,
-                        end_numerator=2, end_denominator=2)}
+        {0: ServerSlice(server_rank=0, start_numerator=0, end_numerator=2,
+                        denominator=2)}
 
         With 3 servers and 2 compute nodes, compute rank 0 gets all of server 0
         and the first half of server 1:
 
         >>> compute_server_assignments(num_servers=3, num_compute_nodes=2, compute_rank=0)
-        {0: ServerSlice(..., 0/2..2/2), 1: ServerSlice(..., 0/2..1/2)}
+        {0: ServerSlice(..., 0..2/2), 1: ServerSlice(..., 0..1/2)}
     """
     if num_servers <= 0:
         raise ValueError(f"num_servers must be positive, got {num_servers}")
@@ -230,9 +230,8 @@ def compute_server_assignments(
         assignments[server_rank] = ServerSlice(
             server_rank=server_rank,
             start_numerator=overlap_start - server_start,
-            start_denominator=num_compute_nodes,
             end_numerator=overlap_end - server_start,
-            end_denominator=num_compute_nodes,
+            denominator=num_compute_nodes,
         )
 
     return assignments

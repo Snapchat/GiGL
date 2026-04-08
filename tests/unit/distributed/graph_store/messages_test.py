@@ -22,9 +22,8 @@ class TestFetchNodesRequestValidation(TestCase):
                     server_slice=ServerSlice(
                         server_rank=0,
                         start_numerator=0,
-                        start_denominator=1,
                         end_numerator=1,
-                        end_denominator=1,
+                        denominator=1,
                     ),
                 ),
             ),
@@ -50,9 +49,8 @@ class TestFetchNodesRequestValidation(TestCase):
                     server_slice=ServerSlice(
                         server_rank=0,
                         start_numerator=0,
-                        start_denominator=1,
                         end_numerator=1,
-                        end_denominator=1,
+                        denominator=1,
                     ),
                 ),
             ),
@@ -104,9 +102,8 @@ class TestFetchABLPRequestValidation(TestCase):
                     server_slice=ServerSlice(
                         server_rank=0,
                         start_numerator=0,
-                        start_denominator=1,
                         end_numerator=1,
-                        end_denominator=1,
+                        denominator=1,
                     ),
                 ),
             ),
@@ -149,9 +146,8 @@ class TestFetchABLPRequestValidation(TestCase):
                     server_slice=ServerSlice(
                         server_rank=0,
                         start_numerator=0,
-                        start_denominator=1,
                         end_numerator=1,
-                        end_denominator=1,
+                        denominator=1,
                     ),
                 ),
             ),
@@ -169,9 +165,8 @@ class TestServerSlice(TestCase):
         server_slice = ServerSlice(
             server_rank=0,
             start_numerator=0,
-            start_denominator=1,
             end_numerator=1,
-            end_denominator=1,
+            denominator=1,
         )
         result = server_slice.slice_tensor(tensor)
         self.assertEqual(result.data_ptr(), tensor.data_ptr())
@@ -181,9 +176,8 @@ class TestServerSlice(TestCase):
         server_slice = ServerSlice(
             server_rank=0,
             start_numerator=0,
-            start_denominator=2,
             end_numerator=1,
-            end_denominator=2,
+            denominator=2,
         )
         result = server_slice.slice_tensor(tensor)
         self.assert_tensor_equality(result, torch.arange(5))

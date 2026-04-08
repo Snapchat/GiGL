@@ -18,16 +18,14 @@ class TestComputeServerAssignments(TestCase):
                     0: ServerSlice(
                         server_rank=0,
                         start_numerator=0,
-                        start_denominator=2,
                         end_numerator=2,
-                        end_denominator=2,
+                        denominator=2,
                     ),
                     1: ServerSlice(
                         server_rank=1,
                         start_numerator=0,
-                        start_denominator=2,
                         end_numerator=1,
-                        end_denominator=2,
+                        denominator=2,
                     ),
                 },
             ),
@@ -38,16 +36,14 @@ class TestComputeServerAssignments(TestCase):
                     1: ServerSlice(
                         server_rank=1,
                         start_numerator=1,
-                        start_denominator=2,
                         end_numerator=2,
-                        end_denominator=2,
+                        denominator=2,
                     ),
                     2: ServerSlice(
                         server_rank=2,
                         start_numerator=0,
-                        start_denominator=2,
                         end_numerator=2,
-                        end_denominator=2,
+                        denominator=2,
                     ),
                 },
             ),
@@ -137,9 +133,8 @@ class TestServerSlice(TestCase):
         server_slice = ServerSlice(
             server_rank=0,
             start_numerator=0,
-            start_denominator=1,
             end_numerator=1,
-            end_denominator=1,
+            denominator=1,
         )
         result = server_slice.slice_tensor(tensor)
         self.assertEqual(result.data_ptr(), tensor.data_ptr())
@@ -149,9 +144,8 @@ class TestServerSlice(TestCase):
         server_slice = ServerSlice(
             server_rank=0,
             start_numerator=0,
-            start_denominator=2,
             end_numerator=1,
-            end_denominator=2,
+            denominator=2,
         )
         result = server_slice.slice_tensor(tensor)
         self.assert_tensor_equality(result, torch.arange(5))

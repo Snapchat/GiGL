@@ -797,9 +797,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=0,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     )
@@ -824,9 +823,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     )
@@ -867,9 +865,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=0,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -881,9 +878,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=1,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -909,9 +905,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=1,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -923,9 +918,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=2,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -1062,9 +1056,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=0,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     )
@@ -1102,9 +1095,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     )
@@ -1178,9 +1170,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=0,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -1193,9 +1184,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=1,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -1242,9 +1232,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=1,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
@@ -1257,9 +1246,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                             server_slice=ServerSlice(
                                 server_rank=2,
                                 start_numerator=0,
-                                start_denominator=2,
                                 end_numerator=2,
-                                end_denominator=2,
+                                denominator=2,
                             ),
                         ),
                     ),
