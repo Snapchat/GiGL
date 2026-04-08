@@ -105,7 +105,22 @@ def _prepare_degree_tensors(
     data: DistDataset,
     sampler_options: SamplerOptions,
 ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-    """Materialize PPR degree tensors before worker spawn when required."""
+    """Materialize PPR degree tensors before worker spawn when required.
+
+    Called once in the main process so that degree data is available in shared
+    memory before workers fork.  Returns ``None`` for non-PPR sampler options.
+
+    Args:
+        data: The distributed dataset whose ``degree_tensor`` property is
+            read.
+        sampler_options: Sampler configuration.  Degree tensors are only
+            materialized when this is a ``PPRSamplerOptions`` instance.
+
+    Returns:
+        A single degree tensor (homogeneous graph), a dict mapping edge types
+        to degree tensors (heterogeneous graph), or ``None`` if PPR sampling
+        is not configured.
+    """
     degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
     if isinstance(sampler_options, PPRSamplerOptions):
         degree_tensors = data.degree_tensor
@@ -232,7 +247,17 @@ class ActiveEpochState:
 
 
 def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[int]:
-    """Extract the channel id from a worker command payload."""
+    """Extract the channel id from a worker command payload.
+
+    Args:
+        command: The command type.
+        payload: The associated payload — one of ``RegisterInputCmd``,
+            ``StartEpochCmd``, ``int`` (channel_id), or ``None``.
+
+    Returns:
+        The channel id if the command targets a specific channel,
+        or ``None`` for ``STOP``.
+    """
     if command == SharedMpCommand.STOP:
         return None
     if isinstance(payload, RegisterInputCmd):
@@ -245,7 +270,17 @@ def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[i
 
 
 def _compute_num_batches(input_len: int, batch_size: int, drop_last: bool) -> int:
-    """Compute the number of batches emitted for an input length."""
+    """Compute the number of batches emitted for an input length.
+
+    Args:
+        input_len: Total number of seed indices.
+        batch_size: Number of seeds per batch.
+        drop_last: If True, drops the final batch when it is smaller than
+            ``batch_size``.
+
+    Returns:
+        The number of batches.  Returns 0 when ``input_len <= 0``.
+    """
     if input_len <= 0:
         return 0
     if drop_last:
@@ -254,11 +289,21 @@ def _compute_num_batches(input_len: int, batch_size: int, drop_last: bool) -> in
 
 
 def _epoch_batch_indices(state: ActiveEpochState) -> Optional[torch.Tensor]:
-    """Return the next batch of indices for an active epoch.
+    """Return the next batch of seed indices for an active epoch.
 
-    Returns the index tensor for the next batch, or None if no more batches
-    should be submitted (epoch cancelled, all batches already submitted, or
-    incomplete final batch with drop_last=True).
+    Advances the logical cursor by one batch based on
+    ``state.submitted_batches``.
+
+    Args:
+        state: The mutable epoch state for the channel.
+            ``submitted_batches`` is read but **not** mutated here — the
+            caller (``_submit_one_batch``) increments it after calling.
+
+    Returns:
+        A 1-D ``torch.long`` tensor of seed indices for the next batch,
+        or ``None`` if no more batches should be submitted (epoch cancelled,
+        all batches already submitted, or incomplete final batch with
+        ``drop_last=True``).
     """
     if state.cancelled or state.submitted_batches >= state.total_batches:
         return None
@@ -276,7 +321,22 @@ def _epoch_batch_indices(state: ActiveEpochState) -> Optional[torch.Tensor]:
 def _compute_worker_seeds_ranges(
     input_len: int, batch_size: int, num_workers: int
 ) -> list[tuple[int, int]]:
-    """Distribute complete batches across workers like GLT's producer does."""
+    """Distribute seed indices across workers using GLT-compatible logic.
+
+    Divides complete batches as evenly as possible across workers
+    (lower-ranked workers get one extra batch when the division is uneven).
+    The last worker's range extends to ``input_len`` so that the remainder
+    (incomplete final batch) is included.
+
+    Args:
+        input_len: Total number of seed indices.
+        batch_size: Number of seeds per batch.
+        num_workers: Number of worker processes.
+
+    Returns:
+        A list of ``(start, end)`` index ranges, one per worker.  The ranges
+        are contiguous and non-overlapping, covering ``[0, input_len)``.
+    """
     num_worker_batches = [0] * num_workers
     num_total_complete_batches = input_len // batch_size
     for rank in range(num_workers):
