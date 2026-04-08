@@ -747,6 +747,20 @@ class SharedDistSamplingBackend:
         sampling_config: SamplingConfig,
         sampler_options: SamplerOptions,
     ) -> None:
+        """Initialize the shared sampling backend.
+
+        Does not start worker processes — call ``init_backend`` to spawn them.
+
+        Args:
+            data: The distributed dataset to sample from.
+            worker_options: GLT remote sampling worker configuration (RPC
+                addresses, devices, concurrency).
+            sampling_config: Sampling parameters (batch size, neighbor counts,
+                shuffle, etc.).  All channels registered on this backend must
+                use the same config.
+            sampler_options: GiGL sampler variant configuration (e.g.
+                ``PPRSamplerOptions`` for PPR-based sampling).
+        """
         self.data = data
         self.worker_options = worker_options
         self.num_workers = worker_options.num_workers
@@ -768,7 +782,26 @@ class SharedDistSamplingBackend:
         )
 
     def init_backend(self) -> None:
-        """Initialize worker processes once for this backend."""
+        """Initialize worker processes once for this backend.
+
+        Spawns ``num_workers`` subprocesses running
+        ``_shared_sampling_worker_loop``.  Each worker initializes RPC and
+        signals readiness via a shared barrier.  This method blocks until all
+        workers are ready.
+
+        The initialization sequence is:
+
+        1. Assign devices and worker ranks from the GLT server context.
+        2. Pre-compute degree tensors for PPR sampling (if applicable).
+        3. Spawn worker processes with per-worker task queues and a shared
+           event queue.
+        4. Wait on the barrier for all workers to finish RPC init.
+
+        No-op if already initialized.
+
+        Raises:
+            RuntimeError: If no GLT server context is active.
+        """
         with self._lock:
             if self._initialized:
                 return
@@ -816,6 +849,17 @@ class SharedDistSamplingBackend:
         command: SharedMpCommand,
         payload: object,
     ) -> None:
+        """Enqueue a command on one worker's task queue.
+
+        Logs a warning if the enqueue blocks for longer than
+        ``SCHEDULER_SLOW_SUBMIT_SECS``.
+
+        Args:
+            worker_rank: Index of the target worker (``0 .. num_workers-1``).
+            command: The command type to send.
+            payload: The command payload (``RegisterInputCmd``,
+                ``StartEpochCmd``, ``int``, or ``None``).
+        """
         queue_ = self._task_queues[worker_rank]
         enqueue_start = time.monotonic()
         queue_.put((command, payload))
@@ -834,7 +878,25 @@ class SharedDistSamplingBackend:
         sampling_config: SamplingConfig,
         channel: ChannelBase,
     ) -> None:
-        """Register a channel-specific input on all backend workers."""
+        """Register a new channel on all backend workers.
+
+        Moves ``sampler_input`` into shared memory, computes per-worker seed
+        ranges, initializes shuffle state (if configured), and broadcasts a
+        ``REGISTER_INPUT`` command to every worker.
+
+        Args:
+            channel_id: Unique identifier for this channel.
+            worker_key: Routing key for the channel in the worker group.
+            sampler_input: Seed node/edge inputs for this channel.
+            sampling_config: Must match the backend's ``sampling_config``.
+            channel: Output channel where sampled subgraphs are written.
+
+        Raises:
+            RuntimeError: If the backend has not been initialized via
+                ``init_backend``.
+            ValueError: If ``channel_id`` is already registered, or if
+                ``sampling_config`` does not match the backend config.
+        """
         with self._lock:
             if not self._initialized:
                 raise RuntimeError("SharedDistSamplingBackend is not initialized.")
@@ -880,7 +942,12 @@ class SharedDistSamplingBackend:
                 )
 
     def _drain_events(self) -> None:
-        """Drain worker completion events into the backend-local state."""
+        """Drain worker completion events into the backend-local state.
+
+        Reads all pending ``EPOCH_DONE_EVENT`` tuples from the shared
+        ``event_queue`` and records which workers have finished each
+        ``(channel_id, epoch)`` in ``_completed_workers``.
+        """
         if self._event_queue is None:
             return
         while True:
@@ -893,7 +960,21 @@ class SharedDistSamplingBackend:
                 self._completed_workers[(channel_id, epoch)].add(worker_rank)
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
-        """Start one new epoch for one registered channel."""
+        """Start a new sampling epoch for one registered channel.
+
+        Cleans up stale completion records, generates a shuffled or sequential
+        seed permutation, slices it into per-worker ranges, and dispatches
+        ``START_EPOCH`` commands to all workers.
+
+        No-op if the channel has already started an epoch >= ``epoch``.
+
+        Args:
+            channel_id: The registered channel to start.
+            epoch: Monotonically increasing epoch number.
+
+        Raises:
+            KeyError: If ``channel_id`` is not registered.
+        """
         with self._lock:
             self._drain_events()
             sampling_config = self._channel_sampling_config[channel_id]
@@ -941,7 +1022,16 @@ class SharedDistSamplingBackend:
                     )
 
     def unregister_input(self, channel_id: int) -> None:
-        """Unregister a channel from the backend workers."""
+        """Unregister a channel from all backend workers.
+
+        Removes backend-side bookkeeping and broadcasts
+        ``UNREGISTER_INPUT`` to every worker.
+
+        No-op if ``channel_id`` is not currently registered.
+
+        Args:
+            channel_id: The channel to remove.
+        """
         with self._lock:
             if channel_id not in self._channel_sampling_config:
                 return
@@ -962,7 +1052,18 @@ class SharedDistSamplingBackend:
                 )
 
     def is_channel_epoch_done(self, channel_id: int, epoch: int) -> bool:
-        """Return whether every worker finished the epoch for one channel."""
+        """Return whether every worker finished the epoch for one channel.
+
+        Drains pending completion events before checking.
+
+        Args:
+            channel_id: The channel to query.
+            epoch: The epoch number to check.
+
+        Returns:
+            ``True`` if all ``num_workers`` workers have reported
+            ``EPOCH_DONE`` for this ``(channel_id, epoch)`` pair.
+        """
         with self._lock:
             self._drain_events()
             return (
@@ -971,7 +1072,21 @@ class SharedDistSamplingBackend:
             )
 
     def describe_channel(self, channel_id: int) -> dict[str, object]:
-        """Return lightweight diagnostics for one registered channel."""
+        """Return lightweight diagnostics for one registered channel.
+
+        Drains pending completion events before building the snapshot.
+
+        Args:
+            channel_id: The channel to describe.
+
+        Returns:
+            A dict with keys:
+
+            - ``"epoch"``: Current epoch number (``-1`` if never started).
+            - ``"input_sizes"``: Per-worker seed counts.
+            - ``"completed_workers"``: Number of workers that finished the
+              current epoch.
+        """
         with self._lock:
             self._drain_events()
             epoch = self._channel_epoch.get(channel_id, -1)
@@ -985,7 +1100,18 @@ class SharedDistSamplingBackend:
             }
 
     def shutdown(self) -> None:
-        """Stop all worker processes and release backend resources."""
+        """Stop all worker processes and release backend resources.
+
+        Cleanup sequence:
+
+        1. Send ``STOP`` to every worker's task queue.
+        2. Join each worker with a timeout of
+           ``MP_STATUS_CHECK_INTERVAL`` seconds.
+        3. Close all task queues and the event queue.
+        4. Terminate any workers still alive after the join timeout.
+
+        No-op if already shut down.
+        """
         with self._lock:
             if self._shutdown:
                 return
