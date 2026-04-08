@@ -261,14 +261,11 @@ class RemoteDistDataset:
 
         Args:
             rank (Optional[int]): The requested shard rank.
-                ``ROUND_ROBIN`` forwards this to the storage server.
-                ``CONTIGUOUS`` expects the compute-node rank.
-                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded
-                (useful for fetching all neighbor nodes during inference).
+                When `None` with `ROUND_ROBIN`, all data is returned unsharded
+                e.g. returns all node ids from all storage nodes.
             world_size (Optional[int]): The requested shard world size.
-                ``ROUND_ROBIN`` forwards this to the storage server.
-                ``CONTIGUOUS`` expects the compute-node world size.
-                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded.
+                When `None` with `ROUND_ROBIN`, all data is returned unsharded
+                e.g. returns all node ids from all storage nodes.
             split (Optional[Literal["train", "val", "test"]]):
                 The split of the dataset to get node ids from.
                 If provided, the dataset must have `train_node_ids`, `val_node_ids`, and `test_node_ids` properties.
@@ -276,15 +273,10 @@ class RemoteDistDataset:
                 Must be provided for heterogeneous datasets.
                 Must be None for labeled homogeneous graphs.
             shard_strategy (ShardStrategy): Strategy for sharding node IDs across compute nodes.
-                ``ROUND_ROBIN`` (default) shards each server's nodes across the
-                requested rank/world_size on the storage server.
-                ``CONTIGUOUS`` assigns storage servers to compute nodes, returning empty tensors
-                for unassigned servers.
-                ``CONTIGUOUS`` always requires rank and world_size because the
-                server-to-compute-node assignment depends on them.
-
+                See the documentation for `ShardStrategy` for more details.
+                `ROUND_ROBIN` (default) is the default strategy.
         Raises:
-            ValueError: If ``shard_strategy`` is ``CONTIGUOUS`` but ``rank`` or ``world_size`` is None.
+            ValueError: If `shard_strategy` is `CONTIGUOUS` but `rank` or `world_size` is `None`.
 
         Returns:
             dict[int, torch.Tensor]: A dict mapping storage rank to node ids.
@@ -443,13 +435,11 @@ class RemoteDistDataset:
         Args:
             split (Literal["train", "val", "test"]): The split to get the input for.
             rank (Optional[int]): The requested shard rank.
-                ``ROUND_ROBIN`` forwards this to the storage server.
-                ``CONTIGUOUS`` expects the compute-node rank.
-                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded.
+                When `None` with `ROUND_ROBIN`, all data is returned unsharded
+                e.g. returns all ABLP input from all storage nodes.
             world_size (Optional[int]): The requested shard world size.
-                ``ROUND_ROBIN`` forwards this to the storage server.
-                ``CONTIGUOUS`` expects the compute-node world size.
-                When ``None`` with ``ROUND_ROBIN``, all data is returned unsharded.
+                When `None` with `ROUND_ROBIN`, all data is returned unsharded
+                e.g. returns all ABLP input from all storage nodes.
             anchor_node_type (Optional[NodeType]): The type of the anchor nodes to retrieve.
                 Must be provided for heterogeneous graphs.
                 Must be None for labeled homogeneous graphs.
@@ -460,12 +450,8 @@ class RemoteDistDataset:
                 Defaults to None.
             shard_strategy (ShardStrategy):
                 Strategy for sharding ABLP input across compute nodes.
-                ``ROUND_ROBIN`` (default) shards each server's data across the
-                requested rank/world_size on the storage server.
-                ``CONTIGUOUS`` assigns storage servers to compute nodes,
-                producing empty tensors for unassigned servers.
-                ``CONTIGUOUS`` always requires rank and world_size because the
-                server-to-compute-node assignment depends on them.
+                See the documentation for `ShardStrategy` for more details.
+                `ROUND_ROBIN` (default) is the default strategy.
 
         Returns:
             dict[int, ABLPInputNodes]:
