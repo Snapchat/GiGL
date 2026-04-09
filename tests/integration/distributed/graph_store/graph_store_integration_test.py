@@ -24,6 +24,7 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.graph_store.sharding import ShardStrategy
 from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
@@ -325,8 +326,56 @@ def _run_compute_train_tests(
         local_expected=local_expected_negative_seeds,
     )
 
-    ablp_loader.shutdown()
-    random_negative_loader.shutdown()
+    # --- CONTIGUOUS shard strategy tests ---
+    # With 2 servers and 2 compute nodes, rank R should get all of server R's
+    # nodes and an empty tensor for server (1-R).
+    contiguous_node_ids = remote_dist_dataset.fetch_node_ids(
+        split="train",
+        rank=cluster_info.compute_node_rank,
+        world_size=cluster_info.num_compute_nodes,
+        shard_strategy=ShardStrategy.CONTIGUOUS,
+    )
+
+    # Assert structure: each rank owns exactly one server in the 2S/2C case
+    rank = cluster_info.compute_node_rank
+    other_rank = 1 - rank
+    assert (
+        contiguous_node_ids[rank].numel() > 0
+    ), f"Rank {rank} should have non-empty tensor for its own server"
+    assert (
+        contiguous_node_ids[other_rank].numel() == 0
+    ), f"Rank {rank} should have empty tensor for server {other_rank}"
+
+    # Assert total node parity: CONTIGUOUS and ROUND_ROBIN should cover the same nodes
+    local_contiguous_nodes = torch.cat(list(contiguous_node_ids.values()))
+    local_round_robin_nodes = torch.cat(list(random_negative_input.values()))
+
+    # Gather all nodes from all ranks
+    contiguous_gathered: list[torch.Tensor] = [
+        torch.empty(0, dtype=torch.long)
+        for _ in range(torch.distributed.get_world_size())
+    ]
+    round_robin_gathered: list[torch.Tensor] = [
+        torch.empty(0, dtype=torch.long)
+        for _ in range(torch.distributed.get_world_size())
+    ]
+    torch.distributed.all_gather_object(contiguous_gathered, local_contiguous_nodes)
+    torch.distributed.all_gather_object(round_robin_gathered, local_round_robin_nodes)
+
+    all_contiguous = torch.cat(contiguous_gathered).sort().values
+    all_round_robin = torch.cat(round_robin_gathered).sort().values
+    assert torch.equal(all_contiguous, all_round_robin), (
+        f"CONTIGUOUS and ROUND_ROBIN must produce the same sorted node set. "
+        f"CONTIGUOUS: {all_contiguous[:10]}... ({all_contiguous.numel()} nodes), "
+        f"ROUND_ROBIN: {all_round_robin[:10]}... ({all_round_robin.numel()} nodes)"
+    )
+
+    torch.distributed.barrier()
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} CONTIGUOUS: "
+        f"{local_contiguous_nodes.numel()} nodes from assigned server"
+    )
+
     shutdown_compute_proccess()
 
 

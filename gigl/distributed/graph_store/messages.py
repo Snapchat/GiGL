@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Union
 
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 
@@ -17,6 +18,9 @@ class FetchNodesRequest:
             Must be provided together with ``rank``.
         split: The split of the dataset to get node ids from.
         node_type: The type of nodes to get node ids for.
+        server_slice: An optional :class:`~gigl.distributed.graph_store.sharding.ServerSlice`
+            describing the fraction of this server's data to return.
+            Cannot be combined with ``rank``/``world_size``.
 
     Examples:
         Fetch all nodes without sharding:
@@ -36,18 +40,25 @@ class FetchNodesRequest:
     world_size: Optional[int] = None
     split: Optional[Union[Literal["train", "val", "test"], str]] = None
     node_type: Optional[NodeType] = None
+    server_slice: Optional[ServerSlice] = None
 
     def validate(self) -> None:
         """Validate that the request has consistent rank/world_size.
 
         Raises:
-            ValueError: If only one of ``rank`` or ``world_size`` is provided.
+            ValueError:
+                If only one of ``rank`` or ``world_size`` is provided.
+                If ``server_slice`` is provided together with ``rank`` or ``world_size``.
         """
         if (self.rank is None) ^ (self.world_size is None):
             raise ValueError(
                 "rank and world_size must be provided together. "
                 f"Received rank={self.rank}, world_size={self.world_size}"
             )
+        if self.server_slice is not None and (
+            self.rank is not None or self.world_size is not None
+        ):
+            raise ValueError("server_slice cannot be combined with rank/world_size.")
 
 
 @dataclass(frozen=True)
@@ -62,6 +73,9 @@ class FetchABLPInputRequest:
             Must be provided together with ``world_size``.
         world_size: The total number of processes in the distributed setup.
             Must be provided together with ``rank``.
+        server_slice: An optional :class:`~gigl.distributed.graph_store.sharding.ServerSlice`
+            describing the fraction of this server's data to return.
+            Cannot be combined with ``rank``/``world_size``.
 
     Examples:
         Fetch training ABLP input without sharding:
@@ -78,15 +92,22 @@ class FetchABLPInputRequest:
     supervision_edge_type: EdgeType
     rank: Optional[int] = None
     world_size: Optional[int] = None
+    server_slice: Optional[ServerSlice] = None
 
     def validate(self) -> None:
         """Validate that the request has consistent rank/world_size.
 
         Raises:
-            ValueError: If only one of ``rank`` or ``world_size`` is provided.
+            ValueError:
+                If only one of ``rank`` or ``world_size`` is provided.
+                If ``server_slice`` is provided together with ``rank`` or ``world_size``.
         """
         if (self.rank is None) ^ (self.world_size is None):
             raise ValueError(
                 "rank and world_size must be provided together. "
                 f"Received rank={self.rank}, world_size={self.world_size}"
             )
+        if self.server_slice is not None and (
+            self.rank is not None or self.world_size is not None
+        ):
+            raise ValueError("server_slice cannot be combined with rank/world_size.")
