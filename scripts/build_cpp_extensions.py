@@ -12,7 +12,7 @@ from setuptools import setup
 from setuptools.extension import Extension
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
-from scripts.cpp_build_constants import COMPILE_ARGS, CSRC_DIR
+from gigl.cpp_build_constants import COMPILE_ARGS, CSRC_DIR
 
 
 def find_cpp_extensions() -> list[Extension]:
