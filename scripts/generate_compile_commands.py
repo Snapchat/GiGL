@@ -20,7 +20,7 @@ import sysconfig
 
 from torch.utils.cpp_extension import include_paths as torch_include_paths
 
-from cpp_build_constants import COMPILE_ARGS, CSRC_DIR, REPO_ROOT
+from scripts.cpp_build_constants import COMPILE_ARGS, CSRC_DIR, REPO_ROOT
 
 
 def main() -> None:
