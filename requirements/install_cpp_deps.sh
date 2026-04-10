@@ -6,9 +6,14 @@
 #
 # Called by `make install_dev_deps` alongside install_py_deps.sh and
 # install_scala_deps.sh.
+#
+# NOTE: On Linux, this script calls apt-get and update-alternatives, which
+# require root privileges. Run as root or prefix with sudo.
 
 set -e
 set -x
+
+CLANG_VERSION=15
 
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
@@ -35,12 +40,11 @@ if is_running_on_mac; then
     # install_dev_deps to pick up the PATH change.
     export PATH="$LLVM_BIN:$PATH"
 else
-    # Ubuntu / Debian — clang 15 is the highest version available on Ubuntu 22.04.
-    apt-get install -y clang-format-15 clang-tidy-15 cmake
+    apt-get install -y "clang-format-${CLANG_VERSION}" "clang-tidy-${CLANG_VERSION}" cmake
     # Register versioned binaries as the default so bare `clang-format` and
     # `clang-tidy` resolve to them without callers specifying the version suffix.
-    update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-15 100
-    update-alternatives --install /usr/bin/clang-tidy   clang-tidy   /usr/bin/clang-tidy-15   100
+    update-alternatives --install /usr/bin/clang-format clang-format "/usr/bin/clang-format-${CLANG_VERSION}" 100
+    update-alternatives --install /usr/bin/clang-tidy   clang-tidy   "/usr/bin/clang-tidy-${CLANG_VERSION}"   100
 fi
 
 echo "Finished installing C++ tooling"

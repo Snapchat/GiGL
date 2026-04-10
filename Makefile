@@ -77,7 +77,7 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under tests/unit.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-unit_test_py: clean_build_files_py type_check build_cpp_extensions
+unit_test_py: clean_build_files_py build_cpp_extensions type_check
 	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -119,7 +119,7 @@ check_format_md:
 check_format_cpp:
 	$(if $(CPP_SOURCES), clang-format --dry-run --Werror --style=file $(CPP_SOURCES))
 
-check_format: check_format_py check_format_scala check_format_md check_format_cpp
+check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`

@@ -11,28 +11,6 @@ This script is used to install the dependencies for GIGL:
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
-
-
-def run_command_and_stream_stdout(cmd: str) -> Optional[int]:
-    """
-    Executes a command and streams the stdout output.
-
-    Args:
-        cmd (str): The command to be executed.
-
-    Returns:
-        Optional[int]: The return code of the command, or None if the command failed to execute.
-    """
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
-    while True:
-        output = process.stdout.readline()  # type: ignore
-        if output == b"" and process.poll() is not None:
-            break
-        if output:
-            print(output.strip())
-    return_code: Optional[int] = process.poll()
-    return return_code
 
 
 def main():
@@ -49,35 +27,32 @@ def main():
         sys.exit(1)
 
     try:
-        print(f"Executing bash {install_glt_script}...")
-        result = run_command_and_stream_stdout(f"bash {install_glt_script}")
-        print("GLT install finished with return code:", result)
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+        print(f"Installing GLT via {install_glt_script}...")
+        subprocess.run(["bash", str(install_glt_script)], check=True)
+        print("GLT install finished.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error installing GLT: {e}")
         sys.exit(1)
 
     # Step 2: Build pybind11 C++ extensions in-place so they are importable
     # without requiring a separate `make build_cpp_extensions` call.
     # subprocess.run streams stdout/stderr to the terminal and raises
     # CalledProcessError on a non-zero exit code.
+    build_cpp_script = repo_root / "scripts" / "build_cpp_extensions.py"
+    if not build_cpp_script.exists():
+        print(f"Error: build_cpp_extensions.py not found at {build_cpp_script}")
+        sys.exit(1)
+
     try:
         print("Building C++ extensions...")
         subprocess.run(
-            [
-                sys.executable,
-                "scripts/build_cpp_extensions.py",
-                "build_ext",
-                "--inplace",
-            ],
+            [sys.executable, str(build_cpp_script), "build_ext", "--inplace"],
             cwd=repo_root,
             check=True,
         )
         print("C++ extension build finished.")
     except subprocess.CalledProcessError as e:
         print(f"Error building C++ extensions: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error building C++ extensions: {e}")
         sys.exit(1)
 
 
