@@ -156,7 +156,7 @@ format_md:
 format_cpp:
 	$(if $(CPP_SOURCES), clang-format -i --style=file $(CPP_SOURCES))
 
-format: format_py format_scala format_md format_cpp
+format: format_py format_cpp format_scala format_md
 
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
