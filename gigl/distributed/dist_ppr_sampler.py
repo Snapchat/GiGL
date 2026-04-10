@@ -443,7 +443,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             fetch_ms_per_iter.append(iter_fetch_ms)
 
             push_start = time.perf_counter()
-            ppr_state.push_residuals(fetched_by_etype_id)
+            await asyncio.get_running_loop().run_in_executor(
+                None, ppr_state.push_residuals, fetched_by_etype_id
+            )
             iter_push_ms = (time.perf_counter() - push_start) * 1000
             total_push_ms += iter_push_ms
             push_ms_per_iter.append(iter_push_ms)

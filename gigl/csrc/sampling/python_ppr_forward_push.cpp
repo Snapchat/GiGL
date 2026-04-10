@@ -29,13 +29,20 @@ static py::object drain_queue_wrapper(PPRForwardPushState& self) {
 // Convert to C++ map before delegating.
 static void push_residuals_wrapper(PPRForwardPushState& self, py::dict fetched_by_etype_id) {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> cpp_map;
+    // Dict iteration touches Python objects — GIL must be held here.
     for (auto item : fetched_by_etype_id) {
         int32_t eid = item.first.cast<int32_t>();
         auto tup = item.second.cast<py::tuple>();
         cpp_map[eid] = {tup[0].cast<torch::Tensor>(), tup[1].cast<torch::Tensor>(),
                         tup[2].cast<torch::Tensor>()};
     }
-    self.push_residuals(cpp_map);
+    // C++ push only uses tensor accessor/data_ptr APIs — GIL-safe to release.
+    // Releasing here lets the asyncio event loop process RPC completion callbacks
+    // from other concurrent PPR coroutines while this push runs.
+    {
+        py::gil_scoped_release release;
+        self.push_residuals(cpp_map);
+    }
 }
 
 // extract_top_k: C++ returns map<ntype_id, tuple<Tensor, Tensor, Tensor>>.
