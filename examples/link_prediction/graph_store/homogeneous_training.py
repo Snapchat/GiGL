@@ -130,9 +130,9 @@ from typing import Literal, Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from torch_geometric.data import Data
 
+from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -909,9 +909,7 @@ def _run_example_training(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
-    raw_eval_metrics_uri = (
-        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.eval_metrics_uri
-    )
+    raw_eval_metrics_uri = gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.eval_metrics_uri
     eval_metrics_uri: Optional[Uri] = (
         UriFactory.create_uri(raw_eval_metrics_uri) if raw_eval_metrics_uri else None
     )

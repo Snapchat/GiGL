@@ -29,6 +29,7 @@ Args:
     --val_every: Run validation every N batches.
     --use_local_saved_model: Use a local saved model instead of a remote URI.
 """
+
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
@@ -40,10 +41,10 @@ from distutils.util import strtobool
 from typing import Literal
 
 import torch
-from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
+from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed import (
@@ -191,7 +192,9 @@ def train(
     logger.info(f"Process {process_number} running test loops...")
     test_loader = get_data_loader(split="test", dataset=dataset, batch_size=batch_size)
     test_loss = run_validation(
-        model, test_loader, num_val_batches=50  # Run validation on the test set
+        model,
+        test_loader,
+        num_val_batches=50,  # Run validation on the test set
     )
     logger.info(f"Process {process_number} test loss: {test_loss:.3f}")
     if process_number == 0:
@@ -265,9 +268,7 @@ if __name__ == "__main__":
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = (
-            gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
-        )
+        saved_model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
 
     logger.info(f"Using saved model URI: {saved_model_uri}")
     torch.multiprocessing.spawn(

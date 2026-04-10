@@ -138,9 +138,9 @@ class KfpOrchestrator:
         check_if_kfp_pipeline_job_name_valid(str(applied_task_identifier))
 
         file_loader = FileLoader()
-        assert file_loader.does_uri_exist(
-            compiled_pipeline_path
-        ), f"Compiled pipeline path {compiled_pipeline_path} does not exist."
+        assert file_loader.does_uri_exist(compiled_pipeline_path), (
+            f"Compiled pipeline path {compiled_pipeline_path} does not exist."
+        )
         logger.info(f"Skipping pipeline compilation; will use {compiled_pipeline_path}")
 
         run_keyword_args = {

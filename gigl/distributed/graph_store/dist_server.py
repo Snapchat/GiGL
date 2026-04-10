@@ -676,7 +676,7 @@ def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
         logging.warning(
-            f"'_call_func_on_server': receive a non-callable " f"function target {func}"
+            f"'_call_func_on_server': receive a non-callable function target {func}"
         )
         return None
 

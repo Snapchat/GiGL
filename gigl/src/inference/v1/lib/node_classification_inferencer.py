@@ -66,10 +66,10 @@ class NodeClassificationInferenceBlueprint(
         assert (
             task_metadata_pb_wrapper.task_metadata_type
             == TaskMetadataType.NODE_BASED_TASK
-        ), f"Expected task metadata to be node based task, got {TaskMetadataType.NODE_BASED_TASK}"
-        inferencer_node_types = (
-            task_metadata_pb_wrapper.task_metadata_pb.node_based_task_metadata.supervision_node_types
+        ), (
+            f"Expected task metadata to be node based task, got {TaskMetadataType.NODE_BASED_TASK}"
         )
+        inferencer_node_types = task_metadata_pb_wrapper.task_metadata_pb.node_based_task_metadata.supervision_node_types
         if len(inferencer_node_types) != 1:
             raise NotImplementedError(
                 f"Supervised node classification task expects one output node type, found {len(inferencer_node_types)} node types: {inferencer_node_types}"

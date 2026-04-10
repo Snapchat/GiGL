@@ -31,7 +31,7 @@ class FileLoader:
 
     @staticmethod
     def __get_uri_map_schema(
-        uri_map: Mapping[Uri, Uri]
+        uri_map: Mapping[Uri, Uri],
     ) -> Tuple[Optional[Type[Uri]], Optional[Type[Uri]]]:
         uniform_src_type: Optional[Type[Uri]] = None
         uniform_dst_type: Optional[Type[Uri]] = None
@@ -251,14 +251,17 @@ class FileLoader:
             )
 
     def does_uri_exist(self, uri: Union[str, Uri]) -> bool:
-        """""
+        (
+            """""
         Check if a URI exists
 
         Args:
             uri (Union[str, Uri]): uri to check
         Returns:
             bool: True if URI exists, False otherwise
-        """ ""
+        """
+            ""
+        )
 
         _uri = UriFactory.create_uri(uri=uri) if isinstance(uri, str) else uri
 

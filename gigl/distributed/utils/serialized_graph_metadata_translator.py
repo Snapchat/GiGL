@@ -125,13 +125,13 @@ def convert_pb_to_serialized_graph_metadata(
                 condensed_edge_type
             ].feature_spec
 
-            positive_label_entity_info[
-                edge_type
-            ] = _build_serialized_tfrecord_entity_info(
-                preprocessed_metadata=edge_metadata.positive_edge_info,
-                feature_spec_dict=pos_edge_feature_spec_dict,
-                entity_key=edge_key,
-                tfrecord_uri_pattern=tfrecord_uri_pattern,
+            positive_label_entity_info[edge_type] = (
+                _build_serialized_tfrecord_entity_info(
+                    preprocessed_metadata=edge_metadata.positive_edge_info,
+                    feature_spec_dict=pos_edge_feature_spec_dict,
+                    entity_key=edge_key,
+                    tfrecord_uri_pattern=tfrecord_uri_pattern,
+                )
             )
 
         if edge_metadata.HasField("negative_edge_info"):
@@ -139,13 +139,13 @@ def convert_pb_to_serialized_graph_metadata(
                 condensed_edge_type
             ].feature_spec
 
-            negative_label_entity_info[
-                edge_type
-            ] = _build_serialized_tfrecord_entity_info(
-                preprocessed_metadata=edge_metadata.negative_edge_info,
-                feature_spec_dict=hard_neg_edge_feature_spec_dict,
-                entity_key=edge_key,
-                tfrecord_uri_pattern=tfrecord_uri_pattern,
+            negative_label_entity_info[edge_type] = (
+                _build_serialized_tfrecord_entity_info(
+                    preprocessed_metadata=edge_metadata.negative_edge_info,
+                    feature_spec_dict=hard_neg_edge_feature_spec_dict,
+                    entity_key=edge_key,
+                    tfrecord_uri_pattern=tfrecord_uri_pattern,
+                )
             )
 
     if not graph_metadata_pb_wrapper.is_heterogeneous:

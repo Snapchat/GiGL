@@ -216,9 +216,7 @@ class GnnTrainingProcess:
     ):
         trainer_instance.setup_for_training()
         logger.info(f"Starting training at {current_formatted_datetime()}")
-        tensorboard_log_uri = (
-            gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
-        )
+        tensorboard_log_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
         profiler = get_torch_profiler_instance(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper
         )
@@ -228,7 +226,11 @@ class GnnTrainingProcess:
             file_writer = tf.summary.create_file_writer(tensorboard_log_uri)
 
         with file_writer.as_default() if file_writer else contextlib.nullcontext():
-            with profiler.profiler_context() if profiler else contextlib.nullcontext() as prof:  # type: ignore
+            with (
+                profiler.profiler_context()
+                if profiler
+                else contextlib.nullcontext() as prof
+            ):  # type: ignore
                 trainer_instance.train(
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper,
                     device=device,
@@ -273,9 +275,7 @@ class GnnTrainingProcess:
         )
 
         if gbml_config_pb_wrapper.shared_config.should_skip_training:
-            pretrained_model_uri = (
-                gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
-            )
+            pretrained_model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
             logger.info(
                 f"Skip training. Load pretrained model from {pretrained_model_uri}"
             )

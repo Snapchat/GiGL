@@ -127,9 +127,9 @@ class NodeClassificationModelingTaskSpec(
             lr=self.__optim_lr,
             weight_decay=self.__optim_weight_decay,
         )
-        self._train_loss_fn: Callable[
-            [torch.Tensor, torch.Tensor], torch.Tensor
-        ] = lambda input, target: F.cross_entropy(input=input, target=target)
+        self._train_loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = (
+            lambda input, target: F.cross_entropy(input=input, target=target)
+        )
         self.model.train()
 
     def _train(
@@ -139,9 +139,9 @@ class NodeClassificationModelingTaskSpec(
         loss: Optional[torch.Tensor] = None
         with ExitStack() as stack:
             if is_distributed_available_and_initialized():
-                assert isinstance(
-                    self.model, Joinable
-                ), "The model should be Joinable, i.e. wrapped with DistributedDataParallel"
+                assert isinstance(self.model, Joinable), (
+                    "The model should be Joinable, i.e. wrapped with DistributedDataParallel"
+                )
                 # See https://pytorch.org/tutorials/advanced/generic_join.html for context,
                 # also: https://github.com/pytorch/pytorch/issues/38174
                 # and: https://github.com/pytorch/pytorch/issues/33148
@@ -153,9 +153,9 @@ class NodeClassificationModelingTaskSpec(
                 self._optimizer.zero_grad()
                 inputs = batch.graph.to(device=device)
                 root_node_indices = batch.root_node_indices.to(device=device)
-                assert (
-                    batch.root_node_labels is not None
-                ), "Labels required for training."
+                assert batch.root_node_labels is not None, (
+                    "Labels required for training."
+                )
                 root_node_labels = batch.root_node_labels.to(device=device)
                 out = self.model(inputs)
                 # Figure out why below is a typing issue
@@ -247,9 +247,10 @@ class NodeClassificationModelingTaskSpec(
         )
         best_val_acc = 0.0
         for epoch in range(self.__num_epochs):
-            logger.info(f"Batch training... for epoch {epoch}/{self.__num_epochs }")
+            logger.info(f"Batch training... for epoch {epoch}/{self.__num_epochs}")
             train_loss = self._train(
-                data_loader=data_loaders.train_main, device=device  # type: ignore
+                data_loader=data_loaders.train_main,
+                device=device,  # type: ignore
             )
             train_loss_str = (
                 f"{train_loss.item():.3f}" if train_loss is not None else None
@@ -264,7 +265,7 @@ class NodeClassificationModelingTaskSpec(
                 tf.summary.scalar("Acc", round(val_acc, 3), step=epoch)
 
             logger.info(
-                f"Train Epoch {epoch}/{self.__num_epochs } | Loss: {train_loss_str} | Val Acc: {val_acc:.3f} | Best Val Acc: {best_val_acc:.3f}"
+                f"Train Epoch {epoch}/{self.__num_epochs} | Loss: {train_loss_str} | Val Acc: {val_acc:.3f} | Best Val Acc: {best_val_acc:.3f}"
             )
 
         logger.info(f"Finished training... ")
