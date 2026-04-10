@@ -40,6 +40,12 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 FormatStyle:     none
 User:            jenkins
+# CheckOptions: per-check tuning parameters. Each entry configures a specific
+# option for an individual check, using the form:
+#   key:   <check-name>.<OptionName>
+#   value: <value>
+# These let you adjust thresholds, naming patterns, and behavior without
+# enabling or disabling the check entirely.
 CheckOptions:
   - key:             bugprone-argument-comment.StrictMode
     value:           '0'
@@ -142,7 +148,7 @@ CheckOptions:
   - key:             performance-type-promotion-in-math-fn.IncludeStyle
     value:           llvm
   - key:             readability-braces-around-statements.ShortStatementLines
-    value:           '2'
+    value:           '0'
   - key:             readability-function-size.BranchThreshold
     value:           '4294967295'
   - key:             readability-function-size.LineThreshold
