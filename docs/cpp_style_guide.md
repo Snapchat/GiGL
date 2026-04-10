@@ -123,6 +123,7 @@ this codebase:
 | `clang-analyzer-cplusplus.NewDeleteLeaks` | Ownership is managed via smart pointers; raw-new leaks are already caught elsewhere |
 | `misc-no-recursion`                       | Recursive graph algorithms are intentional                                          |
 | `modernize-avoid-c-arrays`                | C arrays are needed for pybind11 and C-interop code                                 |
+| `readability-container-contains`          | `.contains()` requires C++20; the codebase builds with C++17                        |
 | `readability-identifier-length`           | Short loop variables (`i`, `j`, `k`) are idiomatic                                  |
 | `readability-magic-numbers`               | Literal constants are common in ML code (e.g. feature dimensions)                   |
 

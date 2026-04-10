@@ -32,6 +32,7 @@ Checks: >
   -modernize-avoid-c-arrays,
   performance-*,
   readability-*,
+  -readability-container-contains,
   -readability-identifier-length,
   -readability-magic-numbers,
 
