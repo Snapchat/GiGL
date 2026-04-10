@@ -17,4 +17,10 @@ CSRC_DIR: Path = REPO_ROOT / "gigl" / "csrc"
 # -Wno-unused-parameter suppresses noise from third-party headers (e.g. PyTorch)
 # that don't compile cleanly under -Wextra. Unused parameters in our own code
 # are still caught by clang-tidy's bugprone-* checks.
-COMPILE_ARGS: list[str] = ["-O3", "-std=c++17", "-Wall", "-Wextra", "-Wno-unused-parameter"]
+COMPILE_ARGS: list[str] = [
+    "-O3",
+    "-std=c++17",
+    "-Wall",
+    "-Wextra",
+    "-Wno-unused-parameter",
+]
