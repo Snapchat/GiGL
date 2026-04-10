@@ -1,4 +1,3 @@
-import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
@@ -24,12 +23,11 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.graph_store.sharding import ShardStrategy
+from gigl.distributed.graph_store.sharding import compute_server_assignments
 from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
@@ -324,56 +322,6 @@ def _run_compute_train_tests(
         cluster_info=cluster_info,
         local_seen=_concat_seed_tensors(random_negative_batches),
         local_expected=local_expected_negative_seeds,
-    )
-
-    # --- CONTIGUOUS shard strategy tests ---
-    # With 2 servers and 2 compute nodes, rank R should get all of server R's
-    # nodes and an empty tensor for server (1-R).
-    contiguous_node_ids = remote_dist_dataset.fetch_node_ids(
-        split="train",
-        rank=cluster_info.compute_node_rank,
-        world_size=cluster_info.num_compute_nodes,
-        shard_strategy=ShardStrategy.CONTIGUOUS,
-    )
-
-    # Assert structure: each rank owns exactly one server in the 2S/2C case
-    rank = cluster_info.compute_node_rank
-    other_rank = 1 - rank
-    assert (
-        contiguous_node_ids[rank].numel() > 0
-    ), f"Rank {rank} should have non-empty tensor for its own server"
-    assert (
-        contiguous_node_ids[other_rank].numel() == 0
-    ), f"Rank {rank} should have empty tensor for server {other_rank}"
-
-    # Assert total node parity: CONTIGUOUS and ROUND_ROBIN should cover the same nodes
-    local_contiguous_nodes = torch.cat(list(contiguous_node_ids.values()))
-    local_round_robin_nodes = torch.cat(list(random_negative_input.values()))
-
-    # Gather all nodes from all ranks
-    contiguous_gathered: list[torch.Tensor] = [
-        torch.empty(0, dtype=torch.long)
-        for _ in range(torch.distributed.get_world_size())
-    ]
-    round_robin_gathered: list[torch.Tensor] = [
-        torch.empty(0, dtype=torch.long)
-        for _ in range(torch.distributed.get_world_size())
-    ]
-    torch.distributed.all_gather_object(contiguous_gathered, local_contiguous_nodes)
-    torch.distributed.all_gather_object(round_robin_gathered, local_round_robin_nodes)
-
-    all_contiguous = torch.cat(contiguous_gathered).sort().values
-    all_round_robin = torch.cat(round_robin_gathered).sort().values
-    assert torch.equal(all_contiguous, all_round_robin), (
-        f"CONTIGUOUS and ROUND_ROBIN must produce the same sorted node set. "
-        f"CONTIGUOUS: {all_contiguous[:10]}... ({all_contiguous.numel()} nodes), "
-        f"ROUND_ROBIN: {all_round_robin[:10]}... ({all_round_robin.numel()} nodes)"
-    )
-
-    torch.distributed.barrier()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} CONTIGUOUS: "
-        f"{local_contiguous_nodes.numel()} nodes from assigned server"
     )
 
     shutdown_compute_proccess()
@@ -812,47 +760,42 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
 def _get_expected_input_nodes_by_rank(
     num_nodes: int, cluster_info: GraphStoreInfo
 ) -> dict[int, list[torch.Tensor]]:
-    """Get the expected sampler input for each compute rank.
+    """Get the expected sampler input for each compute rank using contiguous server assignments.
 
-    We generate the expected sampler input for each global rank by sharding the nodes across the global ranks.
-    We then append the generated nodes to the expected sampler input for each global rank.
-    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2
-    (compute_cluster_world_size = 2):
-    {
-    0: # global rank 0
-    [
-        [0, 1, 3, 4], # From storage rank 0
-        [8, 9, 11, 12] # From storage rank 1
-    ]
-    1: # global rank 1
-    [
-        [5, 6, 7, 8], # From storage rank 0
-        [13, 14, 15, 16] # From storage rank 1
-    ],
-    }
-
+    Each compute rank is assigned contiguous server(s) via
+    :func:`compute_server_assignments`. For each rank, we compute which
+    fraction of each server it owns and slice the server's node tensor
+    accordingly.
 
     Args:
-        num_nodes (int): The number of nodes in the graph.
-        cluster_info (GraphStoreInfo): The cluster information.
+        num_nodes: The number of nodes in the graph.
+        cluster_info: The cluster information.
 
     Returns:
-        dict[int, list[torch.Tensor]]: The expected sampler input for each compute rank.
+        A dict mapping each global rank to a list of tensors, one per
+        storage server (empty tensor for unassigned servers).
     """
     partition_book = build_partition_book(
         num_entities=num_nodes, rank=0, world_size=cluster_info.num_storage_nodes
     )
-    expected_sampler_input = collections.defaultdict(list)
-    for server_rank in range(cluster_info.num_storage_nodes):
-        server_nodes = get_ids_on_rank(partition_book=partition_book, rank=server_rank)
-        for global_rank in range(cluster_info.compute_cluster_world_size):
-            generated_nodes = shard_nodes_by_process(
-                input_nodes=server_nodes,
-                local_process_rank=global_rank,
-                local_process_world_size=cluster_info.compute_cluster_world_size,
+    expected_sampler_input: dict[int, list[torch.Tensor]] = {}
+    for global_rank in range(cluster_info.compute_cluster_world_size):
+        assignments = compute_server_assignments(
+            num_servers=cluster_info.num_storage_nodes,
+            num_compute_nodes=cluster_info.compute_cluster_world_size,
+            compute_rank=global_rank,
+        )
+        rank_nodes: list[torch.Tensor] = []
+        for server_rank in range(cluster_info.num_storage_nodes):
+            server_nodes = get_ids_on_rank(
+                partition_book=partition_book, rank=server_rank
             )
-            expected_sampler_input[global_rank].append(generated_nodes)
-    return dict(expected_sampler_input)
+            if server_rank in assignments:
+                rank_nodes.append(assignments[server_rank].slice_tensor(server_nodes))
+            else:
+                rank_nodes.append(torch.empty(0, dtype=torch.long))
+        expected_sampler_input[global_rank] = rank_nodes
+    return expected_sampler_input
 
 
 # ---------------------------------------------------------------------------
