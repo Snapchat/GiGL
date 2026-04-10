@@ -10,7 +10,8 @@ Usage::
 
 from pathlib import Path
 
-from setuptools import Extension, setup
+from setuptools import setup
+from setuptools.extension import Extension
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 _CSRC_DIR = Path("gigl/csrc")

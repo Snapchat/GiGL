@@ -1,10 +1,12 @@
 #include "ppr_forward_push.h"
 
-PPRForwardPushState::PPRForwardPushState(
-    torch::Tensor seed_nodes, int32_t seed_node_type_id, double alpha,
-    double requeue_threshold_factor,
-    std::vector<std::vector<int32_t>> node_type_to_edge_type_ids,
-    std::vector<int32_t> edge_type_to_dst_ntype_id, std::vector<torch::Tensor> degree_tensors)
+PPRForwardPushState::PPRForwardPushState(torch::Tensor seed_nodes,
+                                         int32_t seed_node_type_id,
+                                         double alpha,
+                                         double requeue_threshold_factor,
+                                         std::vector<std::vector<int32_t>> node_type_to_edge_type_ids,
+                                         std::vector<int32_t> edge_type_to_dst_ntype_id,
+                                         std::vector<torch::Tensor> degree_tensors)
     : alpha_(alpha),
       one_minus_alpha_(1.0 - alpha),
       requeue_threshold_factor_(requeue_threshold_factor),
@@ -20,13 +22,10 @@ PPRForwardPushState::PPRForwardPushState(
 
     // Allocate per-seed, per-node-type tables.
     // .assign(n, val) fills a vector with n copies of val — like [val] * n in Python.
-    ppr_scores_.assign(batch_size_,
-                       std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
-    residuals_.assign(batch_size_,
-                      std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
+    ppr_scores_.assign(batch_size_, std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
+    residuals_.assign(batch_size_, std::vector<std::unordered_map<int32_t, double>>(num_node_types_));
     queue_.assign(batch_size_, std::vector<std::unordered_set<int32_t>>(num_node_types_));
-    queued_nodes_.assign(batch_size_,
-                         std::vector<std::unordered_set<int32_t>>(num_node_types_));
+    queued_nodes_.assign(batch_size_, std::vector<std::unordered_set<int32_t>>(num_node_types_));
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
     // supports [i] indexing with bounds checking in debug builds.
@@ -94,8 +93,7 @@ const std::vector<int32_t>& PPRForwardPushState::get_nodes_drained_per_iteration
 }
 
 void PPRForwardPushState::push_residuals(
-    const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>&
-        fetched_by_etype_id) {
+    const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetched_by_etype_id) {
     // Step 1: Unpack the input map into a C++ map keyed by pack_key(node_id, etype_id)
     // for fast lookup during the residual-push loop below.
     std::unordered_map<uint64_t, std::vector<int32_t>> fetched;
@@ -191,8 +189,7 @@ void PPRForwardPushState::push_residuals(
                         residuals_[s][dst_nt][nbr] += res_per_nbr;
 
                         double threshold =
-                            requeue_threshold_factor_ *
-                            static_cast<double>(get_total_degree(nbr, dst_nt));
+                            requeue_threshold_factor_ * static_cast<double>(get_total_degree(nbr, dst_nt));
 
                         if (queue_[s][dst_nt].find(nbr) == queue_[s][dst_nt].end() &&
                             residuals_[s][dst_nt][nbr] >= threshold) {
@@ -217,8 +214,8 @@ void PPRForwardPushState::push_residuals(
     }
 }
 
-std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-PPRForwardPushState::extract_top_k(int32_t max_ppr_nodes) {
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPushState::extract_top_k(
+    int32_t max_ppr_nodes) {
     std::unordered_set<int32_t> active;
     for (int32_t s = 0; s < batch_size_; ++s)
         for (int32_t nt = 0; nt < num_node_types_; ++nt)
@@ -236,9 +233,9 @@ PPRForwardPushState::extract_top_k(int32_t max_ppr_nodes) {
             int32_t k = std::min(max_ppr_nodes, static_cast<int32_t>(scores.size()));
             if (k > 0) {
                 std::vector<std::pair<int32_t, double>> items(scores.begin(), scores.end());
-                std::partial_sort(
-                    items.begin(), items.begin() + k, items.end(),
-                    [](const auto& a, const auto& b) { return a.second > b.second; });
+                std::partial_sort(items.begin(), items.begin() + k, items.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
 
                 for (int32_t i = 0; i < k; ++i) {
                     flat_ids.push_back(static_cast<int64_t>(items[i].first));
@@ -263,8 +260,13 @@ int32_t PPRForwardPushState::get_total_degree(int32_t node_id, int32_t ntype_id)
     const auto& t = degree_tensors_[ntype_id];
     if (t.numel() == 0)
         return 0;
-    TORCH_CHECK(node_id < static_cast<int32_t>(t.size(0)), "Node ID ", node_id,
-                " out of range for degree tensor of ntype_id ", ntype_id, " (size=", t.size(0),
+    TORCH_CHECK(node_id < static_cast<int32_t>(t.size(0)),
+                "Node ID ",
+                node_id,
+                " out of range for degree tensor of ntype_id ",
+                ntype_id,
+                " (size=",
+                t.size(0),
                 "). This indicates corrupted graph data or a sampler bug.");
     // data_ptr<int32_t>() returns a raw C pointer to the tensor's int32 data buffer.
     return t.data_ptr<int32_t>()[node_id];

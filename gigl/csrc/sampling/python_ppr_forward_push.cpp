@@ -33,8 +33,7 @@ static void push_residuals_wrapper(PPRForwardPushState& self, py::dict fetched_b
     for (auto item : fetched_by_etype_id) {
         int32_t eid = item.first.cast<int32_t>();
         auto tup = item.second.cast<py::tuple>();
-        cpp_map[eid] = {tup[0].cast<torch::Tensor>(), tup[1].cast<torch::Tensor>(),
-                        tup[2].cast<torch::Tensor>()};
+        cpp_map[eid] = {tup[0].cast<torch::Tensor>(), tup[1].cast<torch::Tensor>(), tup[2].cast<torch::Tensor>()};
     }
     // C++ push only uses tensor accessor/data_ptr APIs — GIL-safe to release.
     // Releasing here lets the asyncio event loop process RPC completion callbacks
@@ -51,8 +50,7 @@ static py::dict extract_top_k_wrapper(PPRForwardPushState& self, int32_t max_ppr
     auto result = self.extract_top_k(max_ppr_nodes);
     py::dict d;
     for (auto& [nt, tup] : result) {
-        d[py::int_(nt)] =
-            py::make_tuple(std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
+        d[py::int_(nt)] = py::make_tuple(std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
     }
     return d;
 }
@@ -61,8 +59,12 @@ static py::dict extract_top_k_wrapper(PPRForwardPushState& self, int32_t max_ppr
 // module name derived from this file's path (e.g. "ppr_forward_push").
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<PPRForwardPushState>(m, "PPRForwardPushState")
-        .def(py::init<torch::Tensor, int32_t, double, double,
-                      std::vector<std::vector<int32_t>>, std::vector<int32_t>,
+        .def(py::init<torch::Tensor,
+                      int32_t,
+                      double,
+                      double,
+                      std::vector<std::vector<int32_t>>,
+                      std::vector<int32_t>,
                       std::vector<torch::Tensor>>())
         .def("drain_queue", drain_queue_wrapper)
         .def("push_residuals", push_residuals_wrapper)
