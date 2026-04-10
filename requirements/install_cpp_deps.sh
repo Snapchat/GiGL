@@ -21,9 +21,11 @@ is_running_on_mac() {
 }
 
 if is_running_on_mac; then
-    # `brew install llvm` provides clang-format and clang-tidy.
-    # Homebrew does not add llvm to PATH by default to avoid shadowing Apple's
-    # clang, so we add it ourselves.
+    # macOS ships its own Apple Clang via Xcode Command Line Tools. Homebrew
+    # intentionally does not put its llvm binaries on PATH to avoid shadowing
+    # Apple's clang. We therefore have to add the Homebrew llvm bin directory
+    # to PATH ourselves so that `clang-format` and `clang-tidy` resolve to the
+    # Homebrew versions rather than being missing entirely.
     brew install llvm cmake
     LLVM_BIN="$(brew --prefix llvm)/bin"
 
@@ -40,9 +42,11 @@ if is_running_on_mac; then
     # install_dev_deps to pick up the PATH change.
     export PATH="$LLVM_BIN:$PATH"
 else
+    # On Linux, apt-get installs versioned binaries (e.g. clang-format-15) directly
+    # into /usr/bin. update-alternatives wires up the bare names (clang-format,
+    # clang-tidy) so callers don't need to specify the version suffix. No PATH
+    # changes are needed since /usr/bin is already on PATH.
     apt-get install -y "clang-format-${CLANG_VERSION}" "clang-tidy-${CLANG_VERSION}" cmake
-    # Register versioned binaries as the default so bare `clang-format` and
-    # `clang-tidy` resolve to them without callers specifying the version suffix.
     update-alternatives --install /usr/bin/clang-format clang-format "/usr/bin/clang-format-${CLANG_VERSION}" 100
     update-alternatives --install /usr/bin/clang-tidy   clang-tidy   "/usr/bin/clang-tidy-${CLANG_VERSION}"   100
 fi

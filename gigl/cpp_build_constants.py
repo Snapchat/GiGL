@@ -7,11 +7,20 @@ used during the actual build.
 
 from pathlib import Path
 
-# REPO_ROOT is derived from this file's location — this file must live in scripts/.
+# REPO_ROOT is derived from this file's location — this file must live in gigl/.
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 CSRC_DIR: Path = REPO_ROOT / "gigl" / "csrc"
 
 # Flags passed to every C++ compilation unit. Applies to both the extension
 # build (build_cpp_extensions.py) and the compile_commands.json used by
 # clang-tidy (generate_compile_commands.py).
-COMPILE_ARGS: list[str] = ["-O3", "-std=c++17", "-Wall", "-Wextra"]
+# -Wno-unused-parameter suppresses noise from third-party headers (e.g. PyTorch)
+# that don't compile cleanly under -Wextra. Unused parameters in our own code
+# are still caught by clang-tidy's bugprone-* checks.
+COMPILE_ARGS: list[str] = [
+    "-O3",
+    "-std=c++17",
+    "-Wall",
+    "-Wextra",
+    "-Wno-unused-parameter",
+]
