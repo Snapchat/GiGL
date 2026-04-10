@@ -5,16 +5,13 @@ GiGL enforces C++ style automatically via two tools:
 - **clang-format** (`.clang-format`) — code formatting
 - **clang-tidy** (`.clang-tidy`) — static analysis and lint
 
-Both run as part of CI. All clang-tidy warnings are treated as errors.
+All clang-tidy warnings are treated as errors.
 
 ## Running the Tools
 
 ```bash
-# Format all C++ files in-place
-clang-format -i $(find gigl/csrc -name '*.cpp' -o -name '*.h')
-
-# Run static analysis
-clang-tidy gigl/csrc/**/*.cpp
+make format_cpp  # Format all C++ files in-place
+make lint_cpp    # Run clang-tidy static analysis
 ```
 
 ______________________________________________________________________
@@ -99,11 +96,11 @@ Enabled families:
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `boost-use-to-string`            | Prefer `std::to_string` over `boost::lexical_cast` for numeric conversions                                                             |
 | `bugprone-*`                     | Common programming mistakes: dangling handles, suspicious string construction, assert side effects, etc.                               |
-| `cert-*` (selected)              | CERT secure coding rules for error handling (`err34-c`), floating-point loops (`flp30-c`), and RNG seeding (`msc32-c`, `msc50/51-cpp`) |
+| `cert-*`              | CERT secure coding rules for error handling (`err34-c`), floating-point loops (`flp30-c`), and RNG seeding (`msc32-c`, `msc50/51-cpp`) |
 | `clang-analyzer-*`               | Clang static analyzer: memory safety, null dereferences, use-after-free, etc.                                                          |
 | `clang-diagnostic-*`             | Compiler diagnostic warnings surfaced as lint checks                                                                                   |
-| `cppcoreguidelines-*` (selected) | C++ Core Guidelines: no raw `malloc`, no union member access, no object slicing, safe downcasts                                        |
-| `google-*` (selected)            | Google C++ style: explicit constructors, no global names in headers, safe `memset` usage                                               |
+| `cppcoreguidelines-*` | C++ Core Guidelines: no raw `malloc`, no union member access, no object slicing, safe downcasts                                        |
+| `google-*`            | Google C++ style: explicit constructors, no global names in headers, safe `memset` usage                                               |
 | `hicpp-exception-baseclass`      | All thrown exceptions must derive from `std::exception`                                                                                |
 | `misc-*`                         | Miscellaneous: header-only definitions, suspicious enum usage, throw-by-value/catch-by-reference, etc.                                 |
 | `modernize-*`                    | Modernize to C++11/14/17: `nullptr`, range-based for, `make_unique`, `using` aliases, etc.                                             |
@@ -150,4 +147,4 @@ Enforced via `readability-identifier-naming`:
 | `bugprone-string-constructor.LargeLengthThreshold`         | `8388608` (8 MB) | Strings larger than 8 MB from a length argument are flagged    |
 | `modernize-loop-convert.NamingStyle`                       | `CamelCase`      | Auto-generated loop variable names use CamelCase               |
 | `readability-function-size.LineThreshold`                  | `1000`           | Functions over 1000 lines are flagged                          |
-| `readability-braces-around-statements.ShortStatementLines` | `2`              | Single-line bodies up to 2 lines may omit braces               |
+| `readability-braces-around-statements.ShortStatementLines` | `0`              | Braces required for all control-flow bodies, even single-line  |
