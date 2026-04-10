@@ -9,58 +9,46 @@ Usage::
     uv run python scripts/generate_compile_commands.py
 
 Output: ``build/compile_commands.json`` (created or overwritten).
+
+Note: run ``make build_cpp_extensions`` before this script (or use ``make lint_cpp``,
+which does both in the correct order) so the database reflects the current build state.
 """
 
 import json
-import subprocess
 import sys
 import sysconfig
-from pathlib import Path
 
 from torch.utils.cpp_extension import include_paths as torch_include_paths
 
+from cpp_build_constants import COMPILE_ARGS, CSRC_DIR, REPO_ROOT
+
 
 def main() -> None:
-    repo_root = Path(__file__).parent.parent.resolve()
-
-    # Always rebuild C++ extensions before generating compile_commands.json so
-    # the database reflects the current state of the code.
-    subprocess.run(
-        [sys.executable, "scripts/build_cpp_extensions.py", "build_ext", "--inplace"],
-        cwd=repo_root,
-        check=True,
-    )
-
     # Collect all include directories needed to compile the extension.
     # torch_include_paths() returns the torch headers, which already bundle
     # pybind11 under torch/include/pybind11/ — no separate pybind11 import needed.
-    include_flags: list[str] = []
-    for path in torch_include_paths():
-        include_flags.append(f"-I{path}")
+    include_flags: list[str] = [f"-I{path}" for path in torch_include_paths()]
     # Python C API headers (e.g. Python.h) required by pybind11.
     include_flags.append(f"-I{sysconfig.get_path('include')}")
 
-    cpp_dir = repo_root / "gigl" / "csrc"
-    cpp_sources = sorted(cpp_dir.rglob("*.cpp")) if cpp_dir.exists() else []
+    cpp_sources = sorted(CSRC_DIR.rglob("*.cpp")) if CSRC_DIR.exists() else []
     if not cpp_sources:
-        print("Warning: no .cpp files found under gigl/csrc/", file=sys.stderr)
+        print(f"Warning: no .cpp files found under {CSRC_DIR}", file=sys.stderr)
+
+    cxx_flags = " ".join(COMPILE_ARGS)
 
     # Each entry in compile_commands.json describes how one source file is compiled.
     # clang-tidy reads this to reproduce the exact compilation environment.
     commands: list[dict[str, str]] = [
         {
-            "directory": str(repo_root),
+            "directory": str(REPO_ROOT),
             "file": str(source),
-            "command": (
-                f"c++ -std=c++17 -Wall -Wextra "
-                f"{' '.join(include_flags)} "
-                f"-c {source}"
-            ),
+            "command": f"c++ {cxx_flags} {' '.join(include_flags)} -c {source}",
         }
         for source in cpp_sources
     ]
 
-    output = repo_root / "build" / "compile_commands.json"
+    output = REPO_ROOT / "build" / "compile_commands.json"
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(commands, indent=2))
     print(
