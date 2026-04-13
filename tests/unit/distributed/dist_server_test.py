@@ -6,6 +6,7 @@ from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
 )
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -263,6 +264,47 @@ class TestRemoteDataset(TestCase):
 
         self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
         self.assert_tensor_equality(rank_1_nodes, torch.tensor([1, 2]))
+
+    def test_get_node_ids_with_server_slice(self) -> None:
+        """Test get_node_ids supports contiguous server-side slicing."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+
+        sliced_nodes = server.get_node_ids(
+            FetchNodesRequest(
+                server_slice=ServerSlice(
+                    server_rank=0,
+                    start_numerator=1,
+                    end_numerator=2,
+                    denominator=2,
+                )
+            )
+        )
+
+        self.assert_tensor_equality(sliced_nodes, torch.arange(5, 10))
+
+    def test_get_node_ids_rejects_mixed_sharding_modes(self) -> None:
+        """Test get_node_ids rejects rank/world_size combined with server_slice."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+
+        with self.assertRaises(ValueError):
+            server.get_node_ids(
+                FetchNodesRequest(
+                    rank=0,
+                    world_size=2,
+                    server_slice=ServerSlice(
+                        server_rank=0,
+                        start_numerator=0,
+                        end_numerator=1,
+                        denominator=2,
+                    ),
+                )
+            )
 
     def test_get_node_ids_invalid_split(self) -> None:
         """Test get_node_ids raises ValueError with invalid split."""
@@ -533,6 +575,83 @@ class TestRemoteDataset(TestCase):
 
         # Negative labels should be None
         self.assertIsNone(neg_labels)
+
+    def test_get_ablp_input_with_server_slice(self) -> None:
+        """Test get_ablp_input computes labels only for the server-sliced anchors."""
+        create_test_process_group()
+        positive_labels = {
+            0: [0, 1],
+            1: [1, 2],
+            2: [2, 3],
+            3: [3, 4],
+            4: [4, 0],
+        }
+        negative_labels = {
+            0: [2],
+            1: [3],
+            2: [4],
+            3: [0],
+            4: [1],
+        }
+
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=[0, 1, 2, 3],
+            val_node_ids=[4],
+            test_node_ids=[],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+        server = dist_server.DistServer(dataset)
+
+        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+            FetchABLPInputRequest(
+                split="train",
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+                server_slice=ServerSlice(
+                    server_rank=0,
+                    start_numerator=1,
+                    end_numerator=2,
+                    denominator=2,
+                ),
+            )
+        )
+
+        self.assert_tensor_equality(anchor_nodes, torch.tensor([2, 3]))
+        self.assert_tensor_equality(pos_labels, torch.tensor([[2, 3], [3, 4]]), dim=1)
+        assert neg_labels is not None
+        self.assert_tensor_equality(neg_labels, torch.tensor([[4], [0]]))
+
+    def test_get_ablp_input_rejects_mixed_sharding_modes(self) -> None:
+        """Test get_ablp_input rejects rank/world_size combined with server_slice."""
+        create_test_process_group()
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels={0: [0], 1: [0], 2: [0]},
+            negative_labels=None,
+            train_node_ids=[0],
+            val_node_ids=[1],
+            test_node_ids=[2],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+        server = dist_server.DistServer(dataset)
+
+        with self.assertRaises(ValueError):
+            server.get_ablp_input(
+                FetchABLPInputRequest(
+                    split="train",
+                    rank=0,
+                    world_size=1,
+                    node_type=USER,
+                    supervision_edge_type=USER_TO_STORY,
+                    server_slice=ServerSlice(
+                        server_rank=0,
+                        start_numerator=0,
+                        end_numerator=1,
+                        denominator=1,
+                    ),
+                )
+            )
 
 
 if __name__ == "__main__":

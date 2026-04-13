@@ -39,6 +39,7 @@ from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
 )
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import shard_nodes_by_process
@@ -283,7 +284,7 @@ class DistServer:
 
         Args:
             request: The node-fetch request, including split, node type,
-                and round-robin rank/world_size.
+                and either round-robin rank/world_size or a contiguous slice.
 
         Returns:
             The node ids.
@@ -306,6 +307,7 @@ class DistServer:
             node_type=request.node_type,
             rank=request.rank,
             world_size=request.world_size,
+            server_slice=request.server_slice,
         )
 
     def _get_node_ids(
@@ -314,6 +316,7 @@ class DistServer:
         node_type: Optional[NodeType],
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
+        server_slice: Optional[ServerSlice] = None,
     ) -> torch.Tensor:
         """Core implementation for fetching node IDs by split, type, and sharding.
 
@@ -366,6 +369,8 @@ class DistServer:
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
             )
 
+        if server_slice is not None:
+            return server_slice.slice_tensor(nodes)
         if rank is not None and world_size is not None:
             return shard_nodes_by_process(nodes, rank, world_size)
         return nodes
@@ -420,6 +425,7 @@ class DistServer:
             node_type=request.node_type,
             rank=request.rank,
             world_size=request.world_size,
+            server_slice=request.server_slice,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
