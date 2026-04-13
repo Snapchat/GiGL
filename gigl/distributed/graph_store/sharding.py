@@ -1,104 +1,29 @@
-"""Graph-store-specific sharding helpers."""
+"""Graph-store-specific sharding helpers.
+
+Provides :class:`ServerSlice` and :func:`compute_server_assignments` which
+implement contiguous server-to-compute-node assignment for graph-store
+fetch operations.
+
+Storage servers are assigned to compute nodes in contiguous blocks.
+Each compute node fetches *all* data from its assigned server(s) and
+receives empty tensors for unassigned ones.
+
+If there are more servers than compute nodes, the extra servers are
+divided among compute nodes and each server's data is sliced
+proportionally (e.g. with 3 servers and 2 compute nodes, one compute
+node receives the first half of the middle server's data and the other
+receives the second half).
+If there are more compute nodes than servers, multiple compute nodes
+share a single server, each receiving a proportional slice of that
+server's data.
+
+When ``rank`` and ``world_size`` are both ``None``, all data is returned
+unsharded from every storage server.
+"""
 
 from dataclasses import dataclass
-from enum import Enum
 
 import torch
-
-
-# TOOD(kmonte): Look into deprecating this in favor of always using CONTIGUOUS.
-class ShardStrategy(Enum):
-    """Strategies for splitting remote graph-store inputs across compute nodes.
-
-    When fetching node IDs (or ABLP input) from storage servers, the shard
-    strategy controls how data is divided among compute nodes.
-
-    ``CONTIGUOUS`` is generally recommended as it reduces per-server load and
-    increases cluster stability.
-    ``ROUND_ROBIN`` is the default as it supports ``None`` for rank/world_size
-    (i.e. fetching all data unsharded).
-
-    Suppose we have 2 storage nodes and 2 compute nodes, with 16 total nodes.
-    Nodes are partitioned across storage nodes, with splits defined as::
-
-        Storage rank 0: [0, 1, 2, 3, 4, 5, 6, 7]
-            train=[0, 1, 2, 3], val=[4, 5], test=[6, 7]
-        Storage rank 1: [8, 9, 10, 11, 12, 13, 14, 15]
-            train=[8, 9, 10, 11], val=[12, 13], test=[14, 15]
-
-    **ROUND_ROBIN** — Each storage server independently shards its own nodes
-    across the requested ``world_size``. Every compute node contacts every
-    storage server and receives an interleaved slice::
-
-        # All training nodes, sharded across 2 compute nodes (round-robin):
-        >>> dataset.fetch_node_ids(rank=0, world_size=2, split="train")
-        {
-            0: tensor([0, 2]),   # Even-indexed training nodes from storage 0
-            1: tensor([8, 10])   # Even-indexed training nodes from storage 1
-        }
-        >>> dataset.fetch_node_ids(rank=1, world_size=2, split="train")
-        {
-            0: tensor([1, 3]),   # Odd-indexed training nodes from storage 0
-            1: tensor([9, 11])   # Odd-indexed training nodes from storage 1
-        }
-
-    Both strategies also support ``split=None``, which returns all nodes
-    (train + val + test) from each storage server::
-
-        # Round-robin, all nodes (no split), sharded across 2 compute nodes:
-        >>> dataset.fetch_node_ids(rank=0, world_size=2)
-        {
-            0: tensor([0, 2, 4, 6]),  # Even-indexed nodes from storage 0
-            1: tensor([8, 10, 12, 14])  # Even-indexed nodes from storage 1
-        }
-
-    **CONTIGUOUS** — Storage servers are assigned to compute nodes in
-    contiguous blocks. Each compute node fetches *all* data from its
-    assigned server(s) and receives empty tensors for unassigned ones.
-
-    If there are more servers than compute nodes, the extra servers are
-    divided among compute nodes and each server's data is sliced
-    proportionally (e.g. with 3 servers and 2 compute nodes, one compute
-    node receives the first half of the middle server's data and the other
-    receives the second half).
-    If there are more compute nodes than servers, multiple compute nodes
-    share a single server, each receiving a proportional slice of that
-    server's data::
-
-        # All training nodes, sharded across 2 compute nodes (contiguous):
-        >>> dataset.fetch_node_ids(rank=0, world_size=2, split="train",
-        ...     shard_strategy=ShardStrategy.CONTIGUOUS)
-        {
-            0: tensor([0, 1, 2, 3]),  # All training nodes from storage 0
-            1: tensor([])              # Nothing from storage 1
-        }
-        >>> dataset.fetch_node_ids(rank=1, world_size=2, split="train",
-        ...     shard_strategy=ShardStrategy.CONTIGUOUS)
-        {
-            0: tensor([]),             # Nothing from storage 0
-            1: tensor([8, 9, 10, 11]) # All training nodes from storage 1
-        }
-
-        # With 3 storage nodes and 2 compute nodes, server 1 is fractionally split:
-        >>> dataset.fetch_node_ids(rank=0, world_size=2, split="train",
-        ...     shard_strategy=ShardStrategy.CONTIGUOUS)
-        {
-            0: tensor([0, 1, 2, 3]),       # All of storage 0
-            1: tensor([8, 9]),             # First half of storage 1
-            2: tensor([])                  # Nothing from storage 2
-        }
-
-        # Contiguous, all nodes (no split), sharded across 2 compute nodes:
-        >>> dataset.fetch_node_ids(rank=0, world_size=2,
-        ...     shard_strategy=ShardStrategy.CONTIGUOUS)
-        {
-            0: tensor([0, 1, 2, 3, 4, 5, 6, 7]),  # All nodes from storage 0
-            1: tensor([])                            # Nothing from storage 1
-        }
-    """
-
-    ROUND_ROBIN = "round_robin"
-    CONTIGUOUS = "contiguous"
 
 
 @dataclass(frozen=True)
