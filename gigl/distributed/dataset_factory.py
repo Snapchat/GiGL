@@ -606,7 +606,7 @@ def build_dataset_from_task_config_uri(
     )
 
     # Need to do this "backwards" so the parent class can be defined first.
-    # Otherwise, mypy complains that:
+    # Otherwise, the type checker complains that:
     # "expression has type "type[DistPartitioner]", variable has type "type[DistRangePartitioner]"
     if not should_use_range_partitioning:
         partitioner_class = DistPartitioner

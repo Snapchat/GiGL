@@ -268,7 +268,7 @@ def _build_job_config(
         if vertex_ai_resource_config.timeout
         else None,
         # This should be `aiplatform.gapic.Scheduling.Strategy[inferencer_resource_config.scheduling_strategy]`
-        # But mypy complains otherwise...
+        # But the type checker complains otherwise...
         # gigl/src/inference/v2/glt_inferencer.py:124: error: The type "type[Strategy]" is not generic and not indexable  [misc]
         # TODO(kmonte): Fix this
         scheduling_strategy=getattr(

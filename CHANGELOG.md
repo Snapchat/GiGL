@@ -37,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   in https://github.com/Snapchat/GiGL/pull/414
   - **tl;dr** You will need to remove your old conda environments `conda remove --name gnn --all -y`, run
     `make install_dev_deps` from inside GiGL directory. Following you will need to do `uv run python -m ...` or
-    `uv run black` (same with all other python tools i.e. `mypy`) instead of calling `python -m ...` or `black`
+    `uv run black` (same with all other python tools i.e. `ty`) instead of calling `python -m ...` or `black`
     directly.
   - We eliminate the need for using pip to manage/install deps; we also eliminate the need to maintain different
     requirements files, there is just one now `uv.lock`

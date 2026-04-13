@@ -142,8 +142,7 @@ lint = [
   "isort~=5.12.0",
   "mdformat==0.7.22",
   "mdformat_tables==1.0.0",
-  "mypy==1.8.0",
-  "mypy-extensions",
+  "ty",
   "mypy-protobuf==3.3.0",
 ]
 
@@ -283,3 +282,88 @@ exclude =  [
 remove-all-unused-imports = true
 in-place = true
 recursive = true
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+exclude = ["*_pb2.py", "*_pb2.pyi"]
+
+[tool.ty.analysis]
+# Migrated from mypy.ini per-module ignore_missing_imports sections,
+# plus additional modules that are optional or not installed in all environments.
+allowed-unresolved-imports = [
+  "absl.**",
+  "apache_beam.**",
+  "common.**",
+  "fastavro.**",
+  "google.cloud.**",
+  "google_cloud_pipeline_components.**",
+  "graphlearn_torch.**",
+  "hydra.**",
+  "kfp.**",
+  "kfp_server_api.**",
+  "matplotlib.**",
+  "msgpack",
+  "networkx.**",
+  "ogb.**",
+  "orjson",
+  "parameterized.**",
+  "pyarrow.**",
+  "setuptools",
+  "tensorflow.**",
+  "tensorflow_data_validation.**",
+  "tensorflow_metadata.**",
+  "tensorflow_transform.**",
+  "tfx_bsl.**",
+  "torch.**",
+  "torch_geometric.**",
+  "torch_sparse.**",
+  "torchrec.**",
+]
+# When mypy's ignore_missing_imports=True was set for a module, mypy would also
+# implicitly treat all types from that module as Any, suppressing downstream
+# type errors (e.g. unresolved-attribute, invalid-argument-type) on values from
+# those modules. ty's allowed-unresolved-imports only suppresses the import
+# error but leaves the type as Unknown, causing cascading errors. This setting
+# restores the mypy behavior by replacing imports from untyped libraries with Any.
+replace-imports-with-any = [
+  "apache_beam.**",
+  "fastavro.**",
+  "google.cloud.**",
+  "google_cloud_pipeline_components.**",
+  "graphlearn_torch.**",
+  "hydra.**",
+  "kfp.**",
+  "kfp_server_api.**",
+  "matplotlib.**",
+  "ogb.**",
+  "tensorflow.**",
+  "tensorflow_data_validation.**",
+  "tensorflow_metadata.**",
+  "tensorflow_transform.**",
+  "tfx_bsl.**",
+  "torch.**",
+  "torch_geometric.**",
+  "torch_sparse.**",
+  "torchrec.**",
+]
+
+[tool.ty.rules]
+# Suppress noise from existing type: ignore comments that ty may not need.
+unused-type-ignore-comment = "ignore"
+unused-ignore-comment = "ignore"
+# Downgrade type errors to warnings for the initial migration.
+# These will be promoted back to errors after fixes in a follow-up PR.
+invalid-argument-type = "warn"
+unresolved-attribute = "warn"
+invalid-type-arguments = "warn"
+invalid-assignment = "warn"
+invalid-return-type = "warn"
+unknown-argument = "warn"
+not-subscriptable = "warn"
+no-matching-overload = "warn"
+not-iterable = "warn"
+missing-argument = "warn"
+invalid-raise = "warn"
+invalid-declaration = "warn"

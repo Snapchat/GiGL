@@ -185,7 +185,7 @@ class TestVertexAILauncher(TestCase):
             process_command.split(),
         )
         self.assertIsNotNone(compute_job_config.args)
-        assert compute_job_config.args is not None  # Type narrowing for mypy
+        assert compute_job_config.args is not None  # Type narrowing for the type checker
         self.assertIn(f"--job_name={job_name}", compute_job_config.args)
         self.assertIn(
             f"--learning_rate={process_runtime_args['learning_rate']}",
@@ -298,7 +298,7 @@ class TestVertexAILauncher(TestCase):
         # Verify command and args
         self.assertEqual(job_config.command, process_command.split())
         self.assertIsNotNone(job_config.args)
-        assert job_config.args is not None  # Type narrowing for mypy
+        assert job_config.args is not None  # Type narrowing for the type checker
         self.assertIn(f"--job_name={job_name}", job_config.args)
         self.assertIn(f"--task_config_uri={task_config_uri}", job_config.args)
         self.assertIn(f"--resource_config_uri={resource_config_uri}", job_config.args)

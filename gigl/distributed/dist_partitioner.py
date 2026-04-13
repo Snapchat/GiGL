@@ -1268,7 +1268,7 @@ class DistPartitioner:
         del label_edge_index
 
         if is_positive:
-            # This assert is added to pass mypy type check, in practice we will not see this fail
+            # This assert is added to pass the type checker, in practice we will not see this fail
             assert (
                 self._positive_label_edge_index is not None
             ), "Must register positive labels prior to partitioning them"
@@ -1277,7 +1277,7 @@ class DistPartitioner:
             if len(self._positive_label_edge_index) == 0:
                 self._positive_label_edge_index = None
         else:
-            # This assert is added to pass mypy type check, in practice we will not see this fail
+            # This assert is added to pass the type checker, in practice we will not see this fail
             assert (
                 self._negative_label_edge_index is not None
             ), "Must register negative labels prior to partitioning them"
