@@ -16,7 +16,7 @@ from gigl.distributed.graph_store.messages import (
     FetchNodesRequest,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.graph_store.sharding import ServerSlice, ShardStrategy
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -705,8 +705,8 @@ class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):
             )
 
 
-class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
-    """Tests for fetch_node_ids and fetch_ablp_input with ShardStrategy.CONTIGUOUS."""
+class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
+    """Tests for fetch_node_ids and fetch_ablp_input with contiguous server assignments."""
 
     def _make_rank_aware_async_mock(
         self,
@@ -782,7 +782,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
 
             # Rank 0: gets all of server 0, empty from server 1
             result = ds.fetch_node_ids(
-                rank=0, world_size=2, shard_strategy=ShardStrategy.CONTIGUOUS
+                rank=0,
+                world_size=2,
             )
             self.assert_tensor_equality(result[0], torch.arange(10))
             self.assertEqual(result[1].numel(), 0)
@@ -808,7 +809,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             # Rank 1: empty from server 0, gets all of server 1
             captured_requests.clear()
             result = ds.fetch_node_ids(
-                rank=1, world_size=2, shard_strategy=ShardStrategy.CONTIGUOUS
+                rank=1,
+                world_size=2,
             )
             self.assertEqual(result[0].numel(), 0)
             self.assert_tensor_equality(result[1], torch.arange(10, 20))
@@ -849,7 +851,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
 
             # Rank 0: all of server 0, first half of server 1, nothing from server 2
             result = ds.fetch_node_ids(
-                rank=0, world_size=2, shard_strategy=ShardStrategy.CONTIGUOUS
+                rank=0,
+                world_size=2,
             )
             self.assert_tensor_equality(result[0], torch.arange(10))
             self.assert_tensor_equality(result[1], torch.arange(10, 15))
@@ -889,7 +892,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
             # Rank 1: nothing from server 0, second half of server 1, all of server 2
             captured_requests.clear()
             result = ds.fetch_node_ids(
-                rank=1, world_size=2, shard_strategy=ShardStrategy.CONTIGUOUS
+                rank=1,
+                world_size=2,
             )
             self.assertEqual(result[0].numel(), 0)
             self.assert_tensor_equality(result[1], torch.arange(15, 20))
@@ -944,13 +948,12 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 rank=0,
                 world_size=2,
                 split="train",
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             self.assert_tensor_equality(result[0], torch.tensor([0, 1, 2, 3]))
             self.assertEqual(result[1].numel(), 0)
 
-    def test_contiguous_requires_rank_and_world_size(self) -> None:
-        """CONTIGUOUS without rank/world_size raises ValueError."""
+    def test_requires_both_rank_and_world_size(self) -> None:
+        """Providing only one of rank/world_size raises ValueError."""
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=2, num_compute_nodes=2
         )
@@ -958,21 +961,15 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
 
         with self.assertRaises(ValueError):
             remote_dataset.fetch_node_ids(
-                shard_strategy=ShardStrategy.CONTIGUOUS,
-            )
-        with self.assertRaises(ValueError):
-            remote_dataset.fetch_node_ids(
                 rank=0,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
         with self.assertRaises(ValueError):
             remote_dataset.fetch_node_ids(
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
 
-    def test_contiguous_labeled_homogeneous_auto_inference(self) -> None:
-        """CONTIGUOUS strategy auto-infers DEFAULT_HOMOGENEOUS_NODE_TYPE for labeled homogeneous datasets."""
+    def test_labeled_homogeneous_auto_inference(self) -> None:
+        """Auto-infers DEFAULT_HOMOGENEOUS_NODE_TYPE for labeled homogeneous datasets."""
         _create_server_with_splits(
             edge_indices={
                 DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
@@ -993,7 +990,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 rank=0,
                 world_size=1,
                 split="train",
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             self.assert_tensor_equality(
                 result[0],
@@ -1030,7 +1026,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 split="train",
                 rank=0,
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             ablp_0 = result[0]
             self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1, 2]))
@@ -1070,7 +1065,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 split="train",
                 rank=1,
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             ablp_0 = result[0]
             self.assertEqual(ablp_0.anchor_nodes.numel(), 0)
@@ -1138,7 +1132,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 split="train",
                 rank=0,
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             ablp_0 = result[0]
             self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1, 2, 3]))
@@ -1198,7 +1191,6 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 split="train",
                 rank=1,
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
             self.assertEqual(result[0].anchor_nodes.numel(), 0)
 
@@ -1254,8 +1246,8 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
                 ],
             )
 
-    def test_ablp_contiguous_requires_rank_and_world_size(self) -> None:
-        """ABLP CONTIGUOUS without rank/world_size raises ValueError."""
+    def test_ablp_requires_both_rank_and_world_size(self) -> None:
+        """ABLP with only one of rank/world_size raises ValueError."""
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=2, num_compute_nodes=2
         )
@@ -1264,19 +1256,12 @@ class TestRemoteDistDatasetContiguous(RemoteDistDatasetTestBase):
         with self.assertRaises(ValueError):
             remote_dataset.fetch_ablp_input(
                 split="train",
-                shard_strategy=ShardStrategy.CONTIGUOUS,
-            )
-        with self.assertRaises(ValueError):
-            remote_dataset.fetch_ablp_input(
-                split="train",
                 rank=0,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
         with self.assertRaises(ValueError):
             remote_dataset.fetch_ablp_input(
                 split="train",
                 world_size=2,
-                shard_strategy=ShardStrategy.CONTIGUOUS,
             )
 
 
