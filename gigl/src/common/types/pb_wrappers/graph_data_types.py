@@ -87,7 +87,7 @@ class EdgePbWrapper:
                 )
             )
             object.__setattr__(self, _HASH_CACHE_KEY, h)
-            return cast(int, h)
+            return h
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -159,7 +159,7 @@ class NodePbWrapper:
                 )
             )
             object.__setattr__(self, _HASH_CACHE_KEY, h)
-            return cast(int, h)
+            return h
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -335,7 +335,7 @@ class GraphPbWrapper:
             )
             h = hash(sorted_graph_pb_repr)
             object.__setattr__(self, _HASH_CACHE_KEY, h)
-            return cast(int, h)
+            return h
 
     def __getstate__(self):
         state = self.__dict__.copy()

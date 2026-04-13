@@ -296,7 +296,7 @@ class PreprocessedMetadataPbWrapper:
         feature_to_vocab_list_map = {}
         for asset_file_path in assets_file_paths:
             feature_key = asset_file_path.uri.split("/")[-1]
-            f = read_file_fn(asset_file_path)
+            f = read_file_fn(asset_file_path)  # ty: ignore[invalid-argument-type]
             vocab_list = [line.decode().rstrip() for line in f]
             feature_to_vocab_list_map[feature_key] = vocab_list
             f.close()

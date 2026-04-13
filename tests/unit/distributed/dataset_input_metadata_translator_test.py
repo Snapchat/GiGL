@@ -266,7 +266,7 @@ class TranslatorTestCase(TestCase):
             if isinstance(
                 serialized_graph_metadata.positive_label_entity_info, abc.Mapping
             ):
-                serialized_positive_label_info_iterable = list(
+                serialized_positive_label_info_iterable = list(  # type: ignore
                     serialized_graph_metadata.positive_label_entity_info.values()
                 )
             elif isinstance(
@@ -360,7 +360,7 @@ class TranslatorTestCase(TestCase):
             if isinstance(
                 serialized_graph_metadata.negative_label_entity_info, abc.Mapping
             ):
-                serialized_negative_label_info_iterable = list(
+                serialized_negative_label_info_iterable = list(  # type: ignore
                     serialized_graph_metadata.negative_label_entity_info.values()
                 )
             elif isinstance(

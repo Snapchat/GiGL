@@ -411,7 +411,7 @@ def build_dataset(
         node_world_size = torch.distributed.get_world_size()
         node_rank = torch.distributed.get_rank()
         master_ip_address = get_internal_ip_from_master_node()
-        master_dataset_building_ports = tuple(get_free_ports_from_master_node(num_ports=2))  # type: ignore[assignment]
+        master_dataset_building_ports = tuple(get_free_ports_from_master_node(num_ports=2))  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(

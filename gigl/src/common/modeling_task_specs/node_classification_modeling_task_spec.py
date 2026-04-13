@@ -160,7 +160,8 @@ class NodeClassificationModelingTaskSpec(
                 out = self.model(inputs)
                 # Figure out why below is a typing issue
                 loss = self._train_loss_fn(
-                    input=out[root_node_indices], target=root_node_labels
+                    input=out[root_node_indices],  # ty: ignore[unknown-argument]
+                    target=root_node_labels,  # ty: ignore[unknown-argument]
                 )  # type: ignore
                 loss.backward()
                 self._optimizer.step()

@@ -594,6 +594,7 @@ class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):
 
         node_types = remote_dataset.fetch_node_types()
         self.assertIsNotNone(node_types)
+        assert node_types is not None  # Type narrowing for the type checker
         self.assertIn(DEFAULT_HOMOGENEOUS_NODE_TYPE, node_types)
 
     def test_fetch_node_ids_auto_detects_default_node_type(self):
@@ -1371,7 +1372,7 @@ class TestCallFuncOnServer(RemoteDistDatasetTestBase):
 
     def test_non_callable_returns_none(self):
         """Test that _call_func_on_server returns None for non-callable input."""
-        result: None = _call_func_on_server("not_a_function")  # type: ignore[arg-type]
+        result: None = _call_func_on_server("not_a_function")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         self.assertIsNone(result)
 
     def test_falls_back_for_non_server_function(self):

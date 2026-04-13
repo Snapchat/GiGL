@@ -275,7 +275,7 @@ def message_passing_to_positive_label(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
-        return edge_type
+        return edge_type  # ty: ignore[invalid-return-type]
 
 
 def message_passing_to_negative_label(
@@ -299,7 +299,7 @@ def message_passing_to_negative_label(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
-        return edge_type
+        return edge_type  # ty: ignore[invalid-return-type]
 
 
 def is_label_edge_type(
@@ -336,7 +336,11 @@ def label_edge_type_to_message_passing_edge_type(
     if isinstance(label_edge_type, EdgeType):
         return EdgeType(label_edge_type[0], Relation(relation), label_edge_type[2])
     else:
-        return (label_edge_type[0], relation, label_edge_type[2])
+        return (
+            label_edge_type[0],
+            relation,
+            label_edge_type[2],
+        )  # ty: ignore[invalid-return-type]
 
 
 def select_label_edge_types(
@@ -423,7 +427,7 @@ def to_heterogeneous_node(
     if x is None:
         return None
     if isinstance(x, dict):
-        return x
+        return x  # ty: ignore[invalid-return-type]
     return {DEFAULT_HOMOGENEOUS_NODE_TYPE: x}
 
 
@@ -457,7 +461,7 @@ def to_heterogeneous_edge(
     if x is None:
         return None
     if isinstance(x, dict):
-        return x
+        return x  # ty: ignore[invalid-return-type]
     return {DEFAULT_HOMOGENEOUS_EDGE_TYPE: x}
 
 
@@ -525,4 +529,8 @@ def reverse_edge_type(edge_type: _EdgeType) -> _EdgeType:
     if isinstance(edge_type, EdgeType):
         return EdgeType(edge_type[2], edge_type[1], edge_type[0])
     else:
-        return (edge_type[2], edge_type[1], edge_type[0])
+        return (
+            edge_type[2],
+            edge_type[1],
+            edge_type[0],
+        )  # ty: ignore[invalid-return-type]

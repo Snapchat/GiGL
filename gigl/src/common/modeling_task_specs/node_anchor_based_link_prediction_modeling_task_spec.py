@@ -378,7 +378,10 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
 
             self.model.train()
 
-            for batch_index, (main_batch, random_negative_batch) in enumerate(
+            for batch_index, (
+                main_batch,
+                random_negative_batch,
+            ) in enumerate(  # ty: ignore[not-iterable]
                 zip(main_data_loader, random_negative_data_loader), start=1  # type: ignore
             ):
                 batch_st = time()

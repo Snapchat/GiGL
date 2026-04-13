@@ -213,10 +213,14 @@ class FileLoader:
             filelike.seek(ptr)  # Reset the file pointer after reading
             if isinstance(first, bytes):
                 with open(uri.uri, "wb") as dest:
-                    shutil.copyfileobj(filelike, dest)
+                    shutil.copyfileobj(
+                        filelike, dest  # ty: ignore[invalid-argument-type]
+                    )
             else:
                 with open(uri.uri, "w", encoding="utf-8") as dest:
-                    shutil.copyfileobj(filelike, dest)
+                    shutil.copyfileobj(
+                        filelike, dest  # ty: ignore[invalid-argument-type]
+                    )
 
         else:
             raise NotImplementedError(
@@ -263,12 +267,12 @@ class FileLoader:
         _uri = UriFactory.create_uri(uri=uri) if isinstance(uri, str) else uri
 
         exists: bool
-        if type(_uri) == GcsUri:
+        if isinstance(_uri, GcsUri):
             exists = self.__gcs_utils.does_gcs_file_exist(gcs_path=_uri)
-        elif type(_uri) == LocalUri:
-            exists = does_path_exist(cast(LocalUri, _uri))
-        elif type(_uri) == HttpUri:
-            exists = HttpUtils.does_http_path_resolve(http_path=cast(HttpUri, _uri))
+        elif isinstance(_uri, LocalUri):
+            exists = does_path_exist(_uri)
+        elif isinstance(_uri, HttpUri):
+            exists = HttpUtils.does_http_path_resolve(http_path=_uri)
         else:
             raise NotImplementedError(f"{self.__unsupported_uri_message} : {_uri}")
         return exists

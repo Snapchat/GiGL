@@ -145,21 +145,27 @@ class DistRandomPartitionerTestCase(TestCase):
             if isinstance(output_edge_partition_book, abc.Mapping):
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
                     entity_iterable.append(
-                        (
+                        (  # ty: ignore[invalid-argument-type]
                             edge_type,
-                            output_edge_partition_book[edge_type]
+                            output_edge_partition_book[
+                                edge_type
+                            ]  # ty: ignore[invalid-argument-type]
                             if edge_type in output_edge_partition_book
                             else None,
-                            output_edge_index[edge_type],
+                            output_edge_index[  # ty: ignore[invalid-argument-type]
+                                edge_type
+                            ],
                         )
                     )
             elif output_edge_partition_book is None:
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
                     entity_iterable.append(
-                        (
+                        (  # ty: ignore[invalid-argument-type]
                             edge_type,
                             None,
-                            output_edge_index[edge_type],
+                            output_edge_index[  # ty: ignore[invalid-argument-type]
+                                edge_type
+                            ],
                         )
                     )
             else:
@@ -310,7 +316,9 @@ class DistRandomPartitionerTestCase(TestCase):
             assert isinstance(
                 output_graph, abc.Mapping
             ), f"Homogeneous output detected from node {entity_name} for heterogeneous input"
-            entity_iterable = list(output_graph.items())
+            entity_iterable = list(
+                output_graph.items()
+            )  # ty: ignore[invalid-assignment]
         else:
             assert isinstance(
                 output_graph, GraphPartitionData
@@ -318,7 +326,7 @@ class DistRandomPartitionerTestCase(TestCase):
             entity_iterable = [(USER_TO_USER_EDGE_TYPE, output_graph)]
 
         for edge_type, graph in entity_iterable:
-            node_data: Optional[FeaturePartitionData]
+            node_data: Optional[FeaturePartitionData]  # ty: ignore[invalid-declaration]
             node_ids: torch.Tensor
             if should_assign_edges_by_src_node:
                 target_node_type = edge_type.src_node_type
@@ -335,7 +343,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 assert isinstance(
                     output_node_data, abc.Mapping
                 ), f"Found homogeneous node {entity_name} for heterogeneous input"
-                node_data = output_node_data[target_node_type]
+                node_data = output_node_data[  # ty: ignore[invalid-argument-type]
+                    target_node_type
+                ]  # type: ignore[invalid-argument-type]
             else:
                 assert isinstance(
                     output_node_data, FeaturePartitionData
@@ -346,7 +356,7 @@ class DistRandomPartitionerTestCase(TestCase):
             # should both be equal in number across all ranks, meaning that node data are also equal in number.
             # This is because each node id is the source node of exactly one edge in the mocked graph.
             self.assertEqual(
-                node_data.feats.size(0),
+                node_data.feats.size(0),  # ty: ignore[unresolved-attribute]
                 num_nodes_on_rank,
             )
             # We expect the node ids on the current rank from the graph to be the same as the node ids on the current rank from the data.
@@ -355,35 +365,41 @@ class DistRandomPartitionerTestCase(TestCase):
             if is_range_based_partition:
                 node_data_ids = node_ids
             else:
-                assert node_data.ids is not None
-                node_data_ids = node_data.ids
+                assert node_data.ids is not None  # ty: ignore[unresolved-attribute]
+                node_data_ids = node_data.ids  # ty: ignore[unresolved-attribute]
                 self.assert_tensor_equality(
-                    tensor_a=node_ids, tensor_b=node_data.ids, dim=0
+                    tensor_a=node_ids,
+                    tensor_b=node_data.ids,  # ty: ignore[unresolved-attribute]
+                    dim=0,
                 )
 
             # Validate dimensions and values based on whether this is labels or features
             if entity_name == "labels":
                 # We expect the shape of the node labels to have one label per node
                 self.assertEqual(
-                    node_data.feats.size(1),
+                    node_data.feats.size(1),  # ty: ignore[unresolved-attribute]
                     1,
                 )
                 # We expect the value of each node label to be equal to its corresponding node id on the currently mocked input
                 for idx, n_id in enumerate(node_data_ids):
                     self.assert_tensor_equality(
-                        tensor_a=node_data.feats[idx],
+                        tensor_a=node_data.feats[  # ty: ignore[unresolved-attribute]
+                            idx
+                        ],
                         tensor_b=torch.tensor([n_id], dtype=torch.int64),
                     )
             else:
                 # We expect the shape of the node features to be equal to the expected node feature dimension
                 self.assertEqual(
-                    node_data.feats.size(1),
+                    node_data.feats.size(1),  # ty: ignore[unresolved-attribute]
                     NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
                 )
                 # We expect the value of each node feature to be equal to its corresponding node id / 10 on the currently mocked input
                 for idx, n_id in enumerate(node_data_ids):
                     self.assert_tensor_equality(
-                        tensor_a=node_data.feats[idx],
+                        tensor_a=node_data.feats[  # ty: ignore[unresolved-attribute]
+                            idx
+                        ],
                         tensor_b=torch.ones(
                             NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
                             dtype=torch.float32,
@@ -438,11 +454,13 @@ class DistRandomPartitionerTestCase(TestCase):
             assert isinstance(
                 output_graph, abc.Mapping
             ), "Homogeneous output detected from graph for heterogeneous input"
-            entity_iterable = [
+            entity_iterable = [  # ty: ignore[invalid-assignment]
                 (
                     edge_type,
-                    output_edge_feat.get(edge_type, None),
-                    output_graph[edge_type],
+                    output_edge_feat.get(
+                        edge_type, None
+                    ),  # ty: ignore[no-matching-overload]
+                    output_graph[edge_type],  # ty: ignore[invalid-argument-type]
                 )
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
             ]

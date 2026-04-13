@@ -41,7 +41,7 @@ def get_current_jar_file(directory: LocalUri) -> LocalUri:
     if not list_of_files:
         raise FileNotFoundError(f"No .jar file found in: {directory.uri}")
     latest_file = max(list_of_files, key=os.path.getctime)
-    return LocalUri(latest_file)
+    return LocalUri(str(latest_file))
 
 
 def get_jar_file_uri(component: GiGLComponents, use_spark35=False) -> LocalUri:

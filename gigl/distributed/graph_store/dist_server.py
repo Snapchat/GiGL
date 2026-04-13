@@ -569,7 +569,7 @@ class DistServer:
         buffer = self._msg_buffer_pool.get(producer_id, None)
         while True:
             try:
-                msg = buffer.recv(timeout_ms=500)
+                msg = buffer.recv(timeout_ms=500)  # ty: ignore[unresolved-attribute]
                 return msg, False
             except QueueTimeoutError as e:
                 if producer.is_all_sampling_completed():
@@ -678,10 +678,10 @@ def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R
         logging.warning(
             f"'_call_func_on_server': receive a non-callable " f"function target {func}"
         )
-        return None
+        return None  # ty: ignore[invalid-return-type]
 
     server = get_server()
-    if hasattr(server, func.__name__):
+    if hasattr(server, func.__name__):  # ty: ignore[unresolved-attribute]
         # NOTE: method does not respect inheritance.
         # `func` is the full name of the function, e.g. gigl.distributed.graph_store.dist_server.DistServer.get_edge_dir
         # And so if something subclasses DistServer, the *base* class method will be called, not the subclass method.

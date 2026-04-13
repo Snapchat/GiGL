@@ -482,9 +482,11 @@ class DistDataset(glt.distributed.DistDataset):
                         )
                 else:
                     train_nodes, val_nodes, test_nodes = splits
-                self._num_train = train_nodes.numel()
-                self._num_val = val_nodes.numel()
-                self._num_test = test_nodes.numel()
+                self._num_train = (
+                    train_nodes.numel()  # ty: ignore[unresolved-attribute]
+                )
+                self._num_val = val_nodes.numel()  # ty: ignore[unresolved-attribute]
+                self._num_test = test_nodes.numel()  # ty: ignore[unresolved-attribute]
                 self._node_ids = _append_non_split_node_ids(
                     train_nodes, val_nodes, test_nodes, node_ids_on_machine
                 )
