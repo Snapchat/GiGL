@@ -281,6 +281,48 @@ class RemoteDistDataset:
         Returns:
             A dict mapping storage rank to node ids.
 
+        Example:
+            Suppose we have 2 storage nodes and 2 compute nodes, with 16 total
+            nodes. Nodes are partitioned across storage nodes, with splits
+            defined as::
+
+                Storage rank 0: [0, 1, 2, 3, 4, 5, 6, 7]
+                    train=[0, 1, 2, 3], val=[4, 5], test=[6, 7]
+                Storage rank 1: [8, 9, 10, 11, 12, 13, 14, 15]
+                    train=[8, 9, 10, 11], val=[12, 13], test=[14, 15]
+
+            Get all nodes (no split filtering, no sharding)::
+
+                >>> dataset.fetch_node_ids()
+                {
+                    0: tensor([0, 1, 2, 3, 4, 5, 6, 7]),
+                    1: tensor([8, 9, 10, 11, 12, 13, 14, 15]),
+                }
+
+            Shard training nodes across 2 compute nodes (contiguous — each rank
+            gets entire servers)::
+
+                >>> dataset.fetch_node_ids(rank=0, world_size=2, split="train")
+                {
+                    0: tensor([0, 1, 2, 3]),  # All training nodes from storage 0
+                    1: tensor([]),             # Nothing from storage 1
+                }
+                >>> dataset.fetch_node_ids(rank=1, world_size=2, split="train")
+                {
+                    0: tensor([]),             # Nothing from storage 0
+                    1: tensor([8, 9, 10, 11]), # All training nodes from storage 1
+                }
+
+            With 3 storage nodes and 2 compute nodes, server 1 is fractionally
+            split::
+
+                >>> dataset.fetch_node_ids(rank=0, world_size=2, split="train")
+                {
+                    0: tensor([0, 1, 2, 3]),  # All of storage 0
+                    1: tensor([8, 9]),         # First half of storage 1
+                    2: tensor([]),             # Nothing from storage 2
+                }
+
         Note:
             When ``split=None``, all nodes are queryable. This means nodes from
             any split (train, val, or test) may be returned. This is useful when
@@ -447,6 +489,58 @@ class RemoteDistDataset:
 
         Raises:
             ValueError: If only one of ``rank`` or ``world_size`` is provided.
+
+        Example:
+            Suppose we have 2 storage nodes and 2 compute nodes.
+            Storage rank 0 has anchor nodes [0, 1, 2] (train), storage rank 1
+            has anchor nodes [3, 4, 5] (train), with positive/negative labels
+            for link prediction.
+
+            Shard training ABLP input across 2 compute nodes (contiguous — each
+            rank gets entire servers)::
+
+                >>> dataset.fetch_ablp_input(split="train", rank=0, world_size=2)
+                {
+                    0: ABLPInputNodes(
+                        anchor_nodes=tensor([0, 1, 2]),
+                        labels={...},
+                    ),
+                    1: ABLPInputNodes(
+                        anchor_nodes=tensor([]),
+                        labels={...},
+                    ),
+                }
+                >>> dataset.fetch_ablp_input(split="train", rank=1, world_size=2)
+                {
+                    0: ABLPInputNodes(
+                        anchor_nodes=tensor([]),
+                        labels={...},
+                    ),
+                    1: ABLPInputNodes(
+                        anchor_nodes=tensor([3, 4, 5]),
+                        labels={...},
+                    ),
+                }
+
+            With 3 storage nodes and 2 compute nodes, server 1 is fractionally
+            split. Storage rank 0 has anchors [0, 1], rank 1 has [2, 3],
+            rank 2 has [4, 5]::
+
+                >>> dataset.fetch_ablp_input(split="train", rank=0, world_size=2)
+                {
+                    0: ABLPInputNodes(
+                        anchor_nodes=tensor([0, 1]),
+                        labels={...},
+                    ),
+                    1: ABLPInputNodes(
+                        anchor_nodes=tensor([2]),    # First half of storage 1
+                        labels={...},
+                    ),
+                    2: ABLPInputNodes(
+                        anchor_nodes=tensor([]),     # Nothing from storage 2
+                        labels={...},
+                    ),
+                }
         """
         if (anchor_node_type is None) != (supervision_edge_type is None):
             raise ValueError(
