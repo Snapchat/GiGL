@@ -216,7 +216,12 @@ class ActiveEpochState:
     cancelled: bool = False
 
 
-def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[int]:
+CommandPayload = Union[RegisterInputCmd, StartEpochCmd, int, None]
+
+
+def _command_channel_id(
+    command: SharedMpCommand, payload: CommandPayload
+) -> Optional[int]:
     """Extract the channel id from a worker command payload.
 
     Args:
@@ -393,6 +398,7 @@ def _shared_sampling_worker_loop(
 
     def _enqueue_channel_if_runnable_locked(channel_id: int) -> None:
         """Add channel to the fair-queue if it has pending batches."""
+        # TODO(kmonte): Add a check to ensure the lock is held.
         state = active_epoch_by_channel_id.get(channel_id)
         if state is None:
             return
@@ -411,7 +417,12 @@ def _shared_sampling_worker_loop(
         immediately.
         ``_on_batch_done`` will finish the cleanup once the last in-flight
         batch completes.
+
+        Note: Deferred cleanup assumes that channel_ids are not reused while
+        cleanup is pending.  DistServer allocates channel_ids from a
+        monotonically increasing counter, so this holds in practice.
         """
+        # TODO(kmonte): Add a check to ensure the lock is held.
         state = active_epoch_by_channel_id.get(channel_id)
         if state is not None and state.completed_batches < state.submitted_batches:
             removing_channel_ids.add(channel_id)
@@ -488,16 +499,20 @@ def _shared_sampling_worker_loop(
         """
         with state_lock:
             state = active_epoch_by_channel_id.get(channel_id)
+            # Ignore stale callbacks from a previous epoch or cancelled channel.
             if state is None or state.epoch != epoch:
                 return
             state.completed_batches += 1
             if state.completed_batches == state.total_batches:
+                # All batches done — remove active state and notify the parent.
                 active_epoch_by_channel_id.pop(channel_id, None)
                 event_queue.put((EPOCH_DONE_EVENT, channel_id, epoch, rank))
             if (
                 channel_id in removing_channel_ids
                 and state.completed_batches == state.submitted_batches
             ):
+                # Channel was unregistered while batches were in flight.
+                # Now that all submitted batches have completed, finish cleanup.
                 _clear_registered_input_locked(channel_id)
 
     def _submit_one_batch(channel_id: int) -> bool:
@@ -508,6 +523,8 @@ def _shared_sampling_worker_loop(
         Returns True if a batch was submitted, False if the channel had no
         pending work.
         """
+        # Hold the lock only to read state and advance the cursor.
+        # Release before the sampler call to avoid blocking other threads.
         with state_lock:
             state = active_epoch_by_channel_id.get(channel_id)
             if state is None:
@@ -520,25 +537,40 @@ def _shared_sampling_worker_loop(
             sampler = sampler_by_channel_id[channel_id]
             channel_input = input_by_channel_id[channel_id]
             current_epoch = state.epoch
+            # Re-enqueue for the next round-robin pass if more batches remain.
             if state.submitted_batches < state.total_batches and not state.cancelled:
                 runnable_channel_ids.append(channel_id)
                 runnable_channel_id_set.add(channel_id)
 
         sampler_input = channel_input[batch_indices]
 
+        # Sampler calls are async (submit to thread pool). If submission
+        # itself raises, the callback never fires and the epoch would hang
+        # forever.  Log the error and let the exception kill this worker so
+        # the parent can detect the dead process and fail fast.
         callback = lambda _: _on_batch_done(channel_id, current_epoch)
-        if cfg.sampling_type == SamplingType.NODE:
-            sampler.sample_from_nodes(
-                cast(NodeSamplerInput, sampler_input), callback=callback
+        try:
+            if cfg.sampling_type == SamplingType.NODE:
+                sampler.sample_from_nodes(
+                    cast(NodeSamplerInput, sampler_input), callback=callback
+                )
+            elif cfg.sampling_type == SamplingType.LINK:
+                sampler.sample_from_edges(
+                    cast(EdgeSamplerInput, sampler_input), callback=callback
+                )
+            elif cfg.sampling_type == SamplingType.SUBGRAPH:
+                sampler.subgraph(
+                    cast(NodeSamplerInput, sampler_input), callback=callback
+                )
+            else:
+                raise RuntimeError(f"Unsupported sampling type: {cfg.sampling_type}")
+        except Exception:
+            logger.error(
+                f"shared_sampling_worker sampler call failed "
+                f"worker_rank={rank} channel_id={channel_id} "
+                f"epoch={current_epoch} batch={state.submitted_batches}"
             )
-        elif cfg.sampling_type == SamplingType.LINK:
-            sampler.sample_from_edges(
-                cast(EdgeSamplerInput, sampler_input), callback=callback
-            )
-        elif cfg.sampling_type == SamplingType.SUBGRAPH:
-            sampler.subgraph(cast(NodeSamplerInput, sampler_input), callback=callback)
-        else:
-            raise RuntimeError(f"Unsupported sampling type: {cfg.sampling_type}")
+            raise
         return True
 
     def _pump_runnable_channel_ids() -> bool:
@@ -547,6 +579,10 @@ def _shared_sampling_worker_loop(
         Returns True if at least one batch was submitted.
         """
         made_progress = False
+        # Snapshot the count so we process exactly one batch per channel that
+        # was runnable at the start.  Channels re-enqueued by _submit_one_batch
+        # during this pass are deferred to the next pump cycle to preserve
+        # round-robin fairness.
         with state_lock:
             num_candidates = len(runnable_channel_ids)
         for _ in range(num_candidates):
@@ -558,13 +594,16 @@ def _shared_sampling_worker_loop(
             made_progress = _submit_one_batch(channel_id) or made_progress
         return made_progress
 
-    def _handle_command(command: SharedMpCommand, payload: object) -> bool:
+    def _handle_command(command: SharedMpCommand, payload: CommandPayload) -> bool:
         """Dispatch one command from the task queue.
 
         Returns True to keep running, False on ``STOP``.
         """
         channel_id = _command_channel_id(command, payload)
         if command == SharedMpCommand.REGISTER_INPUT:
+            # Assumes channel_id is fresh (not pending deferred cleanup).
+            # DistServer allocates monotonically increasing IDs, so reuse
+            # does not happen with current callers.
             register = cast(RegisterInputCmd, payload)
             assert current_device is not None
             sampler = create_dist_sampler(
@@ -815,7 +854,7 @@ class SharedDistSamplingBackend:
         self,
         worker_rank: int,
         command: SharedMpCommand,
-        payload: object,
+        payload: CommandPayload,
     ) -> None:
         """Enqueue a command on one worker's task queue.
 
@@ -936,6 +975,10 @@ class SharedDistSamplingBackend:
 
         No-op if the channel has already started an epoch >= ``epoch``.
 
+        Callers must ensure the previous epoch's sampling has completed before
+        starting a new one.  ``BaseDistLoader.__iter__`` guarantees this by
+        consuming all batches via ``__next__`` before re-entering the loop.
+
         Args:
             channel_id: The registered channel to start.
             epoch: Monotonically increasing epoch number.
@@ -949,6 +992,19 @@ class SharedDistSamplingBackend:
             if self._channel_epoch[channel_id] >= epoch:
                 return
             previous_epoch = self._channel_epoch[channel_id]
+            if previous_epoch >= 0:
+                prev_done = (
+                    len(
+                        self._completed_workers.get((channel_id, previous_epoch), set())
+                    )
+                    == self.num_workers
+                )
+                if not prev_done:
+                    logger.warning(
+                        f"start_new_epoch_sampling called for channel_id={channel_id} "
+                        f"epoch={epoch} while previous epoch={previous_epoch} "
+                        f"has not completed on all workers."
+                    )
             self._channel_epoch[channel_id] = epoch
             stale_keys = [
                 k
@@ -1019,6 +1075,18 @@ class SharedDistSamplingBackend:
                     channel_id,
                 )
 
+    def _check_workers_alive(self) -> None:
+        """Raise if any worker process has died.
+
+        Must be called while holding ``self._lock``.
+        """
+        for i, worker in enumerate(self._workers):
+            if not worker.is_alive():
+                raise RuntimeError(
+                    f"Sampling worker {i} (pid={worker.pid}) died unexpectedly. "
+                    f"Check worker logs for the root cause."
+                )
+
     def is_channel_epoch_done(self, channel_id: int, epoch: int) -> bool:
         """Return whether every worker finished the epoch for one channel.
 
@@ -1031,13 +1099,19 @@ class SharedDistSamplingBackend:
         Returns:
             ``True`` if all ``num_workers`` workers have reported
             ``EPOCH_DONE`` for this ``(channel_id, epoch)`` pair.
+
+        Raises:
+            RuntimeError: If any worker process has died.
         """
         with self._lock:
             self._drain_events()
-            return (
+            done = (
                 len(self._completed_workers.get((channel_id, epoch), set()))
                 == self.num_workers
             )
+            if not done:
+                self._check_workers_alive()
+            return done
 
     def describe_channel(self, channel_id: int) -> dict[str, object]:
         """Return lightweight diagnostics for one registered channel.
