@@ -11,10 +11,10 @@
 
 namespace py = pybind11;
 
-// drain_queue: C++ returns std::optional<map<etype_id, Tensor>>.
+// drainQueue: C++ returns std::optional<map<etype_id, Tensor>>.
 // Exposed to Python as: None (convergence) or dict[int, Tensor].
-static py::object drain_queue_wrapper(PPRForwardPushState& self) {
-    auto result = self.drain_queue();
+static py::object drainQueueWrapper(PPRForwardPushState& self) {
+    auto result = self.drainQueue();
     if (!result) {
         return py::none();
     }
@@ -25,29 +25,29 @@ static py::object drain_queue_wrapper(PPRForwardPushState& self) {
     return d;
 }
 
-// push_residuals: Python passes dict[int, tuple[Tensor, Tensor, Tensor]].
+// pushResiduals: Python passes dict[int, tuple[Tensor, Tensor, Tensor]].
 // Convert to C++ map before delegating.
-static void push_residuals_wrapper(PPRForwardPushState& self, py::dict fetched_by_etype_id) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> cpp_map;
+static void pushResidualsWrapper(PPRForwardPushState& self, const py::dict& fetchedByEtypeId) {
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> cppMap;
     // Dict iteration touches Python objects — GIL must be held here.
-    for (auto item : fetched_by_etype_id) {
-        int32_t eid = item.first.cast<int32_t>();
+    for (auto item : fetchedByEtypeId) {
+        auto eid = item.first.cast<int32_t>();
         auto tup = item.second.cast<py::tuple>();
-        cpp_map[eid] = {tup[0].cast<torch::Tensor>(), tup[1].cast<torch::Tensor>(), tup[2].cast<torch::Tensor>()};
+        cppMap[eid] = {tup[0].cast<torch::Tensor>(), tup[1].cast<torch::Tensor>(), tup[2].cast<torch::Tensor>()};
     }
     // C++ push only uses tensor accessor/data_ptr APIs — GIL-safe to release.
     // Releasing here lets the asyncio event loop process RPC completion callbacks
     // from other concurrent PPR coroutines while this push runs.
     {
         py::gil_scoped_release release;
-        self.push_residuals(cpp_map);
+        self.pushResiduals(cppMap);
     }
 }
 
-// extract_top_k: C++ returns map<ntype_id, tuple<Tensor, Tensor, Tensor>>.
+// extractTopK: C++ returns map<ntype_id, tuple<Tensor, Tensor, Tensor>>.
 // Exposed to Python as dict[int, tuple[Tensor, Tensor, Tensor]].
-static py::dict extract_top_k_wrapper(PPRForwardPushState& self, int32_t max_ppr_nodes) {
-    auto result = self.extract_top_k(max_ppr_nodes);
+static py::dict extractTopKWrapper(PPRForwardPushState& self, int32_t maxPprNodes) {
+    auto result = self.extractTopK(maxPprNodes);
     py::dict d;
     for (auto& [nt, tup] : result) {
         d[py::int_(nt)] = py::make_tuple(std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
@@ -66,8 +66,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       std::vector<std::vector<int32_t>>,
                       std::vector<int32_t>,
                       std::vector<torch::Tensor>>())
-        .def("drain_queue", drain_queue_wrapper)
-        .def("push_residuals", push_residuals_wrapper)
-        .def("extract_top_k", extract_top_k_wrapper)
-        .def("get_nodes_drained_per_iteration", &PPRForwardPushState::get_nodes_drained_per_iteration);
+        .def("drain_queue", drainQueueWrapper)
+        .def("push_residuals", pushResidualsWrapper)
+        .def("extract_top_k", extractTopKWrapper)
+        .def("get_nodes_drained_per_iteration", &PPRForwardPushState::getNodesDrainedPerIteration);
 }

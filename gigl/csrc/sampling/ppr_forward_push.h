@@ -22,9 +22,9 @@
 // negative int32_t (e.g. -1 = 0xFFFFFFFF) would be sign-extended to a full
 // 64-bit value, corrupting the upper bits when shifted.  Reinterpreting as
 // uint32_t first treats the bit pattern as-is (no sign extension).
-static inline uint64_t pack_key(int32_t node_id, int32_t etype_id) {
-    return (static_cast<uint64_t>(static_cast<uint32_t>(node_id)) << 32) |
-           static_cast<uint32_t>(etype_id);
+static inline uint64_t packKey(int32_t nodeId, int32_t etypeId) {
+    return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) |
+           static_cast<uint32_t>(etypeId);
 }
 
 // C++ kernel for the PPR Forward Push algorithm (Andersen et al., 2006).
@@ -33,43 +33,45 @@ static inline uint64_t pack_key(int32_t node_id, int32_t etype_id) {
 // this object.  The distributed neighbor fetch is kept in Python because it
 // involves async RPC calls that C++ cannot drive directly.
 //
-// Owned state: ppr_scores, residuals, queue, queued_nodes, neighbor_cache.
+// Owned state: _pprScores, _residuals, _queue, _queuedNodes, _neighborCache.
 // Python retains ownership of: the distributed neighbor fetch (_batch_fetch_neighbors).
 //
 // Typical call sequence per batch:
-//   1.  PPRForwardPushState(seed_nodes, ...)   — init per-seed residuals / queue
+//   1.  PPRForwardPushState(seedNodes, ...)   — init per-seed residuals / queue
 //   while True:
-//   2.  drain_queue()                          — drain queue → nodes needing lookup
+//   2.  drainQueue()                          — drain queue → nodes needing lookup
 //   3.  <Python: _batch_fetch_neighbors(...)>  — distributed RPC fetch (stays in Python)
-//   4.  push_residuals(fetched_by_etype_id)    — push residuals, update queue
-//   5.  extract_top_k(max_ppr_nodes)           — top-k selection per seed per node type
+//   4.  pushResiduals(fetchedByEtypeId)        — push residuals, update queue
+//   5.  extractTopK(maxPprNodes)               — top-k selection per seed per node type
 class PPRForwardPushState {
    public:
-    PPRForwardPushState(torch::Tensor seed_nodes, int32_t seed_node_type_id, double alpha,
-                        double requeue_threshold_factor,
-                        std::vector<std::vector<int32_t>> node_type_to_edge_type_ids,
-                        std::vector<int32_t> edge_type_to_dst_ntype_id,
-                        std::vector<torch::Tensor> degree_tensors);
+    PPRForwardPushState(const torch::Tensor& seedNodes,
+                        int32_t seedNodeTypeId,
+                        double alpha,
+                        double requeueThresholdFactor,
+                        std::vector<std::vector<int32_t>> nodeTypeToEdgeTypeIds,
+                        std::vector<int32_t> edgeTypeToDstNtypeId,
+                        std::vector<torch::Tensor> degreeTensors);
 
     // Drain all queued nodes and return {etype_id: tensor[node_ids]} for batch
-    // neighbor lookup.  Also snapshots the drained nodes into queued_nodes_ for
-    // use by push_residuals().
+    // neighbor lookup.  Also snapshots the drained nodes into _queuedNodes for
+    // use by pushResiduals().
     //
     // Return value semantics:
     //   - std::nullopt   → queue was already empty; convergence achieved; stop the loop.
-    //   - empty map      → nodes were drained but all were cached; call push_residuals({}).
+    //   - empty map      → nodes were drained but all were cached; call pushResiduals({}).
     //   - non-empty map  → {etype_id → 1-D int64 tensor of node IDs} needing neighbor lookup.
-    std::optional<std::unordered_map<int32_t, torch::Tensor>> drain_queue();
+    std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueue();
 
     // Push residuals to neighbors given the fetched neighbor data.
     //
-    // fetched_by_etype_id: {etype_id: (node_ids_tensor, flat_nbrs_tensor, counts_tensor)}
+    // fetchedByEtypeId: {etype_id: (node_ids_tensor, flat_nbrs_tensor, counts_tensor)}
     //   - node_ids_tensor:  [N]           int64 — source node IDs fetched for this edge type
     //   - flat_nbrs_tensor: [sum(counts)] int64 — all neighbor lists concatenated flat
     //   - counts_tensor:    [N]           int64 — neighbor count for each source node
-    void push_residuals(const std::unordered_map<
-                        int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>&
-                            fetched_by_etype_id);
+    void pushResiduals(const std::unordered_map<
+                       int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>&
+                           fetchedByEtypeId);
 
     // Extract top-k PPR nodes per seed per node type.
     //
@@ -81,52 +83,51 @@ class PPRForwardPushState {
     //   flat_ids[valid_counts[0] : valid_counts[0]+valid_counts[1]] → top-k for seed 1
     //   ...
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-    extract_top_k(int32_t max_ppr_nodes);
+    extractTopK(int32_t maxPprNodes);
+
+    // Returns _nodesDrainedPerIteration built up across all drainQueue() calls.
+    [[nodiscard]] const std::vector<int32_t>& getNodesDrainedPerIteration() const;
 
    private:
     // Look up the total (across all edge types) out-degree of a node.
     // Returns 0 for destination-only node types (no outgoing edges).
-    int32_t get_total_degree(int32_t node_id, int32_t ntype_id) const;
+    [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t ntypeId) const;
 
     // -------------------------------------------------------------------------
     // Scalar algorithm parameters
     // -------------------------------------------------------------------------
-    double alpha_;            // Restart probability
-    double one_minus_alpha_;  // 1 - alpha, precomputed to avoid repeated subtraction
-    double requeue_threshold_factor_;  // alpha * eps; multiplied by degree to get per-node threshold
+    double _alpha;                    // Restart probability
+    double _oneMinusAlpha;            // 1 - alpha, precomputed to avoid repeated subtraction
+    double _requeueThresholdFactor;   // alpha * eps; multiplied by degree to get per-node threshold
 
-    int32_t batch_size_;             // Number of seeds in the current batch
-    int32_t num_node_types_;         // Total number of node types (homo + hetero)
-    int32_t num_nodes_in_queue_{0};  // Running count of nodes across all seeds / types
+    int32_t _batchSize;                    // Number of seeds in the current batch
+    int32_t _numNodeTypes;                 // Total number of node types (homo + hetero)
+    int32_t _numNodesInQueue{0};           // Running count of nodes across all seeds / types
 
     // -------------------------------------------------------------------------
     // Graph structure (read-only after construction)
     // -------------------------------------------------------------------------
-    std::vector<std::vector<int32_t>> node_type_to_edge_type_ids_;
-    std::vector<int32_t> edge_type_to_dst_ntype_id_;
-    std::vector<torch::Tensor> degree_tensors_;
+    std::vector<std::vector<int32_t>> _nodeTypeToEdgeTypeIds;
+    std::vector<int32_t> _edgeTypeToDstNtypeId;
+    std::vector<torch::Tensor> _degreeTensors;
 
     // -------------------------------------------------------------------------
     // Per-seed, per-node-type PPR state (indexed [seed_idx][ntype_id])
     // -------------------------------------------------------------------------
-    std::vector<std::vector<std::unordered_map<int32_t, double>>> ppr_scores_;
-    std::vector<std::vector<std::unordered_map<int32_t, double>>> residuals_;
-    std::vector<std::vector<std::unordered_set<int32_t>>> queue_;
-    std::vector<std::vector<std::unordered_set<int32_t>>> queued_nodes_;
+    std::vector<std::vector<std::unordered_map<int32_t, double>>> _pprScores;
+    std::vector<std::vector<std::unordered_map<int32_t, double>>> _residuals;
+    std::vector<std::vector<std::unordered_set<int32_t>>> _queue;
+    std::vector<std::vector<std::unordered_set<int32_t>>> _queuedNodes;
 
     // -------------------------------------------------------------------------
     // Neighbor cache
     // -------------------------------------------------------------------------
-    std::unordered_map<uint64_t, std::vector<int32_t>> neighbor_cache_;
+    std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
 
     // -------------------------------------------------------------------------
     // Diagnostics (populated during the algorithm; read after convergence)
     // -------------------------------------------------------------------------
-    // Total nodes drained (across all seeds and node types) in each drain_queue()
+    // Total nodes drained (across all seeds and node types) in each drainQueue()
     // call.  One entry per loop iteration; useful for understanding convergence speed.
-    std::vector<int32_t> nodes_drained_per_iteration_;
-
-   public:
-    // Returns nodes_drained_per_iteration_ built up across all drain_queue() calls.
-    const std::vector<int32_t>& get_nodes_drained_per_iteration() const;
+    std::vector<int32_t> _nodesDrainedPerIteration;
 };
