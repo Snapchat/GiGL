@@ -47,7 +47,6 @@ import os
 import re
 import shlex
 import signal
-import socket
 import subprocess
 import sys
 import threading
@@ -57,6 +56,8 @@ from pathlib import Path
 from typing import Any, Optional, TextIO
 
 import yaml
+
+from gigl.distributed.utils import get_free_ports
 
 DEFAULT_JOB_ROOT = Path("/tmp/gigl")
 JOB_ID_SUFFIX_RE = re.compile(r"^(.*?)(\d+)$")
@@ -76,23 +77,6 @@ class NodeProcess:
 
 
 RunningChild = tuple[NodeProcess, subprocess.Popen[str], TextIO, threading.Thread]
-
-
-def _get_free_ports(num_ports: int) -> list[int]:
-    """Reserve *num_ports* ephemeral TCP ports and return their numbers."""
-
-    ports: list[int] = []
-    sockets: list[socket.socket] = []
-    try:
-        for _ in range(num_ports):
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.bind(("", 0))
-            sockets.append(sock)
-            ports.append(sock.getsockname()[1])
-        return ports
-    finally:
-        for sock in sockets:
-            sock.close()
 
 
 def _increment_job_id(job_id: str) -> str:
@@ -712,7 +696,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     job_root = args.job_root.expanduser().resolve()
     job_id, job_dir = _allocate_job_dir(job_root, args.job_id)
 
-    master_port = _get_free_ports(1)[0]
+    master_port = get_free_ports(1)[0]
     world_size = args.compute_nodes + args.storage_nodes
     base_env = os.environ.copy()
     base_env.update(
