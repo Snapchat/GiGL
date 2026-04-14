@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-import unittest
+import tempfile
 from typing import Optional
 from unittest.mock import patch
 
@@ -10,6 +10,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
+from gigl.common import LocalUri
+from gigl.common.utils.vertex_ai_context import get_vertex_ai_job_id
 from gigl.distributed.utils import (
     GraphStoreInfo,
     get_free_ports_from_master_node,
@@ -18,11 +20,17 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_internal_ip_from_node,
 )
+from gigl.distributed.utils.networking import (
+    wait_for_readiness_signal,
+    write_readiness_signal,
+)
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
     GraphStoreInfo,
 )
+from gigl.env.pipelines_config import get_resource_config
 from tests.test_assets.distributed.utils import get_process_group_init_method
+from tests.test_assets.test_case import TestCase
 
 
 def _test_fetching_free_ports_in_dist_context(
@@ -172,7 +180,7 @@ def _test_get_internal_ip_from_node(
         dist.destroy_process_group()
 
 
-class TestDistributedNetworkingUtils(unittest.TestCase):
+class TestDistributedNetworkingUtils(TestCase):
     def tearDown(self):
         if dist.is_initialized():
             print("Destroying process group")
@@ -414,6 +422,19 @@ def _test_get_graph_store_info_in_dist_context(
             assert (
                 graph_store_info.compute_cluster_world_size == compute_nodes * 4
             ), "Compute cluster world size should be the number of compute nodes times the number of processes per compute"
+
+            # Verify readiness URI is constructed correctly
+            expected_readiness_uri = (
+                get_resource_config().temp_assets_bucket_path
+                / "gigl"
+                / "graph_store"
+                / get_vertex_ai_job_id()
+                / "graph_store_readiness.txt"
+            )
+            assert (
+                graph_store_info.readiness_uri == expected_readiness_uri
+            ), f"Expected readiness URI to be {expected_readiness_uri}, got {graph_store_info.readiness_uri}"
+
             # Verify all ranks get the same result (since they should all get the same broadcasted values)
             gathered_info: list[Optional[GraphStoreInfo]] = [None] * world_size
             dist.all_gather_object(gathered_info, graph_store_info)
@@ -446,7 +467,7 @@ def _get_cluster_spec_for_test(
     return cluster_spec
 
 
-class TestGetGraphStoreInfo(unittest.TestCase):
+class TestGetGraphStoreInfo(TestCase):
     """Test suite for get_graph_store_info function."""
 
     def tearDown(self):
@@ -506,3 +527,31 @@ class TestGetGraphStoreInfo(unittest.TestCase):
                 ),
                 nprocs=world_size,
             )
+
+
+class TestReadinessSignal(TestCase):
+    """Test suite for write_readiness_signal and wait_for_readiness_signal."""
+
+    def test_write_readiness_signal(self) -> None:
+        """Test that write_readiness_signal uploads a sentinel file."""
+
+        tmp_file = tempfile.NamedTemporaryFile(delete=False)
+        self.addCleanup(tmp_file.close)
+        readiness_uri = LocalUri(tmp_file.name)
+        write_readiness_signal(readiness_uri)
+
+        with open(tmp_file.name, "r") as f:
+            assert f.read() == "ready"
+
+    def test_wait_for_readiness_signal(self) -> None:
+        """Test that wait_for_readiness_signal waits for the readiness signal to be written."""
+
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        readiness_uri = LocalUri(temp_dir.name) / "readiness.txt"
+        with self.assertRaises(TimeoutError):
+            wait_for_readiness_signal(readiness_uri, timeout=0.1, poll_interval=0.01)
+
+        write_readiness_signal(readiness_uri)
+
+        wait_for_readiness_signal(readiness_uri)

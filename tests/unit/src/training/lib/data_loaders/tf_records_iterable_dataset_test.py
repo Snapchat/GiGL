@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 from typing import cast
 
 import tensorflow as tf
@@ -17,9 +16,10 @@ from snapchat.research.gbml import graph_schema_pb2, training_samples_schema_pb2
 from tests.test_assets.graph_metadata_constants import (
     DEFAULT_HOMOGENEOUS_GRAPH_METADATA_PB_WRAPPER,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TfRecordsIterableDatasetTest(unittest.TestCase):
+class TfRecordsIterableDatasetTest(TestCase):
     def setUp(self) -> None:
         self._num_records_per_file = 5
         self._num_files = 2

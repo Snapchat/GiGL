@@ -281,7 +281,7 @@ class VertexAIService:
             machine_spec=storage_machine_spec,
             container_spec=storage_container_spec,
             disk_spec=storage_disk_spec,
-            replica_count=compute_pool_job_config.replica_count,
+            replica_count=storage_pool_job_config.replica_count,
         )
         worker_pool_specs.append(worker_spec)
 

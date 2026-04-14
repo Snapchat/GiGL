@@ -1,12 +1,14 @@
 import os
-import unittest
 from datetime import datetime, timedelta
 from tempfile import NamedTemporaryFile
+
+from absl.testing import absltest
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from snapchat.research.gbml import gbml_config_pb2
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
@@ -21,7 +23,7 @@ datasetConfig:
 """
 
 
-class ProtoUtilsTest(unittest.TestCase):
+class ProtoUtilsTest(TestCase):
     def setUp(self):
         super().setUp()
         self.proto_utils = ProtoUtils()
@@ -68,4 +70,4 @@ class ProtoUtilsTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

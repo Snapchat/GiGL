@@ -1,5 +1,3 @@
-import unittest
-
 from gigl.common.logger import Logger
 from gigl.src.common.types.exception import (
     SubgraphSamplingValidationError,
@@ -28,11 +26,12 @@ from tests.test_assets.graph_metadata_constants import (
     EXAMPLE_HETEROGENEOUS_NODE_TYPES_STR,
     EXAMPLE_NABLP_HETEROGENEOUS_TASK_METADATA_PB,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class SubgraphSamplingStrategyValidationUnitTest(unittest.TestCase):
+class SubgraphSamplingStrategyValidationUnitTest(TestCase):
     """
     This tests checks the Subgraph Sampling Strategy Pb Wrapper validation check for logic affecting an entire DAG. Specifically, we test for
     correctness of validation checks from both building the SubgraphSamplingStrategyPbWrapper DAG and through calling the 'validate_dags' function.

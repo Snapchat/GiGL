@@ -1,15 +1,16 @@
 import subprocess
-import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import yaml
+from absl.testing import absltest
 from omegaconf import OmegaConf
 
 from gigl.common.omegaconf_resolvers import register_resolvers
+from tests.test_assets.test_case import TestCase
 
 
-class TestNowResolver(unittest.TestCase):
+class TestNowResolver(TestCase):
     def setUp(self):
         register_resolvers()
         # Use a fixed datetime for predictable testing
@@ -126,4 +127,4 @@ class TestNowResolver(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

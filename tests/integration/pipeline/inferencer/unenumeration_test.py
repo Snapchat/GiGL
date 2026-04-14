@@ -1,5 +1,3 @@
-import unittest
-
 import apache_beam as beam
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
@@ -19,11 +17,12 @@ from gigl.src.inference.v1.lib.inference_output_schema import (
     DEFAULT_PREDICTION_FIELD,
 )
 from gigl.src.inference.v1.lib.utils import UnenumerateAssets
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class UnenumeratorTest(unittest.TestCase):
+class UnenumeratorTest(TestCase):
     """Tests un-enumeration functionality in Inferencer by validating that
     we can un-enumerate an asset using an id mapping similar to that produced
     by the enumerator inside Data Preprocessor.

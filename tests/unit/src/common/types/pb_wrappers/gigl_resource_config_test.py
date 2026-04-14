@@ -1,12 +1,13 @@
-import unittest
+from absl.testing import absltest
 
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from snapchat.research.gbml.gigl_resource_config_pb2 import GiglResourceConfig
+from tests.test_assets.test_case import TestCase
 
 
-class GiglResourceConfigTest(unittest.TestCase):
+class GiglResourceConfigTest(TestCase):
     def test_vertex_ai_trainer_region_default(self):
         resource_config = GiglResourceConfig()
         resource_config.shared_resource_config.common_compute_config.region = (
@@ -115,4 +116,4 @@ class GiglResourceConfigTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -174,7 +174,7 @@ these tests both locally and on an open PR (leveraring our build/testing system)
   echo $GIGL_DOCKER_ARTIFACT_REGISTRY
   ```
 
-  These environment variables override what is defined in the `Makefile`, and when running e2e tests (see: `testing/e2e_tests/e2e_tests.yaml`), allowing you to run tests as discussed below.
+  These environment variables override what is defined in the `Makefile`, and when running e2e tests (see: `tests/e2e_tests/e2e_tests.yaml`), allowing you to run tests as discussed below.
 ````
 
 ##### Lint/Formatting & Unit Tests
@@ -258,7 +258,7 @@ All integration tests are organized in `tests/integration` folder with the pytho
 ##### Cloud Integration Test (end-to-end)
 
 We have a few e2e test entrypoints defined in the Makefile i.e. `run_cora_nalp_e2e_test`, `run_cora_snc_e2e_test`, etc.
-You will note that all these tests are defined in `testing/e2e_tests/e2e_tests.yaml`.
+You will note that all these tests are defined in `tests/e2e_tests/e2e_tests.yaml`.
 
 ```{caution}
 As these are very long running tests, we advise you run them on the PR; leveraging commands [pointed out above](#running-tests-against-an-open-pr).

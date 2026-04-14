@@ -4,6 +4,7 @@ import unittest
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Iterator, Tuple
+from unittest import TestCase
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
@@ -48,7 +49,7 @@ def parse_args() -> TestArgs:
     return test_args
 
 
-def _run_individual_test(test: unittest.TestCase) -> Tuple[bool, int]:
+def _run_individual_test(test: TestCase) -> Tuple[bool, int]:
     # If we don't have any test cases, we skip running the test.
     # This reduces some noise in the logs.
     if test.countTestCases() == 0:

@@ -1,12 +1,11 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
-import unittest
 from collections import abc, defaultdict
 from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
 
-import graphlearn_torch as glt
 import torch
 import torch.multiprocessing as mp
+from absl.testing import absltest
 from graphlearn_torch.distributed import init_rpc, init_worker_group
 from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
@@ -14,6 +13,7 @@ from torch.multiprocessing import Manager
 
 from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
+from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
@@ -34,10 +34,10 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
     run_distributed_partitioner,
 )
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 
-class DistRandomPartitionerTestCase(unittest.TestCase):
+class DistRandomPartitionerTestCase(TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
 
@@ -209,7 +209,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             # If it is a range-based partition book, we should check that the node ids on the current machine are as expected and in the
             # correct order, specified by setting `dim=None`
             if isinstance(node_partition_book, PartitionBook):
-                assert_tensor_equality(
+                self.assert_tensor_equality(
                     node_ids,
                     get_ids_on_rank(partition_book=node_partition_book, rank=rank),
                     dim=None,
@@ -224,7 +224,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             expected_node_pidx = (
                 torch.ones(num_nodes_on_rank, dtype=expected_pb_dtype) * rank
             )
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=node_partition_book[node_ids],
                 tensor_b=expected_node_pidx,
             )
@@ -256,7 +256,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                     )
                     * rank
                 )
-                assert_tensor_equality(
+                self.assert_tensor_equality(
                     tensor_a=edge_partition_book[edge_ids],
                     tensor_b=expected_edge_pidx,
                 )
@@ -357,7 +357,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             else:
                 assert node_data.ids is not None
                 node_data_ids = node_data.ids
-                assert_tensor_equality(tensor_a=node_ids, tensor_b=node_data.ids, dim=0)
+                self.assert_tensor_equality(
+                    tensor_a=node_ids, tensor_b=node_data.ids, dim=0
+                )
 
             # Validate dimensions and values based on whether this is labels or features
             if entity_name == "labels":
@@ -368,7 +370,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 )
                 # We expect the value of each node label to be equal to its corresponding node id on the currently mocked input
                 for idx, n_id in enumerate(node_data_ids):
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=node_data.feats[idx],
                         tensor_b=torch.tensor([n_id], dtype=torch.int64),
                     )
@@ -380,7 +382,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 )
                 # We expect the value of each node feature to be equal to its corresponding node id / 10 on the currently mocked input
                 for idx, n_id in enumerate(node_data_ids):
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=node_data.feats[idx],
                         tensor_b=torch.ones(
                             NODE_TYPE_TO_FEATURE_DIMENSION_MAP[target_node_type],
@@ -489,7 +491,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 else:
                     assert edge_feat.ids is not None
                     edge_feat_ids = edge_feat.ids
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=graph.edge_ids, tensor_b=edge_feat.ids, dim=0
                     )
 
@@ -501,7 +503,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
                 # We expect the value of each edge feature to be equal to its corresponding edge id / 10 on the currently mocked input
                 for idx, e_id in enumerate(edge_feat_ids):
-                    assert_tensor_equality(
+                    self.assert_tensor_equality(
                         tensor_a=edge_feat.feats[idx],
                         tensor_b=torch.ones(
                             EDGE_TYPE_TO_FEATURE_DIMENSION_MAP[edge_type],
@@ -584,7 +586,9 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
                 * rank
             )
 
-            assert_tensor_equality(node_partition_book[target_nodes], expect_edge_pidx)
+            self.assert_tensor_equality(
+                node_partition_book[target_nodes], expect_edge_pidx
+            )
 
     @parameterized.expand(
         [
@@ -681,7 +685,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
                 Otherwise, it will be a torch.uint8.
         """
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         manager = Manager()
         output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
@@ -920,7 +924,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             output_edge_index = torch.cat(unified_output_edge_index[edge_type], dim=1)
 
             # Finally, we check that the expected tensor and output tensor have the same columns, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_edge_index, tensor_b=output_edge_index, dim=1
             )
 
@@ -935,7 +939,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             partitioned_node_feat = torch.cat(partitioned_node_feat_list, dim=0)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_node_feat, tensor_b=partitioned_node_feat, dim=0
             )
 
@@ -950,7 +954,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             partitioned_node_labels = torch.cat(partitioned_node_labels_list, dim=0)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_node_labels,
                 tensor_b=partitioned_node_labels,
                 dim=0,
@@ -967,7 +971,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             partitioned_edge_feat = torch.cat(partitioned_edge_feat_list, dim=0)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 0
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_edge_feat, tensor_b=partitioned_edge_feat, dim=0
             )
 
@@ -979,7 +983,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             output_pos_label = torch.cat(unified_output_pos_label[edge_type], dim=1)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_positive_labels, tensor_b=output_pos_label, dim=1
             )
 
@@ -991,12 +995,12 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
             output_neg_label = torch.cat(unified_output_neg_label[edge_type], dim=1)
 
             # Finally, we check that the expected tensor and output tensor have the same rows, which is achieved by setting the shuffle dimension to 1
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
             )
 
     def test_partitioning_failure(self) -> None:
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
         rank = 0
 
         input_graph = RANK_TO_MOCKED_GRAPH[rank]
@@ -1152,7 +1156,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
     ) -> None:
         # We expect node IDs across all machines to be contiguous starting from 0 to total_num_nodes - 1.
         # This test checks that the partitioner raises an error when this assumption is not met.
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1184,7 +1188,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_node_ids_re_registration(self) -> None:
         """Test that re-registering node IDs raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1207,7 +1211,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_edge_index_re_registration(self) -> None:
         """Test that re-registering edge indices raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1233,7 +1237,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_node_features_re_registration(self) -> None:
         """Test that re-registering node features raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1256,7 +1260,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_node_labels_re_registration(self) -> None:
         """Test that re-registering node labels raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1279,7 +1283,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_edge_features_re_registration(self) -> None:
         """Test that re-registering edge features raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1305,7 +1309,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_positive_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1332,7 +1336,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_negative_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1358,7 +1362,7 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
     def test_heterogeneous_re_registration(self) -> None:
         """Test re-registration prevention for heterogeneous data."""
-        master_port = glt.utils.get_free_port(self._master_ip_address)
+        master_port = get_free_port()
 
         init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
         init_rpc(
@@ -1410,4 +1414,4 @@ class DistRandomPartitionerTestCase(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

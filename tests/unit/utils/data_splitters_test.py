@@ -1,9 +1,9 @@
-import unittest
 from collections.abc import Mapping
 from typing import Union
 
 import torch
 import torch.multiprocessing as mp
+from absl.testing import absltest
 from graphlearn_torch.data import Dataset, Topology
 from parameterized import param, parameterized
 from torch.testing import assert_close
@@ -22,8 +22,10 @@ from gigl.utils.data_splitters import (
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
+    create_test_process_group,
     get_process_group_init_method,
 )
+from tests.test_assets.test_case import TestCase
 
 # For TestDataSplitters
 _NODE_A = NodeType("A")
@@ -60,7 +62,7 @@ def _run_splitter_distributed(
         splitter (Union[DistNodeSplitter, DistNodeAnchorLinkSplitter]): The splitter to use for the distributed test
     """
     torch.distributed.init_process_group(
-        rank=process_num, world_size=world_size, init_method=init_method
+        rank=process_num, world_size=world_size, init_method=init_method, backend="gloo"
     )
     train, val, test = splitter(tensors[process_num])
     expected_train, expected_val, expected_test = expected[process_num]
@@ -69,7 +71,7 @@ def _run_splitter_distributed(
     assert_tensor_equality(test, expected_test)
 
 
-class TestDataSplitters(unittest.TestCase):
+class TestDataSplitters(TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
             print("Destroying process group")
@@ -197,9 +199,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         splitter = DistNodeAnchorLinkSplitter(
             sampling_direction=sampling_direction,
             hash_function=_IdentityHash(),
@@ -415,9 +415,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
 
         splitter = DistNodeAnchorLinkSplitter(
             sampling_direction="in",
@@ -666,6 +664,42 @@ class TestDataSplitters(unittest.TestCase):
         assert_close(positive, expected_positive, rtol=0, atol=0)
         self.assertIsNone(negative)
 
+    def test_get_labels_for_anchor_nodes_empty_input(self):
+        edges = torch.tensor(
+            [
+                [9, 10, 10, 10, 11, 11, 12, 12, 10],
+                [8, 10, 11, 15, 12, 13, 10, 11, 7],
+            ]
+        )
+        ds = Dataset()
+        ds.init_graph(
+            edge_index=to_heterogeneous_edge(edges),
+            edge_ids=to_heterogeneous_edge(torch.arange(edges.shape[1])),
+            graph_mode="CPU",
+        )
+
+        empty_node_ids = torch.tensor([], dtype=torch.int64)
+
+        # Without negative labels
+        positive, negative = get_labels_for_anchor_nodes(
+            dataset=ds,
+            node_ids=empty_node_ids,
+            positive_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+        self.assertEqual(positive.shape, (0, 0))
+        self.assertIsNone(negative)
+
+        # With negative labels
+        positive, negative = get_labels_for_anchor_nodes(
+            dataset=ds,
+            node_ids=empty_node_ids,
+            positive_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            negative_label_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+        self.assertEqual(positive.shape, (0, 0))
+        assert negative is not None
+        self.assertEqual(negative.shape, (0, 0))
+
     def test_get_labels_for_anchor_nodes_heterogeneous(self):
         a_to_b = EdgeType(_NODE_A, _TO, _NODE_B)
         a_to_c = EdgeType(_NODE_A, _TO, _NODE_C)
@@ -821,9 +855,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         splitter = DistNodeSplitter(
             hash_function=_IdentityHash(),
             num_val=val_num,
@@ -832,9 +864,9 @@ class TestDataSplitters(unittest.TestCase):
 
         train, val, test = splitter(node_ids)
 
-        assert_tensor_equality(train, expected_train, dim=0)
-        assert_tensor_equality(val, expected_val, dim=0)
-        assert_tensor_equality(test, expected_test, dim=0)
+        self.assert_tensor_equality(train, expected_train, dim=0)
+        self.assert_tensor_equality(val, expected_val, dim=0)
+        self.assert_tensor_equality(test, expected_test, dim=0)
 
     @parameterized.expand(
         [
@@ -921,10 +953,7 @@ class TestDataSplitters(unittest.TestCase):
         # train_num = 1 - val_num - test_num
         # From (minimum_num, maximum_num), the first train_num % of node ids will be in expected_train, the next val_num % of node ids will be in expected_val,
         # and the test_num % of node ids will be in test. If there are no node ids which are in the range for that split, the expected split will be empty.
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
-
+        create_test_process_group()
         splitter = DistNodeSplitter(
             hash_function=_IdentityHash(),
             num_val=val_num,
@@ -940,9 +969,9 @@ class TestDataSplitters(unittest.TestCase):
             expected_test,
         ) in expected.items():
             train, val, test = split[node_type]
-            assert_tensor_equality(train, expected_train, dim=0)
-            assert_tensor_equality(val, expected_val, dim=0)
-            assert_tensor_equality(test, expected_test, dim=0)
+            self.assert_tensor_equality(train, expected_train, dim=0)
+            self.assert_tensor_equality(val, expected_val, dim=0)
+            self.assert_tensor_equality(test, expected_test, dim=0)
 
     def test_hashed_node_splitter_requires_process_group(self):
         node_ids = torch.arange(10, dtype=torch.int64)
@@ -967,15 +996,13 @@ class TestDataSplitters(unittest.TestCase):
         ]
     )
     def test_hashed_node_splitter_invalid_inputs(self, _, node_ids):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         splitter = DistNodeSplitter()
         with self.assertRaises(ValueError):
             splitter(node_ids)
 
 
-class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
+class SelectSSLPositiveLabelEdgesTest(TestCase):
     @parameterized.expand(
         [
             param(
@@ -1034,4 +1061,4 @@ class SelectSSLPositiveLabelEdgesTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,5 +1,3 @@
-import unittest
-
 import torch
 
 from gigl.common.logger import Logger
@@ -15,11 +13,12 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class NodeAnchorBasedLinkPredictionModelingTaskSpecPygTrainingTest(unittest.TestCase):
+class NodeAnchorBasedLinkPredictionModelingTaskSpecPygTrainingTest(TestCase):
     """
     Tests functionality of being able to train a model with a node anchor based link
     prediction modeling task spec.

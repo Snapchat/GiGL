@@ -14,6 +14,7 @@ from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
+from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.distributed.utils.partition_book import get_ids_on_rank
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
     EdgeType,
@@ -76,6 +77,9 @@ class DistDataset(glt.distributed.DistDataset):
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
+        degree_tensor: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
     ) -> None:
         """
         Initializes the fields of the DistDataset class. This function is called upon each serialization of the DistDataset instance.
@@ -100,6 +104,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
+            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -134,6 +139,10 @@ class DistDataset(glt.distributed.DistDataset):
         # These fields are added so we can extract the node and edge feature dimensions and data type in the dataloader without having to lazily initialize the features.
         self._node_feature_info = node_feature_info
         self._edge_feature_info = edge_feature_info
+
+        self._degree_tensor: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = degree_tensor
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -287,6 +296,38 @@ class DistDataset(glt.distributed.DistDataset):
         Contains information about the dimension and dtype for the edge features in the graph
         """
         return self._edge_feature_info
+
+    @property
+    def degree_tensor(
+        self,
+    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+        """
+        Lazily compute and return the degree tensor for the graph.
+
+        On first access, computes node degrees from the graph partition and uses
+        all-reduce to aggregate across all machines. Requires torch.distributed
+        to be initialized.
+
+        Over-counting correction (for processes sharing the same data on the same
+        machine) is handled automatically by detecting the distributed topology.
+
+        The result is cached for subsequent accesses.
+
+        Returns:
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
+                - For homogeneous graphs: A tensor of shape [num_nodes].
+                - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
+
+        Raises:
+            RuntimeError: If torch.distributed is not initialized.
+            ValueError: If the dataset graph is None or topology is unavailable.
+        """
+        if self._degree_tensor is None:
+            if self.graph is None:
+                raise ValueError("Dataset graph is None. Cannot compute degrees.")
+
+            self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
+        return self._degree_tensor
 
     @property
     def train_node_ids(
@@ -816,6 +857,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -837,6 +879,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
+            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -845,6 +888,7 @@ class DistDataset(glt.distributed.DistDataset):
         share_memory(entity=self._positive_edge_label)
         share_memory(entity=self._negative_edge_label)
         share_memory(entity=self._node_ids)
+        share_memory(entity=self._degree_tensor)
         ipc_handle = (
             self._rank,
             self._world_size,
@@ -863,6 +907,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._num_test,  # Additional field unique to DistDataset class
             self._node_feature_info,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
+            self._degree_tensor,  # Additional field unique to DistDataset class
         )
         return ipc_handle
 
@@ -1118,6 +1163,7 @@ def _rebuild_distributed_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
     ]
 ):
     dataset = DistDataset.from_ipc_handle(ipc_handle)

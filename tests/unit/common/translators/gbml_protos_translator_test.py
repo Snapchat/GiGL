@@ -1,4 +1,3 @@
-import unittest
 from typing import cast
 
 from gigl.common.logger import Logger
@@ -12,11 +11,12 @@ from tests.test_assets.celeb_test_graph.assets import (
     get_celeb_graph_metadata_pb2,
     get_celeb_khop_subgraph_for_node1,
 )
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class GbmlProtosTranslatorTest(unittest.TestCase):
+class GbmlProtosTranslatorTest(TestCase):
     def test_parsing_graph_data_from_KHopSubgraph(self):
         _, khop_subgraph = get_celeb_khop_subgraph_for_node1()
         graph_metadata = get_celeb_graph_metadata_pb2()

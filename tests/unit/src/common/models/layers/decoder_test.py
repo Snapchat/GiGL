@@ -1,12 +1,11 @@
-import unittest
-
 import torch
 import torch.nn.functional as F
 
 from gigl.src.common.models.layers.decoder import DecoderType, LinkPredictionDecoder
+from tests.test_assets.test_case import TestCase
 
 
-class TestLinkPredictionDecoder(unittest.TestCase):
+class TestLinkPredictionDecoder(TestCase):
     def setUp(self):
         self.model = LinkPredictionDecoder(
             decoder_type=DecoderType.hadamard_MLP, decoder_channel_list=[4, 2, 1]

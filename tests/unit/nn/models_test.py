@@ -1,10 +1,10 @@
-import unittest
 from typing import Optional, Union
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
+from absl.testing import absltest
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.models import LightGCN as PyGLightGCN
 from torchrec.distributed.model_parallel import (
@@ -14,10 +14,8 @@ from torchrec.distributed.model_parallel import (
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
-from tests.test_assets.distributed.utils import (
-    assert_tensor_equality,
-    get_process_group_init_method,
-)
+from tests.test_assets.distributed.utils import get_process_group_init_method
+from tests.test_assets.test_case import TestCase
 
 # Embedding table name for default homogeneous node type
 # Constructed as f"node_embedding_{DEFAULT_HOMOGENEOUS_NODE_TYPE}" in LightGCN
@@ -64,7 +62,7 @@ class DummyDecoder(nn.Module):
         return query_embeddings + candidate_embeddings
 
 
-class TestLinkPredictionGNN(unittest.TestCase):
+class TestLinkPredictionGNN(TestCase):
     def setUp(self):
         self.device = torch.device("cpu")
 
@@ -75,7 +73,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
         data = Data()
         result = model.forward(data, self.device)
         assert isinstance(result, torch.Tensor)
-        assert_tensor_equality(result, torch.tensor([1.0, 2.0]))
+        self.assert_tensor_equality(result, torch.tensor([1.0, 2.0]))
 
     def test_forward_heterogeneous_with_node_types(self):
         encoder = DummyEncoder()
@@ -87,7 +85,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
         assert isinstance(result, dict)
         self.assertEqual(set(result.keys()), set(output_node_types))
         for node_type in output_node_types:
-            assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))
+            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))
 
     def test_forward_heterogeneous_missing_node_types(self):
         encoder = DummyEncoder()
@@ -104,7 +102,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
         q = torch.tensor([1.0, 2.0])
         c = torch.tensor([3.0, 4.0])
         result = model.decode(q, c)
-        assert_tensor_equality(result, torch.tensor([4.0, 6.0]))
+        self.assert_tensor_equality(result, torch.tensor([4.0, 6.0]))
 
     def test_encoder_property(self):
         encoder = DummyEncoder()
@@ -148,7 +146,7 @@ class TestLinkPredictionGNN(unittest.TestCase):
 
 
 # TODO(swong3): Move create model and graph data in individual tests, rather than using a method to do so
-class TestLightGCN(unittest.TestCase):
+class TestLightGCN(TestCase):
     def setUp(self):
         self.device = torch.device("cpu")
 
@@ -269,7 +267,7 @@ class TestLightGCN(unittest.TestCase):
             pyg_output = pyg_model.get_embedding(
                 self.edge_index.to(self.device)
             )  # <<< edge_index on device
-        assert_tensor_equality(our_output, pyg_output)
+        self.assert_tensor_equality(our_output, pyg_output)
 
     def test_compare_with_math(self):
         """Test that our implementation matches the mathematical formulation of LightGCN."""
@@ -430,4 +428,4 @@ def _run_dmp_multiprocess_test(
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

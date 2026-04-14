@@ -1,5 +1,8 @@
-# All code in this file is directly taken from GraphLearn-for-PyTorch (graphlearn_torch/python/distributed/dist_sampling_producer.py),
-# with the exception that we call the GiGL DistNeighborSampler with custom link prediction logic instead of the GLT DistNeighborSampler.
+# Significant portions of this file are taken from GraphLearn-for-PyTorch
+# (graphlearn_torch/python/distributed/dist_sampling_producer.py).
+# This version uses GiGL's sampler hierarchy (BaseGiGLSampler subclasses:
+# DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR) instead of
+# GLT's DistNeighborSampler directly.
 
 import datetime
 import queue
@@ -27,12 +30,17 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.typing import EdgeType
 from graphlearn_torch.utils import seed_everything
 from torch._C import _set_worker_signal_handlers
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
-from gigl.distributed.dist_neighbor_sampler import DistABLPNeighborSampler
+from gigl.common.logger import Logger
+from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.utils.dist_sampler import create_dist_sampler
+
+logger = Logger()
 
 
 def _sampling_worker_loop(
@@ -46,6 +54,8 @@ def _sampling_worker_loop(
     task_queue: mp.Queue,
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
+    sampler_options: SamplerOptions,
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
 ):
     dist_sampler = None
     try:
@@ -84,19 +94,15 @@ def _sampling_worker_loop(
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
-        dist_sampler = DistABLPNeighborSampler(
-            data,
-            sampling_config.num_neighbors,
-            sampling_config.with_edge,
-            sampling_config.with_neg,
-            sampling_config.with_weight,
-            sampling_config.edge_dir,
-            sampling_config.collect_features,
-            channel,
-            worker_options.use_all2all,
-            worker_options.worker_concurrency,
-            current_device,
-            seed=sampling_config.seed,
+
+        dist_sampler = create_dist_sampler(
+            data=data,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+            current_device=current_device,
         )
         dist_sampler.start_loop()
 
@@ -166,6 +172,22 @@ def _sampling_worker_loop(
 
 
 class DistSamplingProducer(DistMpSamplingProducer):
+    def __init__(
+        self,
+        data: DistDataset,
+        sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
+        sampling_config: SamplingConfig,
+        worker_options: MpDistSamplingWorkerOptions,
+        channel: ChannelBase,
+        sampler_options: SamplerOptions,
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
+    ):
+        super().__init__(data, sampler_input, sampling_config, worker_options, channel)
+        self._sampler_options = sampler_options
+        self._degree_tensors = degree_tensors
+
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
         if self.sampling_config.seed is not None:
@@ -182,7 +204,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                 self.num_workers * self.worker_options.worker_concurrency
             )
             self._task_queues.append(task_queue)
-            w = mp_context.Process(
+            worker = mp_context.Process(
                 target=_sampling_worker_loop,
                 args=(
                     rank,
@@ -195,9 +217,11 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     task_queue,
                     self.sampling_completed_worker_count,
                     barrier,
+                    self._sampler_options,
+                    self._degree_tensors,
                 ),
             )
-            w.daemon = True
-            w.start()
-            self._workers.append(w)
+            worker.daemon = True
+            worker.start()
+            self._workers.append(worker)
         barrier.wait()

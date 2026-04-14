@@ -1,4 +1,3 @@
-import unittest
 from collections import abc
 from typing import Optional, Union
 
@@ -8,9 +7,10 @@ from parameterized import param, parameterized
 
 from gigl.src.common.types.graph_data import NodeType
 from gigl.utils.share_memory import share_memory
+from tests.test_assets.test_case import TestCase
 
 
-class ShareMemoryTest(unittest.TestCase):
+class ShareMemoryTest(TestCase):
     @parameterized.expand(
         [
             param(

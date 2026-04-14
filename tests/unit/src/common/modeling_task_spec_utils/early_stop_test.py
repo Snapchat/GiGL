@@ -1,4 +1,3 @@
-import unittest
 from typing import Optional
 
 import torch
@@ -6,7 +5,7 @@ import torch.nn as nn
 from parameterized import param, parameterized
 
 from gigl.src.common.modeling_task_specs.utils.early_stop import EarlyStopper
-from tests.test_assets.distributed.utils import assert_tensor_equality
+from tests.test_assets.test_case import TestCase
 
 _EARLY_STOP_PATIENCE = 3
 
@@ -20,7 +19,7 @@ class _DummyModel(nn.Module):
         return x
 
 
-class EarlyStopTests(unittest.TestCase):
+class EarlyStopTests(TestCase):
     @parameterized.expand(
         [
             param(
@@ -105,7 +104,7 @@ class EarlyStopTests(unittest.TestCase):
                 self.assertTrue(should_early_stop)
         if model is not None:
             assert early_stopper.best_model_state_dict is not None
-            assert_tensor_equality(
+            self.assert_tensor_equality(
                 early_stopper.best_model_state_dict["foo"], torch.tensor(5.0)
             )
             self.assertTrue(early_stopper.best_model_state_dict["foo"].is_cpu)

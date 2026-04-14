@@ -1,14 +1,16 @@
-import unittest
 from pathlib import Path
+
+from absl.testing import absltest
 
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.http_uri import HttpUri
 from gigl.common.types.uri.local_uri import LocalUri
 from gigl.common.types.uri.uri import Uri
 from gigl.common.types.uri.uri_factory import UriFactory
+from tests.test_assets.test_case import TestCase
 
 
-class UriTest(unittest.TestCase):
+class UriTest(TestCase):
     def test_can_get_basename(self):
         file_name = "file.txt"
         gcs_uri_full = UriFactory.create_uri(f"gs://bucket/path/to/{file_name}")
@@ -78,4 +80,4 @@ class UriTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

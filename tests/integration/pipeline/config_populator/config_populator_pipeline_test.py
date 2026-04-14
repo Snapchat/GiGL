@@ -1,5 +1,4 @@
 import tempfile
-import unittest
 
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import GcsUri, LocalUri
@@ -11,6 +10,7 @@ from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from snapchat.research.gbml import gbml_config_pb2
+from tests.test_assets.test_case import TestCase
 from tests.test_assets.uri_constants import DEFAULT_TEST_RESOURCE_CONFIG_URI
 
 logger = Logger()
@@ -19,7 +19,7 @@ logger = Logger()
 CONFIG_POPULATOR_PIPELINE_TIMEOUT_SECONDS = 300
 
 
-class ConfigPopulatorPipelineTest(unittest.TestCase):
+class ConfigPopulatorPipelineTest(TestCase):
     """
     This test checks the completion of the ConfigPopulator step.
     """

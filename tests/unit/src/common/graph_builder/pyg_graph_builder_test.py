@@ -1,5 +1,3 @@
-import unittest
-
 import torch
 
 from gigl.common.collections.frozen_dict import FrozenDict
@@ -7,11 +5,12 @@ from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.types.graph_data import Edge, Node, NodeId, NodeType, Relation
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class PygGraphBuilderTest(unittest.TestCase):
+class PygGraphBuilderTest(TestCase):
     def test_can_create_accurate_graph_representation(self):
         pyg_graph_builder = PygGraphBuilder()
 

@@ -15,14 +15,33 @@ datasetConfig:
     dataPreprocessorArgs:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
-# TODO(kmonte): Add GS trainer
 trainerConfig:
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
-  command: python -m examples.link_prediction.homogeneous_training
-# TODO(kmonte): Move to user-defined server code
+  command: python -m examples.link_prediction.graph_store.homogeneous_training
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+      # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
+      # We do this so that the tuples for edge types get parsed as such.
+      splitter_kwargs: >-
+        {
+          "sampling_direction": "in",
+          "should_convert_labels_to_edges": True,
+          "num_val": 0.25,
+          "num_test": 0.25
+        }
+      # We only do one session for training.
+      # You should set one server session per process group you want to communicate with.
+      # e.g. for inference:
+      # for node_type in inference_node_types:
+      #   launch_inference_process(node_type)
+      #   num_server_sessions = len(inference_node_types)
+      num_server_sessions: "1"
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
@@ -30,6 +49,17 @@ inferencerConfig:
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.graph_store.homogeneous_inference
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      # We only do one session for inference.
+      # You should set one server session per process group you want to communicate with.
+      # e.g. for inference:
+      # for node_type in inference_node_types:
+      #   launch_inference_process(node_type)
+      #   num_server_sessions = len(inference_node_types)
+      num_server_sessions: "1" # We do inference for 1 node type, paper
 sharedConfig:
   shouldSkipInference: false
   # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.

@@ -1,5 +1,4 @@
 import time
-import unittest
 import uuid
 
 import torch
@@ -11,11 +10,12 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.bq import BqUtils
+from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 
-class EmbeddingExportIntegrationTest(unittest.TestCase):
+class EmbeddingExportIntegrationTest(TestCase):
     def setUp(self):
         resource_config = get_resource_config()
         test_unique_name = f"GiGL-Integration-Exporter-{uuid.uuid4().hex}"

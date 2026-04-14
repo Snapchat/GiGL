@@ -1,9 +1,10 @@
-import unittest
+from absl.testing import absltest
 
 from gigl.utils.iterator import InfiniteIterator
+from tests.test_assets.test_case import TestCase
 
 
-class IteratorTest(unittest.TestCase):
+class IteratorTest(TestCase):
     def test_infinite_iterator(self):
         iterable_list: list[int] = [3, 4, 5, 6]
         expected_list: list[int] = [3, 4, 5, 6, 3, 4, 5, 6, 3, 4]
@@ -19,4 +20,4 @@ class IteratorTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,4 +1,3 @@
-import unittest
 from collections import abc
 from typing import Optional, Union
 
@@ -21,9 +20,10 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TranslatorTestCase(unittest.TestCase):
+class TranslatorTestCase(TestCase):
     def setUp(self):
         self._name_to_mocked_dataset_map: dict[
             str, MockedDatasetArtifactMetadata

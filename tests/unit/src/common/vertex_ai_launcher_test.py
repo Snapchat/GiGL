@@ -1,7 +1,8 @@
 """Unit tests for vertex_ai_launcher module."""
 
-import unittest
 from unittest.mock import Mock, patch
+
+from absl.testing import absltest
 
 from gigl.common import Uri
 from gigl.src.common.constants.components import GiGLComponents
@@ -13,6 +14,7 @@ from gigl.src.common.vertex_ai_launcher import (
     launch_single_pool_job,
 )
 from snapchat.research.gbml import gigl_resource_config_pb2
+from tests.test_assets.test_case import TestCase
 
 
 def _create_shared_resource_config(
@@ -103,7 +105,7 @@ def _create_gigl_resource_config_with_single_pool_inference(
     )
 
 
-class TestVertexAILauncher(unittest.TestCase):
+class TestVertexAILauncher(TestCase):
     """Test suite for vertex_ai_launcher module."""
 
     @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
@@ -144,9 +146,11 @@ class TestVertexAILauncher(unittest.TestCase):
             job_name=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
-            process_command=process_command,
-            process_runtime_args=process_runtime_args,
+            compute_commmand=process_command,
+            compute_runtime_args=process_runtime_args,
             resource_config_wrapper=resource_config_wrapper,
+            storage_command="python -m gigl.distributed.graph_store.storage_main",
+            storage_args={},
             cpu_docker_uri=cpu_docker_uri,
             cuda_docker_uri=cuda_docker_uri,
             component=component,
@@ -315,4 +319,4 @@ class TestVertexAILauncher(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

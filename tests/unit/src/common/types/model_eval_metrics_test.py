@@ -1,13 +1,12 @@
-import unittest
-
 from gigl.src.common.types.model_eval_metrics import (
     EvalMetric,
     EvalMetricsCollection,
     EvalMetricType,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class EvalMetricsCollectionTest(unittest.TestCase):
+class EvalMetricsCollectionTest(TestCase):
     def test_eval_metrics_constructor(self):
         mrr_model_metric = EvalMetric.from_eval_metric_type(
             eval_metric_type=EvalMetricType.mrr, value=0.8

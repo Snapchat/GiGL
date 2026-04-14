@@ -28,7 +28,7 @@ jobs:
           Starting to [build](${{env.WORKFLOW_URL}}) base images for CUDA and CPU.
           This may take a while, please be patient.
           The images will be pushed to the GCP Artifact Registry.
-          Once done, the workflow will update the `dep_vars.env` file with the new image names.
+          Once done, the workflow will update the `gigl/dep_vars.env` file with the new image names.
 
   build-cuda-base-image:
     runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
@@ -174,5 +174,5 @@ jobs:
           * Dataflow base image: `${{ env.GIGL_BASE_DATAFLOW_IMAGE }}`
           * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
 
-          Updated `dep_vars.env` with new image names.
+          Updated `gigl/dep_vars.env` with new image names.
           Updated `.github/cloud_builder/run_command_on_pr_cloud_build.yaml` with new builder image.

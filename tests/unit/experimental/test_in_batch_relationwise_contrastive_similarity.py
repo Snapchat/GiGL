@@ -1,6 +1,5 @@
-import unittest
-
 import torch
+from absl.testing import absltest
 
 from gigl.experimental.knowledge_graph_embedding.lib.model.negative_sampling import (
     in_batch_relationwise_contrastive_similarity,
@@ -9,9 +8,10 @@ from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
     NegativeSamplingCorruptionType,
     SimilarityType,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestInBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
+class TestInBatchRelationwiseContrastiveSimilarity(TestCase):
     def test_correctness_dot_dst_one_negative(self):
         # Test dot product similarity with destination-side corruption and one negative sample.
         src_embeddings = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
@@ -179,4 +179,4 @@ class TestInBatchRelationwiseContrastiveSimilarity(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

@@ -1,7 +1,8 @@
 import json
 import os
-import unittest
 from unittest.mock import call, patch
+
+from absl.testing import absltest
 
 from gigl.common import GcsUri
 from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
@@ -18,9 +19,10 @@ from gigl.common.utils.vertex_ai_context import (
     get_world_size,
     is_currently_running_in_vertex_ai_job,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestVertexAIContext(unittest.TestCase):
+class TestVertexAIContext(TestCase):
     VAI_JOB_ENV = {"CLOUD_ML_JOB_ID": "test_job_id"}
 
     @patch.dict(os.environ, VAI_JOB_ENV)
@@ -175,4 +177,4 @@ class TestVertexAIContext(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

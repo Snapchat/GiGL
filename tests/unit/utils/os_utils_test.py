@@ -1,10 +1,9 @@
-import unittest
-
 import gigl.common.utils.local_fs as local_fs_utils
 from gigl.common import LocalUri
+from tests.test_assets.test_case import TestCase
 
 
-class OsUtilsTest(unittest.TestCase):
+class OsUtilsTest(TestCase):
     def test_create_empty_file_if_none_exists(self):
         path_to_temp_file: LocalUri = LocalUri.join(
             ".test_assets", "test_create_empty_file_if_none_exists.txt"

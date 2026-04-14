@@ -1,7 +1,6 @@
 import io
 import os
 import tempfile
-import unittest
 import uuid
 
 from parameterized import param, parameterized
@@ -11,9 +10,10 @@ from gigl.common import GcsUri, HttpUri, LocalUri, Uri
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
+from tests.test_assets.test_case import TestCase
 
 
-class FileLoaderTest(unittest.TestCase):
+class FileLoaderTest(TestCase):
     def setUp(self) -> None:
         self.file_loader = FileLoader()
         self.gcs_utils = GcsUtils()

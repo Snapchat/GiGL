@@ -5,10 +5,9 @@ This module contains comprehensive tests for all functions in the loss_utils mod
 including mathematical correctness verification and various test scenarios.
 """
 
-import unittest
-
 import torch
 import torch.nn.functional as F
+from absl.testing import absltest
 
 from gigl.experimental.knowledge_graph_embedding.lib.model.loss_utils import (
     average_pos_neg_scores,
@@ -17,9 +16,10 @@ from gigl.experimental.knowledge_graph_embedding.lib.model.loss_utils import (
     infonce_loss,
     mean_reciprocal_rank,
 )
+from tests.test_assets.test_case import TestCase
 
 
-class TestBPRLoss(unittest.TestCase):
+class TestBPRLoss(TestCase):
     """Test suite for the BPR (Bayesian Personalized Ranking) loss function."""
 
     def test_bpr_loss_basic_functionality(self):
@@ -116,7 +116,7 @@ class TestBPRLoss(unittest.TestCase):
         self.assertGreaterEqual(loss.item(), 0, "Loss should be non-negative")
 
 
-class TestInfoNCELoss(unittest.TestCase):
+class TestInfoNCELoss(TestCase):
     """Test suite for the InfoNCE contrastive loss function."""
 
     def test_infonce_loss_basic_functionality(self):
@@ -186,7 +186,7 @@ class TestInfoNCELoss(unittest.TestCase):
         self.assertTrue(torch.allclose(loss, expected_loss, atol=1e-6))
 
 
-class TestAveragePosNegScores(unittest.TestCase):
+class TestAveragePosNegScores(TestCase):
     """Test suite for the average_pos_neg_scores function."""
 
     def test_average_pos_neg_scores_basic(self):
@@ -251,7 +251,7 @@ class TestAveragePosNegScores(unittest.TestCase):
         self.assertTrue(torch.allclose(avg_neg, negative_scores.mean(), atol=1e-6))
 
 
-class TestHitRateAtK(unittest.TestCase):
+class TestHitRateAtK(TestCase):
     """Test suite for the hit_rate_at_k function."""
 
     def test_hit_rate_at_k_single_k(self):
@@ -336,7 +336,7 @@ class TestHitRateAtK(unittest.TestCase):
         self.assertTrue(torch.allclose(hit_rate, torch.tensor([1.0]), atol=1e-6))
 
 
-class TestMeanReciprocalRank(unittest.TestCase):
+class TestMeanReciprocalRank(TestCase):
     """Test suite for the mean_reciprocal_rank function."""
 
     def test_mean_reciprocal_rank_basic(self):
@@ -409,4 +409,4 @@ class TestMeanReciprocalRank(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()
