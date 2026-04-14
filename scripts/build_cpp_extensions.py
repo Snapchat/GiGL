@@ -8,11 +8,21 @@ Usage::
     python build_cpp_extensions.py build_ext --inplace
 """
 
+from pathlib import Path
+
 from setuptools import setup
 from setuptools.extension import Extension
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
-from gigl.cpp_build_constants import COMPILE_ARGS, CSRC_DIR
+_REPO_ROOT: Path = Path(__file__).resolve().parent.parent
+_CSRC_DIR: Path = _REPO_ROOT / "gigl" / "csrc"
+_COMPILE_ARGS: list[str] = [
+    "-O3",
+    "-std=c++17",
+    "-Wall",
+    "-Wextra",
+    "-Wno-unused-parameter",
+]
 
 
 def find_cpp_extensions() -> list[Extension]:
@@ -23,10 +33,10 @@ def find_cpp_extensions() -> list[Extension]:
 
     Returns an empty list if ``gigl/csrc/`` does not yet exist.
     """
-    if not CSRC_DIR.exists():
+    if not _CSRC_DIR.exists():
         return []
     extensions = []
-    for cpp_file in sorted(CSRC_DIR.rglob("python_*.cpp")):
+    for cpp_file in sorted(_CSRC_DIR.rglob("python_*.cpp")):
         parts = list(cpp_file.with_suffix("").parts)
         parts[-1] = parts[-1].removeprefix("python_")
         module_name = ".".join(parts)
@@ -38,7 +48,7 @@ def find_cpp_extensions() -> list[Extension]:
             CppExtension(
                 name=module_name,
                 sources=sources,
-                extra_compile_args=COMPILE_ARGS,
+                extra_compile_args=_COMPILE_ARGS,
             )
         )
     return extensions

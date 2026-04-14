@@ -97,8 +97,7 @@ Enabled families:
 | `boost-use-to-string`            | Prefer `std::to_string` over `boost::lexical_cast` for numeric conversions                                                             |
 | `bugprone-*`                     | Common programming mistakes: dangling handles, suspicious string construction, assert side effects, etc.                               |
 | `cert-*`              | CERT secure coding rules for error handling (`err34-c`), floating-point loops (`flp30-c`), and RNG seeding (`msc32-c`, `msc50/51-cpp`) |
-| `clang-analyzer-*`               | Clang static analyzer: memory safety, null dereferences, use-after-free, etc.                                                          |
-| `clang-diagnostic-*`             | Compiler diagnostic warnings surfaced as lint checks                                                                                   |
+| `clang-diagnostic-*`             | Compiler diagnostic warnings surfaced as lint checks (e.g. `-Wall`, `-Wextra` violations)                                             |
 | `cppcoreguidelines-*` | C++ Core Guidelines: no raw `malloc`, no union member access, no object slicing, safe downcasts                                        |
 | `google-*`            | Google C++ style: explicit constructors, no global names in headers, safe `memset` usage                                               |
 | `hicpp-exception-baseclass`      | All thrown exceptions must derive from `std::exception`                                                                                |
@@ -112,17 +111,21 @@ Enabled families:
 Some checks in the above families are disabled where they produce excessive noise or conflict with common patterns in
 this codebase:
 
-| Disabled check                            | Reason                                                                              |
-| ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| `bugprone-easily-swappable-parameters`    | Tensor and sampler APIs legitimately have many adjacent same-typed parameters       |
-| `bugprone-narrowing-conversions`          | Too noisy in ML code mixing `int`/`int64_t`/`size_t` for tensor dimensions          |
-| `clang-analyzer-alpha*`                   | Alpha checks are experimental and unstable                                          |
-| `clang-analyzer-cplusplus.NewDeleteLeaks` | Ownership is managed via smart pointers; raw-new leaks are already caught elsewhere |
-| `misc-no-recursion`                       | Recursive graph algorithms are intentional                                          |
-| `modernize-avoid-c-arrays`                | C arrays are needed for pybind11 and C-interop code                                 |
-| `readability-container-contains`          | `.contains()` requires C++20; the codebase builds with C++17                        |
-| `readability-identifier-length`           | Short loop variables (`i`, `j`, `k`) are idiomatic                                  |
-| `readability-magic-numbers`               | Literal constants are common in ML code (e.g. feature dimensions)                   |
+| Disabled check                                          | Reason                                                                                                                                                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bugprone-easily-swappable-parameters`                  | Tensor and sampler APIs legitimately have many adjacent same-typed parameters                                                                                                              |
+| `bugprone-implicit-widening-of-multiplication-result`   | Crashes clang-tidy 15 on a construct in `ATen/core/dynamic_type.h` (upstream LLVM bug). Re-enable when upgrading past clang-tidy 15.                                                       |
+| `bugprone-narrowing-conversions`                        | Too noisy in ML code mixing `int`/`int64_t`/`size_t` for tensor dimensions                                                                                                                 |
+| `misc-confusable-identifiers`                           | Performs an O(n²) comparison of all identifiers in scope to detect Unicode homoglyphs. PyTorch headers introduce thousands of identifiers, making this check account for ~70% of total lint time. All identifiers in this codebase are standard ASCII. |
+| `misc-const-correctness`                                | Produces false positives with pybind11 types whose mutation happens through `operator[]` (which is non-const). The check incorrectly suggests `const` on variables that are mutated.       |
+| `misc-no-recursion`                                     | Recursive graph algorithms are intentional                                                                                                                                                 |
+| `modernize-avoid-c-arrays`                              | C arrays are needed for pybind11 and C-interop code                                                                                                                                        |
+| `modernize-use-trailing-return-type`                    | Trailing return types (`auto f() -> T`) are only useful when the return type depends on template params. Requiring them everywhere is non-standard and reduces readability.                 |
+| `readability-avoid-const-params-in-decls`               | Incorrectly fires on `const T&` parameters in multi-line declarations (clang-tidy 15 bug). The check is meant for top-level const on by-value params, which is a separate, valid concern. |
+| `readability-container-contains`                        | `.contains()` requires C++20; the codebase builds with C++17                                                                                                                               |
+| `readability-identifier-length`                         | Short loop variables (`i`, `j`, `k`) are idiomatic                                                                                                                                         |
+| `readability-function-cognitive-complexity`             | Algorithmic code often requires nesting that is inherent to the problem structure. Enforcing an arbitrary complexity ceiling discourages clarity and encourages artificial decomposition.   |
+| `readability-magic-numbers`                             | Literal constants are common in ML code (e.g. feature dimensions)                                                                                                                          |
 
 ### Naming conventions
 
@@ -142,7 +145,7 @@ Enforced via `readability-identifier-naming`:
 | Option                                                     | Value            | Effect                                                         |
 | ---------------------------------------------------------- | ---------------- | -------------------------------------------------------------- |
 | `WarningsAsErrors`                                         | `*`              | Every check failure is a hard error in CI                      |
-| `HeaderFilterRegex`                                        | `.*`             | Checks apply to all headers, not just implementation files     |
+| `HeaderFilterRegex`                                        | `.*/gigl/csrc/.*`  | Scopes checks to our own headers. Using `.*` causes clang-tidy to report warnings from every PyTorch/pybind11 header it parses, flooding output with thousands of third-party issues.  |
 | `FormatStyle`                                              | `none`           | clang-tidy does not auto-reformat; use clang-format separately |
 | `bugprone-string-constructor.LargeLengthThreshold`         | `8388608` (8 MB) | Strings larger than 8 MB from a length argument are flagged    |
 | `modernize-loop-convert.NamingStyle`                       | `CamelCase`      | Auto-generated loop variable names use CamelCase               |

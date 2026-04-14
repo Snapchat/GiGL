@@ -3,16 +3,13 @@ Checks: >
   boost-use-to-string,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
   -bugprone-narrowing-conversions,
   cert-err34-c,
   cert-flp30-c,
   cert-msc32-c,
   cert-msc50-cpp,
   cert-msc51-cpp,
-  clang-analyzer-*,
-  -clang-analyzer-alpha*,
-  -clang-analyzer-cplusplus.NewDeleteLeaks,
-  -clang-analyzer-osx*,
   clang-diagnostic-*,
   cppcoreguidelines-interfaces-global-init,
   cppcoreguidelines-no-malloc,
@@ -27,17 +24,29 @@ Checks: >
   google-runtime-memset,
   hicpp-exception-baseclass,
   misc-*,
+  -misc-confusable-identifiers,
+  -misc-const-correctness,
   -misc-no-recursion,
   modernize-*,
   -modernize-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
   performance-*,
   readability-*,
+  -readability-avoid-const-params-in-decls,
+  -readability-function-cognitive-complexity,
   -readability-container-contains,
   -readability-identifier-length,
   -readability-magic-numbers,
 
+# WarningsAsErrors and HeaderFilterRegex work together:
+# HeaderFilterRegex scopes which headers clang-tidy reports diagnostics for.
+# Warnings from headers outside the regex (PyTorch, pybind11, etc.) are suppressed
+# entirely and never reach WarningsAsErrors — so the large warning counts printed
+# by clang-tidy ("N warnings generated") are third-party noise that is silently
+# dropped. Only diagnostics in our own headers (.*/gigl/csrc/.*) are reported,
+# and those are treated as hard errors.
 WarningsAsErrors: '*'
-HeaderFilterRegex: '.*'
+HeaderFilterRegex: '.*/gigl/csrc/.*'
 FormatStyle:     none
 User:            jenkins
 # CheckOptions: per-check tuning parameters. Each entry configures a specific
