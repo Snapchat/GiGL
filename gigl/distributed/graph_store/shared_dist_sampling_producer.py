@@ -4,6 +4,64 @@ This module implements the multi-channel sampling backend used in graph-store
 mode.  A single ``SharedDistSamplingBackend`` per loader instance manages a
 pool of worker processes that service many compute-rank channels through a
 fair-queued scheduler (``_shared_sampling_worker_loop``).
+
+We need this "fair-queued" scheduler to ensure that each compute rank gets a fair share of the work.
+If we didn't have this, then compute ranks with more data would starve the compute ranks with less data
+as `sample_from_*` calls would be blocked by the compute ranks with more data.
+Surprisingly, upping `worker_concurrency` does not fix this problem.
+TODO(kmonte): Look into why worker_concurrency does not fix this problem.
+
+High-level architecture::
+
+    ┌──────────────────────────────────────────────┐
+    │      SharedDistSamplingBackend               │
+    │      (main process)                          │
+    ├──────────────────────────────────────────────┤
+    │  register_input()                            │
+    │  start_new_epoch_sampling()                  │
+    │  is_channel_epoch_done()                     │
+    │  unregister_input()                          │
+    │  shutdown()                                  │
+    └──────┬──────────────────────────────▲────────┘
+           │ task_queues                  │ event_queue
+           │ (SharedMpCommand, payload)   │ (EPOCH_DONE_EVENT,
+           │                              │  channel_id, epoch,
+           ▼                              │  worker_rank)
+    ┌──────────────────────────────────────────────┐
+    │  Worker 0 .. N-1                             │
+    │  _shared_sampling_worker_loop()              │
+    │                                              │
+    │  ┌─────────────┐  sample_from_*  ┌─────────┐ │
+    │  │ Sampler      │───────────────▶│ Channel │ │
+    │  │ (per channel)│  (results)     │ (output)│ │
+    │  └─────────────┘                 └─────────┘ │
+    └──────────────────────────────────────────────┘
+
+Worker event-loop internals::
+
+    ┌─────────────────────────────────────────────────┐
+    │ Phase 1: Drain commands (non-blocking)          │
+    │   task_queue.get_nowait() ──▶ _handle_command() │
+    │     REGISTER_INPUT  ──▶ create sampler + state  │
+    │     START_EPOCH     ──▶ ActiveEpochState        │
+    │                          + enqueue to runnable  │
+    │     UNREGISTER_INPUT ──▶ cleanup / defer        │
+    │     STOP             ──▶ exit loop              │
+    ├─────────────────────────────────────────────────┤
+    │ Phase 2: Round-robin batch submission           │
+    │   for each channel in runnable_channel_ids:     │
+    │     pop ──▶ _submit_one_batch()                 │
+    │            ──▶ sampler.sample_from_*()          │
+    │     if more batches: re-enqueue channel         │
+    │                                                 │
+    │   completion callback (_on_batch_done):         │
+    │     completed_batches += 1                      │
+    │     if all done ──▶ EPOCH_DONE to event_queue   │
+    ├─────────────────────────────────────────────────┤
+    │ Phase 3: Idle wait                              │
+    │   if no commands and no batches submitted:      │
+    │     task_queue.get(timeout=SCHEDULER_TICK_SECS) │
+    └─────────────────────────────────────────────────┘
 """
 
 import datetime
@@ -39,7 +97,7 @@ from graphlearn_torch.typing import EdgeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
-from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import (
     SamplerInput,
     SamplerRuntime,
@@ -47,27 +105,6 @@ from gigl.distributed.utils.dist_sampler import (
 )
 
 logger = Logger()
-
-
-def _prepare_degree_tensors(
-    data: DistDataset,
-    sampler_options: SamplerOptions,
-) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
-    """Materialize PPR degree tensors before worker spawn when required."""
-    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
-    if isinstance(sampler_options, PPRSamplerOptions):
-        degree_tensors = data.degree_tensor
-        if isinstance(degree_tensors, dict):
-            logger.info(
-                "Pre-computed degree tensors for PPR sampling across "
-                f"{len(degree_tensors)} edge types."
-            )
-        elif degree_tensors is not None:
-            logger.info(
-                "Pre-computed degree tensor for PPR sampling with "
-                f"{degree_tensors.size(0)} nodes."
-            )
-    return degree_tensors
 
 
 EPOCH_DONE_EVENT = "EPOCH_DONE"
@@ -78,6 +115,23 @@ SCHEDULER_SLOW_SUBMIT_SECS = 1.0
 
 
 class SharedMpCommand(Enum):
+    """Commands sent from the backend to worker subprocesses via task queues.
+
+    Each command is paired with a payload in a ``(command, payload)`` tuple
+    placed on the per-worker ``task_queue``.
+
+    Attributes:
+        REGISTER_INPUT: Register a new channel with its sampler input,
+            sampling config, and output channel.
+            Payload: ``RegisterInputCmd``.
+        UNREGISTER_INPUT: Remove a channel and clean up its state.
+            Payload: ``int`` (the channel_id).
+        START_EPOCH: Begin sampling a new epoch for one channel.
+            Payload: ``StartEpochCmd``.
+        STOP: Shut down the worker process.
+            Payload: ``None``.
+    """
+
     REGISTER_INPUT = auto()
     UNREGISTER_INPUT = auto()
     START_EPOCH = auto()
@@ -86,6 +140,20 @@ class SharedMpCommand(Enum):
 
 @dataclass(frozen=True)
 class RegisterInputCmd:
+    """Payload for ``SharedMpCommand.REGISTER_INPUT``.
+
+    Carries everything a worker needs to set up sampling for one channel.
+
+    Attributes:
+        channel_id: Unique identifier for this channel across the backend.
+        worker_key: Routing key used to identify this channel in the worker
+            group (passed through to ``create_dist_sampler``).
+        sampler_input: The full set of seed node/edge inputs for this channel,
+            already in shared memory.
+        sampling_config: Sampling parameters (batch size, num neighbors, etc.).
+        channel: The output channel where sampled subgraphs are written.
+    """
+
     channel_id: int
     worker_key: str
     sampler_input: SamplerInput
@@ -95,6 +163,17 @@ class RegisterInputCmd:
 
 @dataclass(frozen=True)
 class StartEpochCmd:
+    """Payload for ``SharedMpCommand.START_EPOCH``.
+
+    Attributes:
+        channel_id: The channel whose epoch is starting.
+        epoch: Monotonically increasing epoch number.
+            Duplicate or stale epochs are silently ignored by the worker.
+        seeds_index: Index tensor selecting which seeds from the channel's
+            ``sampler_input`` to sample this epoch.
+            ``None`` means use the full input range.
+    """
+
     channel_id: int
     epoch: int
     seeds_index: Optional[torch.Tensor]
@@ -102,6 +181,29 @@ class StartEpochCmd:
 
 @dataclass
 class ActiveEpochState:
+    """Mutable per-channel state for an in-progress epoch inside a worker.
+
+    Created by ``_handle_command`` on ``START_EPOCH`` and removed when all
+    batches complete.
+
+    Attributes:
+        channel_id: The channel this epoch belongs to.
+        epoch: The epoch number.
+        input_len: Total number of seed indices assigned to this worker for
+            this epoch.
+        batch_size: Number of seeds per batch.
+        drop_last: If True, the final incomplete batch is skipped.
+        seeds_index: Index tensor into the channel's ``sampler_input``.
+            ``None`` means sequential indices ``[0, input_len)``.
+        total_batches: Pre-computed number of batches for this epoch.
+        submitted_batches: Number of batches submitted to the sampler so far.
+            Mutated by ``_submit_one_batch``.
+        completed_batches: Number of batches whose sampler callbacks have
+            fired.  Mutated by ``_on_batch_done``.
+        cancelled: Set to True when the channel is unregistered while batches
+            are still in flight.  Mutated by ``_clear_registered_input_locked``.
+    """
+
     channel_id: int
     epoch: int
     input_len: int
@@ -114,8 +216,23 @@ class ActiveEpochState:
     cancelled: bool = False
 
 
-def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[int]:
-    """Extract the channel id from a worker command payload."""
+CommandPayload = Union[RegisterInputCmd, StartEpochCmd, int, None]
+
+
+def _command_channel_id(
+    command: SharedMpCommand, payload: CommandPayload
+) -> Optional[int]:
+    """Extract the channel id from a worker command payload.
+
+    Args:
+        command: The command type.
+        payload: The associated payload — one of ``RegisterInputCmd``,
+            ``StartEpochCmd``, ``int`` (channel_id), or ``None``.
+
+    Returns:
+        The channel id if the command targets a specific channel,
+        or ``None`` for ``STOP``.
+    """
     if command == SharedMpCommand.STOP:
         return None
     if isinstance(payload, RegisterInputCmd):
@@ -128,7 +245,17 @@ def _command_channel_id(command: SharedMpCommand, payload: object) -> Optional[i
 
 
 def _compute_num_batches(input_len: int, batch_size: int, drop_last: bool) -> int:
-    """Compute the number of batches emitted for an input length."""
+    """Compute the number of batches emitted for an input length.
+
+    Args:
+        input_len: Total number of seed indices.
+        batch_size: Number of seeds per batch.
+        drop_last: If True, drops the final batch when it is smaller than
+            ``batch_size``.
+
+    Returns:
+        The number of batches.  Returns 0 when ``input_len <= 0``.
+    """
     if input_len <= 0:
         return 0
     if drop_last:
@@ -137,11 +264,21 @@ def _compute_num_batches(input_len: int, batch_size: int, drop_last: bool) -> in
 
 
 def _epoch_batch_indices(state: ActiveEpochState) -> Optional[torch.Tensor]:
-    """Return the next batch of indices for an active epoch.
+    """Return the next batch of seed indices for an active epoch.
 
-    Returns the index tensor for the next batch, or None if no more batches
-    should be submitted (epoch cancelled, all batches already submitted, or
-    incomplete final batch with drop_last=True).
+    Advances the logical cursor by one batch based on
+    ``state.submitted_batches``.
+
+    Args:
+        state: The mutable epoch state for the channel.
+            ``submitted_batches`` is read but **not** mutated here — the
+            caller (``_submit_one_batch``) increments it after calling.
+
+    Returns:
+        A 1-D ``torch.long`` tensor of seed indices for the next batch,
+        or ``None`` if no more batches should be submitted (epoch cancelled,
+        all batches already submitted, or incomplete final batch with
+        ``drop_last=True``).
     """
     if state.cancelled or state.submitted_batches >= state.total_batches:
         return None
@@ -159,7 +296,22 @@ def _epoch_batch_indices(state: ActiveEpochState) -> Optional[torch.Tensor]:
 def _compute_worker_seeds_ranges(
     input_len: int, batch_size: int, num_workers: int
 ) -> list[tuple[int, int]]:
-    """Distribute complete batches across workers like GLT's producer does."""
+    """Distribute seed indices across workers using GLT-compatible logic.
+
+    Divides complete batches as evenly as possible across workers
+    (lower-ranked workers get one extra batch when the division is uneven).
+    The last worker's range extends to ``input_len`` so that the remainder
+    (incomplete final batch) is included.
+
+    Args:
+        input_len: Total number of seed indices.
+        batch_size: Number of seeds per batch.
+        num_workers: Number of worker processes.
+
+    Returns:
+        A list of ``(start, end)`` index ranges, one per worker.  The ranges
+        are contiguous and non-overlapping, covering ``[0, input_len)``.
+    """
     num_worker_batches = [0] * num_workers
     num_total_complete_batches = input_len // batch_size
     for rank in range(num_workers):
@@ -194,12 +346,32 @@ def _shared_sampling_worker_loop(
     Multiple input channels (each representing one compute rank's data stream)
     share the same sampling worker processes and graph data.
 
+    Args:
+        rank: This worker's index within the pool (``0 .. num_workers-1``).
+        data: The distributed dataset, shared across all workers via the
+            spawn context.
+        worker_options: GLT remote sampling worker configuration (RPC
+            addresses, devices, concurrency settings).
+        task_queue: Per-worker command queue.  The backend enqueues
+            ``(SharedMpCommand, payload)`` tuples; the worker drains them
+            in Phase 1 of the event loop.
+        event_queue: Shared completion queue.  Workers emit
+            ``(EPOCH_DONE_EVENT, channel_id, epoch, worker_rank)`` tuples
+            when all batches for an epoch have completed.
+        mp_barrier: Synchronization barrier.  The worker signals it after
+            RPC initialization is complete so the parent can proceed.
+        sampler_options: GiGL sampler configuration (e.g. ``PPRSamplerOptions``
+            for PPR-based sampling).
+        degree_tensors: Pre-computed degree tensors for PPR sampling, or
+            ``None`` for non-PPR samplers.  Materialized once in the parent
+            process by ``_prepare_degree_tensors`` and shared across workers.
+
     Algorithm:
         1. Initialize RPC, sampler infrastructure, and signal the parent via barrier.
         2. Enter the main event loop which alternates between:
            a. Draining all pending commands from ``task_queue`` (register/unregister
               channels, start epochs, stop).
-           b. Submitting batches round-robin from ``runnable_channels`` — a FIFO
+           b. Submitting batches round-robin from ``runnable_channel_ids`` — a FIFO
               queue of channels that have pending work. Each channel gets one batch
               submitted per round to prevent starvation.
            c. If no commands were processed and no batches submitted, blocking on
@@ -208,16 +380,16 @@ def _shared_sampling_worker_loop(
            ``EPOCH_DONE_EVENT`` to ``event_queue`` when all batches for an epoch
            are finished.
     """
-    samplers: dict[int, SamplerRuntime] = {}
-    channels: dict[int, ChannelBase] = {}
-    inputs: dict[int, SamplerInput] = {}
-    cfgs: dict[int, SamplingConfig] = {}
-    route_key_by_channel: dict[int, str] = {}
-    started_epoch: dict[int, int] = {}
-    active_epochs_by_channel: dict[int, ActiveEpochState] = {}
-    runnable_channels: deque[int] = deque()
-    runnable_set: set[int] = set()
-    removing: set[int] = set()
+    sampler_by_channel_id: dict[int, SamplerRuntime] = {}
+    output_channel_by_channel_id: dict[int, ChannelBase] = {}
+    input_by_channel_id: dict[int, SamplerInput] = {}
+    config_by_channel_id: dict[int, SamplingConfig] = {}
+    route_key_by_channel_id: dict[int, str] = {}
+    started_epoch_by_channel_id: dict[int, int] = {}
+    active_epoch_by_channel_id: dict[int, ActiveEpochState] = {}
+    runnable_channel_ids: deque[int] = deque()
+    runnable_channel_id_set: set[int] = set()
+    removing_channel_ids: set[int] = set()
     state_lock = threading.RLock()
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
@@ -226,15 +398,16 @@ def _shared_sampling_worker_loop(
 
     def _enqueue_channel_if_runnable_locked(channel_id: int) -> None:
         """Add channel to the fair-queue if it has pending batches."""
-        state = active_epochs_by_channel.get(channel_id)
+        # TODO(kmonte): Add a check to ensure the lock is held.
+        state = active_epoch_by_channel_id.get(channel_id)
         if state is None:
             return
         if state.cancelled or state.submitted_batches >= state.total_batches:
             return
-        if channel_id in runnable_set:
+        if channel_id in runnable_channel_id_set:
             return
-        runnable_channels.append(channel_id)
-        runnable_set.add(channel_id)
+        runnable_channel_ids.append(channel_id)
+        runnable_channel_id_set.add(channel_id)
 
     def _clear_registered_input_locked(channel_id: int) -> None:
         """Remove a channel's registration and clean up all associated state.
@@ -244,35 +417,40 @@ def _shared_sampling_worker_loop(
         immediately.
         ``_on_batch_done`` will finish the cleanup once the last in-flight
         batch completes.
+
+        Note: Deferred cleanup assumes that channel_ids are not reused while
+        cleanup is pending.  DistServer allocates channel_ids from a
+        monotonically increasing counter, so this holds in practice.
         """
-        state = active_epochs_by_channel.get(channel_id)
+        # TODO(kmonte): Add a check to ensure the lock is held.
+        state = active_epoch_by_channel_id.get(channel_id)
         if state is not None and state.completed_batches < state.submitted_batches:
-            removing.add(channel_id)
+            removing_channel_ids.add(channel_id)
             state.cancelled = True
             return
-        sampler = samplers.pop(channel_id, None)
+        sampler = sampler_by_channel_id.pop(channel_id, None)
         if sampler is not None:
             sampler.wait_all()
             sampler.shutdown_loop()
-        channels.pop(channel_id, None)
-        inputs.pop(channel_id, None)
-        cfgs.pop(channel_id, None)
-        route_key_by_channel.pop(channel_id, None)
-        started_epoch.pop(channel_id, None)
-        active_epochs_by_channel.pop(channel_id, None)
-        runnable_set.discard(channel_id)
-        removing.discard(channel_id)
+        output_channel_by_channel_id.pop(channel_id, None)
+        input_by_channel_id.pop(channel_id, None)
+        config_by_channel_id.pop(channel_id, None)
+        route_key_by_channel_id.pop(channel_id, None)
+        started_epoch_by_channel_id.pop(channel_id, None)
+        active_epoch_by_channel_id.pop(channel_id, None)
+        runnable_channel_id_set.discard(channel_id)
+        removing_channel_ids.discard(channel_id)
 
     def _format_scheduler_state_locked() -> str:
         """Format a human-readable snapshot of the scheduler for logging.
 
         Must be called while holding ``state_lock``.
         """
-        channel_ids = sorted(channels.keys())
+        channel_ids = sorted(output_channel_by_channel_id.keys())
         preview = channel_ids[:SCHEDULER_STATE_MAX_CHANNELS]
         previews: list[str] = []
         for channel_id in preview:
-            active_epoch = active_epochs_by_channel.get(channel_id)
+            active_epoch = active_epoch_by_channel_id.get(channel_id)
             if active_epoch is None:
                 previews.append(f"{channel_id}:idle")
             else:
@@ -286,8 +464,8 @@ def _shared_sampling_worker_loop(
         if len(channel_ids) > len(preview):
             extra = f" +{len(channel_ids) - len(preview)}"
         return (
-            f"registered={len(channels)} active={len(active_epochs_by_channel)} "
-            f"runnable={len(runnable_set)} removing={len(removing)} "
+            f"registered={len(output_channel_by_channel_id)} active={len(active_epoch_by_channel_id)} "
+            f"runnable={len(runnable_channel_id_set)} removing={len(removing_channel_ids)} "
             f"channels=[{', '.join(previews)}]{extra}"
         )
 
@@ -320,84 +498,112 @@ def _shared_sampling_worker_loop(
         ``_clear_registered_input_locked``.
         """
         with state_lock:
-            state = active_epochs_by_channel.get(channel_id)
+            state = active_epoch_by_channel_id.get(channel_id)
+            # Ignore stale callbacks from a previous epoch or cancelled channel.
             if state is None or state.epoch != epoch:
                 return
             state.completed_batches += 1
             if state.completed_batches == state.total_batches:
-                active_epochs_by_channel.pop(channel_id, None)
+                # All batches done — remove active state and notify the parent.
+                active_epoch_by_channel_id.pop(channel_id, None)
                 event_queue.put((EPOCH_DONE_EVENT, channel_id, epoch, rank))
             if (
-                channel_id in removing
+                channel_id in removing_channel_ids
                 and state.completed_batches == state.submitted_batches
             ):
+                # Channel was unregistered while batches were in flight.
+                # Now that all submitted batches have completed, finish cleanup.
                 _clear_registered_input_locked(channel_id)
 
     def _submit_one_batch(channel_id: int) -> bool:
         """Submit the next batch for a channel to its sampler.
 
-        Re-enqueues the channel into ``runnable_channels`` if more batches
+        Re-enqueues the channel into ``runnable_channel_ids`` if more batches
         remain.
         Returns True if a batch was submitted, False if the channel had no
         pending work.
         """
+        # Hold the lock only to read state and advance the cursor.
+        # Release before the sampler call to avoid blocking other threads.
         with state_lock:
-            state = active_epochs_by_channel.get(channel_id)
+            state = active_epoch_by_channel_id.get(channel_id)
             if state is None:
                 return False
             batch_indices = _epoch_batch_indices(state)
             if batch_indices is None:
                 return False
             state.submitted_batches += 1
-            cfg = cfgs[channel_id]
-            sampler = samplers[channel_id]
-            channel_input = inputs[channel_id]
+            cfg = config_by_channel_id[channel_id]
+            sampler = sampler_by_channel_id[channel_id]
+            channel_input = input_by_channel_id[channel_id]
             current_epoch = state.epoch
+            # Re-enqueue for the next round-robin pass if more batches remain.
             if state.submitted_batches < state.total_batches and not state.cancelled:
-                runnable_channels.append(channel_id)
-                runnable_set.add(channel_id)
+                runnable_channel_ids.append(channel_id)
+                runnable_channel_id_set.add(channel_id)
 
         sampler_input = channel_input[batch_indices]
 
+        # Sampler calls are async (submit to thread pool). If submission
+        # itself raises, the callback never fires and the epoch would hang
+        # forever.  Log the error and let the exception kill this worker so
+        # the parent can detect the dead process and fail fast.
         callback = lambda _: _on_batch_done(channel_id, current_epoch)
-        if cfg.sampling_type == SamplingType.NODE:
-            sampler.sample_from_nodes(
-                cast(NodeSamplerInput, sampler_input), callback=callback
+        try:
+            if cfg.sampling_type == SamplingType.NODE:
+                sampler.sample_from_nodes(
+                    cast(NodeSamplerInput, sampler_input), callback=callback
+                )
+            elif cfg.sampling_type == SamplingType.LINK:
+                sampler.sample_from_edges(
+                    cast(EdgeSamplerInput, sampler_input), callback=callback
+                )
+            elif cfg.sampling_type == SamplingType.SUBGRAPH:
+                sampler.subgraph(
+                    cast(NodeSamplerInput, sampler_input), callback=callback
+                )
+            else:
+                raise RuntimeError(f"Unsupported sampling type: {cfg.sampling_type}")
+        except Exception:
+            logger.error(
+                f"shared_sampling_worker sampler call failed "
+                f"worker_rank={rank} channel_id={channel_id} "
+                f"epoch={current_epoch} batch={state.submitted_batches}"
             )
-        elif cfg.sampling_type == SamplingType.LINK:
-            sampler.sample_from_edges(
-                cast(EdgeSamplerInput, sampler_input), callback=callback
-            )
-        elif cfg.sampling_type == SamplingType.SUBGRAPH:
-            sampler.subgraph(cast(NodeSamplerInput, sampler_input), callback=callback)
-        else:
-            raise RuntimeError(f"Unsupported sampling type: {cfg.sampling_type}")
+            raise
         return True
 
-    def _pump_runnable_channels() -> bool:
+    def _pump_runnable_channel_ids() -> bool:
         """Submit one batch per runnable channel in round-robin order.
 
         Returns True if at least one batch was submitted.
         """
         made_progress = False
+        # Snapshot the count so we process exactly one batch per channel that
+        # was runnable at the start.  Channels re-enqueued by _submit_one_batch
+        # during this pass are deferred to the next pump cycle to preserve
+        # round-robin fairness.
         with state_lock:
-            num_candidates = len(runnable_channels)
+            num_candidates = len(runnable_channel_ids)
         for _ in range(num_candidates):
             with state_lock:
-                if not runnable_channels:
+                if not runnable_channel_ids:
                     break
-                channel_id = runnable_channels.popleft()
-                runnable_set.discard(channel_id)
+                channel_id = runnable_channel_ids.popleft()
+                runnable_channel_id_set.discard(channel_id)
             made_progress = _submit_one_batch(channel_id) or made_progress
         return made_progress
 
-    def _handle_command(command: SharedMpCommand, payload: object) -> bool:
+    def _handle_command(command: SharedMpCommand, payload: CommandPayload) -> bool:
         """Dispatch one command from the task queue.
 
         Returns True to keep running, False on ``STOP``.
         """
         channel_id = _command_channel_id(command, payload)
         if command == SharedMpCommand.REGISTER_INPUT:
+            # Assumes channel_id is fresh (not pending deferred cleanup).
+            # DistServer allocates monotonically increasing IDs, so reuse
+            # does not happen with current callers.
             register = cast(RegisterInputCmd, payload)
             assert current_device is not None
             sampler = create_dist_sampler(
@@ -411,28 +617,28 @@ def _shared_sampling_worker_loop(
             )
             sampler.start_loop()
             with state_lock:
-                samplers[register.channel_id] = sampler
-                channels[register.channel_id] = register.channel
-                inputs[register.channel_id] = register.sampler_input
-                cfgs[register.channel_id] = register.sampling_config
-                route_key_by_channel[register.channel_id] = register.worker_key
-                started_epoch[register.channel_id] = -1
+                sampler_by_channel_id[register.channel_id] = sampler
+                output_channel_by_channel_id[register.channel_id] = register.channel
+                input_by_channel_id[register.channel_id] = register.sampler_input
+                config_by_channel_id[register.channel_id] = register.sampling_config
+                route_key_by_channel_id[register.channel_id] = register.worker_key
+                started_epoch_by_channel_id[register.channel_id] = -1
             _maybe_log_scheduler_state("register_input", force=True)
             return True
 
         if command == SharedMpCommand.START_EPOCH:
             start_epoch = cast(StartEpochCmd, payload)
             with state_lock:
-                if channel_id not in channels:
+                if channel_id not in output_channel_by_channel_id:
                     return True
-                if started_epoch.get(channel_id, -1) >= start_epoch.epoch:
+                if started_epoch_by_channel_id.get(channel_id, -1) >= start_epoch.epoch:
                     return True
-                started_epoch[channel_id] = start_epoch.epoch
-                sampling_config = cfgs[channel_id]
+                started_epoch_by_channel_id[channel_id] = start_epoch.epoch
+                sampling_config = config_by_channel_id[channel_id]
                 local_input_len = (
                     len(start_epoch.seeds_index)
                     if start_epoch.seeds_index is not None
-                    else len(inputs[channel_id])
+                    else len(input_by_channel_id[channel_id])
                 )
                 state = ActiveEpochState(
                     channel_id=channel_id,
@@ -447,9 +653,9 @@ def _shared_sampling_worker_loop(
                         sampling_config.drop_last,
                     ),
                 )
-                active_epochs_by_channel[channel_id] = state
+                active_epoch_by_channel_id[channel_id] = state
                 if state.total_batches == 0:
-                    active_epochs_by_channel.pop(channel_id, None)
+                    active_epoch_by_channel_id.pop(channel_id, None)
                     event_queue.put(
                         (EPOCH_DONE_EVENT, channel_id, start_epoch.epoch, rank)
                     )
@@ -518,7 +724,7 @@ def _shared_sampling_worker_loop(
                 keep_running = _handle_command(command, payload)
 
             # Phase 2: Submit batches round-robin from runnable channels.
-            made_progress = _pump_runnable_channels()
+            made_progress = _pump_runnable_channel_ids()
             _maybe_log_scheduler_state("steady_state")
             if not keep_running:
                 break
@@ -533,7 +739,7 @@ def _shared_sampling_worker_loop(
     except KeyboardInterrupt:
         pass
     finally:
-        for sampler in list(samplers.values()):
+        for sampler in list(sampler_by_channel_id.values()):
             sampler.wait_all()
             sampler.shutdown_loop()
         shutdown_rpc(graceful=False)
@@ -549,7 +755,23 @@ class SharedDistSamplingBackend:
         worker_options: RemoteDistSamplingWorkerOptions,
         sampling_config: SamplingConfig,
         sampler_options: SamplerOptions,
+        degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ) -> None:
+        """Initialize the shared sampling backend.
+
+        Does not start worker processes — call ``init_backend`` to spawn them.
+
+        Args:
+            data: The distributed dataset to sample from.
+            worker_options: GLT remote sampling worker configuration (RPC
+                addresses, devices, concurrency).
+            sampling_config: Sampling parameters (batch size, neighbor counts,
+                shuffle, etc.).  All channels registered on this backend must
+                use the same config.
+            sampler_options: GiGL sampler variant configuration (e.g.
+                ``PPRSamplerOptions`` for PPR-based sampling).
+            degree_tensors: Pre-computed degree tensors for PPR sampling (if applicable).
+        """
         self.data = data
         self.worker_options = worker_options
         self.num_workers = worker_options.num_workers
@@ -569,9 +791,28 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
+        self._degree_tensors = degree_tensors
 
     def init_backend(self) -> None:
-        """Initialize worker processes once for this backend."""
+        """Initialize worker processes once for this backend.
+
+        Spawns ``num_workers`` subprocesses running
+        ``_shared_sampling_worker_loop``.  Each worker initializes RPC and
+        signals readiness via a shared barrier.  This method blocks until all
+        workers are ready.
+
+        The initialization sequence is:
+
+        1. Assign devices and worker ranks from the GLT server context.
+        3. Spawn worker processes with per-worker task queues and a shared
+           event queue.
+        4. Wait on the barrier for all workers to finish RPC init.
+
+        No-op if already initialized.
+
+        Raises:
+            RuntimeError: If no GLT server context is active.
+        """
         with self._lock:
             if self._initialized:
                 return
@@ -582,10 +823,6 @@ class SharedDistSamplingBackend:
                     "SharedDistSamplingBackend.init_backend() requires a GLT server context."
                 )
             self.worker_options._set_worker_ranks(current_ctx)
-            degree_tensors = _prepare_degree_tensors(
-                self.data,
-                self._sampler_options,
-            )
             mp_context = mp.get_context("spawn")
             barrier = mp_context.Barrier(self.num_workers + 1)
             self._event_queue = mp_context.Queue()
@@ -604,7 +841,7 @@ class SharedDistSamplingBackend:
                         self._event_queue,
                         barrier,
                         self._sampler_options,
-                        degree_tensors,
+                        self._degree_tensors,
                     ),
                 )
                 worker.daemon = True
@@ -617,8 +854,19 @@ class SharedDistSamplingBackend:
         self,
         worker_rank: int,
         command: SharedMpCommand,
-        payload: object,
+        payload: CommandPayload,
     ) -> None:
+        """Enqueue a command on one worker's task queue.
+
+        Logs a warning if the enqueue blocks for longer than
+        ``SCHEDULER_SLOW_SUBMIT_SECS``.
+
+        Args:
+            worker_rank: Index of the target worker (``0 .. num_workers-1``).
+            command: The command type to send.
+            payload: The command payload (``RegisterInputCmd``,
+                ``StartEpochCmd``, ``int``, or ``None``).
+        """
         queue_ = self._task_queues[worker_rank]
         enqueue_start = time.monotonic()
         queue_.put((command, payload))
@@ -637,7 +885,25 @@ class SharedDistSamplingBackend:
         sampling_config: SamplingConfig,
         channel: ChannelBase,
     ) -> None:
-        """Register a channel-specific input on all backend workers."""
+        """Register a new channel on all backend workers.
+
+        Moves ``sampler_input`` into shared memory, computes per-worker seed
+        ranges, initializes shuffle state (if configured), and broadcasts a
+        ``REGISTER_INPUT`` command to every worker.
+
+        Args:
+            channel_id: Unique identifier for this channel.
+            worker_key: Routing key for the channel in the worker group.
+            sampler_input: Seed node/edge inputs for this channel.
+            sampling_config: Must match the backend's ``sampling_config``.
+            channel: Output channel where sampled subgraphs are written.
+
+        Raises:
+            RuntimeError: If the backend has not been initialized via
+                ``init_backend``.
+            ValueError: If ``channel_id`` is already registered, or if
+                ``sampling_config`` does not match the backend config.
+        """
         with self._lock:
             if not self._initialized:
                 raise RuntimeError("SharedDistSamplingBackend is not initialized.")
@@ -683,7 +949,12 @@ class SharedDistSamplingBackend:
                 )
 
     def _drain_events(self) -> None:
-        """Drain worker completion events into the backend-local state."""
+        """Drain worker completion events into the backend-local state.
+
+        Reads all pending ``EPOCH_DONE_EVENT`` tuples from the shared
+        ``event_queue`` and records which workers have finished each
+        ``(channel_id, epoch)`` in ``_completed_workers``.
+        """
         if self._event_queue is None:
             return
         while True:
@@ -696,13 +967,44 @@ class SharedDistSamplingBackend:
                 self._completed_workers[(channel_id, epoch)].add(worker_rank)
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
-        """Start one new epoch for one registered channel."""
+        """Start a new sampling epoch for one registered channel.
+
+        Cleans up stale completion records, generates a shuffled or sequential
+        seed permutation, slices it into per-worker ranges, and dispatches
+        ``START_EPOCH`` commands to all workers.
+
+        No-op if the channel has already started an epoch >= ``epoch``.
+
+        Callers must ensure the previous epoch's sampling has completed before
+        starting a new one.  ``BaseDistLoader.__iter__`` guarantees this by
+        consuming all batches via ``__next__`` before re-entering the loop.
+
+        Args:
+            channel_id: The registered channel to start.
+            epoch: Monotonically increasing epoch number.
+
+        Raises:
+            KeyError: If ``channel_id`` is not registered.
+        """
         with self._lock:
             self._drain_events()
             sampling_config = self._channel_sampling_config[channel_id]
             if self._channel_epoch[channel_id] >= epoch:
                 return
             previous_epoch = self._channel_epoch[channel_id]
+            if previous_epoch >= 0:
+                prev_done = (
+                    len(
+                        self._completed_workers.get((channel_id, previous_epoch), set())
+                    )
+                    == self.num_workers
+                )
+                if not prev_done:
+                    logger.warning(
+                        f"start_new_epoch_sampling called for channel_id={channel_id} "
+                        f"epoch={epoch} while previous epoch={previous_epoch} "
+                        f"has not completed on all workers."
+                    )
             self._channel_epoch[channel_id] = epoch
             stale_keys = [
                 k
@@ -744,7 +1046,16 @@ class SharedDistSamplingBackend:
                     )
 
     def unregister_input(self, channel_id: int) -> None:
-        """Unregister a channel from the backend workers."""
+        """Unregister a channel from all backend workers.
+
+        Removes backend-side bookkeeping and broadcasts
+        ``UNREGISTER_INPUT`` to every worker.
+
+        No-op if ``channel_id`` is not currently registered.
+
+        Args:
+            channel_id: The channel to remove.
+        """
         with self._lock:
             if channel_id not in self._channel_sampling_config:
                 return
@@ -764,17 +1075,60 @@ class SharedDistSamplingBackend:
                     channel_id,
                 )
 
+    def _check_workers_alive(self) -> None:
+        """Raise if any worker process has died.
+
+        Must be called while holding ``self._lock``.
+        """
+        for i, worker in enumerate(self._workers):
+            if not worker.is_alive():
+                raise RuntimeError(
+                    f"Sampling worker {i} (pid={worker.pid}) died unexpectedly. "
+                    f"Check worker logs for the root cause."
+                )
+
     def is_channel_epoch_done(self, channel_id: int, epoch: int) -> bool:
-        """Return whether every worker finished the epoch for one channel."""
+        """Return whether every worker finished the epoch for one channel.
+
+        Drains pending completion events before checking.
+
+        Args:
+            channel_id: The channel to query.
+            epoch: The epoch number to check.
+
+        Returns:
+            ``True`` if all ``num_workers`` workers have reported
+            ``EPOCH_DONE`` for this ``(channel_id, epoch)`` pair.
+
+        Raises:
+            RuntimeError: If any worker process has died.
+        """
         with self._lock:
             self._drain_events()
-            return (
+            done = (
                 len(self._completed_workers.get((channel_id, epoch), set()))
                 == self.num_workers
             )
+            if not done:
+                self._check_workers_alive()
+            return done
 
     def describe_channel(self, channel_id: int) -> dict[str, object]:
-        """Return lightweight diagnostics for one registered channel."""
+        """Return lightweight diagnostics for one registered channel.
+
+        Drains pending completion events before building the snapshot.
+
+        Args:
+            channel_id: The channel to describe.
+
+        Returns:
+            A dict with keys:
+
+            - ``"epoch"``: Current epoch number (``-1`` if never started).
+            - ``"input_sizes"``: Per-worker seed counts.
+            - ``"completed_workers"``: Number of workers that finished the
+              current epoch.
+        """
         with self._lock:
             self._drain_events()
             epoch = self._channel_epoch.get(channel_id, -1)
@@ -788,7 +1142,18 @@ class SharedDistSamplingBackend:
             }
 
     def shutdown(self) -> None:
-        """Stop all worker processes and release backend resources."""
+        """Stop all worker processes and release backend resources.
+
+        Cleanup sequence:
+
+        1. Send ``STOP`` to every worker's task queue.
+        2. Join each worker with a timeout of
+           ``MP_STATUS_CHECK_INTERVAL`` seconds.
+        3. Close all task queues and the event queue.
+        4. Terminate any workers still alive after the join timeout.
+
+        No-op if already shut down.
+        """
         with self._lock:
             if self._shutdown:
                 return

@@ -57,29 +57,28 @@ def create_dist_sampler(
     Raises:
         NotImplementedError: If ``sampler_options`` is an unsupported type.
     """
-    shared_sampler_args = (
-        data,
-        sampling_config.num_neighbors,
-        sampling_config.with_edge,
-        sampling_config.with_neg,
-        sampling_config.with_weight,
-        sampling_config.edge_dir,
-        sampling_config.collect_features,
-        channel,
-        worker_options.use_all2all,
-        worker_options.worker_concurrency,
-        current_device,
+    shared_sampler_kwargs = dict(
+        data=data,
+        num_neighbors=sampling_config.num_neighbors,
+        with_edge=sampling_config.with_edge,
+        with_neg=sampling_config.with_neg,
+        with_weight=sampling_config.with_weight,
+        edge_dir=sampling_config.edge_dir,
+        collect_features=sampling_config.collect_features,
+        channel=channel,
+        use_all2all=worker_options.use_all2all,
+        concurrency=worker_options.worker_concurrency,
+        device=current_device,
+        seed=sampling_config.seed,
     )
     if isinstance(sampler_options, KHopNeighborSamplerOptions):
         sampler: SamplerRuntime = DistNeighborSampler(
-            *shared_sampler_args,
-            seed=sampling_config.seed,
+            **shared_sampler_kwargs,
         )
     elif isinstance(sampler_options, PPRSamplerOptions):
         assert degree_tensors is not None
         sampler = DistPPRNeighborSampler(
-            *shared_sampler_args,
-            seed=sampling_config.seed,
+            **shared_sampler_kwargs,
             alpha=sampler_options.alpha,
             eps=sampler_options.eps,
             max_ppr_nodes=sampler_options.max_ppr_nodes,
