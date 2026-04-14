@@ -46,9 +46,10 @@ else
     # into /usr/bin. update-alternatives wires up the bare names (clang-format,
     # clang-tidy) so callers don't need to specify the version suffix. No PATH
     # changes are needed since /usr/bin is already on PATH.
-    apt-get install -y "clang-format-${CLANG_VERSION}" "clang-tidy-${CLANG_VERSION}" cmake
+    apt-get install -y "clang-format-${CLANG_VERSION}" "clang-tidy-${CLANG_VERSION}" "clangd-${CLANG_VERSION}" cmake
     update-alternatives --install /usr/bin/clang-format clang-format "/usr/bin/clang-format-${CLANG_VERSION}" 100
     update-alternatives --install /usr/bin/clang-tidy   clang-tidy   "/usr/bin/clang-tidy-${CLANG_VERSION}"   100
+    update-alternatives --install /usr/bin/clangd       clangd       "/usr/bin/clangd-${CLANG_VERSION}"       100
 fi
 
 echo "Finished installing C++ tooling"
