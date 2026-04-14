@@ -71,7 +71,7 @@ def retry(
                 exception_to_check
                 if isinstance(exception_to_check, tuple)
                 else (exception_to_check,)
-            )  # type: ignore[invalid-assignment]
+            )
             acceptable_exceptions = acceptable_exceptions + (
                 __RetriableTimeoutException,
             )
