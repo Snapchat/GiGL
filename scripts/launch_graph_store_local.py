@@ -14,8 +14,8 @@ Example - training with 3 storage nodes and 2 compute nodes::
         --compute-nodes 2 \\
         --compute-procs-per-node 1 \\
         --mode train \\
-        --task-config-uri applied_tasks/unsupervised_user_embeddings/small_frozen_training_gs.yaml \\
-        --resource-config-uri deployment/configs/unittest_resource_config.yaml
+        --task-config-uri path/to/task_config.yaml \\
+        --resource-config-uri path/to/resource_config.yaml
 
 Example - inference with GPU accelerators::
 
