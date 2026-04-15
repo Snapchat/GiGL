@@ -261,16 +261,16 @@ def infer_task_inputs(
 
             if pos_nodes.numel():
                 _pos_embeddings[condensed_supervision_edge_type].append(
-                    main_embeddings[condensed_supervision_target_node_type][pos_nodes]
-                )  # type: ignore
+                    main_embeddings[condensed_supervision_target_node_type][pos_nodes]  # type: ignore[arg-type]
+                )
                 _positive_ids[condensed_supervision_edge_type].append(pos_nodes)
 
             if hard_neg_nodes.numel():
                 _hard_neg_embeddings[condensed_supervision_edge_type].append(
                     main_embeddings[condensed_supervision_target_node_type][
                         hard_neg_nodes
-                    ]
-                )  # type: ignore
+                    ]  # type: ignore[arg-type]
+                )
                 _hard_neg_ids[condensed_supervision_edge_type].append(hard_neg_nodes)
 
             # If any tasks need batch score information, decode embeddings into scores

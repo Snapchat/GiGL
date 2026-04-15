@@ -227,10 +227,10 @@ class GnnTrainingProcess:
 
         with file_writer.as_default() if file_writer else contextlib.nullcontext():
             with (
-                profiler.profiler_context()
+                profiler.profiler_context()  # type: ignore[attr-defined]
                 if profiler
                 else contextlib.nullcontext() as prof
-            ):  # type: ignore
+            ):
                 trainer_instance.train(
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper,
                     device=device,

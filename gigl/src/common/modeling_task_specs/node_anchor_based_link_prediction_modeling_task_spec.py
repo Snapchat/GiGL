@@ -375,8 +375,8 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             self.model.train()
 
             for batch_index, (main_batch, random_negative_batch) in enumerate(
-                zip(main_data_loader, random_negative_data_loader),
-                start=1,  # type: ignore
+                zip(main_data_loader, random_negative_data_loader),  # type: ignore[arg-type]
+                start=1,
             ):
                 batch_st = time()
                 self._optimizer.zero_grad()
