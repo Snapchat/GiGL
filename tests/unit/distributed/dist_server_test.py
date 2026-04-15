@@ -717,11 +717,11 @@ class TestDistServerSampling(TestCase):
 
         runtime.unregister_input.assert_called_once_with(channel_id)
         runtime.shutdown.assert_called_once()
-        self.assertEqual(self.server._backend_state_by_id, {})
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
 
     def test_destroy_unknown_channel_noop(self) -> None:
         self.server.destroy_sampling_input(999)
-        self.assertEqual(self.server._backend_state_by_id, {})
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
 
     @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
     @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
@@ -758,7 +758,7 @@ class TestDistServerSampling(TestCase):
     def test_shutdown_cleans_all_backends(self) -> None:
         runtime_1 = MagicMock()
         runtime_2 = MagicMock()
-        self.server._backend_state_by_id = {
+        self.server._backend_state_by_backend_id = {
             0: dist_server.SamplingBackendState(
                 backend_id=0,
                 backend_key="neighbor_loader_0",
@@ -770,7 +770,7 @@ class TestDistServerSampling(TestCase):
                 runtime=runtime_2,
             ),
         }
-        self.server._backend_key_to_id = {
+        self.server._backend_id_by_backend_key = {
             "neighbor_loader_0": 0,
             "neighbor_loader_1": 1,
         }
@@ -779,7 +779,7 @@ class TestDistServerSampling(TestCase):
 
         runtime_1.shutdown.assert_called_once()
         runtime_2.shutdown.assert_called_once()
-        self.assertEqual(self.server._backend_state_by_id, {})
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
 
 
 if __name__ == "__main__":

@@ -40,13 +40,11 @@ from gigl.distributed.graph_store.messages import (
     InitSamplingBackendRequest,
     RegisterBackendRequest,
 )
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     SharedDistSamplingBackend,
 )
-from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
@@ -120,6 +118,8 @@ class DistServer:
     Args:
       dataset (DistDataset): The ``DistDataset`` object of a partition of graph
         data and feature data, along with distributed patition books.
+      log_every_n (int): Log aggregated ``fetch_one_sampled_message`` timing
+        stats after every ``N`` fetch attempts per channel.
     """
 
     def __init__(self, dataset: DistDataset, log_every_n: int = 50) -> None:
@@ -128,18 +128,18 @@ class DistServer:
         self._exit = False
         self._next_backend_id = 0
         self._next_channel_id = 0
-        self._backend_key_to_id: dict[str, int] = {}
-        self._backend_state_by_id: dict[int, SamplingBackendState] = {}
-        self._channel_state: dict[int, ChannelState] = {}
+        self._backend_id_by_backend_key: dict[str, int] = {}
+        self._backend_state_by_backend_id: dict[int, SamplingBackendState] = {}
+        self._channel_state_by_channel_id: dict[int, ChannelState] = {}
+        self._fetch_stats_by_channel_id: dict[int, _ChannelFetchStats] = {}
         self._log_every_n = log_every_n
-        self._fetch_stats: dict[int, _ChannelFetchStats] = {}
 
     def shutdown(self) -> None:
         with self._lock:
-            backends = list(self._backend_state_by_id.values())
-            self._backend_key_to_id.clear()
-            self._backend_state_by_id.clear()
-            self._channel_state.clear()
+            backends = list(self._backend_state_by_backend_id.values())
+            self._backend_id_by_backend_key.clear()
+            self._backend_state_by_backend_id.clear()
+            self._channel_state_by_channel_id.clear()
         for backend_state in backends:
             try:
                 backend_state.runtime.shutdown()
@@ -482,7 +482,7 @@ class DistServer:
         """
         request_start_time = time.monotonic()
         with self._lock:
-            backend_id = self._backend_key_to_id.get(opts.backend_key)
+            backend_id = self._backend_id_by_backend_key.get(opts.backend_key)
             if backend_id is not None:
                 return backend_id
             backend_id = self._next_backend_id
@@ -496,18 +496,20 @@ class DistServer:
                     sampling_config=opts.sampling_config,
                     sampler_options=opts.sampler_options,
                     # We only need degree tensor for PPR sampling
-                    degree_tensors=self.dataset.degree_tensor if isinstance(opts.sampler_options, PPRSamplerOptions) else None,
+                    degree_tensors=self.dataset.degree_tensor
+                    if isinstance(opts.sampler_options, PPRSamplerOptions)
+                    else None,
                 ),
             )
-            self._backend_key_to_id[opts.backend_key] = backend_id
-            self._backend_state_by_id[backend_id] = backend_state
+            self._backend_id_by_backend_key[opts.backend_key] = backend_id
+            self._backend_state_by_backend_id[backend_id] = backend_state
         init_start_time = time.monotonic()
         try:
             backend_state.runtime.init_backend()
         except Exception:
             with self._lock:
-                self._backend_key_to_id.pop(opts.backend_key, None)
-                self._backend_state_by_id.pop(backend_id, None)
+                self._backend_id_by_backend_key.pop(opts.backend_key, None)
+                self._backend_state_by_backend_id.pop(backend_id, None)
             raise
         init_elapsed = time.monotonic() - init_start_time
         total_elapsed = time.monotonic() - request_start_time
@@ -530,7 +532,7 @@ class DistServer:
         """
         request_start_time = time.monotonic()
         with self._lock:
-            backend_state = self._backend_state_by_id[opts.backend_id]
+            backend_state = self._backend_state_by_backend_id[opts.backend_id]
             channel_id = self._next_channel_id
             self._next_channel_id += 1
             channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
@@ -539,7 +541,7 @@ class DistServer:
                 worker_key=opts.worker_key,
                 channel=channel,
             )
-            self._channel_state[channel_id] = channel_state
+            self._channel_state_by_channel_id[channel_id] = channel_state
             backend_state.active_channels.add(channel_id)
 
         sampler_input = opts.sampler_input
@@ -557,7 +559,7 @@ class DistServer:
                 )
         except Exception:
             with self._lock:
-                self._channel_state.pop(channel_id, None)
+                self._channel_state_by_channel_id.pop(channel_id, None)
                 backend_state.active_channels.discard(channel_id)
             raise
 
@@ -578,12 +580,14 @@ class DistServer:
         Args:
             channel_id: The ID of the channel to destroy.
         """
-        self._fetch_stats.pop(channel_id, None)
+        self._fetch_stats_by_channel_id.pop(channel_id, None)
         with self._lock:
-            channel_state = self._channel_state.pop(channel_id, None)
+            channel_state = self._channel_state_by_channel_id.pop(channel_id, None)
             if channel_state is None:
                 return
-            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+            backend_state = self._backend_state_by_backend_id.get(
+                channel_state.backend_id
+            )
         if backend_state is None:
             return
 
@@ -594,8 +598,8 @@ class DistServer:
         with self._lock:
             backend_state.active_channels.discard(channel_id)
             if not backend_state.active_channels:
-                self._backend_state_by_id.pop(backend_state.backend_id, None)
-                self._backend_key_to_id.pop(backend_state.backend_key, None)
+                self._backend_state_by_backend_id.pop(backend_state.backend_id, None)
+                self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
                 should_shutdown_backend = True
         if should_shutdown_backend:
             backend_state.runtime.shutdown()
@@ -665,12 +669,14 @@ class DistServer:
             RuntimeError: If the channel or its backend is not found.
         """
         with self._lock:
-            channel_state = self._channel_state.get(channel_id)
+            channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
                 raise RuntimeError(
                     f"start_new_epoch_sampling: channel_id={channel_id} not found"
                 )
-            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+            backend_state = self._backend_state_by_backend_id.get(
+                channel_state.backend_id
+            )
         if backend_state is None:
             raise RuntimeError(
                 f"start_new_epoch_sampling: backend for channel_id={channel_id} "
@@ -689,20 +695,20 @@ class DistServer:
     def _log_fetch_stats_if_due(
         self, channel_id: int, worker_key: str, elapsed: float
     ) -> None:
-        """Accumulate per-channel fetch timing and log aggregated stats every ``log_every_n`` calls.
+        """Accumulate per-channel fetch timing and log every ``self._log_every_n`` fetches.
 
-        Stats are keyed by ``channel_id`` so each channel's RPC thread updates
-        its own counters without contention.
+        ``log_every_n`` is tracked independently per ``channel_id``, so each
+        channel's RPC thread updates its own counters without contention.
 
         Args:
             channel_id: The channel whose stats to update.
             worker_key: The worker key for logging.
             elapsed: The elapsed time for this fetch call.
         """
-        stats = self._fetch_stats.get(channel_id)
+        stats = self._fetch_stats_by_channel_id.get(channel_id)
         if stats is None:
             stats = _ChannelFetchStats()
-            self._fetch_stats[channel_id] = stats
+            self._fetch_stats_by_channel_id[channel_id] = stats
         stats.fetch_count += 1
         stats.fetch_total_elapsed += elapsed
         if elapsed >= FETCH_SLOW_LOG_SECS:
@@ -732,10 +738,12 @@ class DistServer:
         """
         request_start_time = time.monotonic()
         with self._lock:
-            channel_state = self._channel_state.get(channel_id)
+            channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
                 return None, True
-            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+            backend_state = self._backend_state_by_backend_id.get(
+                channel_state.backend_id
+            )
         if backend_state is None:
             return None, True
 

@@ -11,9 +11,9 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
 )
 
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 
