@@ -142,7 +142,7 @@ class TrainingSamplesProtosTranslator:
                     condensed_supervision_edge_type_to_pos_edge_feats[
                         condensed_edge_type
                     ].append(
-                        pos_edge[1]  # type: ignore
+                        pos_edge[1]
                     )
 
             for hard_neg_edge_pb in sample.hard_neg_edges:
@@ -168,7 +168,7 @@ class TrainingSamplesProtosTranslator:
                     condensed_supervision_edge_type_to_hard_neg_edge_feats[
                         condensed_edge_type
                     ].append(
-                        hard_neg_edge[1]  # type: ignore
+                        hard_neg_edge[1]
                     )
 
             for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types:
@@ -182,8 +182,8 @@ class TrainingSamplesProtosTranslator:
                         condensed_edge_type
                     ],
                     pos_edge_features=(
-                        torch.stack(  # type: ignore
-                            condensed_supervision_edge_type_to_pos_edge_feats[  # type: ignore
+                        torch.stack(
+                            condensed_supervision_edge_type_to_pos_edge_feats[
                                 condensed_edge_type
                             ]
                         )
@@ -196,8 +196,8 @@ class TrainingSamplesProtosTranslator:
                         else None
                     ),
                     hard_neg_edge_features=(
-                        torch.stack(  # type: ignore
-                            condensed_supervision_edge_type_to_hard_neg_edge_feats[  # type: ignore
+                        torch.stack(
+                            condensed_supervision_edge_type_to_hard_neg_edge_feats[
                                 condensed_edge_type
                             ]
                         )

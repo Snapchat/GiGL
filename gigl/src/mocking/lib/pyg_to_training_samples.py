@@ -111,7 +111,7 @@ def _build_graph_pb_wrapper_from_hetero_data(
                 src_node_id=global_src_node_id,
                 dst_node_id=global_dst_node_id,
                 condensed_edge_type=condensed_edge_type,
-                feature_values=edge_feature_value,  # type: ignore
+                feature_values=edge_feature_value,
             )
             khop_subgraph_edges.append(edge)
 
@@ -136,7 +136,7 @@ def _build_graph_pb_wrapper_from_hetero_data(
             node = graph_schema_pb2.Node(
                 node_id=global_node_id,
                 condensed_node_type=condensed_node_type,
-                feature_values=node_feature_value,  # type: ignore
+                feature_values=node_feature_value,
             )
             khop_subgraph_nodes.append(node)
 
@@ -203,7 +203,7 @@ def _get_random_negative_samples_for_pos_edges(
 
     pos_node_ids = edge_index[0].repeat(num_negative_samples_per_pos_edge)
     neg_node_ids = torch.randint(low=0, high=num_nodes, size=[pos_node_ids.numel()])
-    return torch.vstack((pos_node_ids, neg_node_ids))  # type: ignore
+    return torch.vstack((pos_node_ids, neg_node_ids))
 
 
 def _build_rooted_node_neighborhood_samples_from_subgraphs(
@@ -216,7 +216,7 @@ def _build_rooted_node_neighborhood_samples_from_subgraphs(
             root_node=graph_schema_pb2.Node(
                 node_id=int(root_node_id),
                 condensed_node_type=condensed_node_type,
-                feature_values=None,  # type: ignore
+                feature_values=None,
             ),
             neighborhood=subgraph.pb,
         )
@@ -255,7 +255,7 @@ def build_supervised_node_classification_samples_from_pyg_heterodata(
             root_node=graph_schema_pb2.Node(
                 node_id=int(root_node_id),
                 condensed_node_type=condensed_node_type,
-                feature_values=None,  # type: ignore
+                feature_values=None,
             ),
             neighborhood=subgraph.pb,
             root_node_labels=[
@@ -407,7 +407,7 @@ def build_node_anchor_link_prediction_samples_from_pyg_heterodata(
         root_node_pb = graph_schema_pb2.Node(
             node_id=root_node_id,
             condensed_node_type=condensed_src_node_type,
-            feature_values=None,  # type: ignore
+            feature_values=None,
         )
         subgraphs_to_merge.append(src_node_id_to_k_hop_subgraph[root_node_id])
 

@@ -149,7 +149,7 @@ class DistRandomPartitionerTestCase(TestCase):
                             edge_type,
                             output_edge_partition_book[
                                 edge_type
-                            ]  # ty: ignore[invalid-argument-type]
+                            ]
                             if edge_type in output_edge_partition_book
                             else None,
                             output_edge_index[  # ty: ignore[invalid-argument-type]

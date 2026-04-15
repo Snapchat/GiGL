@@ -10,7 +10,7 @@ from gigl.src.data_preprocessor.lib.types import InstanceDictPTransform
 # Type hints for abstract dataclasses may have limited support in type checkers. https://github.com/python/mypy/issues/5374
 
 
-@dataclass(frozen=True)  # type: ignore
+@dataclass(frozen=True)
 class DataReference(ABC):
     """
     Contains a URI string to the data reference, and provides a means of yielding
@@ -37,7 +37,7 @@ class DataReference(ABC):
         raise NotImplementedError
 
 
-@dataclass(frozen=True)  # type: ignore
+@dataclass(frozen=True)
 class NodeDataReference(DataReference, ABC):
     """
     DataReference which stores node data.
@@ -52,7 +52,7 @@ class NodeDataReference(DataReference, ABC):
         return f"NodeDataReference(node_type={self.node_type}, identifier={self.identifier}, reference_uri={self.reference_uri})"
 
 
-@dataclass(frozen=True)  # type: ignore
+@dataclass(frozen=True)
 class EdgeDataReference(DataReference, ABC):
     """
     DataReference which stores edge data

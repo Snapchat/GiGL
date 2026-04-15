@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch_geometric.nn import GraphConv
 
 from gigl.common.logger import Logger
-from gigl.src.common.modeling_task_specs.utils.infer import (  # type: ignore
+from gigl.src.common.modeling_task_specs.utils.infer import (
     infer_root_embeddings,
     infer_training_batch,
 )
@@ -29,7 +29,7 @@ from gigl.src.common.models.layers.loss import (
     UniformityLoss,
     WhiteningDecorrelationLoss,
 )
-from gigl.src.common.models.pyg.graph.augmentations import (  # type: ignore
+from gigl.src.common.models.pyg.graph.augmentations import (
     get_augmented_graph,
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -228,9 +228,9 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         hid_dim = self.encoder.hid_dim
         out_dim = self.encoder.out_dim
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),  # type: ignore
+            torch.nn.Linear(out_dim, hid_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),  # type: ignore
+            torch.nn.Linear(hid_dim, out_dim),
         )
         self.loss = GRACELoss(temperature=temperature)
         self.feat_drop_1 = feat_drop_1
@@ -248,8 +248,8 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_1,  # type: ignore
-            feat_drop_ratio=self.edge_drop_2,  # type: ignore
+            edge_drop_ratio=self.edge_drop_1,
+            feat_drop_ratio=self.edge_drop_2,
         )
         augmented_embeddings_1 = infer_root_embeddings(
             model=self.encoder,
@@ -260,8 +260,8 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         )
         augmented_graph_2 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_2,  # type: ignore
-            feat_drop_ratio=self.feat_drop_2,  # type: ignore
+            edge_drop_ratio=self.edge_drop_2,
+            feat_drop_ratio=self.feat_drop_2,
         )
         augmented_embeddings_2 = infer_root_embeddings(
             model=self.encoder,
@@ -296,8 +296,8 @@ class FeatureReconstruction(NodeAnchorBasedLinkPredictionBaseTask):
         out_dim = self.encoder.out_dim
         self.loss = FeatureReconstructionLoss(alpha=alpha)
         self.reconstruction_decoder = GraphConv(out_dim, in_dim)
-        self.reconstruction_mask = torch.nn.Parameter(torch.zeros(1, in_dim))  # type: ignore
-        self.reconstruction_enc_dec = torch.nn.Linear(out_dim, out_dim, bias=False)  # type: ignore
+        self.reconstruction_mask = torch.nn.Parameter(torch.zeros(1, in_dim))
+        self.reconstruction_enc_dec = torch.nn.Linear(out_dim, out_dim, bias=False)
         self.edge_drop = edge_drop
 
     def forward(
@@ -318,7 +318,7 @@ class FeatureReconstruction(NodeAnchorBasedLinkPredictionBaseTask):
         main_batch = task_input.input_batch.main_batch
         augmented_graph = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop,  # type: ignore
+            edge_drop_ratio=self.edge_drop,
             feat_drop_ratio=0.0,
         )
         root_node_indices = main_batch.root_node_indices
@@ -368,9 +368,9 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         out_dim = self.encoder.out_dim
         self.loss = WhiteningDecorrelationLoss(lambd=lambd)
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),  # type: ignore
+            torch.nn.Linear(out_dim, hid_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),  # type: ignore
+            torch.nn.Linear(hid_dim, out_dim),
         )
         self.feat_drop_1 = feat_drop_1
         self.edge_drop_1 = edge_drop_1
@@ -387,8 +387,8 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_1,  # type: ignore
-            feat_drop_ratio=self.feat_drop_1,  # type: ignore
+            edge_drop_ratio=self.edge_drop_1,
+            feat_drop_ratio=self.feat_drop_1,
         )
         augmented_embeddings_1 = infer_root_embeddings(
             model=self.encoder,
@@ -399,8 +399,8 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         )
         augmented_graph_2 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_2,  # type: ignore
-            feat_drop_ratio=self.feat_drop_2,  # type: ignore
+            edge_drop_ratio=self.edge_drop_2,
+            feat_drop_ratio=self.feat_drop_2,
         )
         augmented_embeddings_2 = infer_root_embeddings(
             model=self.encoder,
@@ -449,8 +449,8 @@ class GBT(NodeAnchorBasedLinkPredictionBaseTask):
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_1,  # type: ignore
-            feat_drop_ratio=self.feat_drop_1,  # type: ignore
+            edge_drop_ratio=self.edge_drop_1,
+            feat_drop_ratio=self.feat_drop_1,
         )
         augmented_embeddings_1 = infer_root_embeddings(
             model=self.encoder,
@@ -461,8 +461,8 @@ class GBT(NodeAnchorBasedLinkPredictionBaseTask):
         )
         augmented_graph_2 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_2,  # type: ignore
-            feat_drop_ratio=self.feat_drop_2,  # type: ignore
+            edge_drop_ratio=self.edge_drop_2,
+            feat_drop_ratio=self.feat_drop_2,
         )
         augmented_embeddings_2 = infer_root_embeddings(
             model=self.encoder,
@@ -498,13 +498,13 @@ class BGRL(NodeAnchorBasedLinkPredictionBaseTask):
         hid_dim = self.encoder.hid_dim
         out_dim = self.encoder.out_dim
         self.offline_encoder = copy.deepcopy(encoder)
-        for param in self.offline_encoder.parameters():  # type: ignore
+        for param in self.offline_encoder.parameters():
             param.requires_grad = False
         self.loss = BGRLLoss()
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),  # type: ignore
+            torch.nn.Linear(out_dim, hid_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),  # type: ignore
+            torch.nn.Linear(hid_dim, out_dim),
         )
         self.feat_drop_1 = feat_drop_1
         self.edge_drop_1 = edge_drop_1
@@ -521,13 +521,13 @@ class BGRL(NodeAnchorBasedLinkPredictionBaseTask):
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_1,  # type: ignore
-            feat_drop_ratio=self.feat_drop_1,  # type: ignore
+            edge_drop_ratio=self.edge_drop_1,
+            feat_drop_ratio=self.feat_drop_1,
         )
         augmented_graph_2 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_2,  # type: ignore
-            feat_drop_ratio=self.feat_drop_2,  # type: ignore
+            edge_drop_ratio=self.edge_drop_2,
+            feat_drop_ratio=self.feat_drop_2,
         )
         enc1 = infer_root_embeddings(
             model=self.encoder,
@@ -581,13 +581,13 @@ class TBGRL(NodeAnchorBasedLinkPredictionBaseTask):
         hid_dim = self.encoder.hid_dim
         out_dim = self.encoder.out_dim
         self.offline_encoder = copy.deepcopy(encoder)
-        for param in self.offline_encoder.parameters():  # type: ignore
+        for param in self.offline_encoder.parameters():
             param.requires_grad = False
         self.loss = TBGRLLoss(neg_lambda=neg_lambda)
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),  # type: ignore
+            torch.nn.Linear(out_dim, hid_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),  # type: ignore
+            torch.nn.Linear(hid_dim, out_dim),
         )
 
         self.feat_drop_1 = feat_drop_1
@@ -607,18 +607,18 @@ class TBGRL(NodeAnchorBasedLinkPredictionBaseTask):
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_1,  # type: ignore
-            feat_drop_ratio=self.feat_drop_1,  # type: ignore
+            edge_drop_ratio=self.edge_drop_1,
+            feat_drop_ratio=self.feat_drop_1,
         )
         augmented_graph_2 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_2,  # type: ignore
-            feat_drop_ratio=self.feat_drop_2,  # type: ignore
+            edge_drop_ratio=self.edge_drop_2,
+            feat_drop_ratio=self.feat_drop_2,
         )
         augmented_graph_3 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
-            edge_drop_ratio=self.edge_drop_neg,  # type: ignore
-            feat_drop_ratio=self.feat_drop_neg,  # type: ignore
+            edge_drop_ratio=self.edge_drop_neg,
+            feat_drop_ratio=self.feat_drop_neg,
             graph_perm=True,
         )
         enc1 = infer_root_embeddings(
@@ -709,7 +709,7 @@ class NodeAnchorBasedLinkPredictionTasks:
         for task in list(self._task_to_weights_map.keys()):
             fn = self._task_to_fn_map[task]
             weight = self._task_to_weights_map[task]
-            tasks_list.append((fn, weight))  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+            tasks_list.append((fn, weight))# https://github.com/Snapchat/GiGL/issues/408
         return tasks_list
 
     def add_task(

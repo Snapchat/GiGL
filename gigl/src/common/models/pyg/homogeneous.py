@@ -66,7 +66,7 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         self.feature_embedding_layer = feature_embedding_layer
         # Feature interaction layers
         self.feats_interaction = feature_interaction_layer
-        self.conv_layers: nn.ModuleList = self.init_conv_layers(  # type: ignore
+        self.conv_layers: nn.ModuleList = self.init_conv_layers(
             in_dim=in_dim,
             out_dim=hid_dim if linear_layer or jk_mode else out_dim,
             edge_dim=edge_dim,
@@ -98,7 +98,7 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
                 lstm_dim=jk_lstm_dim,
             )
         else:
-            self.jk_layer = None  # type: ignore
+            self.jk_layer = None
         self.return_emb = return_emb
         self.linear_layer = linear_layer
         if linear_layer:

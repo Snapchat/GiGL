@@ -257,7 +257,7 @@ class NodeAnchorBasedLinkPredictionBatch:
             iterable_training_dataset,
             batch_size=config.batch_size,
             num_workers=config.num_workers,
-            collate_fn=collate_fn,  # type: ignore
+            collate_fn=collate_fn,
             persistent_workers=False,
             pin_memory=config.pin_memory,
         )

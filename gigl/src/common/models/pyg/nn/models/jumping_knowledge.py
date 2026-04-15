@@ -77,16 +77,16 @@ class JumpingKnowledge(MessagePassing):
             self.output_linear = nn.Linear(hid_dim, out_dim)
         elif self.mode == "cat":
             assert num_layers is not None, "num_layers cannot be none for cat mode"
-            self.lstm_dim = None  # type: ignore
-            self.lstm = None  # type: ignore
-            self.att = None  # type: ignore
+            self.lstm_dim = None
+            self.lstm = None
+            self.att = None
             self.num_layers = num_layers
             self.output_linear = nn.Linear((num_layers * hid_dim), out_dim)
         else:  # self.mode == "max"
-            self.lstm_dim = None  # type: ignore
-            self.lstm = None  # type: ignore
-            self.att = None  # type: ignore
-            self.num_layers = None  # type: ignore
+            self.lstm_dim = None
+            self.lstm = None
+            self.att = None
+            self.num_layers = None
             self.output_linear = nn.Linear(hid_dim, out_dim)
 
         self.reset_parameters()

@@ -129,7 +129,7 @@ class GraphSageTemplateTrainerSpec(
     @model.setter
     def model(self, model: torch.nn.Module) -> None:
         self.__model = model
-        self.__model.graph_backend = GraphBackend.PYG  # type: ignore
+        self.__model.graph_backend = GraphBackend.PYG
 
     def init_model(
         self,
@@ -519,9 +519,9 @@ class GraphSageTemplateTrainerSpec(
                     mrr = 1.0 / pos_rank.float()
 
                     hit_rates = hit_rate_at_k(
-                        pos_scores=pos_scores,  # type: ignore
-                        neg_scores=neg_scores,  # type: ignore
-                        ks=torch.tensor(ks, device=device, dtype=torch.long),  # type: ignore
+                        pos_scores=pos_scores,
+                        neg_scores=neg_scores,
+                        ks=torch.tensor(ks, device=device, dtype=torch.long),
                     )
 
                     total_mrr += mrr.mean().item()

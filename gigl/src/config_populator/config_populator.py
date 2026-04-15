@@ -559,7 +559,7 @@ class ConfigPopulator:
 
         # Build SharedConfig from constants, and merge into the content of the template / input GbmlConfig.
         shared_config_pb = gbml_config_pb2.GbmlConfig.SharedConfig(
-            preprocessed_metadata_uri=preprocessed_metadata_uri.uri,  # type: ignore
+            preprocessed_metadata_uri=preprocessed_metadata_uri.uri,
             flattened_graph_metadata=flattened_graph_metadata_pb,
             dataset_metadata=dataset_metadata_pb,
             trained_model_metadata=trained_model_metadata_pb,

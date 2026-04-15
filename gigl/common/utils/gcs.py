@@ -3,7 +3,7 @@ import re
 import tempfile
 import typing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
+from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper
 from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
 
 import google.cloud.exceptions as google_exceptions

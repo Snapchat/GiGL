@@ -182,7 +182,7 @@ def _validate_accelerator_type(
     """
     Checks if the provided accelerator type is valid.
     """
-    if proto_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:  # type: ignore
+    if proto_config.gpu_type == AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name:
         assert (
             proto_config.gpu_limit == 0
         ), f"""gpu_limit must be equal to 0 for cpu training/inference, indicated by provided gpu_type {proto_config.gpu_type}.
@@ -191,7 +191,7 @@ def _validate_accelerator_type(
         assert (
             proto_config.gpu_limit > 0
         ), f"""gpu_limit must be greater than 0 for gpu training/inference, indicated by provided gpu_type {proto_config.gpu_type}.
-            Got gpu_limit {proto_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""  # type: ignore
+            Got gpu_limit {proto_config.gpu_limit}. Use gpu_type {AcceleratorType.ACCELERATOR_TYPE_UNSPECIFIED.name} for cpu training."""
 
 
 def _validate_cloud_machine_config(

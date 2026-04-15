@@ -107,7 +107,7 @@ class FeatureEmbeddingLayer(nn.Module):
             ):
                 feature_padding_value = str(
                     self.__feature_padding_value_map[feature_name]
-                )  # type: ignore
+                )
                 feature_padding_idx = self.__feature_schema.feature_vocab[
                     feature_name
                 ].index(feature_padding_value)

@@ -281,7 +281,7 @@ class DatasetAssetMockingSuite:
         data, node_types, edge_types = self._get_pyg_dblp_dataset()
         mocked_dataset_info = MockedDatasetInfo(
             name="dblp_node_anchor_edge_features_lp",
-            task_metadata_type=TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK,  # type: ignore
+            task_metadata_type=TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK,
             edge_index={
                 edge_types["author_to_paper"]: data[
                     edge_types["author_to_paper"].tuple_repr()
@@ -327,7 +327,7 @@ class DatasetAssetMockingSuite:
         )
         mocked_dataset_info = MockedDatasetInfo(
             name="dblp_node_anchor_edge_features_user_defined_labels",
-            task_metadata_type=TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK,  # type: ignore
+            task_metadata_type=TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK,
             edge_index={
                 edge_types["author_to_paper"]: data[
                     edge_types["author_to_paper"].tuple_repr()

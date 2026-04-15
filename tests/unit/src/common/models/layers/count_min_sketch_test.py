@@ -13,7 +13,7 @@ class CountMinSketchTest(TestCase):
         # Initialize the CountMinSketch object
         cms = CountMinSketch(width=20, depth=5)
         candidate_ids = torch.tensor([1, 2, 2, 3, 3, 3, 4, 4, 4, 4], dtype=torch.long)
-        cms.add_torch_long_tensor(candidate_ids)  # type: ignore
+        cms.add_torch_long_tensor(candidate_ids)
         # Check the total count
         self.assertEqual(cms.total(), 10)
         # Check the estimated count

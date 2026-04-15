@@ -228,7 +228,7 @@ class GnnTrainingProcess:
             file_writer = tf.summary.create_file_writer(tensorboard_log_uri)
 
         with file_writer.as_default() if file_writer else contextlib.nullcontext():
-            with profiler.profiler_context() if profiler else contextlib.nullcontext() as prof:  # type: ignore
+            with profiler.profiler_context() if profiler else contextlib.nullcontext() as prof:
                 trainer_instance.train(
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper,
                     device=device,

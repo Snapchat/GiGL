@@ -467,7 +467,7 @@ class GraphVisualizer:
                 new_node_index_to_type[unenumerated_node.id] = unenumerated_node.type
             g = nx.relabel_nodes(g, mapping)
             # Update the node_index_to_type mapping to use global node types
-            node_index_to_type = new_node_index_to_type  # type: ignore
+            node_index_to_type = new_node_index_to_type
 
         # Add positive edges to the graph if they don't already exist
         pos_edge_pairs = set()
@@ -596,10 +596,10 @@ class GraphVisualizer:
         nx.draw_networkx_nodes(
             g,
             pos,
-            node_color=node_colors if node_colors else "lightblue",  # type: ignore
-            edgecolors=node_edge_colors if node_edge_colors else CHARCOAL,  # type: ignore
-            linewidths=node_line_widths if node_line_widths else 1,  # type: ignore
-            node_size=node_sizes if node_sizes else 500,  # type: ignore
+            node_color=node_colors if node_colors else "lightblue",
+            edgecolors=node_edge_colors if node_edge_colors else CHARCOAL,
+            linewidths=node_line_widths if node_line_widths else 1,
+            node_size=node_sizes if node_sizes else 500,
         )
 
         # Draw edges - straight for homogeneous, curved for bipartite
@@ -609,7 +609,7 @@ class GraphVisualizer:
                 nx.draw_networkx_edges(
                     g,
                     pos,
-                    edge_color=edge_colors,  # type: ignore
+                    edge_color=edge_colors,
                     width=0.75,  # 75% of default edge width
                     alpha=0.9,  # Less transparent for cleaner look
                 )
@@ -618,7 +618,7 @@ class GraphVisualizer:
                 nx.draw_networkx_edges(
                     g,
                     pos,
-                    edge_color=edge_colors,  # type: ignore
+                    edge_color=edge_colors,
                     width=0.75,  # 75% of default edge width
                     alpha=0.8,  # Slightly transparent for better overlap visibility
                     connectionstyle="arc3,rad=0.1",  # Curved edges to reduce overlap

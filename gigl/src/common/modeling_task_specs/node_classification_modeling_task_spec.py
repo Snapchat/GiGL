@@ -201,7 +201,7 @@ class NodeClassificationModelingTaskSpec(
             assert root_node_labels is not None
 
             results: InferBatchResults = self.infer_batch(batch=batch, device=device)
-            num_correct_in_batch = int((results.predictions == root_node_labels).sum())  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+            num_correct_in_batch = int((results.predictions == root_node_labels).sum())# https://github.com/Snapchat/GiGL/issues/408
             num_correct += num_correct_in_batch
             num_evaluated += len(batch.root_node_labels)
 
@@ -250,7 +250,7 @@ class NodeClassificationModelingTaskSpec(
         for epoch in range(self.__num_epochs):
             logger.info(f"Batch training... for epoch {epoch}/{self.__num_epochs }")
             train_loss = self._train(
-                data_loader=data_loaders.train_main, device=device  # type: ignore
+                data_loader=data_loaders.train_main, device=device
             )
             train_loss_str = (
                 f"{train_loss.item():.3f}" if train_loss is not None else None

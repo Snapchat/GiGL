@@ -139,8 +139,8 @@ def infer_task_inputs(
         decoder = model.module.decode
         batch_result_types = model.module.tasks.result_types
     else:
-        decoder = model.decode  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
-        batch_result_types = model.tasks.result_types  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+        decoder = model.decode# https://github.com/Snapchat/GiGL/issues/408
+        batch_result_types = model.tasks.result_types# https://github.com/Snapchat/GiGL/issues/408
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.
@@ -218,7 +218,7 @@ def infer_task_inputs(
             ].to(device=device)
         )
         random_neg_root_embeddings[condensed_node_type] = (
-            random_neg_embeddings[condensed_node_type][random_neg_root_node_indices]  # type: ignore
+            random_neg_embeddings[condensed_node_type][random_neg_root_node_indices]
             if random_neg_root_node_indices.numel()
             else torch.FloatTensor([]).to(device=device)
         )
@@ -268,11 +268,11 @@ def infer_task_inputs(
             )
 
             if pos_nodes.numel():
-                _pos_embeddings[condensed_supervision_edge_type].append(main_embeddings[condensed_supervision_target_node_type][pos_nodes])  # type: ignore
+                _pos_embeddings[condensed_supervision_edge_type].append(main_embeddings[condensed_supervision_target_node_type][pos_nodes])
                 _positive_ids[condensed_supervision_edge_type].append(pos_nodes)
 
             if hard_neg_nodes.numel():
-                _hard_neg_embeddings[condensed_supervision_edge_type].append(main_embeddings[condensed_supervision_target_node_type][hard_neg_nodes])  # type: ignore
+                _hard_neg_embeddings[condensed_supervision_edge_type].append(main_embeddings[condensed_supervision_target_node_type][hard_neg_nodes])
                 _hard_neg_ids[condensed_supervision_edge_type].append(hard_neg_nodes)
 
             # If any tasks need batch score information, decode embeddings into scores
@@ -303,7 +303,7 @@ def infer_task_inputs(
                 _batch_scores[condensed_supervision_edge_type] = BatchScores(
                     pos_scores=pos_scores,
                     hard_neg_scores=hard_neg_scores,
-                    random_neg_scores=random_neg_scores_root,  # type: ignore
+                    random_neg_scores=random_neg_scores_root,
                 )
 
         if ModelResultType.batch_scores in batch_result_types or should_eval:
@@ -323,12 +323,12 @@ def infer_task_inputs(
             condensed_supervision_edge_type
         ]
         pos_embeddings[condensed_supervision_edge_type] = (
-            torch.cat(tuple(_pos_embeddings[condensed_supervision_edge_type]))  # type: ignore
+            torch.cat(tuple(_pos_embeddings[condensed_supervision_edge_type]))
             if len(_pos_embeddings[condensed_supervision_edge_type])
             else torch.tensor([])
         )
         hard_neg_embeddings[condensed_supervision_edge_type] = (
-            torch.cat(tuple(_hard_neg_embeddings[condensed_supervision_edge_type]))  # type: ignore
+            torch.cat(tuple(_hard_neg_embeddings[condensed_supervision_edge_type]))
             if len(_hard_neg_embeddings[condensed_supervision_edge_type])
             else torch.tensor([])
         )
@@ -336,7 +336,7 @@ def infer_task_inputs(
         repeated_anchor_embeddings[
             condensed_supervision_edge_type
         ] = query_embeddings.repeat_interleave(
-            torch.tensor(repeated_anchor_count[condensed_supervision_edge_type]).to(device=device), dim=0  # type: ignore
+            torch.tensor(repeated_anchor_count[condensed_supervision_edge_type]).to(device=device), dim=0
         )
 
         # If needed, calculate task inputs for retrieval loss per condensed edge type
@@ -434,20 +434,20 @@ def infer_task_inputs(
                 condensed_supervision_edge_type
             ] = BatchCombinedScores(
                 repeated_candidate_scores=repeated_candidate_scores,
-                positive_ids=global_positive_ids,  # type: ignore
-                hard_neg_ids=global_hard_neg_ids,  # type: ignore
-                random_neg_ids=global_random_neg_ids,  # type: ignore
-                repeated_query_ids=repeated_global_query_ids,  # type: ignore
+                positive_ids=global_positive_ids,
+                hard_neg_ids=global_hard_neg_ids,
+                random_neg_ids=global_random_neg_ids,
+                repeated_query_ids=repeated_global_query_ids,
                 num_unique_query_ids=main_batch_root_node_indices.shape[0],
             )
 
     # Populate all computed embeddings for task input
     batch_embeddings = BatchEmbeddings(
-        query_embeddings=query_embeddings,  # type: ignore
-        repeated_query_embeddings=repeated_anchor_embeddings,  # type: ignore
-        pos_embeddings=pos_embeddings,  # type: ignore
-        hard_neg_embeddings=hard_neg_embeddings,  # type: ignore
-        random_neg_embeddings=random_neg_root_embeddings,  # type: ignore
+        query_embeddings=query_embeddings,
+        repeated_query_embeddings=repeated_anchor_embeddings,
+        pos_embeddings=pos_embeddings,
+        hard_neg_embeddings=hard_neg_embeddings,
+        random_neg_embeddings=random_neg_root_embeddings,
     )
 
     return NodeAnchorBasedLinkPredictionTaskInputs(

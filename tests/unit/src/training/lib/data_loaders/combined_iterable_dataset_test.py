@@ -78,7 +78,7 @@ class CombinedIterableDatasetTest(TestCase):
             loopy_dataset = LoopyIterableDataset(iterable_dataset=tf_dataset)
             loopy_datasets_map[condensed_node_type_str] = loopy_dataset
 
-        dataset = CombinedIterableDatasets(iterable_dataset_map=loopy_datasets_map)  # type: ignore
+        dataset = CombinedIterableDatasets(iterable_dataset_map=loopy_datasets_map)
         dataset_iter = iter(dataset)
         for _ in range(15):
             dataset_sample = next(dataset_iter)
@@ -107,7 +107,7 @@ class CombinedIterableDatasetTest(TestCase):
             )
             datasets_map[condensed_node_type_str] = tf_dataset
 
-        dataset = CombinedIterableDatasets(iterable_dataset_map=datasets_map)  # type: ignore
+        dataset = CombinedIterableDatasets(iterable_dataset_map=datasets_map)
         dataset_iter = iter(dataset)
         for _ in range(10):
             dataset_sample = next(dataset_iter)

@@ -250,7 +250,7 @@ class InferencerV1:
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
         graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=inferencer_instance.model.graph_backend  # type: ignore
+            backend_name=inferencer_instance.model.graph_backend
         )
 
         inference_blueprint: BaseInferenceBlueprint = (

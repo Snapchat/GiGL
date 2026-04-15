@@ -186,24 +186,24 @@ class NodePbWrapper:
 class GraphPbWrapper:
     pb: graph_schema_pb2.Graph
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def nodes_wrapper(self) -> list[NodePbWrapper]:
         # TODO: rename to nodes_pb_wrapper for clarity
         return [NodePbWrapper(pb=node_pb2) for node_pb2 in self.pb.nodes]
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def nodes_pb(self) -> list[graph_schema_pb2.Node]:
         return list(self.pb.nodes)
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def edges_wrapper(self) -> list[EdgePbWrapper]:
         # TODO: rename to edges_pb_wrapper for clarity
         return [EdgePbWrapper(pb=edge_pb2) for edge_pb2 in self.pb.edges]
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def edges_pb(self) -> list[graph_schema_pb2.Edge]:
         return list(self.pb.edges)

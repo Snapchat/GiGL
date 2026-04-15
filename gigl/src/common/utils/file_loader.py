@@ -1,7 +1,7 @@
 import shutil
 import tempfile
 from collections.abc import Mapping
-from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
+from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper
 from typing import IO, AnyStr, Optional, Sequence, Tuple, Type, Union, cast
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory

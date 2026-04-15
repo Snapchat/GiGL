@@ -168,7 +168,7 @@ class DataPreprocessor:
             self.gbml_config_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path
         )
         data_preprocessor_cls = os_utils.import_obj(data_preprocessor_cls_str)
-        kwargs = self.gbml_config_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_args  # type: ignore
+        kwargs = self.gbml_config_pb_wrapper.dataset_config.data_preprocessor_config.data_preprocessor_args
 
         try:
             data_preprocessor_config: DataPreprocessorConfig = data_preprocessor_cls(

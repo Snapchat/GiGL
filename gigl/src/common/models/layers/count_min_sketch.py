@@ -84,7 +84,7 @@ class CountMinSketch(object):
         Return the estimated count of all items in a torch long tensor
         """
         tensor_cpu = tensor.cpu().numpy()
-        return torch.tensor(  # type: ignore
+        return torch.tensor(
             [self.estimate(item) for item in tensor_cpu],
             dtype=torch.long,
         )
@@ -115,6 +115,6 @@ def calculate_in_batch_candidate_sampling_probability(
     because there is a larger error in P(candidate in batch | x) ~= P(candidate in batch)
     """
     estimated_prob: torch.FloatTensor = (
-        batch_size * frequency_tensor.float() / total_cnt  # type: ignore
+        batch_size * frequency_tensor.float() / total_cnt
     )
     return estimated_prob.clamp(max=1.0)
