@@ -26,9 +26,9 @@ class FeatureInteraction(nn.Module):
         combination_mode: Optional[str] = None,
     ) -> None:
         super().__init__()
-        assert (
-            use_dcnv2_feats_interaction or use_mlp_feats_interaction
-        ), f"At least one type of the feature interaction layer should be enabled"
+        assert use_dcnv2_feats_interaction or use_mlp_feats_interaction, (
+            f"At least one type of the feature interaction layer should be enabled"
+        )
         self.in_dim = in_dim
         self.use_dcnv2_feats_interaction = use_dcnv2_feats_interaction
         self.dcnv2 = None

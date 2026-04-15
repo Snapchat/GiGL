@@ -40,7 +40,7 @@ def is_distributed_local_debug() -> bool:
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "29501")
     logger.info(
-        f'Overriding local environment variables for debugging WORLD_SIZE={os.environ["WORLD_SIZE"]}, RANK={os.environ["RANK"]}, MASTER_ADDR={os.environ["MASTER_ADDR"]}, MASTER_PORT={os.environ["MASTER_PORT"]}'
+        f"Overriding local environment variables for debugging WORLD_SIZE={os.environ['WORLD_SIZE']}, RANK={os.environ['RANK']}, MASTER_ADDR={os.environ['MASTER_ADDR']}, MASTER_PORT={os.environ['MASTER_PORT']}"
     )
     return True
 

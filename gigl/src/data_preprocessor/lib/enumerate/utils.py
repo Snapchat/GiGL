@@ -210,9 +210,9 @@ class Enumerator:
         logger.info(
             f"[Node Type: {node_data_ref.node_type}]: starting to enumerate node ids from source node table {bq_source_table_name}."
         )
-        assert (
-            node_data_ref.identifier is not None
-        ), f"Missing identifier for node data reference: {node_data_ref}. "
+        assert node_data_ref.identifier is not None, (
+            f"Missing identifier for node data reference: {node_data_ref}. "
+        )
 
         (
             bq_unique_node_ids_enumerated_table_name,
@@ -447,10 +447,10 @@ class Enumerator:
         self.__bq_utils = BqUtils(project=gcp_project)
         self.__applied_task_identifier = applied_task_identifier
 
-        enumerated_node_metadata: list[
-            EnumeratorNodeTypeMetadata
-        ] = self.__enumerate_all_node_references(
-            node_data_references=node_data_references
+        enumerated_node_metadata: list[EnumeratorNodeTypeMetadata] = (
+            self.__enumerate_all_node_references(
+                node_data_references=node_data_references
+            )
         )
         map_enumerator_node_type_metadata: dict[
             NodeType, EnumeratorNodeTypeMetadata
@@ -458,11 +458,11 @@ class Enumerator:
             node_metadata.input_node_data_reference.node_type: node_metadata
             for node_metadata in enumerated_node_metadata
         }
-        enumerated_edge_metadata: list[
-            EnumeratorEdgeTypeMetadata
-        ] = self.__enumerate_all_edge_references(
-            edge_data_references=edge_data_references,
-            map_enumerator_node_type_metadata=map_enumerator_node_type_metadata,
+        enumerated_edge_metadata: list[EnumeratorEdgeTypeMetadata] = (
+            self.__enumerate_all_edge_references(
+                edge_data_references=edge_data_references,
+                map_enumerator_node_type_metadata=map_enumerator_node_type_metadata,
+            )
         )
 
         logger.info("Finished enumerating all node and edge references.")

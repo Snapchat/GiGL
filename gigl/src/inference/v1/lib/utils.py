@@ -101,12 +101,10 @@ def get_inferencer_pipeline_component_for_single_node_type(
     """
     # Launching one beam pipeline per node type
     inferencer_config = get_resource_config().inferencer_config
-    assert isinstance(
-        inferencer_config, DataflowResourceConfig
-    ), f"Only Dataflow is supported for v1 inference, got: {type(inferencer_config)}"
-    condensed_node_type_to_preprocessed_metadata = (
-        gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata
+    assert isinstance(inferencer_config, DataflowResourceConfig), (
+        f"Only Dataflow is supported for v1 inference, got: {type(inferencer_config)}"
     )
+    condensed_node_type_to_preprocessed_metadata = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata
     batch_size = (
         gbml_config_pb_wrapper.inferencer_config.inference_batch_size
         or DEFAULT_BATCH_SIZE

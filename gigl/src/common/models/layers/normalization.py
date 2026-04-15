@@ -7,7 +7,7 @@ from gigl.src.common.types.graph_data import NodeType
 
 
 def l2_normalize_embeddings(
-    node_typed_embeddings: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    node_typed_embeddings: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
 ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
     if isinstance(node_typed_embeddings, dict):
         for node_type in node_typed_embeddings:

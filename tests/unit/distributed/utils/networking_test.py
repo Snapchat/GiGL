@@ -52,16 +52,16 @@ def _test_fetching_free_ports_in_dist_context(
             torch.zeros(num_ports, dtype=torch.int32) for _ in range(world_size)
         ]
         dist.all_gather_object(gathered_ports_across_ranks, free_ports)
-        assert (
-            len(gathered_ports_across_ranks) == world_size
-        ), f"Expected {world_size} ports, but got {len(gathered_ports_across_ranks)}"
+        assert len(gathered_ports_across_ranks) == world_size, (
+            f"Expected {world_size} ports, but got {len(gathered_ports_across_ranks)}"
+        )
         ports_gathered_at_rank_0 = gathered_ports_across_ranks[0]
-        assert (
-            len(ports_gathered_at_rank_0) == num_ports
-        ), "returned number of ports to match requested number of ports"
-        assert all(
-            port >= 0 for port in ports_gathered_at_rank_0
-        ), "All ports should be non-negative integers"
+        assert len(ports_gathered_at_rank_0) == num_ports, (
+            "returned number of ports to match requested number of ports"
+        )
+        assert all(port >= 0 for port in ports_gathered_at_rank_0), (
+            "All ports should be non-negative integers"
+        )
         assert all(
             ports_gathered_at_rank_k == ports_gathered_at_rank_0
             for ports_gathered_at_rank_k in gathered_ports_across_ranks
@@ -107,16 +107,16 @@ def _test_fetching_free_ports_from_node(
             torch.zeros(num_ports, dtype=torch.int32) for _ in range(world_size)
         ]
         dist.all_gather_object(gathered_ports_across_ranks, free_ports)
-        assert (
-            len(gathered_ports_across_ranks) == world_size
-        ), f"Expected {world_size} ports, but got {len(gathered_ports_across_ranks)}"
+        assert len(gathered_ports_across_ranks) == world_size, (
+            f"Expected {world_size} ports, but got {len(gathered_ports_across_ranks)}"
+        )
         ports_gathered_at_rank_0 = gathered_ports_across_ranks[0]
-        assert (
-            len(ports_gathered_at_rank_0) == num_ports
-        ), "returned number of ports to match requested number of ports"
-        assert all(
-            port >= 0 for port in ports_gathered_at_rank_0
-        ), "All ports should be non-negative integers"
+        assert len(ports_gathered_at_rank_0) == num_ports, (
+            "returned number of ports to match requested number of ports"
+        )
+        assert all(port >= 0 for port in ports_gathered_at_rank_0), (
+            "All ports should be non-negative integers"
+        )
         assert all(
             ports_gathered_at_rank_k == ports_gathered_at_rank_0
             for ports_gathered_at_rank_k in gathered_ports_across_ranks
@@ -140,9 +140,9 @@ def _test_get_internal_ip_from_master_node_in_dist_context(
     )
     try:
         master_ip = get_internal_ip_from_master_node()
-        assert (
-            master_ip == expected_ip
-        ), f"Expected master IP to be {expected_ip}, but got {master_ip}"
+        assert master_ip == expected_ip, (
+            f"Expected master IP to be {expected_ip}, but got {master_ip}"
+        )
     finally:
         dist.destroy_process_group()
 
@@ -173,9 +173,9 @@ def _test_get_internal_ip_from_node(
                 side_effect=Exception("Should not be called on non-master node"),
             ):
                 master_ip = get_internal_ip_from_node(node_rank=master_node_rank)
-        assert (
-            master_ip == expected_ip
-        ), f"Expected master IP to be {expected_ip}, but got {master_ip}"
+        assert master_ip == expected_ip, (
+            f"Expected master IP to be {expected_ip}, but got {master_ip}"
+        )
     finally:
         dist.destroy_process_group()
 
@@ -360,68 +360,68 @@ def _test_get_graph_store_info_in_dist_context(
             graph_store_info = get_graph_store_info()
 
             # Verify the result is a GraphStoreInfo instance
-            assert isinstance(
-                graph_store_info, GraphStoreInfo
-            ), "Result should be a GraphStoreInfo instance"
+            assert isinstance(graph_store_info, GraphStoreInfo), (
+                "Result should be a GraphStoreInfo instance"
+            )
             # Verify cluster sizes
-            assert (
-                graph_store_info.num_storage_nodes == storage_nodes
-            ), f"Expected {storage_nodes} storage nodes"
-            assert (
-                graph_store_info.num_compute_nodes == compute_nodes
-            ), f"Expected {compute_nodes} compute nodes"
+            assert graph_store_info.num_storage_nodes == storage_nodes, (
+                f"Expected {storage_nodes} storage nodes"
+            )
+            assert graph_store_info.num_compute_nodes == compute_nodes, (
+                f"Expected {compute_nodes} compute nodes"
+            )
             assert (
                 graph_store_info.num_cluster_nodes == storage_nodes + compute_nodes
             ), "Total nodes should be sum of storage and compute nodes"
 
             # Verify IP addresses are strings and not empty
-            assert isinstance(
-                graph_store_info.cluster_master_ip, str
-            ), "Cluster master IP should be a string"
-            assert (
-                len(graph_store_info.cluster_master_ip) > 0
-            ), "Cluster master IP should not be empty"
-            assert isinstance(
-                graph_store_info.storage_cluster_master_ip, str
-            ), "Storage cluster master IP should be a string"
-            assert (
-                len(graph_store_info.storage_cluster_master_ip) > 0
-            ), "Storage cluster master IP should not be empty"
-            assert isinstance(
-                graph_store_info.compute_cluster_master_ip, str
-            ), "Compute cluster master IP should be a string"
-            assert (
-                len(graph_store_info.compute_cluster_master_ip) > 0
-            ), "Compute cluster master IP should not be empty"
+            assert isinstance(graph_store_info.cluster_master_ip, str), (
+                "Cluster master IP should be a string"
+            )
+            assert len(graph_store_info.cluster_master_ip) > 0, (
+                "Cluster master IP should not be empty"
+            )
+            assert isinstance(graph_store_info.storage_cluster_master_ip, str), (
+                "Storage cluster master IP should be a string"
+            )
+            assert len(graph_store_info.storage_cluster_master_ip) > 0, (
+                "Storage cluster master IP should not be empty"
+            )
+            assert isinstance(graph_store_info.compute_cluster_master_ip, str), (
+                "Compute cluster master IP should be a string"
+            )
+            assert len(graph_store_info.compute_cluster_master_ip) > 0, (
+                "Compute cluster master IP should not be empty"
+            )
 
             # Verify ports are positive integers
-            assert isinstance(
-                graph_store_info.cluster_master_port, int
-            ), "Cluster master port should be an integer"
-            assert (
-                graph_store_info.cluster_master_port > 0
-            ), "Cluster master port should be positive"
-            assert isinstance(
-                graph_store_info.storage_cluster_master_port, int
-            ), "Storage cluster master port should be an integer"
-            assert (
-                graph_store_info.storage_cluster_master_port > 0
-            ), "Storage cluster master port should be positive"
-            assert isinstance(
-                graph_store_info.compute_cluster_master_port, int
-            ), "Compute cluster master port should be an integer"
-            assert (
-                graph_store_info.compute_cluster_master_port > 0
-            ), "Compute cluster master port should be positive"
+            assert isinstance(graph_store_info.cluster_master_port, int), (
+                "Cluster master port should be an integer"
+            )
+            assert graph_store_info.cluster_master_port > 0, (
+                "Cluster master port should be positive"
+            )
+            assert isinstance(graph_store_info.storage_cluster_master_port, int), (
+                "Storage cluster master port should be an integer"
+            )
+            assert graph_store_info.storage_cluster_master_port > 0, (
+                "Storage cluster master port should be positive"
+            )
+            assert isinstance(graph_store_info.compute_cluster_master_port, int), (
+                "Compute cluster master port should be an integer"
+            )
+            assert graph_store_info.compute_cluster_master_port > 0, (
+                "Compute cluster master port should be positive"
+            )
 
             # Verify number of processes per compute
-            assert (
-                graph_store_info.num_processes_per_compute == 4
-            ), "Number of processes per compute should be 4"
+            assert graph_store_info.num_processes_per_compute == 4, (
+                "Number of processes per compute should be 4"
+            )
 
-            assert (
-                graph_store_info.compute_cluster_world_size == compute_nodes * 4
-            ), "Compute cluster world size should be the number of compute nodes times the number of processes per compute"
+            assert graph_store_info.compute_cluster_world_size == compute_nodes * 4, (
+                "Compute cluster world size should be the number of compute nodes times the number of processes per compute"
+            )
 
             # Verify readiness URI is constructed correctly
             expected_readiness_uri = (
@@ -431,9 +431,9 @@ def _test_get_graph_store_info_in_dist_context(
                 / get_vertex_ai_job_id()
                 / "graph_store_readiness.txt"
             )
-            assert (
-                graph_store_info.readiness_uri == expected_readiness_uri
-            ), f"Expected readiness URI to be {expected_readiness_uri}, got {graph_store_info.readiness_uri}"
+            assert graph_store_info.readiness_uri == expected_readiness_uri, (
+                f"Expected readiness URI to be {expected_readiness_uri}, got {graph_store_info.readiness_uri}"
+            )
 
             # Verify all ranks get the same result (since they should all get the same broadcasted values)
             gathered_info: list[Optional[GraphStoreInfo]] = [None] * world_size
@@ -442,9 +442,9 @@ def _test_get_graph_store_info_in_dist_context(
             # All ranks should have the same GraphStoreInfo
             for i, info in enumerate(gathered_info):
                 assert info is not None
-                assert (
-                    info == graph_store_info
-                ), f"Rank {i} should have same GraphStoreInfo. Got {info} but expected {graph_store_info}"
+                assert info == graph_store_info, (
+                    f"Rank {i} should have same GraphStoreInfo. Got {info} but expected {graph_store_info}"
+                )
         finally:
             dist.destroy_process_group()
 

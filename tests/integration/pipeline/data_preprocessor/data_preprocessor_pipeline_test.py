@@ -133,9 +133,7 @@ class DataPreprocessorPipelineTest(TestCase):
         )
 
         # Inject Data Preprocessor Config cls path.
-        gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path = (
-            passthrough_preprocessor_config_cls_path
-        )
+        gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path = passthrough_preprocessor_config_cls_path
         gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_args[
             "mocked_dataset_name"
         ] = task_name
@@ -165,14 +163,10 @@ class DataPreprocessorPipelineTest(TestCase):
             + f"Source mock dataset info: {mocked_dataset_info}"
         )
 
-        condensed_node_type_to_node_type_map: dict[
-            CondensedNodeType, NodeType
-        ] = (
+        condensed_node_type_to_node_type_map: dict[CondensedNodeType, NodeType] = (
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map
         )
-        condensed_edge_type_to_edge_type_map: dict[
-            CondensedEdgeType, EdgeType
-        ] = (
+        condensed_edge_type_to_edge_type_map: dict[CondensedEdgeType, EdgeType] = (
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map
         )
 
@@ -216,9 +210,7 @@ class DataPreprocessorPipelineTest(TestCase):
         for (
             _condensed_node_type,
             node_metadata_output_pb,
-        ) in (
-            preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata.items()
-        ):
+        ) in preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata.items():
             condensed_node_type = CondensedNodeType(_condensed_node_type)
             node_type: NodeType = (
                 graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
@@ -234,9 +226,9 @@ class DataPreprocessorPipelineTest(TestCase):
             for column_tensor, node_feat_name in zip(
                 mocked_dataset_info.node_feats[node_type].T, expected_node_feature_names
             ):
-                expected_node_feats_indexed_by_feat_name[
-                    node_feat_name
-                ] = column_tensor.numpy()
+                expected_node_feats_indexed_by_feat_name[node_feat_name] = (
+                    column_tensor.numpy()
+                )
 
             self.assertEqual(
                 node_metadata_output_pb.node_id_key,
@@ -281,10 +273,10 @@ class DataPreprocessorPipelineTest(TestCase):
                 f"{node_data_features_prefix.uri}*.tfrecord"
             )
             self.assertIsNotNone(node_tfrecords)
-            node_info: dict[
-                str, np.ndarray
-            ] = DataPreprocessorPipelineTest.__get_np_arrays_from_tfrecords(
-                schema_path=node_data_schema, tfrecord_files=node_tfrecords
+            node_info: dict[str, np.ndarray] = (
+                DataPreprocessorPipelineTest.__get_np_arrays_from_tfrecords(
+                    schema_path=node_data_schema, tfrecord_files=node_tfrecords
+                )
             )
 
             self.assertEqual(
@@ -292,11 +284,9 @@ class DataPreprocessorPipelineTest(TestCase):
                 mocked_dataset_info.num_nodes[node_type],
                 f"The number of nodes does not match what is expected for node type: {node_type}.",
             )
-            fields_to_check = (
-                [  # Ensure all expected fields exist in preprocessed TfExample outputs
-                    mocked_dataset_info.node_id_column_name,
-                ]
-            )
+            fields_to_check = [  # Ensure all expected fields exist in preprocessed TfExample outputs
+                mocked_dataset_info.node_id_column_name,
+            ]
             if mocked_dataset_info.node_labels is not None:
                 fields_to_check.append(mocked_dataset_info.node_label_column_name)
             for field in fields_to_check:
@@ -361,10 +351,10 @@ class DataPreprocessorPipelineTest(TestCase):
         # Check node data is same.
         edge_tfrecords = tf.io.gfile.glob(f"{edge_data_prefix.uri}*.tfrecord")
         self.assertIsNotNone(edge_tfrecords)
-        edge_info: dict[
-            str, np.ndarray
-        ] = DataPreprocessorPipelineTest.__get_np_arrays_from_tfrecords(
-            schema_path=edge_data_schema, tfrecord_files=edge_tfrecords
+        edge_info: dict[str, np.ndarray] = (
+            DataPreprocessorPipelineTest.__get_np_arrays_from_tfrecords(
+                schema_path=edge_data_schema, tfrecord_files=edge_tfrecords
+            )
         )
 
         self.assertEqual(
@@ -410,7 +400,9 @@ class DataPreprocessorPipelineTest(TestCase):
         assert edge_usage_type in [
             EdgeUsageType.POSITIVE,
             EdgeUsageType.NEGATIVE,
-        ], f"Invalid edge usage type: {edge_usage_type}; expected one of {EdgeUsageType.POSITIVE}, {EdgeUsageType.NEGATIVE}"
+        ], (
+            f"Invalid edge usage type: {edge_usage_type}; expected one of {EdgeUsageType.POSITIVE}, {EdgeUsageType.NEGATIVE}"
+        )
         logger.info(
             f"assert_user_defined_edges_in_preprocessed_metadata_reflects_mocked_dataset_info for {edge_usage_type} edges"
         )
@@ -454,9 +446,7 @@ class DataPreprocessorPipelineTest(TestCase):
                         edge_feat_name
                     ] = column_tensor.numpy()
 
-            edge_metadata_info: (
-                preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo
-            ) = (
+            edge_metadata_info: preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo = (
                 edge_metadata_output_pb.positive_edge_info
                 if edge_usage_type == EdgeUsageType.POSITIVE
                 else edge_metadata_output_pb.negative_edge_info
@@ -492,9 +482,7 @@ class DataPreprocessorPipelineTest(TestCase):
         for (
             _condensed_edge_type,
             edge_metadata_output_pb,
-        ) in (
-            preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata.items()
-        ):
+        ) in preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata.items():
             condensed_edge_type = CondensedEdgeType(_condensed_edge_type)
             edge_type: EdgeType = (
                 graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
@@ -527,9 +515,9 @@ class DataPreprocessorPipelineTest(TestCase):
                     mocked_dataset_info.edge_feats[edge_type].T,
                     expected_main_edge_feature_names,
                 ):
-                    expected_main_edge_feats_indexed_by_feat_name[
-                        edge_feat_name
-                    ] = column_tensor.numpy()
+                    expected_main_edge_feats_indexed_by_feat_name[edge_feat_name] = (
+                        column_tensor.numpy()
+                    )
 
             expected_num_main_edge_features = mocked_dataset_info.num_edge_features[
                 edge_type

@@ -139,8 +139,8 @@ class DistSamplingProducerTest(TestCase):
         )
         backend._initialized = True
         recorded: list[tuple[int, SharedMpCommand, object]] = []
-        backend._enqueue_worker_command = lambda worker_rank, command, payload: recorded.append(  # type: ignore[method-assign]
-            (worker_rank, command, payload)
+        backend._enqueue_worker_command = lambda worker_rank, command, payload: (  # type: ignore[method-assign]
+            recorded.append((worker_rank, command, payload))
         )
 
         channel = MagicMock()
