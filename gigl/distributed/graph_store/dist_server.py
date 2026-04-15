@@ -42,7 +42,6 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.sampler import ABLPNodeSamplerInput
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -284,14 +283,13 @@ class DistServer:
 
         Args:
             request: The node-fetch request, including split, node type,
-                and either round-robin rank/world_size or a contiguous slice.
+                and an optional contiguous server slice.
 
         Returns:
             The node ids.
 
         Raises:
             ValueError:
-                * If the rank and world_size are not provided together
                 * If the split is invalid
                 * If the node ids are not a torch.Tensor or a dict[NodeType, torch.Tensor]
                 * If the node type is provided for a homogeneous dataset
@@ -301,12 +299,9 @@ class DistServer:
             split (train, val, or test) may be returned. This is useful when you need
             to sample neighbors during inference, as neighbor nodes may belong to any split.
         """
-        request.validate()
         return self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            rank=request.rank,
-            world_size=request.world_size,
             server_slice=request.server_slice,
         )
 
@@ -314,36 +309,26 @@ class DistServer:
         self,
         split: Optional[Union[Literal["train", "val", "test"], str]],
         node_type: Optional[NodeType],
-        rank: Optional[int] = None,
-        world_size: Optional[int] = None,
         server_slice: Optional[ServerSlice] = None,
     ) -> torch.Tensor:
-        """Core implementation for fetching node IDs by split, type, and sharding.
+        """Core implementation for fetching node IDs by split, type, and optional slicing.
 
         Args:
             split: The dataset split to fetch from (``"train"``, ``"val"``,
                 ``"test"``, or ``None`` for all nodes).
             node_type: The node type to select. Must be ``None`` for
                 homogeneous datasets.
-            rank: Round-robin rank for sharding. Must be provided together
-                with ``world_size``.
-            world_size: Total number of processes for sharding. Must be
-                provided together with ``rank``.
+            server_slice: An optional :class:`ServerSlice` to return only a
+                fraction of the nodes. When ``None``, all nodes are returned.
 
         Returns:
-            The node IDs tensor, optionally sharded by rank.
+            The node IDs tensor, optionally sliced by ``server_slice``.
 
         Raises:
-            ValueError: If rank/world_size are not provided together, the
-                split is invalid, or the node type is inconsistent with
-                the dataset type (homogeneous vs. heterogeneous).
+            ValueError: If the split is invalid, or the node type is
+                inconsistent with the dataset type (homogeneous vs.
+                heterogeneous).
         """
-        if (rank is None) ^ (world_size is None):
-            raise ValueError(
-                "rank and world_size must be provided together. "
-                f"Received rank={rank}, world_size={world_size}"
-            )
-
         if split == "train":
             nodes = self.dataset.train_node_ids
         elif split == "val":
@@ -371,8 +356,6 @@ class DistServer:
 
         if server_slice is not None:
             return server_slice.slice_tensor(nodes)
-        if rank is not None and world_size is not None:
-            return shard_nodes_by_process(nodes, rank, world_size)
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -401,14 +384,11 @@ class DistServer:
         self,
         request: FetchABLPInputRequest,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
-
-        Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
-        e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        """Get the ABLP (Anchor Based Link Prediction) input for distributed processing.
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and round-robin rank/world_size.
+                supervision edge type, and an optional contiguous server slice.
 
         Returns:
             A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
@@ -419,12 +399,9 @@ class DistServer:
         Raises:
             ValueError: If the split is invalid.
         """
-        request.validate()
         anchors = self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            rank=request.rank,
-            world_size=request.world_size,
             server_slice=request.server_slice,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
