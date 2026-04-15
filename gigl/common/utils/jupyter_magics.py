@@ -198,14 +198,14 @@ class PbVisualizer:
             )
             assert hasattr(
                 flattened_graph_metadata, "node_anchor_based_link_prediction_output"
-            ), f"find_node_pb only supported for node_anchor_based_link_prediction, not {flattened_graph_metadata}"
+            ), (
+                f"find_node_pb only supported for node_anchor_based_link_prediction, not {flattened_graph_metadata}"
+            )
             if (
                 pb_type
                 == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
             ):
-                tfrecord_uri_prefix = (
-                    flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix
-                )
+                tfrecord_uri_prefix = flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix
             elif pb_type == training_samples_schema_pb2.RootedNodeNeighborhood:
                 tfrecord_uri_prefix = flattened_graph_metadata.node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix[
                     unenumerated_node_type
@@ -216,10 +216,10 @@ class PbVisualizer:
             assert hasattr(
                 self.frozen_task_config.shared_config.dataset_metadata,
                 "node_anchor_based_link_prediction_dataset",
-            ), f"find_node_pb only supported for node_anchor_based_link_prediction, not {self.frozen_task_config.shared_config.dataset_metadata}"
-            dataset = (
-                self.frozen_task_config.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
+            ), (
+                f"find_node_pb only supported for node_anchor_based_link_prediction, not {self.frozen_task_config.shared_config.dataset_metadata}"
             )
+            dataset = self.frozen_task_config.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
             if (
                 pb_type
                 == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
@@ -289,9 +289,7 @@ class PbVisualizer:
                     pb_type
                     == training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
                 ):
-                    pb = (
-                        training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample()
-                    )
+                    pb = training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample()
                 else:
                     raise ValueError(f"Unsupported pb_type: {pb_type}")
                 pb.ParseFromString(bytestr)

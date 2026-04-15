@@ -8,9 +8,9 @@ from gigl.src.common.utils.file_loader import FileLoader
 
 
 def save_scripted_model(model: torch.nn.Module, save_to_path_uri: Uri) -> None:
-    assert isinstance(
-        model, torch.nn.Module
-    ), "Can only save model of type torch.nn.Module"
+    assert isinstance(model, torch.nn.Module), (
+        "Can only save model of type torch.nn.Module"
+    )
     file_loader = FileLoader()
     tmp_save_model_file = tempfile.NamedTemporaryFile(delete=False)
 
@@ -27,9 +27,9 @@ def save_state_dict(model: torch.nn.Module, save_to_path_uri: Uri) -> None:
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         model = model.module
 
-    assert isinstance(
-        model, torch.nn.Module
-    ), "Can only save model of type torch.nn.Module"
+    assert isinstance(model, torch.nn.Module), (
+        "Can only save model of type torch.nn.Module"
+    )
     file_loader = FileLoader()
 
     tmp_save_model_file = tempfile.NamedTemporaryFile(delete=False)

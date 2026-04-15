@@ -1,4 +1,5 @@
 """Checks for if assorted strings are valid."""
+
 import re
 
 from gigl.common.logger import Logger

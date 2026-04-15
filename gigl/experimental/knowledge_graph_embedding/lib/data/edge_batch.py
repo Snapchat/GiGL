@@ -130,9 +130,9 @@ class EdgeBatch(DataclassBatch):
         num_edges = int(
             len(src_dst_pairs_kjt.lengths()) / num_node_types / 2
         )  # len(lengths) == 2 * num_node_types * num_edges
-        assert (
-            num_edges == len(edge_labels) == len(condensed_edge_types)
-        ), f"The number of edges, edge labels and edge types should be equal.  Got {num_edges, len(edge_labels), len(condensed_edge_types)}"
+        assert num_edges == len(edge_labels) == len(condensed_edge_types), (
+            f"The number of edges, edge labels and edge types should be equal.  Got {num_edges, len(edge_labels), len(condensed_edge_types)}"
+        )
 
         reconstructed_edges = []
         src_dst_pairs_kjt_view = src_dst_pairs_kjt.lengths().view(
@@ -154,7 +154,9 @@ class EdgeBatch(DataclassBatch):
             assert (
                 condensed_node_types_in_edges[0].item() == expected_src_cnt
                 and condensed_node_types_in_edges[1].item() == expected_dst_cnt
-            ), f"Expected condensed node types for edge type {condensed_edge_type} to be {expected_src_cnt, expected_dst_cnt}, but got {condensed_node_types_in_edges}"
+            ), (
+                f"Expected condensed node types for edge type {condensed_edge_type} to be {expected_src_cnt, expected_dst_cnt}, but got {condensed_node_types_in_edges}"
+            )
 
         condensed_node_types_for_edges = src_dst_pairs_kjt_view.argmax(dim=0).tolist()
         src_dst_pairs_values_iters = {
