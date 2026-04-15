@@ -290,12 +290,12 @@ python-version = "3.11"
 exclude = ["*_pb2.py", "*_pb2.pyi", "**/*.ipynb"]
 
 [tool.ty.analysis]
-# Migrated from mypy.ini per-module ignore_missing_imports sections,
-# plus additional modules that are optional or not installed in all environments.
+# Suppress "unresolved import" diagnostics for third-party packages that are
+# optional, environment-specific, or otherwise not installed in every dev setup.
+# https://docs.astral.sh/ty/reference/configuration/#allowed-unresolved-imports
 allowed-unresolved-imports = [
   "absl.**",
   "apache_beam.**",
-  "common.**",
   "fastavro.**",
   "google.cloud.**",
   "google_cloud_pipeline_components.**",
@@ -322,12 +322,10 @@ allowed-unresolved-imports = [
   "torch_sparse.**",
   "torchrec.**",
 ]
-# When mypy's ignore_missing_imports=True was set for a module, mypy would also
-# implicitly treat all types from that module as Any, suppressing downstream
-# type errors (e.g. unresolved-attribute, invalid-argument-type) on values from
-# those modules. ty's allowed-unresolved-imports only suppresses the import
-# error but leaves the type as Unknown, causing cascading errors. This setting
-# restores the mypy behavior by replacing imports from untyped libraries with Any.
+# Treat all types from unresolved third-party modules as Any instead of Unknown,
+# preventing cascading type errors (e.g. unresolved-attribute, invalid-argument-type)
+# on values imported from those modules.
+# https://docs.astral.sh/ty/reference/configuration/#replace-imports-with-any
 replace-imports-with-any = [
   "apache_beam.**",
   "fastavro.**",
