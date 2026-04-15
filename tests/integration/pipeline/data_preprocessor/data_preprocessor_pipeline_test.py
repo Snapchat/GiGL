@@ -6,8 +6,8 @@ from typing import Optional
 import numpy as np
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
-import tensorflow_transform as tft
 import torch
+from tensorflow_transform.tf_metadata import schema_utils
 
 import gigl.common.utils.local_fs as local_fs_utils
 import gigl.src.common.constants.gcs as gcs_consts
@@ -85,9 +85,7 @@ class DataPreprocessorPipelineTest(TestCase):
         max_batch_size=16384,
     ) -> dict[str, np.ndarray]:
         schema = tfdv.load_schema_text(schema_path.uri)
-        feature_spec = tft.tf_metadata.schema_utils.schema_as_feature_spec(
-            schema
-        ).feature_spec
+        feature_spec = schema_utils.schema_as_feature_spec(schema).feature_spec
         dataset = (
             tf.data.TFRecordDataset(tfrecord_files)
             .map(lambda record: tf.io.parse_example(record, feature_spec))

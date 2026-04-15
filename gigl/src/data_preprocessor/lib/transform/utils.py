@@ -3,8 +3,11 @@ from typing import Any, Callable, Iterable, Optional, Tuple, Union
 import apache_beam as beam
 import pyarrow as pa
 import tensorflow_data_validation as tfdv
+import tensorflow_data_validation.utils.display_util
 import tensorflow_transform
 import tfx_bsl
+import tfx_bsl.tfxio.tensor_adapter
+import tfx_bsl.tfxio.tf_example_record
 from apache_beam.pvalue import PBegin, PCollection, PDone
 from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
 from tensorflow_transform import beam as tft_beam

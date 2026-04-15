@@ -8,9 +8,9 @@ from typing import Callable, Iterable, NamedTuple, Optional, Tuple, Union
 
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
-import tensorflow_transform as tft
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
+from tensorflow_transform.tf_metadata import schema_utils
 
 import gigl.common.utils.dataflow
 import gigl.src.common.constants.gcs as gcs_constants
@@ -264,9 +264,7 @@ class DataPreprocessor:
             schema_path: Uri, feature_outputs: list[str]
         ) -> int:
             schema = tfdv.load_schema_text(schema_path.uri)
-            feature_spec = tft.tf_metadata.schema_utils.schema_as_feature_spec(
-                schema
-            ).feature_spec
+            feature_spec = schema_utils.schema_as_feature_spec(schema).feature_spec
             feature_dimension = 0
             for feature in feature_spec:
                 if feature in feature_outputs:
