@@ -185,7 +185,9 @@ class TestVertexAILauncher(TestCase):
             process_command.split(),
         )
         self.assertIsNotNone(compute_job_config.args)
-        assert compute_job_config.args is not None  # Type narrowing for the type checker
+        assert (
+            compute_job_config.args is not None
+        )  # Type narrowing for the type checker
         self.assertIn(f"--job_name={job_name}", compute_job_config.args)
         self.assertIn(
             f"--learning_rate={process_runtime_args['learning_rate']}",
