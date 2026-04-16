@@ -14,7 +14,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.generate_compile_commands import _COMPILE_COMMANDS, generate
+from scripts.generate_compile_commands import _COMPILE_COMMANDS, write_compile_commands
 
 # Matches real clang-tidy diagnostics emitted by clangd:
 #   E[HH:MM:SS.mmm] [check-name] Line N: message
@@ -44,7 +44,7 @@ def main() -> None:
     if not sources:
         sys.exit(0)
 
-    generate()
+    write_compile_commands()
 
     failures: dict[Path, list[str]] = {}
     with ThreadPoolExecutor() as executor:

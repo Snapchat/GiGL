@@ -11,7 +11,7 @@ All clang-tidy warnings are treated as errors.
 
 ```bash
 make format_cpp  # Format all C++ files in-place
-make lint_cpp    # Run clang-tidy static analysis
+make check_lint_cpp  # Run clang-tidy static analysis
 ```
 
 ______________________________________________________________________

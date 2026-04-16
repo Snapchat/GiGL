@@ -1,16 +1,16 @@
-"""Generate build/compile_commands.json for clangd IDE integration.
+"""Generate build/compile_commands.json for clangd.
 
-clangd needs a compilation database to resolve include paths and compiler flags.
-This script derives those paths from the installed torch and pybind11 packages.
+clangd requires a compilation database to resolve include paths and compiler
+flags. This script derives those paths from the installed torch and pybind11
+packages and writes ``build/compile_commands.json``.
 
-This script is for IDE setup (VS Code, CLion, etc.) and is also called by
-``run_cpp_lint.py`` before running clangd checks.
+Primary use: called by ``run_cpp_lint.py`` before running clangd checks, and
+by ``make generate_compile_commands`` when you need to refresh the database
+manually (e.g. after adding new source files or changing compiler flags).
 
 Usage::
 
-    uv run python scripts/generate_compile_commands.py
-
-Output: ``build/compile_commands.json`` (created or overwritten).
+    make generate_compile_commands
 """
 
 import json
@@ -20,16 +20,11 @@ import sysconfig
 import warnings
 from pathlib import Path
 
+from scripts._cpp_config import COMPILE_ARGS
+
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CSRC_DIR: Path = _REPO_ROOT / "gigl" / "csrc"
 _COMPILE_COMMANDS: Path = _REPO_ROOT / "build" / "compile_commands.json"
-_COMPILE_ARGS: list[str] = [
-    "-O3",
-    "-std=c++17",
-    "-Wall",
-    "-Wextra",
-    "-Wno-unused-parameter",
-]
 
 
 def _get_cxx_system_include_flags() -> list[str]:
@@ -65,7 +60,7 @@ def _get_cxx_system_include_flags() -> list[str]:
         return []
 
 
-def generate() -> None:
+def write_compile_commands() -> None:
     """Write build/compile_commands.json for clangd."""
     # Suppress PyTorch's CUDA-not-found warning emitted at import time.
     with warnings.catch_warnings():
@@ -82,12 +77,12 @@ def generate() -> None:
     if not cpp_sources:
         print(f"Warning: no .cpp files found under {_CSRC_DIR}", file=sys.stderr)
 
-    cxx_flags = " ".join(_COMPILE_ARGS)
+    cxx_flags = " ".join(COMPILE_ARGS)
     commands: list[dict[str, str]] = [
         {
             "directory": str(_REPO_ROOT),
             "file": str(source),
-            "command": f"clang++-15 {cxx_flags} {' '.join(include_flags)} -c {source}",
+            "command": f"clang++ {cxx_flags} {' '.join(include_flags)} -c {source}",
         }
         for source in cpp_sources
     ]
@@ -97,7 +92,7 @@ def generate() -> None:
 
 
 def main() -> None:
-    generate()
+    write_compile_commands()
     print(f"Wrote {_COMPILE_COMMANDS}")
 
 
