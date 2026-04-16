@@ -21,4 +21,4 @@ COPY tests tests
 COPY examples examples
 
 RUN uv pip install -e .
-RUN uv run python scripts/build_cpp_extensions.py build_ext --inplace
+RUN uv run python -m scripts.build_cpp_extensions build_ext --inplace

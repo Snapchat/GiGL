@@ -10,11 +10,10 @@ Usage::
 
 from pathlib import Path
 
+from scripts._cpp_config import COMPILE_ARGS
 from setuptools import setup
 from setuptools.extension import Extension
 from torch.utils.cpp_extension import BuildExtension, CppExtension
-
-from scripts._cpp_config import COMPILE_ARGS
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CSRC_DIR: Path = _REPO_ROOT / "gigl" / "csrc"
