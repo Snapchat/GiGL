@@ -343,6 +343,7 @@ clean_build_files_scala:
 
 clean_build_files_cpp:
 	rm -rf build/
+	rm -f .cache/compile_commands.json
 
 clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
 
