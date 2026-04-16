@@ -61,6 +61,9 @@ def main() -> None:
             print(f"  FAIL  {source}")
             for d in failures[source]:
                 print(f"        {d}")
+        print(
+            "\nRun \033[1mmake fix_lint_cpp\033[0m to auto-fix violations where possible."
+        )
         sys.exit(1)
 
 
