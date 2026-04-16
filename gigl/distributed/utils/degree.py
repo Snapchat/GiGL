@@ -74,9 +74,9 @@ def compute_and_broadcast_degree_tensor(
         topo = graph.topo
         if topo is None or topo.indptr is None:
             raise ValueError("Topology/indptr not available for graph.")
-        local_degrees: Union[
-            torch.Tensor, dict[EdgeType, torch.Tensor]
-        ] = _compute_degrees_from_indptr(topo.indptr)
+        local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+            _compute_degrees_from_indptr(topo.indptr)
+        )
     else:
         local_dict: dict[EdgeType, torch.Tensor] = {}
         for edge_type, edge_graph in graph.items():

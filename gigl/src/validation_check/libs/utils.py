@@ -11,9 +11,9 @@ def assert_proto_has_field(proto: message.Message, field_name: str) -> None:
         field_name: A string representing the field name.
     """
 
-    assert proto.HasField(
-        field_name
-    ), f"Invalid '{field_name}'; must provide {field_name}."
+    assert proto.HasField(field_name), (
+        f"Invalid '{field_name}'; must provide {field_name}."
+    )
 
 
 def assert_proto_field_value_is_truthy(proto: message.Message, field_name: str) -> None:

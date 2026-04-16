@@ -130,9 +130,7 @@ class TestVertexAILauncher(TestCase):
         )
 
         # Get the graph store config and its sub-configs for the launcher
-        graph_store_config = (
-            gigl_resource_config_proto.trainer_resource_config.vertex_ai_graph_store_trainer_config
-        )
+        graph_store_config = gigl_resource_config_proto.trainer_resource_config.vertex_ai_graph_store_trainer_config
         compute_pool = graph_store_config.compute_pool
         storage_pool = graph_store_config.graph_store_pool
         shared_config = gigl_resource_config_proto.shared_resource_config
@@ -247,9 +245,7 @@ class TestVertexAILauncher(TestCase):
         )
 
         # Get the vertex AI config for the launcher
-        vertex_ai_config = (
-            gigl_resource_config_proto.inferencer_resource_config.vertex_ai_inferencer_config
-        )
+        vertex_ai_config = gigl_resource_config_proto.inferencer_resource_config.vertex_ai_inferencer_config
         shared_config = gigl_resource_config_proto.shared_resource_config
 
         # Setup mock service

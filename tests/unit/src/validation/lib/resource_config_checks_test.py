@@ -151,32 +151,16 @@ def _create_valid_vertex_ai_graph_store_trainer_config() -> (
     config = gigl_resource_config_pb2.GiglResourceConfig()
 
     # Graph store pool config
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = (
-        "n1-highmem-8"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_type = (
-        "ACCELERATOR_TYPE_UNSPECIFIED"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_limit = (
-        0
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.num_replicas = (
-        2
-    )
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = "n1-highmem-8"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_type = "ACCELERATOR_TYPE_UNSPECIFIED"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_limit = 0
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.num_replicas = 2
 
     # Compute pool config
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.machine_type = (
-        "n1-standard-16"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_type = (
-        "NVIDIA_TESLA_T4"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = (
-        2
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.num_replicas = (
-        3
-    )
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.machine_type = "n1-standard-16"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_type = "NVIDIA_TESLA_T4"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = 2
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.num_replicas = 3
 
     return config
 
@@ -364,9 +348,7 @@ class TestSharedResourceConfig(TestCase):
     def test_missing_temp_regional_assets_bucket(self):
         """Test that missing temp_regional_assets_bucket raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.temp_regional_assets_bucket = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.temp_regional_assets_bucket = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
@@ -380,27 +362,21 @@ class TestSharedResourceConfig(TestCase):
     def test_missing_temp_assets_bq_dataset_name(self):
         """Test that missing temp_assets_bq_dataset_name raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.temp_assets_bq_dataset_name = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.temp_assets_bq_dataset_name = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
     def test_missing_embedding_bq_dataset_name(self):
         """Test that missing embedding_bq_dataset_name raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.embedding_bq_dataset_name = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.embedding_bq_dataset_name = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
     def test_missing_gcp_service_account_email(self):
         """Test that missing gcp_service_account_email raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.gcp_service_account_email = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.gcp_service_account_email = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
@@ -573,18 +549,14 @@ class TestTrainerResourceConfig(TestCase):
     def test_invalid_vertex_ai_graph_store_trainer_config_graph_store_pool(self):
         """Test that invalid graph store pool config raises an assertion error."""
         config = _create_valid_vertex_ai_graph_store_trainer_config()
-        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = (
-            ""
-        )
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = ""
         with self.assertRaises(AssertionError):
             check_if_trainer_resource_config_valid(config)
 
     def test_invalid_vertex_ai_graph_store_trainer_config_compute_pool(self):
         """Test that invalid compute pool config raises an assertion error."""
         config = _create_valid_vertex_ai_graph_store_trainer_config()
-        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = (
-            0  # Should be > 0 for GPU
-        )
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = 0  # Should be > 0 for GPU
         with self.assertRaises(AssertionError):
             check_if_trainer_resource_config_valid(config)
 

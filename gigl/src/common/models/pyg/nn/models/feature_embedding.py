@@ -62,9 +62,9 @@ class FeatureEmbeddingLayer(nn.Module):
             if feature not in set(features_to_embed.keys())
         ]
         self.__aggregation = aggregation
-        assert (
-            padding_idx is None or padding_idx >= 0
-        ), "padding_idx for embedding layer has to be >= 0"
+        assert padding_idx is None or padding_idx >= 0, (
+            "padding_idx for embedding layer has to be >= 0"
+        )
         self.__padding_idx = padding_idx
         self.__feature_padding_value_map = feature_padding_value_map
 
@@ -92,12 +92,12 @@ class FeatureEmbeddingLayer(nn.Module):
                 f"int_domain has to be provided in schema for {feature_name}, "
                 f"please check schema.pbtxt"
             )
-            assert (
-                feat_schema.int_domain.min >= -1
-            ), "int_domain.min_value has to be >= -1"
-            assert not (
-                feat_schema.int_domain.min == -1 and oov_idx != -1
-            ), "If int_domain.min_value is -1, oov_idx must also be -1"
+            assert feat_schema.int_domain.min >= -1, (
+                "int_domain.min_value has to be >= -1"
+            )
+            assert not (feat_schema.int_domain.min == -1 and oov_idx != -1), (
+                "If int_domain.min_value is -1, oov_idx must also be -1"
+            )
             vocab_size = feat_schema.int_domain.max - feat_schema.int_domain.min + 1
 
             feature_padding_idx: Optional[int]
