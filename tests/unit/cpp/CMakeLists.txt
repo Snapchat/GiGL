@@ -11,8 +11,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(FetchContent)
 FetchContent_Declare(
     googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
-    URL_HASH SHA256=8372520bab45e12a97cd2f49dad36d07e55ddb89c0e39fad4a1a64cab0bdf35d
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.14.0
 )
 # Prevent GoogleTest from overriding the compiler's runtime on Windows
 # (no-op on Linux/Mac, but required for portable CMake config).
