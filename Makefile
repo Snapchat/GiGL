@@ -97,9 +97,9 @@ unit_test_scala: clean_build_files_scala
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
 unit_test_cpp:
-	cmake -S tests/unit/cpp -B build/cpp_tests
-	cmake --build build/cpp_tests --parallel
-	ctest --test-dir build/cpp_tests --output-on-failure
+	cmake -S tests/unit/cpp -B .cache/cpp_tests
+	cmake --build .cache/cpp_tests --parallel
+	ctest --test-dir .cache/cpp_tests --output-on-failure
 
 unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
@@ -342,7 +342,7 @@ clean_build_files_scala:
 	( cd scala_spark35; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 
 clean_build_files_cpp:
-	rm -rf build/
+	rm -rf .cache/cpp_tests
 	rm -f .cache/compile_commands.json
 
 clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
