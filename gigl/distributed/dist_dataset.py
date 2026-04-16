@@ -26,7 +26,11 @@ from gigl.types.graph import (
     GraphPartitionData,
     PartitionOutput,
 )
-from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
+from gigl.utils.data_splitters import (
+    NodeAnchorLinkSplitter,
+    NodeSplitter,
+    validate_max_labels_per_anchor_node,
+)
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
@@ -80,6 +84,7 @@ class DistDataset(glt.distributed.DistDataset):
         degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
+        max_labels_per_anchor_node: Optional[int] = None,
     ) -> None:
         """
         Initializes the fields of the DistDataset class. This function is called upon each serialization of the DistDataset instance.
@@ -105,6 +110,8 @@ class DistDataset(glt.distributed.DistDataset):
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
             degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
+            max_labels_per_anchor_node (Optional[int]): Optional cap for how many
+                labels to materialize per anchor node for ABLP label fetching.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -143,6 +150,9 @@ class DistDataset(glt.distributed.DistDataset):
         self._degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = degree_tensor
+        self._max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
+            max_labels_per_anchor_node
+        )
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -328,6 +338,18 @@ class DistDataset(glt.distributed.DistDataset):
 
             self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
         return self._degree_tensor
+
+    @property
+    def max_labels_per_anchor_node(self) -> Optional[int]:
+        return self._max_labels_per_anchor_node
+
+    @max_labels_per_anchor_node.setter
+    def max_labels_per_anchor_node(
+        self, new_max_labels_per_anchor_node: Optional[int]
+    ) -> None:
+        self._max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
+            new_max_labels_per_anchor_node
+        )
 
     @property
     def train_node_ids(
@@ -858,6 +880,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+        Optional[int],
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -880,6 +903,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
+            Optional[int]: Optional per-anchor label cap for ABLP label fetching
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -908,6 +932,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._node_feature_info,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
             self._degree_tensor,  # Additional field unique to DistDataset class
+            self._max_labels_per_anchor_node,  # Additional field unique to DistDataset class
         )
         return ipc_handle
 
@@ -1164,6 +1189,7 @@ def _rebuild_distributed_dataset(
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
+        Optional[int],  # Optional per-anchor label cap for ABLP label fetching
     ],
 ):
     dataset = DistDataset.from_ipc_handle(ipc_handle)

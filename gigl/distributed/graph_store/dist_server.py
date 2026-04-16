@@ -408,7 +408,11 @@ class DistServer:
             request.supervision_edge_type, self.dataset.get_edge_types()
         )
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            self.dataset, anchors, positive_label_edge_type, negative_label_edge_type
+            self.dataset,
+            anchors,
+            positive_label_edge_type,
+            negative_label_edge_type,
+            max_labels_per_anchor_node=self.dataset.max_labels_per_anchor_node,
         )
         return anchors, positive_labels, negative_labels
 

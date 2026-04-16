@@ -538,6 +538,7 @@ class DistABLPLoader(BaseDistLoader):
                 node_ids=curr_process_nodes,
                 positive_label_edge_type=positive_label_edge_type,
                 negative_label_edge_type=negative_label_edge_type,
+                max_labels_per_anchor_node=dataset.max_labels_per_anchor_node,
             )
             positive_labels_by_label_edge_type[positive_label_edge_type] = (
                 positive_labels

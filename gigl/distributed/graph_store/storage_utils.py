@@ -32,7 +32,11 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
+from gigl.utils.data_splitters import (
+    DistNodeAnchorLinkSplitter,
+    DistNodeSplitter,
+    get_max_labels_per_anchor_node_from_runtime_args,
+)
 
 logger = Logger()
 
@@ -45,6 +49,7 @@ def build_storage_dataset(
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
     should_load_tensors_in_parallel: bool = True,
     ssl_positive_label_percentage: Optional[float] = None,
+    max_labels_per_anchor_node: Optional[int] = None,
 ) -> DistDataset:
     """Build a :class:`DistDataset` for a storage node from a task config.
 
@@ -71,6 +76,10 @@ def build_storage_dataset(
             self-supervised positive labels.  Must be ``None`` when
             supervised edge labels are already provided.  For example,
             ``0.1`` selects 10 % of edges.
+        max_labels_per_anchor_node: Optional cap for how many labels to
+            materialize per anchor node when the storage server serves ABLP
+            input. If ``None``, this is inferred from the task config's
+            ``trainer_args``.
 
     Returns:
         A partitioned :class:`DistDataset` ready to be served.
@@ -78,12 +87,16 @@ def build_storage_dataset(
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )
+    if max_labels_per_anchor_node is None:
+        max_labels_per_anchor_node = get_max_labels_per_anchor_node_from_runtime_args(
+            dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
+        )
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
-    return build_dataset(
+    dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
@@ -91,6 +104,8 @@ def build_storage_dataset(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
+    dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
+    return dataset
 
 
 def _run_storage_server_session(

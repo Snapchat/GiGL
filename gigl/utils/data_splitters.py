@@ -31,9 +31,42 @@ from gigl.types.graph import (
 logger = Logger()
 
 PADDING_NODE: Final[torch.Tensor] = torch.tensor(-1, dtype=torch.int64)
+MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG: Final[str] = "max_labels_per_anchor_node"
 
 # We need to make the protocols for the node splitter and node anchor linked spliter runtime checkable so that
 # we can make isinstance() checks on them at runtime.
+
+
+def validate_max_labels_per_anchor_node(
+    max_labels_per_anchor_node: Optional[int],
+) -> Optional[int]:
+    """Validate the optional per-anchor label cap."""
+    if max_labels_per_anchor_node is None:
+        return None
+    if max_labels_per_anchor_node <= 0:
+        raise ValueError(
+            "max_labels_per_anchor_node must be a positive integer when provided."
+        )
+    return max_labels_per_anchor_node
+
+
+def get_max_labels_per_anchor_node_from_runtime_args(
+    runtime_args: Mapping[str, str],
+) -> Optional[int]:
+    """Parse the optional per-anchor label cap from runtime args."""
+    raw_max_labels_per_anchor_node = runtime_args.get(
+        MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG
+    )
+    if raw_max_labels_per_anchor_node is None:
+        return None
+    try:
+        parsed_max_labels_per_anchor_node = int(raw_max_labels_per_anchor_node)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid {MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG} value "
+            f"{raw_max_labels_per_anchor_node!r}. Expected a positive integer."
+        ) from exc
+    return validate_max_labels_per_anchor_node(parsed_max_labels_per_anchor_node)
 
 
 @runtime_checkable
@@ -562,6 +595,7 @@ def get_labels_for_anchor_nodes(
     node_ids: torch.Tensor,
     positive_label_edge_type: PyGEdgeType,
     negative_label_edge_type: Optional[PyGEdgeType] = None,
+    max_labels_per_anchor_node: Optional[int] = None,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Selects labels for the given node ids based on the provided edge types.
 
@@ -592,6 +626,8 @@ def get_labels_for_anchor_nodes(
         positive_label_edge_type (PyGEdgeType): The edge type to use for the positive labels.
         negative_label_edge_type (Optional[PyGEdgeType]): The edge type to use for the negative labels.
             Defaults to None. If not provided no negative labels will be returned.
+        max_labels_per_anchor_node (Optional[int]): If provided, caps the number of
+            positive and negative labels materialized per anchor node.
     Returns:
         Tuple of (positive labels, negative_labels?)
         negative labels may be None depending on if negative_label_edge_type is provided.
@@ -612,13 +648,19 @@ def get_labels_for_anchor_nodes(
 
     # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
     positive_labels = _get_padded_labels(
-        node_ids, positive_node_topo, allow_non_existant_node_ids=False
+        node_ids,
+        positive_node_topo,
+        allow_non_existant_node_ids=False,
+        max_labels_per_anchor_node=max_labels_per_anchor_node,
     )
 
     if negative_node_topo is not None:
         # Labels is NxM, where N is the number of nodes, and M is the max number of labels.
         negative_labels = _get_padded_labels(
-            node_ids, negative_node_topo, allow_non_existant_node_ids=True
+            node_ids,
+            negative_node_topo,
+            allow_non_existant_node_ids=True,
+            max_labels_per_anchor_node=max_labels_per_anchor_node,
         )
     else:
         negative_labels = None
@@ -630,6 +672,7 @@ def _get_padded_labels(
     anchor_node_ids: torch.Tensor,
     topo: Topology,
     allow_non_existant_node_ids: bool = False,
+    max_labels_per_anchor_node: Optional[int] = None,
 ) -> torch.Tensor:
     """Returns the padded labels and the max range of labels.
 
@@ -642,9 +685,14 @@ def _get_padded_labels(
         topo (Topology): The topology to use for the labels.
         allow_non_existant_node_ids (bool): If True, will allow anchor node ids that do not exist in the topology.
             This means that the returned tensor will be padded with `PADDING_NODE` for those anchor node ids.
+        max_labels_per_anchor_node (Optional[int]): If provided, caps the number of
+            labels materialized per anchor node.
     Returns:
         The shape of the returned tensor is [N, max_number_of_labels].
     """
+    max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
+        max_labels_per_anchor_node
+    )
     # indptr is the ROW_INDEX of a CSR matrix.
     # and indices is the COL_INDEX of a CSR matrix.
     # See https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
@@ -660,6 +708,8 @@ def _get_padded_labels(
     ends = indptr[anchor_node_ids + 1]  # [N]
 
     max_range = int(torch.max(ends - starts).item())
+    if max_labels_per_anchor_node is not None:
+        max_range = min(max_range, max_labels_per_anchor_node)
 
     # Sample all labels based on the CSR start/stop indices.
     # Creates "indices" for us to us, e.g [[0, 1], [2, 3]]
