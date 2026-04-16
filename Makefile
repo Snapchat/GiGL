@@ -160,13 +160,21 @@ format: format_py format_cpp format_scala format_md
 
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
-	$(MAKE) --no-print-directory lint_cpp
 
 build_cpp_extensions:
 	uv run --no-sync python scripts/build_cpp_extensions.py build_ext --inplace
 
+generate_compile_commands:
+	uv run python -m scripts.generate_compile_commands
+
 lint_cpp:
-	$(if $(CPP_SOURCES), uv run python scripts/run_cpp_lint.py $(CPP_SOURCES))
+	$(if $(CPP_SOURCES), uv run python -m scripts.run_cpp_lint $(CPP_SOURCES))
+
+# Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
+# changes expressions, adds/removes keywords), not just style. Run manually and
+# review the diff before committing.
+fix_cpp_lint: generate_compile_commands
+	$(if $(CPP_SOURCES), clang-tidy --fix -p build/compile_commands.json $(CPP_SOURCES))
 
 lint_test: check_format assert_yaml_configs_parse lint_cpp
 	@echo "Lint checks pass!"
