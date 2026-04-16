@@ -1,4 +1,4 @@
-"""Shared C++ build configuration used by build_cpp_extensions.py and generate_compile_commands.py."""
+"""C++ compiler flags used by the pybind11 extension build and clangd compile commands generation."""
 
 COMPILE_ARGS: list[str] = [
     "-O3",

@@ -20,7 +20,7 @@ import sysconfig
 import warnings
 from pathlib import Path
 
-from scripts._cpp_config import COMPILE_ARGS
+from gigl.csrc.cpp_compile_constants import COMPILE_ARGS
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CSRC_DIR: Path = _REPO_ROOT / "gigl" / "csrc"
