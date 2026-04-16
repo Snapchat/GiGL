@@ -10,19 +10,13 @@ Usage::
 
 from pathlib import Path
 
+from scripts._cpp_config import COMPILE_ARGS
 from setuptools import setup
 from setuptools.extension import Extension
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CSRC_DIR: Path = _REPO_ROOT / "gigl" / "csrc"
-_COMPILE_ARGS: list[str] = [
-    "-O3",
-    "-std=c++17",
-    "-Wall",
-    "-Wextra",
-    "-Wno-unused-parameter",
-]
 
 
 def find_cpp_extensions() -> list[Extension]:
@@ -48,7 +42,7 @@ def find_cpp_extensions() -> list[Extension]:
             CppExtension(
                 name=module_name,
                 sources=sources,
-                extra_compile_args=_COMPILE_ARGS,
+                extra_compile_args=COMPILE_ARGS,
             )
         )
     return extensions
