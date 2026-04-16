@@ -46,7 +46,13 @@ def main():
     try:
         print("Building C++ extensions...")
         subprocess.run(
-            [sys.executable, "-m", "scripts.build_cpp_extensions", "build_ext", "--inplace"],
+            [
+                sys.executable,
+                "-m",
+                "scripts.build_cpp_extensions",
+                "build_ext",
+                "--inplace",
+            ],
             cwd=repo_root,
             check=True,
         )
