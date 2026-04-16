@@ -174,7 +174,7 @@ check_lint_cpp:
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES), clang-tidy --fix -p build/compile_commands.json $(CPP_SOURCES))
+	$(if $(CPP_SOURCES), clang-tidy --fix -p .cache/compile_commands.json $(CPP_SOURCES))
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

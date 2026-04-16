@@ -1,8 +1,8 @@
-"""Generate build/compile_commands.json for clangd.
+"""Generate .cache/compile_commands.json for clangd.
 
 clangd requires a compilation database to resolve include paths and compiler
 flags. This script derives those paths from the installed torch and pybind11
-packages and writes ``build/compile_commands.json``.
+packages and writes ``.cache/compile_commands.json``.
 
 Primary use: called by ``run_cpp_lint.py`` before running clangd checks, and
 by ``make generate_compile_commands`` when you need to refresh the database
@@ -24,7 +24,7 @@ from scripts._cpp_config import COMPILE_ARGS
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CSRC_DIR: Path = _REPO_ROOT / "gigl" / "csrc"
-_COMPILE_COMMANDS: Path = _REPO_ROOT / "build" / "compile_commands.json"
+_COMPILE_COMMANDS: Path = _REPO_ROOT / ".cache" / "compile_commands.json"
 
 
 def _get_cxx_system_include_flags() -> list[str]:
@@ -61,7 +61,7 @@ def _get_cxx_system_include_flags() -> list[str]:
 
 
 def write_compile_commands() -> None:
-    """Write build/compile_commands.json for clangd."""
+    """Write .cache/compile_commands.json for clangd."""
     # Suppress PyTorch's CUDA-not-found warning emitted at import time.
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore")
