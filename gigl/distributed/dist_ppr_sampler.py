@@ -148,9 +148,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # on every neighbor during sampling.  Computing it here (rather than in
         # the dataset) also keeps the door open for edge-specific degree
         # strategies.  If memory becomes a bottleneck, revisit this.
-        self._node_type_to_total_degree: dict[
-            NodeType, torch.Tensor
-        ] = self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
+        self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = (
+            self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
+        )
 
     def _build_total_degree_tensors(
         self,
@@ -459,9 +459,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                             source_node, 0.0
                         )
 
-                        ppr_scores[seed_idx][source_type][
-                            source_node
-                        ] += source_residual
+                        ppr_scores[seed_idx][source_type][source_node] += (
+                            source_residual
+                        )
                         residuals[seed_idx][source_type][source_node] = 0.0
 
                         # Same destination-only guard as in the queue drain loop above.
@@ -493,9 +493,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                             neighbor_type = self._get_destination_type(etype)
 
                             for neighbor_node in neighbor_list:
-                                residuals[seed_idx][neighbor_type][
-                                    neighbor_node
-                                ] += residual_per_neighbor
+                                residuals[seed_idx][neighbor_type][neighbor_node] += (
+                                    residual_per_neighbor
+                                )
 
                                 requeue_threshold = (
                                     self._requeue_threshold_factor
@@ -529,9 +529,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                                             promote_key in fetched_neighbors
                                             and promote_key not in neighbor_cache
                                         ):
-                                            neighbor_cache[
-                                                promote_key
-                                            ] = fetched_neighbors[promote_key]
+                                            neighbor_cache[promote_key] = (
+                                                fetched_neighbors[promote_key]
+                                            )
 
         # Extract top-k nodes by PPR score, grouped by node type.
         # Results are three flat tensors per node type (no padding):
@@ -704,9 +704,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 for ntype, flat_ids in ntype_to_flat_ids.items():
                     ppr_edge_type: EdgeType = (seed_type, "ppr", ntype)
                     valid_counts = ntype_to_valid_counts[ntype]
-                    ppr_edge_type_to_flat_weights[
-                        ppr_edge_type
-                    ] = ntype_to_flat_weights[ntype]
+                    ppr_edge_type_to_flat_weights[ppr_edge_type] = (
+                        ntype_to_flat_weights[ntype]
+                    )
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types

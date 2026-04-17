@@ -19,9 +19,9 @@ def hit_rate_at_k(
     max_k_requested = int(torch.max(ks).item())
     max_viable_k = 1 + neg_scores.numel()
     min_k_requested = torch.min(ks).item()
-    assert (
-        min_k_requested >= 1
-    ), f"ks must be greater-or-equal to 1 (got {min_k_requested})"
+    assert min_k_requested >= 1, (
+        f"ks must be greater-or-equal to 1 (got {min_k_requested})"
+    )
     pos_scores_reshaped = pos_scores.view(-1, 1)
     neg_scores_reshaped = neg_scores.view(1, -1)
     num_pos_scores = pos_scores_reshaped.shape[0]

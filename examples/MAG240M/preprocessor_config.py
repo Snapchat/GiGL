@@ -4,6 +4,8 @@ from typing import Callable
 
 import tensorflow as tf
 import tensorflow_transform as tft
+from google.cloud.bigquery.job import WriteDisposition
+
 from examples.MAG240M.common import NUM_PAPER_FEATURES, TOTAL_NUM_PAPERS
 from examples.MAG240M.queries import (
     query_template_cast_to_homogeneous_edge_table,
@@ -12,8 +14,6 @@ from examples.MAG240M.queries import (
     query_template_generate_homogeneous_node_table,
     query_template_reindex_author_writes_paper_table,
 )
-from google.cloud.bigquery.job import WriteDisposition
-
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -95,11 +95,9 @@ class Mag240DataPreprocessorConfig(DataPreprocessorConfig):
         self.fixed_int_node_feature_list = [
             "degree"
         ]  # We specify which input feature columns are an int
-        self.fixed_float_node_feature_list = (
-            [  # And which input feature columns are a float
-                f"feat_{i}" for i in range(NUM_PAPER_FEATURES)
-            ]
-        )
+        self.fixed_float_node_feature_list = [  # And which input feature columns are a float
+            f"feat_{i}" for i in range(NUM_PAPER_FEATURES)
+        ]
 
         self.node_feature_list = (
             self.fixed_int_node_feature_list + self.fixed_float_node_feature_list

@@ -312,17 +312,17 @@ if __name__ == "__main__":
 
     gcloud_cmd = inspect.cleandoc(
         f"""
-        gcloud compute instances create {values['machine_name']} \
-        --project={values['project']} \
-        --zone={values['zone']} \
-        --machine-type={values['machine_type']} \
+        gcloud compute instances create {values["machine_name"]} \
+        --project={values["project"]} \
+        --zone={values["zone"]} \
+        --machine-type={values["machine_type"]} \
         --network-interface=network-tier=PREMIUM,stack-type=IPV4_ONLY,subnet=default \
         --metadata=enable-osconfig=TRUE{startup_script_clause} \
         --maintenance-policy=TERMINATE \
         --provisioning-model=STANDARD \
-        --service-account={values['service_account']} \
+        --service-account={values["service_account"]} \
         --scopes=https://www.googleapis.com/auth/cloud-platform \
-        --create-disk=auto-delete=yes,boot=yes,device-name={values['machine_name']},image={machine_boot_full_name},mode=rw,size={values['boot_drive_size_gb']},type=pd-ssd \
+        --create-disk=auto-delete=yes,boot=yes,device-name={values["machine_name"]},image={machine_boot_full_name},mode=rw,size={values["boot_drive_size_gb"]},type=pd-ssd \
         --no-shielded-secure-boot \
         --shielded-vtpm \
         --shielded-integrity-monitoring \

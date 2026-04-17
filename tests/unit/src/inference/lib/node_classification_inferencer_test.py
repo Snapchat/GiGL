@@ -65,9 +65,7 @@ class NodeClassificationInferencerTest(TestCase):
         ) -> InferBatchResults:
             embeddings = torch.Tensor(
                 [i for i in range(len(batch.root_nodes))]
-            ).reshape(
-                -1, 1
-            )  # [[1], [2]]
+            ).reshape(-1, 1)  # [[1], [2]]
             return InferBatchResults(
                 embeddings=embeddings, predictions=batch.root_node_labels
             )

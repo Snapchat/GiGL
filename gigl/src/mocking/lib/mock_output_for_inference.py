@@ -133,7 +133,9 @@ def _infer_supervised_node_classification_model(
     assert isinstance(
         gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata,
         flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput,
-    ), f"Flattened graph metadata output of wrong type: expected {flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput.__name__}"
+    ), (
+        f"Flattened graph metadata output of wrong type: expected {flattened_graph_metadata_pb2.SupervisedNodeClassificationOutput.__name__}"
+    )
 
     supervised_node_classification_output = (
         gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata
@@ -261,7 +263,9 @@ def _infer_node_anchor_based_link_prediction_model(
     assert isinstance(
         gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata,
         flattened_graph_metadata_pb2.NodeAnchorBasedLinkPredictionOutput,
-    ), f"Flattened graph metadata output of wrong type: expected {flattened_graph_metadata_pb2.NodeAnchorBasedLinkPredictionOutput.__name__}"
+    ), (
+        f"Flattened graph metadata output of wrong type: expected {flattened_graph_metadata_pb2.NodeAnchorBasedLinkPredictionOutput.__name__}"
+    )
 
     node_anchor_output = (
         gbml_config_pb_wrapper.flattened_graph_metadata_pb_wrapper.output_metadata
@@ -291,12 +295,12 @@ def _infer_node_anchor_based_link_prediction_model(
             infer_batch_results: InferBatchResults = inferencer.infer_batch(batch=batch)
             node = batch.root_nodes[0]
             node_id = node.id
-            assert (
-                NodeType(node_type) == node.type
-            ), "Expected node type at this tfrecord_uri_prefix to match batch root node type"
-            assert (
-                infer_batch_results.embeddings is not None
-            ), "Expected embeddings to be returned by inferencer"
+            assert NodeType(node_type) == node.type, (
+                "Expected node type at this tfrecord_uri_prefix to match batch root node type"
+            )
+            assert infer_batch_results.embeddings is not None, (
+                "Expected embeddings to be returned by inferencer"
+            )
             emb = infer_batch_results.embeddings[0].tolist()
             emb_file.write(
                 json.dumps(

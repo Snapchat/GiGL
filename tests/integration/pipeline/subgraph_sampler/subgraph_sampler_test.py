@@ -436,12 +436,8 @@ class SubgraphSamplerTest(TestCase):
             Raises:
                 AssertionError: If an edge type is not part of the supervision edge types.
             """
-            supervision_edge_types = (
-                gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
-            )
-            condensed_edge_type_to_edge_type_map = (
-                gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map
-            )
+            supervision_edge_types = gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
+            condensed_edge_type_to_edge_type_map = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map
             for edge_pb in edge_pbs:
                 edge_pbw = EdgePbWrapper(pb=edge_pb).dehydrate()
                 edge_type = condensed_edge_type_to_edge_type_map[
@@ -555,7 +551,9 @@ class SubgraphSamplerTest(TestCase):
         ):
             assert isinstance(sample_pb, RootedNodeNeighborhood) or isinstance(
                 sample_pb, NodeAnchorBasedLinkPredictionSample
-            ), f"Expected a {RootedNodeNeighborhood.__name__} or {NodeAnchorBasedLinkPredictionSample.__name__}, but got {type(sample_pb)}."
+            ), (
+                f"Expected a {RootedNodeNeighborhood.__name__} or {NodeAnchorBasedLinkPredictionSample.__name__}, but got {type(sample_pb)}."
+            )
             # Ensure we don't have duplication of node PBs in each sample.
             # Also ensure that the number of features in each node is as expected.
             sample_nodes: Set[NodePbWrapper] = set()
@@ -574,9 +572,7 @@ class SubgraphSamplerTest(TestCase):
                     len(
                         expected_graph_from_preprocessor.node_type_to_node_to_features_map[
                             node_type
-                        ][
-                            node_pb_wrapper
-                        ]
+                        ][node_pb_wrapper]
                     ),
                     f"Node {node_pb_wrapper} in SGS output has misaligned number of features as in Data Preprocessor: {len(node_pb.feature_values)} instead of {len(expected_graph_from_preprocessor.node_type_to_node_to_features_map[node_type][node_pb_wrapper])} ",
                 )
@@ -601,9 +597,7 @@ class SubgraphSamplerTest(TestCase):
                     len(
                         expected_graph_from_preprocessor.main_edge_info.edge_type_to_edge_to_features_map[
                             edge_type
-                        ][
-                            edge_pb_wrapper
-                        ]
+                        ][edge_pb_wrapper]
                     ),
                     f"Edge {edge_pb_wrapper} in SGS output has misaligned number of features as in Data Preprocessor: {len(edge_pb.feature_values)} instead of {expected_graph_from_preprocessor.main_edge_info.edge_type_to_edge_to_features_map[edge_type][edge_pb_wrapper]} ",
                 )
@@ -701,9 +695,7 @@ class SubgraphSamplerTest(TestCase):
         for (
             src_node,
             edges,
-        ) in (
-            expected_graph_from_preprocessor.main_edge_info.feasible_adjacency_list_map.items()
-        ):
+        ) in expected_graph_from_preprocessor.main_edge_info.feasible_adjacency_list_map.items():
             for edge in edges:
                 (
                     condensed_src_node_type,
@@ -741,11 +733,7 @@ class SubgraphSamplerTest(TestCase):
             NodeType, dict[NodeType, list[subgraph_sampling_strategy_pb2.SamplingOp]]
         ] = defaultdict(lambda: defaultdict(list))
         if is_subgraph_sampling_strategy_provided:
-            for (
-                path
-            ) in (
-                subgraph_sampler_config_pb.subgraph_sampling_strategy.message_passing_paths.paths
-            ):
+            for path in subgraph_sampler_config_pb.subgraph_sampling_strategy.message_passing_paths.paths:
                 root_node_type = NodeType(path.root_node_type)
                 for sampling_op in path.sampling_ops:
                     edge_type = sampling_op.edge_type
@@ -867,9 +855,9 @@ class SubgraphSamplerTest(TestCase):
                         edge_type
                     ]
                 )
-                condensed_edge_type_to_max_num_nodes_to_sample[
-                    condensed_edge_type
-                ] += sampling_op.random_uniform.num_nodes_to_sample
+                condensed_edge_type_to_max_num_nodes_to_sample[condensed_edge_type] += (
+                    sampling_op.random_uniform.num_nodes_to_sample
+                )
             # check that the number of in-edges for each dst node is less than or equal to the added number of nodes to sample for the edge type for all samplingOps
             for (
                 condensed_edge_type,
@@ -900,9 +888,9 @@ class SubgraphSamplerTest(TestCase):
         def __build_condensed_edge_type_to_in_edges_count_map(
             in_edges: list[EdgePbWrapper],
         ):
-            condensed_edge_type_to_in_edges_count: dict[
-                CondensedEdgeType, int
-            ] = defaultdict(lambda: 0)
+            condensed_edge_type_to_in_edges_count: dict[CondensedEdgeType, int] = (
+                defaultdict(lambda: 0)
+            )
             for edge_pb_wrapper in in_edges:
                 condensed_edge_type_to_in_edges_count[
                     edge_pb_wrapper.condensed_edge_type
@@ -943,9 +931,7 @@ class SubgraphSamplerTest(TestCase):
                         )
                     )
 
-                    if (
-                        should_check_exact_number_of_in_edges
-                    ):  # When checking for exact number of in-edges, SamplingOp of the same edge type can not be repeated in the samplingDAG
+                    if should_check_exact_number_of_in_edges:  # When checking for exact number of in-edges, SamplingOp of the same edge type can not be repeated in the samplingDAG
                         __check_exact_number_of_in_edges_for_dst_node(
                             dst_node_pb_wrapper=dst_node_pb_wrapper,
                             sampling_ops=sampling_ops,
@@ -1030,12 +1016,8 @@ class SubgraphSamplerTest(TestCase):
 
         # Check that we have fewer training samples than nodes of type src_node_type since isolated nodes exist in the preprocessor output.
         # This check only applies when isolated nodes are not included in training.
-        supervision_edge_types = (
-            gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
-        )
-        if (
-            not gbml_config_pb_wrapper.shared_config.should_include_isolated_nodes_in_training
-        ):
+        supervision_edge_types = gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
+        if not gbml_config_pb_wrapper.shared_config.should_include_isolated_nodes_in_training:
             for supervision_edge_type in supervision_edge_types:
                 src_node_type = NodeType(supervision_edge_type.src_node_type)
                 self.assertLess(
@@ -1142,21 +1124,18 @@ class SubgraphSamplerTest(TestCase):
         )
 
         # Check that we have fewer training samples than nodes since isolated nodes exist in the preprocessor output.
-        supervision_edge_types = (
-            gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
+        supervision_edge_types = gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
+        assert len(supervision_edge_types) == 1, (
+            "This graph only has 1 supervision edge type."
         )
-        assert (
-            len(supervision_edge_types) == 1
-        ), "This graph only has 1 supervision edge type."
-        src_node_type, dst_node_type = NodeType(
-            supervision_edge_types[0].src_node_type
-        ), NodeType(supervision_edge_types[0].dst_node_type)
+        src_node_type, dst_node_type = (
+            NodeType(supervision_edge_types[0].src_node_type),
+            NodeType(supervision_edge_types[0].dst_node_type),
+        )
 
         # Check that we have fewer training samples than nodes of type src_node_type since isolated nodes exist in the preprocessor output.
         # This check only applies when isolated nodes are not included in training.
-        if (
-            not gbml_config_pb_wrapper.shared_config.should_include_isolated_nodes_in_training
-        ):
+        if not gbml_config_pb_wrapper.shared_config.should_include_isolated_nodes_in_training:
             self.assertLess(
                 len(training_samples),
                 len(
@@ -1336,12 +1315,10 @@ class SubgraphSamplerTest(TestCase):
             gbml_config_pb_wrapper=gbml_config_pb_wrapper
         )
 
-        supervision_node_types = (
-            gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_based_task_metadata.supervision_node_types
+        supervision_node_types = gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_based_task_metadata.supervision_node_types
+        assert len(supervision_node_types) == 1, (
+            "Only 1 supervision node type is supported for this test."
         )
-        assert (
-            len(supervision_node_types) == 1
-        ), "Only 1 supervision node type is supported for this test."
         supervision_node_type = NodeType(supervision_node_types[0])
 
         # Check that the number of labeled rooted node neighborhoods produced is greater than 0.
