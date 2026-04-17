@@ -329,9 +329,7 @@ class RetrievalLoss(nn.Module):
         positive_indices = torch.arange(num_queries).to(device=device)  # [num_queries]
         positive_candidate_ids = torch.gather(
             candidate_ids, 0, positive_indices
-        ).unsqueeze(
-            1
-        )  # [num_queries, 1]
+        ).unsqueeze(1)  # [num_queries, 1]
         all_candidate_ids = torch.unsqueeze(candidate_ids, 1)  # [num_candidates, 1]
         return torch.eq(positive_candidate_ids, all_candidate_ids.T).type(
             dtype
@@ -610,7 +608,9 @@ class AligmentLoss(nn.Module):
     def forward(
         self, user_embeddings: torch.Tensor, item_embeddings: torch.Tensor
     ) -> torch.Tensor:
-        return (user_embeddings - item_embeddings).norm(p=2, dim=1).pow(self.alpha).mean()
+        return (
+            (user_embeddings - item_embeddings).norm(p=2, dim=1).pow(self.alpha).mean()
+        )  # type: ignore
 
 
 class UniformityLoss(nn.Module):
@@ -628,8 +628,22 @@ class UniformityLoss(nn.Module):
     def forward(
         self, user_embeddings: torch.Tensor, item_embeddings: torch.Tensor
     ) -> torch.Tensor:
-        user_uniformity = torch.pdist(user_embeddings, p=2).pow(2).mul(-self.temperature).exp().mean().log()
-        item_uniformity = torch.pdist(item_embeddings, p=2).pow(2).mul(-self.temperature).exp().mean().log()
+        user_uniformity = (
+            torch.pdist(user_embeddings, p=2)
+            .pow(2)
+            .mul(-self.temperature)
+            .exp()
+            .mean()
+            .log()
+        )  # type: ignore
+        item_uniformity = (
+            torch.pdist(item_embeddings, p=2)
+            .pow(2)
+            .mul(-self.temperature)
+            .exp()
+            .mean()
+            .log()
+        )  # type: ignore
         return (user_uniformity + item_uniformity) / 2
 
 

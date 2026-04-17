@@ -80,9 +80,9 @@ def check_if_task_metadata_valid(
     """
     logger.info("Config validation check: if taskMetadata is valid.")
     pb_wrapper = TaskMetadataPbWrapper(gbml_config_pb.task_metadata)
-    assert (
-        pb_wrapper.task_metadata_type is not None
-    ), "Invalid 'taskMetadata'; must be provided."
+    assert pb_wrapper.task_metadata_type is not None, (
+        "Invalid 'taskMetadata'; must be provided."
+    )
     task_metadata_type = pb_wrapper.task_metadata_type
 
     # We need to check if the types in the task_metadata are valid according to the graph_metadata.
@@ -93,22 +93,26 @@ def check_if_task_metadata_valid(
         assert isinstance(
             task_metadata_pb,
             gbml_config_pb2.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata,
-        ), f"Found 'taskMetadata' of type {task_metadata_type}, but pb is of type {type(task_metadata_pb)}; must be {gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata}."
-        assert (
-            len(task_metadata_pb.supervision_node_types) > 0
-        ), "Must provide at least one supervision node type."
+        ), (
+            f"Found 'taskMetadata' of type {task_metadata_type}, but pb is of type {type(task_metadata_pb)}; must be {gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata}."
+        )
+        assert len(task_metadata_pb.supervision_node_types) > 0, (
+            "Must provide at least one supervision node type."
+        )
         for node_type in task_metadata_pb.supervision_node_types:
-            assert (
-                node_type in graph_metadata_pb.node_types
-            ), f"Invalid supervision node type: {node_type}; not found in graphMetadata node types {graph_metadata_pb.node_types}."
+            assert node_type in graph_metadata_pb.node_types, (
+                f"Invalid supervision node type: {node_type}; not found in graphMetadata node types {graph_metadata_pb.node_types}."
+            )
     elif task_metadata_type == TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK:
         assert isinstance(
             task_metadata_pb,
             gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata,
-        ), f"Found 'taskMetadata' of type {task_metadata_type}, but pb is of type {type(task_metadata_pb)}; must be {gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata}."
-        assert (
-            len(task_metadata_pb.supervision_edge_types) > 0
-        ), "Must provide at least one supervision edge type."
+        ), (
+            f"Found 'taskMetadata' of type {task_metadata_type}, but pb is of type {type(task_metadata_pb)}; must be {gbml_config_pb2.GbmlConfig.TaskMetadata.NodeAnchorBasedLinkPredictionTaskMetadata}."
+        )
+        assert len(task_metadata_pb.supervision_edge_types) > 0, (
+            "Must provide at least one supervision edge type."
+        )
         graph_metadata_pb_edge_types = [
             GbmlProtosTranslator.edge_type_from_EdgeTypePb(edge_type_pb=edge_type_pb)
             for edge_type_pb in graph_metadata_pb.edge_types
@@ -117,9 +121,9 @@ def check_if_task_metadata_valid(
             edge_type = GbmlProtosTranslator.edge_type_from_EdgeTypePb(
                 edge_type_pb=edge_type_pb
             )
-            assert (
-                edge_type in graph_metadata_pb_edge_types
-            ), f"Invalid supervision edge type: {edge_type}; not found in graphMetadata edge types {graph_metadata_pb_edge_types}."
+            assert edge_type in graph_metadata_pb_edge_types, (
+                f"Invalid supervision edge type: {edge_type}; not found in graphMetadata edge types {graph_metadata_pb_edge_types}."
+            )
     else:
         raise ValueError(
             f"Invalid 'taskMetadata'; must be one of {[TaskMetadataType.NODE_BASED_TASK, TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK]}.",
@@ -147,9 +151,9 @@ def check_if_preprocessed_metadata_valid(
     )
 
     # Check that the number of preprocessed node types is nonzero, and every type exists in the graph metadata.
-    assert (
-        len(pb.condensed_node_type_to_preprocessed_metadata) > 0
-    ), "preprocessedMetadata found with no node types."
+    assert len(pb.condensed_node_type_to_preprocessed_metadata) > 0, (
+        "preprocessedMetadata found with no node types."
+    )
     for condensed_node_type in pb.condensed_node_type_to_preprocessed_metadata:
         assert (
             condensed_node_type in gbml_config_pb.graph_metadata.condensed_node_type_map
@@ -159,9 +163,9 @@ def check_if_preprocessed_metadata_valid(
         )
 
     # Check that the number of preprocessed edge types is nonzero, and every type exists in the graph metadata.
-    assert (
-        len(pb.condensed_edge_type_to_preprocessed_metadata) > 0
-    ), "preprocessedMetadata found with no edge types."
+    assert len(pb.condensed_edge_type_to_preprocessed_metadata) > 0, (
+        "preprocessedMetadata found with no edge types."
+    )
     for condensed_edge_type in pb.condensed_edge_type_to_preprocessed_metadata:
         assert (
             condensed_edge_type in gbml_config_pb.graph_metadata.condensed_edge_type_map
@@ -220,12 +224,12 @@ def check_if_graph_metadata_valid(
     if not graph_metadata_pb:
         raise ValueError("Invalid 'graphMetadata'; must be provided.")
 
-    assert (
-        graph_metadata_pb.node_types
-    ), "Must provide at least one node type in graphMetadata."
-    assert (
-        graph_metadata_pb.edge_types
-    ), "Must provide at least one edge type in graphMetadata."
+    assert graph_metadata_pb.node_types, (
+        "Must provide at least one node type in graphMetadata."
+    )
+    assert graph_metadata_pb.edge_types, (
+        "Must provide at least one edge type in graphMetadata."
+    )
 
 
 def check_if_data_preprocessor_config_cls_valid(
@@ -238,9 +242,7 @@ def check_if_data_preprocessor_config_cls_valid(
     logger.info(
         "Config validation check: if dataPreprocessorConfigClsPath and its args are valid."
     )
-    data_preprocessor_config_cls_path = (
-        gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path
-    )
+    data_preprocessor_config_cls_path = gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path
     runtime_args: dict[str, str] = dict(
         gbml_config_pb.dataset_config.data_preprocessor_config.data_preprocessor_args
     )
@@ -419,9 +421,9 @@ def check_if_subgraph_sampler_config_valid(
         raise ValueError(
             "Can provide either num_positive_samples, or num_user_defined_positive_samples; not both."
         )
-    assert (
-        sum([num_user_defined_positive_samples, num_positive_samples]) > 0
-    ), "Must provide either num_positive_samples, or num_user_defined_positive_samples."
+    assert sum([num_user_defined_positive_samples, num_positive_samples]) > 0, (
+        "Must provide either num_positive_samples, or num_user_defined_positive_samples."
+    )
 
     if num_max_training_samples_to_output < 0:
         raise ValueError(

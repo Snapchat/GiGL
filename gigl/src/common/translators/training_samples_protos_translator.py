@@ -121,11 +121,11 @@ class TrainingSamplesProtosTranslator:
             #              this or filter those out in Split Generator.
 
             for pos_edge_pb in sample.pos_edges:
-                pos_edge: Tuple[
-                    Edge, Optional[torch.Tensor]
-                ] = GbmlProtosTranslator.edge_from_EdgePb(
-                    graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
-                    edge_pb=pos_edge_pb,
+                pos_edge: Tuple[Edge, Optional[torch.Tensor]] = (
+                    GbmlProtosTranslator.edge_from_EdgePb(
+                        graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+                        edge_pb=pos_edge_pb,
+                    )
                 )
                 node_id = pos_edge[0].dst_node.id
                 condensed_edge_type = (
@@ -146,11 +146,11 @@ class TrainingSamplesProtosTranslator:
                     )
 
             for hard_neg_edge_pb in sample.hard_neg_edges:
-                hard_neg_edge: Tuple[
-                    Edge, Optional[torch.Tensor]
-                ] = GbmlProtosTranslator.edge_from_EdgePb(
-                    graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
-                    edge_pb=hard_neg_edge_pb,
+                hard_neg_edge: Tuple[Edge, Optional[torch.Tensor]] = (
+                    GbmlProtosTranslator.edge_from_EdgePb(
+                        graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
+                        edge_pb=hard_neg_edge_pb,
+                    )
                 )
                 node_id = hard_neg_edge[0].dst_node.id
                 condensed_edge_type = (
@@ -172,43 +172,43 @@ class TrainingSamplesProtosTranslator:
                     )
 
             for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types:
-                condensed_edge_type_to_supervision_edge_data[
-                    condensed_edge_type
-                ] = NodeAnchorBasedLinkPredictionSample.SampleSupervisionEdgeData(
-                    pos_nodes=condensed_supervision_edge_type_to_pos_nodes[
-                        condensed_edge_type
-                    ],
-                    hard_neg_nodes=condensed_supervision_edge_type_to_hard_neg_nodes[
-                        condensed_edge_type
-                    ],
-                    pos_edge_features=(
-                        torch.stack(
-                            condensed_supervision_edge_type_to_pos_edge_feats[
-                                condensed_edge_type
-                            ]
-                        )
-                        if len(
-                            condensed_supervision_edge_type_to_pos_edge_feats[
-                                condensed_edge_type
-                            ]
-                        )
-                        > 0
-                        else None
-                    ),
-                    hard_neg_edge_features=(
-                        torch.stack(
-                            condensed_supervision_edge_type_to_hard_neg_edge_feats[
-                                condensed_edge_type
-                            ]
-                        )
-                        if len(
-                            condensed_supervision_edge_type_to_hard_neg_edge_feats[
-                                condensed_edge_type
-                            ]
-                        )
-                        > 0
-                        else None
-                    ),
+                condensed_edge_type_to_supervision_edge_data[condensed_edge_type] = (
+                    NodeAnchorBasedLinkPredictionSample.SampleSupervisionEdgeData(
+                        pos_nodes=condensed_supervision_edge_type_to_pos_nodes[
+                            condensed_edge_type
+                        ],
+                        hard_neg_nodes=condensed_supervision_edge_type_to_hard_neg_nodes[
+                            condensed_edge_type
+                        ],
+                        pos_edge_features=(
+                            torch.stack(  # type: ignore
+                                condensed_supervision_edge_type_to_pos_edge_feats[  # type: ignore
+                                    condensed_edge_type
+                                ]
+                            )
+                            if len(
+                                condensed_supervision_edge_type_to_pos_edge_feats[
+                                    condensed_edge_type
+                                ]
+                            )
+                            > 0
+                            else None
+                        ),
+                        hard_neg_edge_features=(
+                            torch.stack(  # type: ignore
+                                condensed_supervision_edge_type_to_hard_neg_edge_feats[  # type: ignore
+                                    condensed_edge_type
+                                ]
+                            )
+                            if len(
+                                condensed_supervision_edge_type_to_hard_neg_edge_feats[
+                                    condensed_edge_type
+                                ]
+                            )
+                            > 0
+                            else None
+                        ),
+                    )
                 )
 
             training_samples.append(

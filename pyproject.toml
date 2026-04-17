@@ -137,9 +137,7 @@ test = [
   "parameterized==0.9.0",
 ]
 lint = [
-  "autoflake==2.3.1",
-  "black~=23.1.0",
-  "isort~=5.12.0",
+  "ruff==0.15.10",
   "mdformat==0.7.22",
   "mdformat_tables==1.0.0",
   "ty~=0.0.29",
@@ -247,41 +245,32 @@ gigl-post-install = "gigl.scripts.post_install:main"
 "gigl.scripts" = ["*.sh"]
 
 
-[tool.black]
+[tool.ruff]
 # Skip generated proto files.
-# Note black uses regex instead of the glob isort/autoflake use.
-exclude = ".*_pb2.pyi?"
+exclude = ["*_pb2.py", "*_pb2.pyi"]
 
-[tool.isort]
-profile = "black"
-src_paths = [
-    "gigl",
-    "tests",
-    "snapchat",
-    "scripts",
-]
-# Skip generated proto files.
-skip_glob = [
-    "**_pb2.py*",
-]
-skip_gitignore = true
+[tool.ruff.lint]
+# Rules reference: https://docs.astral.sh/ruff/rules/
+#
+# F401 - Unused imports (pyflakes)
+#   Detects imported names that are never used in the module.
+#   Replaces: autoflake --remove-all-unused-imports
+#   Docs: https://docs.astral.sh/ruff/rules/unused-import/
+#
+# I - Import sorting (isort)
+#   Enforces a consistent import order (stdlib → third-party → first-party).
+#   Replaces: isort
+#   Docs: https://docs.astral.sh/ruff/rules/#isort-i
+select = ["F401", "I"]
 
-[tool.autoflake]
-exclude =  [
-    # Skip generated proto files. If we run autoflake on generated protos
-    # their descriptor gets removed and they break, see below.
-    #   File "snapchat/research/gbml/gbml_config_pb2.py", line 17, in <module>
-    #   DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(...)
-    #   TypeError: Couldn't build proto file into descriptor pool!
-    #   Invalid proto descriptor for file "snapchat/research/gbml/gbml_config.proto":
-    #   snapchat/research/gbml/trained_model_metadata.proto: Import "snapchat/research/gbml/trained_model_metadata.proto" has not been loaded.
-    "**_pb2.py*",
-    # __init__.py are used to "export" modules, and their input are often not directly used.
-    "__init__.py",
-]
-remove-all-unused-imports = true
-in-place = true
-recursive = true
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files re-export symbols for the public API, so unused-import
+# warnings (F401) are expected and should be suppressed.
+"__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+# Docs: https://docs.astral.sh/ruff/settings/#lint_isort_known-first-party
+known-first-party = ["gigl", "tests", "snapchat", "scripts"]
 
 [tool.ty.environment]
 python-version = "3.11"
@@ -296,11 +285,12 @@ exclude = ["*_pb2.py", "*_pb2.pyi", "**/*.ipynb"]
 # https://docs.astral.sh/ty/reference/configuration/#replace-imports-with-any
 replace-imports-with-any = [
   "apache_beam.**",
-  "google.cloud.**",
   "graphlearn_torch.**",
   "kfp.**",
   "tensorflow.**",
   "tensorflow_metadata.**",
+  # TODO: (svij Torch has type information but we are doing some incorrect casting and using old api types thus type check fails
+  # Although, the code still runs fine.
   "torch.**",
   "torch_geometric.**",
   "torchrec.**",

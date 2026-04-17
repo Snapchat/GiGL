@@ -20,7 +20,8 @@ TMP_PROFILER_LOG_DIR_NAME = LocalUri(tempfile.TemporaryDirectory().name)
 class TorchProfiler:
     def __init__(self, **kwargs) -> None:
         self.trace_handler = tensorboard_trace_handler(
-            dir_name=TMP_PROFILER_LOG_DIR_NAME, use_gzip=True
+            dir_name=TMP_PROFILER_LOG_DIR_NAME,  # type: ignore[arg-type]
+            use_gzip=True,
         )
         self.wait = int(kwargs.get("wait", 5))
         self.warmup = int(kwargs.get("warmup", 2))

@@ -1301,9 +1301,9 @@ def _test_fetch_free_ports_on_storage_cluster(
         dist.all_gather_object(gathered_ports, ports)
 
         for i, rank_ports in enumerate(gathered_ports):
-            assert (
-                rank_ports == mock_ports
-            ), f"Rank {i} got {rank_ports}, expected {mock_ports}"
+            assert rank_ports == mock_ports, (
+                f"Rank {i} got {rank_ports}, expected {mock_ports}"
+            )
     finally:
         dist.destroy_process_group()
 

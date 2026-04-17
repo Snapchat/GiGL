@@ -425,9 +425,9 @@ class RemoteDistDataset:
             for server_rank, request in requests.items()
         }
 
-        def _empty_ablp_result() -> (
-            tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-        ):
+        def _empty_ablp_result() -> tuple[
+            torch.Tensor, torch.Tensor, Optional[torch.Tensor]
+        ]:
             """Return an empty ABLP result tuple: (anchor_nodes, positive_labels, negative_labels)."""
             return (
                 torch.empty(0, dtype=torch.long),

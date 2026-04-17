@@ -56,9 +56,9 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
         self._assert_sampling_config_is_valid()
 
         # Define the embedding layers.
-        assert (
-            model_config.embeddings_config is not None
-        ), "Embedding config must be provided."
+        assert model_config.embeddings_config is not None, (
+            "Embedding config must be provided."
+        )
         self.large_embeddings = LargeEmbeddingLookup(
             embeddings_config=model_config.embeddings_config
         )
@@ -83,9 +83,9 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
             self.testing_sampling_config,
         ):
             assert sampling_config is not None, "Sampling config must be provided."
-            assert (
-                sampling_config.positive_edge_batch_size > 0
-            ), "Positive edge batch size must be greater than 0."
+            assert sampling_config.positive_edge_batch_size > 0, (
+                "Positive edge batch size must be greater than 0."
+            )
             assert (
                 sampling_config.num_inbatch_negatives_per_edge
                 + sampling_config.num_random_negatives_per_edge
@@ -419,9 +419,9 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
             or self.phase == ModelPhase.INFERENCE_DST
         ):
             # In inference phase, we only handle NodeBatch.
-            assert isinstance(
-                batch, NodeBatch
-            ), "Batch must be a NodeBatch in inference phase."
+            assert isinstance(batch, NodeBatch), (
+                "Batch must be a NodeBatch in inference phase."
+            )
             node_embeddings = self.encoder_model.infer_node_batch(node_batch=batch)
             dummy_loss = torch.tensor(0.0)
             node_ids = batch.nodes.values()
@@ -431,9 +431,9 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
             )
         else:
             # We expect an EdgeBatch in training, validation, or testing phases.
-            assert isinstance(
-                batch, EdgeBatch
-            ), "Batch must be an EdgeBatch in training, validation, or testing phases."
+            assert isinstance(batch, EdgeBatch), (
+                "Batch must be an EdgeBatch in training, validation, or testing phases."
+            )
             logits: torch.Tensor
             labels: torch.Tensor
             logits, labels, condensed_edge_types = self.encoder_model(edge_batch=batch)

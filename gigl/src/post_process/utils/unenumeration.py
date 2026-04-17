@@ -62,12 +62,8 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
     """
 
     # First we need to read all the node types in inferencer output and get their condensed node types.
-    inference_output_map = (
-        gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
-    )
-    node_type_to_condensed_node_type_map = (
-        gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map
-    )
+    inference_output_map = gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
+    node_type_to_condensed_node_type_map = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map
 
     # We then collect all the assets that need to be un-enumerated and their mapping tables
     enumerated_assets_output_tables: List = list()
@@ -83,9 +79,7 @@ def unenumerate_all_inferred_bq_assets(gbml_config_pb_wrapper: GbmlConfigPbWrapp
         logger.info(
             f"Processing node type: {node_type} with condensed node type: {condensed_inference_node_type}"
         )
-        preprocessed_metadata_pb: preprocessed_metadata_pb2.PreprocessedMetadata = (
-            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata
-        )
+        preprocessed_metadata_pb: preprocessed_metadata_pb2.PreprocessedMetadata = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata
         node_type_metadata_map = (
             preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata
         )

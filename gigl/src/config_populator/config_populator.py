@@ -132,12 +132,12 @@ class ConfigPopulator:
 
             node_type_to_random_negative_tfrecord_uri_prefix: dict[str, str] = {}
             for node_type in random_negative_node_types:
-                node_type_to_random_negative_tfrecord_uri_prefix[
-                    str(node_type)
-                ] = gcs_constants.get_subgraph_sampler_node_anchor_based_link_prediction_random_negatives_samples_prefix(
-                    applied_task_identifier=self.applied_task_identifier,
-                    node_type=NodeType(node_type),
-                ).uri
+                node_type_to_random_negative_tfrecord_uri_prefix[str(node_type)] = (
+                    gcs_constants.get_subgraph_sampler_node_anchor_based_link_prediction_random_negatives_samples_prefix(
+                        applied_task_identifier=self.applied_task_identifier,
+                        node_type=NodeType(node_type),
+                    ).uri
+                )
 
             node_anchor_pb = flattened_graph_metadata_pb2.NodeAnchorBasedLinkPredictionOutput(
                 tfrecord_uri_prefix=tfrecord_uri_prefix.uri,
@@ -234,29 +234,29 @@ class ConfigPopulator:
             test_node_type_to_random_negative_data_uri: dict[str, str] = {}
 
             for node_type in random_negative_node_types:
-                train_node_type_to_random_negative_data_uri[
-                    str(node_type)
-                ] = gcs_constants.get_split_dataset_random_negatives_gcs_file_prefix(
-                    applied_task_identifier=self.applied_task_identifier,
-                    node_type=NodeType(node_type),
-                    dataset_split=DatasetSplit.TRAIN,
-                ).uri
+                train_node_type_to_random_negative_data_uri[str(node_type)] = (
+                    gcs_constants.get_split_dataset_random_negatives_gcs_file_prefix(
+                        applied_task_identifier=self.applied_task_identifier,
+                        node_type=NodeType(node_type),
+                        dataset_split=DatasetSplit.TRAIN,
+                    ).uri
+                )
 
-                val_node_type_to_random_negative_data_uri[
-                    str(node_type)
-                ] = gcs_constants.get_split_dataset_random_negatives_gcs_file_prefix(
-                    applied_task_identifier=self.applied_task_identifier,
-                    node_type=NodeType(node_type),
-                    dataset_split=DatasetSplit.VAL,
-                ).uri
+                val_node_type_to_random_negative_data_uri[str(node_type)] = (
+                    gcs_constants.get_split_dataset_random_negatives_gcs_file_prefix(
+                        applied_task_identifier=self.applied_task_identifier,
+                        node_type=NodeType(node_type),
+                        dataset_split=DatasetSplit.VAL,
+                    ).uri
+                )
 
-                test_node_type_to_random_negative_data_uri[
-                    str(node_type)
-                ] = gcs_constants.get_split_dataset_random_negatives_gcs_file_prefix(
-                    applied_task_identifier=self.applied_task_identifier,
-                    node_type=NodeType(node_type),
-                    dataset_split=DatasetSplit.TEST,
-                ).uri
+                test_node_type_to_random_negative_data_uri[str(node_type)] = (
+                    gcs_constants.get_split_dataset_random_negatives_gcs_file_prefix(
+                        applied_task_identifier=self.applied_task_identifier,
+                        node_type=NodeType(node_type),
+                        dataset_split=DatasetSplit.TEST,
+                    ).uri
+                )
 
             node_anchor_pb = dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset(
                 train_main_data_uri=main_train_data_tfrecord_uri_prefix,
@@ -360,9 +360,9 @@ class ConfigPopulator:
                 embeddings_path=embeddings_path,
                 predictions_path=predictions_path,
             )
-            node_type_to_inferencer_output_info_map[
-                str(node_type)
-            ] = inference_output_pb
+            node_type_to_inferencer_output_info_map[str(node_type)] = (
+                inference_output_pb
+            )
         inference_metadata_pb = inference_metadata_pb2.InferenceMetadata(
             node_type_to_inferencer_output_info_map=node_type_to_inferencer_output_info_map
         )

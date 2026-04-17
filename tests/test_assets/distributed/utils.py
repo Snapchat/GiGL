@@ -23,9 +23,9 @@ def assert_tensor_equality(
             2D tensor, passing in a value of 1 will mean that the column order does not matter.
     """
 
-    assert (
-        tensor_a.dim() == tensor_b.dim()
-    ), f"Provided tensors have different dimension {tensor_a.dim()} and {tensor_b.dim()}"
+    assert tensor_a.dim() == tensor_b.dim(), (
+        f"Provided tensors have different dimension {tensor_a.dim()} and {tensor_b.dim()}"
+    )
 
     # Exact match
     if dim is None:

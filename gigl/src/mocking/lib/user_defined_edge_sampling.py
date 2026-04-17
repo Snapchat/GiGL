@@ -14,9 +14,9 @@ def sample_hydrate_user_def_edge(
     """
     src_to_dst_map = defaultdict(list)
 
-    assert (
-        mocked_dataset_info.sample_edge_type is not None
-    ), "sample_edge_type is missing in mocked_dataset_info"
+    assert mocked_dataset_info.sample_edge_type is not None, (
+        "sample_edge_type is missing in mocked_dataset_info"
+    )
     edge_index = (
         mocked_dataset_info.user_defined_edge_index[
             mocked_dataset_info.sample_edge_type

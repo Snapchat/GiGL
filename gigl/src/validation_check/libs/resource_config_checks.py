@@ -69,9 +69,9 @@ def check_if_shared_resource_config_valid(
 
     logger.info("Config validation check: if resource config shared_resource is valid.")
     wrapper = GiglResourceConfigWrapper(resource_config=resource_config_pb)
-    assert (
-        wrapper.shared_resource_config
-    ), "Invalid 'shared_resource_config'; must provide shared_resource_config."
+    assert wrapper.shared_resource_config, (
+        "Invalid 'shared_resource_config'; must provide shared_resource_config."
+    )
     assert_proto_has_field(
         proto=wrapper.shared_resource_config, field_name="common_compute_config"
     )
@@ -136,9 +136,9 @@ def check_if_trainer_resource_config_valid(
 ) -> None:
     logger.info("Config validation check: if resource config trainer_config is valid.")
     wrapper = GiglResourceConfigWrapper(resource_config=resource_config_pb)
-    assert (
-        wrapper.trainer_config
-    ), "Invalid 'trainer_config'; must provide trainer_config."
+    assert wrapper.trainer_config, (
+        "Invalid 'trainer_config'; must provide trainer_config."
+    )
 
     trainer_config: Union[
         gigl_resource_config_pb2.LocalResourceConfig,
@@ -198,7 +198,7 @@ def _validate_cloud_machine_config(
     config: Union[
         gigl_resource_config_pb2.VertexAiResourceConfig,
         gigl_resource_config_pb2.KFPResourceConfig,
-    ]
+    ],
 ) -> None:
     """
     Checks if the provided cloud machine configuration is valid.
@@ -218,7 +218,7 @@ def _validate_machine_config(
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
         gigl_resource_config_pb2.DataflowResourceConfig,
-    ]
+    ],
 ) -> None:
     if isinstance(config, gigl_resource_config_pb2.LocalResourceConfig):
         assert_proto_field_value_is_truthy(proto=config, field_name="num_workers")

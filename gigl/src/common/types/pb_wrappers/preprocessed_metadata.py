@@ -42,9 +42,9 @@ class PreprocessedMetadataPbWrapper:
         CondensedEdgeType, FeatureSchema
     ] = field(init=False)
 
-    _condensed_edge_type_to_pos_edge_feature_dim_map: dict[
-        CondensedEdgeType, int
-    ] = field(init=False)
+    _condensed_edge_type_to_pos_edge_feature_dim_map: dict[CondensedEdgeType, int] = (
+        field(init=False)
+    )
     _condensed_edge_type_to_pos_edge_feature_schema_map: dict[
         CondensedEdgeType, FeatureSchema
     ] = field(init=False)
@@ -281,8 +281,10 @@ class PreprocessedMetadataPbWrapper:
         transform_fn_assets_uri: Uri,
     ) -> FeatureVocabDict:
         if isinstance(transform_fn_assets_uri, LocalUri):
-            list_files_fn = partial(LocalFsUtils.list_at_path, entity=LocalFsUtils.FileSystemEntity.FILE)
-            read_file_fn = lambda path: open(path, "rb")
+            list_files_fn = partial(
+                LocalFsUtils.list_at_path, entity=LocalFsUtils.FileSystemEntity.FILE
+            )  # type: ignore
+            read_file_fn = lambda path: open(path, "rb")  # type: ignore
         elif isinstance(transform_fn_assets_uri, GcsUri):
             gcs_utils = GcsUtils()
             list_files_fn = gcs_utils.list_uris_with_gcs_path_pattern

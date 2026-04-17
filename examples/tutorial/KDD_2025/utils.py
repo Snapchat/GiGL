@@ -6,7 +6,7 @@ def init_model(
     metadata: Metadata = (  # Hard code metadata for toy graph example.
         ["user", "story"],  # node types
         [("user", "to", "story"), ("story", "to", "user")],  # edge types
-    )
+    ),
 ) -> HGTConv:
     return HGTConv(
         in_channels=-1,  # Will be inferred after first fowrard pass

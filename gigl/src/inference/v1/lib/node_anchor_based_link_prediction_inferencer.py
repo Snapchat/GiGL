@@ -67,9 +67,7 @@ class NodeAnchorBasedLinkPredictionInferenceBlueprint(
         node_type_to_tf_record_uri_prefixes: dict[NodeType, list[Uri]] = defaultdict(
             list
         )
-        node_type_to_random_negative_tfrecord_uri_prefix = (
-            flattened_graph_metadata_pb_wrapper.output_metadata.node_type_to_random_negative_tfrecord_uri_prefix
-        )
+        node_type_to_random_negative_tfrecord_uri_prefix = flattened_graph_metadata_pb_wrapper.output_metadata.node_type_to_random_negative_tfrecord_uri_prefix
         for (
             node_type,
             uri_prefix,

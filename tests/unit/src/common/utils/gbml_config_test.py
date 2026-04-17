@@ -26,9 +26,7 @@ class GbmlConfigTest(TestCase):
 
     def test_gbml_config_read_and_write_proto(self):
         obj = gbml_config_pb2.GbmlConfig()
-        obj.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path = (
-            self.gbml_config_test_run_id
-        )
+        obj.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path = self.gbml_config_test_run_id
 
         self.proto_utils.write_proto_to_binary(proto=obj, uri=self.target_proto_uri)
         obj2 = self.proto_utils.read_proto_from_binary(
@@ -38,9 +36,7 @@ class GbmlConfigTest(TestCase):
 
     def test_gbml_config_read_and_write_yaml(self):
         obj = gbml_config_pb2.GbmlConfig()
-        obj.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path = (
-            self.gbml_config_test_run_id
-        )
+        obj.dataset_config.data_preprocessor_config.data_preprocessor_config_cls_path = self.gbml_config_test_run_id
 
         self.proto_utils.write_proto_to_yaml(proto=obj, uri=self.target_yaml_uri)
         obj2 = self.proto_utils.read_proto_from_yaml(

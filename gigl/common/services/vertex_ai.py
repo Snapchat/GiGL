@@ -78,9 +78,9 @@ from gigl.common.logger import Logger
 
 logger = Logger()
 
-LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
-    str
-] = "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
+    "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+)
 
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
@@ -101,9 +101,9 @@ class VertexAiJobConfig:
     boot_disk_type: str = "pd-ssd"  # Persistent Disk SSD
     boot_disk_size_gb: int = 100  # Default disk size in GB
     labels: Optional[dict[str, str]] = None
-    timeout_s: Optional[
-        int
-    ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
+    timeout_s: Optional[int] = (
+        None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
+    )
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
 
@@ -181,9 +181,9 @@ class VertexAIService:
 
         disk_spec = _create_disk_spec(job_config)
 
-        assert (
-            job_config.replica_count >= 1
-        ), "Replica count can be at minumum 1, i.e. leader worker"
+        assert job_config.replica_count >= 1, (
+            "Replica count can be at minumum 1, i.e. leader worker"
+        )
 
         leader_worker_spec = WorkerPoolSpec(
             machine_spec=machine_spec,
@@ -209,7 +209,7 @@ class VertexAIService:
 
         if not job_config.timeout_s:
             logger.info(
-                f"No timeout set for Vertex AI job, setting default timeout to {DEFAULT_CUSTOM_JOB_TIMEOUT_S/60/60} hours"
+                f"No timeout set for Vertex AI job, setting default timeout to {DEFAULT_CUSTOM_JOB_TIMEOUT_S / 60 / 60} hours"
             )
             job_config.timeout_s = DEFAULT_CUSTOM_JOB_TIMEOUT_S
         else:

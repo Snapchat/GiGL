@@ -80,9 +80,9 @@ class DistRandomPartitionerTestCase(TestCase):
         """
         self.assertIsNotNone(output_data)
         if is_heterogeneous:
-            assert isinstance(
-                output_data, abc.Mapping
-            ), "Homogeneous output detected for heterogeneous input"
+            assert isinstance(output_data, abc.Mapping), (
+                "Homogeneous output detected for heterogeneous input"
+            )
             self.assertTrue(sorted(output_data.keys()) == sorted(expected_entity_types))
         else:
             self.assertNotIsInstance(output_data, abc.Mapping)
@@ -313,16 +313,14 @@ class DistRandomPartitionerTestCase(TestCase):
         # Each iteration contains an EdgeType and a graph consisting of edge indices and ids.
         entity_iterable: Iterable[Tuple[EdgeType, GraphPartitionData]]
         if is_heterogeneous:
-            assert isinstance(
-                output_graph, abc.Mapping
-            ), f"Homogeneous output detected from node {entity_name} for heterogeneous input"
-            entity_iterable = list(
-                output_graph.items()
-            )  # ty: ignore[invalid-assignment]
+            assert isinstance(output_graph, abc.Mapping), (
+                f"Homogeneous output detected from node {entity_name} for heterogeneous input"
+            )
+            entity_iterable = list(output_graph.items())
         else:
-            assert isinstance(
-                output_graph, GraphPartitionData
-            ), f"Heterogeneous output detected from node {entity_name} for homogeneous input"
+            assert isinstance(output_graph, GraphPartitionData), (
+                f"Heterogeneous output detected from node {entity_name} for homogeneous input"
+            )
             entity_iterable = [(USER_TO_USER_EDGE_TYPE, output_graph)]
 
         for edge_type, graph in entity_iterable:
@@ -340,16 +338,14 @@ class DistRandomPartitionerTestCase(TestCase):
             ]
 
             if is_heterogeneous:
-                assert isinstance(
-                    output_node_data, abc.Mapping
-                ), f"Found homogeneous node {entity_name} for heterogeneous input"
-                node_data = output_node_data[  # ty: ignore[invalid-argument-type]
-                    target_node_type
-                ]  # type: ignore[invalid-argument-type]
+                assert isinstance(output_node_data, abc.Mapping), (
+                    f"Found homogeneous node {entity_name} for heterogeneous input"
+                )
+                node_data = output_node_data[target_node_type]
             else:
-                assert isinstance(
-                    output_node_data, FeaturePartitionData
-                ), f"Found heterogeneous node {entity_name} for homogeneous input"
+                assert isinstance(output_node_data, FeaturePartitionData), (
+                    f"Found heterogeneous node {entity_name} for homogeneous input"
+                )
                 node_data = output_node_data
 
             # We expect the number of output node data to be the same as the number of nodes input to the partitioner on the current rank, as the input and output node ids per rank
@@ -448,13 +444,13 @@ class DistRandomPartitionerTestCase(TestCase):
             Tuple[EdgeType, Optional[FeaturePartitionData], GraphPartitionData]
         ]
         if is_heterogeneous:
-            assert isinstance(
-                output_edge_feat, abc.Mapping
-            ), "Homogeneous output detected from edge features for heterogeneous input"
-            assert isinstance(
-                output_graph, abc.Mapping
-            ), "Homogeneous output detected from graph for heterogeneous input"
-            entity_iterable = [  # ty: ignore[invalid-assignment]
+            assert isinstance(output_edge_feat, abc.Mapping), (
+                "Homogeneous output detected from edge features for heterogeneous input"
+            )
+            assert isinstance(output_graph, abc.Mapping), (
+                "Homogeneous output detected from graph for heterogeneous input"
+            )
+            entity_iterable = [
                 (
                     edge_type,
                     output_edge_feat.get(
@@ -465,12 +461,12 @@ class DistRandomPartitionerTestCase(TestCase):
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
             ]
         else:
-            assert isinstance(
-                output_edge_feat, FeaturePartitionData
-            ), "Heterogeneous output detected from edge features for homogeneous input"
-            assert isinstance(
-                output_graph, GraphPartitionData
-            ), "Heterogeneous output detected from graph for homogeneous input"
+            assert isinstance(output_edge_feat, FeaturePartitionData), (
+                "Heterogeneous output detected from edge features for homogeneous input"
+            )
+            assert isinstance(output_graph, GraphPartitionData), (
+                "Heterogeneous output detected from graph for homogeneous input"
+            )
 
             entity_iterable = [(USER_TO_USER_EDGE_TYPE, output_edge_feat, output_graph)]
 
@@ -562,14 +558,14 @@ class DistRandomPartitionerTestCase(TestCase):
 
         entity_iterable: Iterable[Tuple[EdgeType, torch.Tensor]]
         if is_heterogeneous:
-            assert isinstance(
-                output_labeled_edge_index, abc.Mapping
-            ), "Homogeneous output detected from labels for heterogeneous input"
+            assert isinstance(output_labeled_edge_index, abc.Mapping), (
+                "Homogeneous output detected from labels for heterogeneous input"
+            )
             entity_iterable = list(output_labeled_edge_index.items())
         else:
-            assert isinstance(
-                output_labeled_edge_index, torch.Tensor
-            ), "Heterogeneous output detected from labels for homogeneous input"
+            assert isinstance(output_labeled_edge_index, torch.Tensor), (
+                "Heterogeneous output detected from labels for homogeneous input"
+            )
             entity_iterable = [(USER_TO_USER_EDGE_TYPE, output_labeled_edge_index)]
 
         for edge_type, labeled_edge_index in entity_iterable:
@@ -583,9 +579,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 target_nodes = labeled_edge_index[1]
 
             if is_heterogeneous:
-                assert isinstance(
-                    output_node_partition_book, abc.Mapping
-                ), "Homogeneous node partition book detected for heterogeneous input"
+                assert isinstance(output_node_partition_book, abc.Mapping), (
+                    "Homogeneous node partition book detected for heterogeneous input"
+                )
                 node_partition_book = output_node_partition_book[target_node_type]
             else:
                 assert isinstance(
@@ -787,9 +783,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 self.assertIsNone(partition_output.partitioned_positive_labels)
                 self.assertIsNone(partition_output.partitioned_negative_labels)
             else:
-                assert (
-                    partition_output.edge_partition_book is not None
-                ), f"Must create edge partition book for strategy {input_data_strategy.value}"
+                assert partition_output.edge_partition_book is not None, (
+                    f"Must create edge partition book for strategy {input_data_strategy.value}"
+                )
                 if isinstance(partition_output.edge_partition_book, abc.Mapping):
                     for (
                         edge_type,
@@ -799,20 +795,20 @@ class DistRandomPartitionerTestCase(TestCase):
                 else:
                     assert partition_output.edge_partition_book is not None
 
-                assert (
-                    partition_output.partitioned_node_features is not None
-                ), f"Must partition node features for strategy {input_data_strategy.value}"
-                assert (
-                    partition_output.partitioned_edge_features is not None
-                ), f"Must partition edge features for strategy {input_data_strategy.value}"
+                assert partition_output.partitioned_node_features is not None, (
+                    f"Must partition node features for strategy {input_data_strategy.value}"
+                )
+                assert partition_output.partitioned_edge_features is not None, (
+                    f"Must partition edge features for strategy {input_data_strategy.value}"
+                )
 
-                assert (
-                    partition_output.partitioned_positive_labels is not None
-                ), f"Must partition positive labels for strategy {input_data_strategy.value}"
+                assert partition_output.partitioned_positive_labels is not None, (
+                    f"Must partition positive labels for strategy {input_data_strategy.value}"
+                )
 
-                assert (
-                    partition_output.partitioned_negative_labels is not None
-                ), f"Must partition negative labels for strategy {input_data_strategy.value}"
+                assert partition_output.partitioned_negative_labels is not None, (
+                    f"Must partition negative labels for strategy {input_data_strategy.value}"
+                )
 
                 self._assert_node_data_outputs(
                     rank=rank,
@@ -837,9 +833,9 @@ class DistRandomPartitionerTestCase(TestCase):
                         partition_output.partitioned_node_features.feats
                     )
 
-                assert (
-                    partition_output.partitioned_node_labels is not None
-                ), f"Must partition node labels for strategy {input_data_strategy.value}"
+                assert partition_output.partitioned_node_labels is not None, (
+                    f"Must partition node labels for strategy {input_data_strategy.value}"
+                )
 
                 self._assert_node_data_outputs(
                     rank=rank,
@@ -1102,17 +1098,23 @@ class DistRandomPartitionerTestCase(TestCase):
         assert (
             partitioned_output.partitioned_node_features.feats.shape
             == empty_node_features.shape
-        ), f"Node Features should be empty, but got shape {partitioned_output.partitioned_node_features.feats.shape}"
+        ), (
+            f"Node Features should be empty, but got shape {partitioned_output.partitioned_node_features.feats.shape}"
+        )
 
         assert (
             partitioned_output.partitioned_node_labels.feats.shape
             == empty_node_labels.shape
-        ), f"Node Labels should be empty, but got shape {partitioned_output.partitioned_node_labels.feats.shape}"
+        ), (
+            f"Node Labels should be empty, but got shape {partitioned_output.partitioned_node_labels.feats.shape}"
+        )
 
         assert (
             partitioned_output.partitioned_edge_features.feats.shape
             == empty_edge_features.shape
-        ), f"Edge Features should be empty, but got shape {partitioned_output.partitioned_edge_features.feats.shape}"
+        ), (
+            f"Edge Features should be empty, but got shape {partitioned_output.partitioned_edge_features.feats.shape}"
+        )
 
         # Assert that calling partition() twice in a row on registered input raises error
         with self.subTest(partitioner=partitioner):

@@ -66,7 +66,12 @@ class BigqueryNodeDataReference(NodeDataReference):
     sharded_read_config: Optional[BigQueryShardedReadConfig] = None
 
     def yield_instance_dict_ptransform(self, *args, **kwargs) -> InstanceDictPTransform:
-        return _get_bigquery_ptransform(table_name=self.reference_uri, sharded_read_config=self.sharded_read_config, *args, **kwargs)  # type: ignore
+        return _get_bigquery_ptransform(
+            table_name=self.reference_uri,
+            sharded_read_config=self.sharded_read_config,
+            *args,
+            **kwargs,
+        )  # type: ignore
 
     def __repr__(self) -> str:
         return f"BigqueryNodeDataReference(node_type={self.node_type}, identifier={self.identifier}, reference_uri={self.reference_uri}, sharded_read_config={self.sharded_read_config})"
@@ -98,7 +103,12 @@ class BigqueryEdgeDataReference(EdgeDataReference):
     sharded_read_config: Optional[BigQueryShardedReadConfig] = None
 
     def yield_instance_dict_ptransform(self, *args, **kwargs) -> InstanceDictPTransform:
-        return _get_bigquery_ptransform(table_name=self.reference_uri, sharded_read_config=self.sharded_read_config, *args, **kwargs)  # type: ignore
+        return _get_bigquery_ptransform(
+            table_name=self.reference_uri,
+            sharded_read_config=self.sharded_read_config,
+            *args,
+            **kwargs,
+        )  # type: ignore
 
     def __repr__(self) -> str:
         return f"BigqueryEdgeDataReference(edge_type={self.edge_type}, src_identifier={self.src_identifier}, dst_identifier={self.dst_identifier}, reference_uri={self.reference_uri}, sharded_read_config={self.sharded_read_config})"

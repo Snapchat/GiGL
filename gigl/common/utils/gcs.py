@@ -537,6 +537,6 @@ class GcsUtils:
         post_deletion_matching_blobs = list(
             self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
         )
-        assert (
-            len(post_deletion_matching_blobs) == 0
-        ), f"The GCS dir {gcs_path} could not be deleted completely. Remaining files: {post_deletion_matching_blobs}"
+        assert len(post_deletion_matching_blobs) == 0, (
+            f"The GCS dir {gcs_path} could not be deleted completely. Remaining files: {post_deletion_matching_blobs}"
+        )
