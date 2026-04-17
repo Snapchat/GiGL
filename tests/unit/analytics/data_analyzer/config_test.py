@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 from omegaconf import OmegaConf
 
@@ -41,7 +42,7 @@ class DataAnalyzerConfigTest(TestCase):
         """
         raw = OmegaConf.create(yaml_str)
         merged = OmegaConf.merge(OmegaConf.structured(DataAnalyzerConfig), raw)
-        config = OmegaConf.to_object(merged)
+        config = cast(DataAnalyzerConfig, OmegaConf.to_object(merged))
         self.assertIsNone(config.node_tables[0].label_column)
         self.assertIsNone(config.edge_tables[0].timestamp_column)
         self.assertIsNone(config.fan_out)
