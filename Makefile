@@ -51,7 +51,7 @@ install_dev_deps: check_if_valid_env
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	bash ./requirements/install_cpp_deps.sh
-	uv pip install -e .
+	uv pip install -e . --no-build-isolation
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 # Production environments, if you are developing use `make install_dev_deps` instead
@@ -59,7 +59,7 @@ install_deps:
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./requirements/install_py_deps.sh
 	bash ./requirements/install_scala_deps.sh
-	uv pip install -e .
+	uv pip install -e . --no-build-isolation
 
 # These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
@@ -117,7 +117,7 @@ check_format_md:
 	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
-	$(if $(CPP_SOURCES), clang-format --dry-run --Werror --style=file $(CPP_SOURCES))
+	$(if $(CPP_SOURCES), clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
 
 check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
@@ -154,7 +154,7 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	$(if $(CPP_SOURCES), clang-format -i --style=file $(CPP_SOURCES))
+	$(if $(CPP_SOURCES), clang-format-15 -i --style=file $(CPP_SOURCES))
 
 format: format_py format_cpp format_scala format_md
 
@@ -162,7 +162,7 @@ type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
 build_cpp_extensions:
-	uv run --no-sync python -m scripts.build_cpp_extensions build_ext --inplace
+	uv pip install -e . --no-build-isolation
 
 generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
@@ -174,7 +174,7 @@ check_lint_cpp:
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES), clang-tidy --fix -p .cache/compile_commands.json $(CPP_SOURCES))
+	$(if $(CPP_SOURCES), clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES))
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
