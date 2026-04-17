@@ -6,6 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+
+# Locate pybind11's cmake config via the Python interpreter so this works
+# whether pybind11 is installed system-wide or via pip.
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c
+        "import pybind11; print(pybind11.get_cmake_dir())"
+    OUTPUT_VARIABLE pybind11_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
 find_package(pybind11 CONFIG REQUIRED)
 
 # Locate PyTorch headers via its own cmake prefix path (works for both CPU and CUDA torch).
