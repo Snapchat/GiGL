@@ -69,6 +69,7 @@ from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
     DiskSpec,
     MachineSpec,
+    ReservationAffinity,
     WorkerPoolSpec,
     env_var,
 )
@@ -89,6 +90,23 @@ DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 
 @dataclass
 class VertexAiJobConfig:
+    """Configuration for a Vertex AI CustomJob worker pool.
+
+    ``reservation_affinity`` maps to ``MachineSpec.reservation_affinity``;
+    leave it ``None`` for the Vertex AI default.
+
+    Example:
+        >>> from google.cloud.aiplatform_v1.types import ReservationAffinity
+        >>> reservation = ReservationAffinity(
+        ...     reservation_affinity_type=ReservationAffinity.Type.SPECIFIC_RESERVATION,
+        ...     key="compute.googleapis.com/reservation-name",
+        ...     values=["projects/p/zones/us-central1-a/reservations/r"],
+        ... )
+
+    See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+    for reservation prerequisites.
+    """
+
     job_name: str
     container_uri: str
     command: list[str]
@@ -106,6 +124,7 @@ class VertexAiJobConfig:
     )
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
+    reservation_affinity: Optional[ReservationAffinity] = None
 
 
 class VertexAIService:
@@ -443,6 +462,7 @@ def _create_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
         machine_type=job_config.machine_type,
         accelerator_type=job_config.accelerator_type,
         accelerator_count=job_config.accelerator_count,
+        reservation_affinity=job_config.reservation_affinity,
     )
     return machine_spec
 
