@@ -8,10 +8,7 @@ from gigl.analytics.data_analyzer.graph_structure_analyzer import (
     GraphStructureAnalyzer,
 )
 from gigl.analytics.data_analyzer.report.report_generator import generate_report
-from gigl.analytics.data_analyzer.types import (
-    FeatureProfileResult,
-    GraphAnalysisResult,
-)
+from gigl.analytics.data_analyzer.types import FeatureProfileResult, GraphAnalysisResult
 from gigl.common import Uri
 from gigl.common.logger import Logger
 
