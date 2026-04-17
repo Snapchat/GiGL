@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GiGL Data Analysis Report</title>
+    <style>:root {
+    --color-ok: #28a745;
+    --color-warn: #ffc107;
+    --color-crit: #dc3545;
+    --color-bg: #f8f9fa;
+    --color-card-bg: #ffffff;
+    --color-border: #dee2e6;
+    --color-text: #212529;
+    --color-text-muted: #6c757d;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.5;
+}
+
+h1, h2, h3, h4 {
+    font-family: var(--font-sans);
+    margin-top: 1.2em;
+    margin-bottom: 0.5em;
+}
+
+h1 { font-size: 1.8rem; }
+h2 { font-size: 1.4rem; border-bottom: 1px solid var(--color-border); padding-bottom: 4px; }
+h3 { font-size: 1.15rem; }
+
+.meta, .config-summary {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    margin: 4px 0;
+}
+
+.data-value {
+    font-family: var(--font-mono);
+    color: #111;
+}
+
+.status-green  { background: var(--color-ok);   color: #ffffff; padding: 2px 6px; border-radius: 3px; }
+.status-yellow { background: var(--color-warn); color: #212529; padding: 2px 6px; border-radius: 3px; }
+.status-red    { background: var(--color-crit); color: #ffffff; padding: 2px 6px; border-radius: 3px; }
+
+.status-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    vertical-align: middle;
+}
+.status-dot.status-green  { background: var(--color-ok); }
+.status-dot.status-yellow { background: var(--color-warn); }
+.status-dot.status-red    { background: var(--color-crit); }
+
+details {
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 8px 0;
+}
+
+summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 4px 0;
+    user-select: none;
+}
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.card {
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+}
+
+.card .card-label {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin-bottom: 6px;
+}
+
+.card .card-value {
+    font-family: var(--font-mono);
+    font-size: 1.4rem;
+    font-weight: 600;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+    background: var(--color-card-bg);
+    font-size: 0.92rem;
+}
+
+th, td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+}
+
+th {
+    background: #f1f3f5;
+    font-weight: 600;
+}
+
+tbody tr:nth-child(even) {
+    background: #fafbfc;
+}
+
+td.numeric {
+    font-family: var(--font-mono);
+    text-align: right;
+}
+
+svg.histogram {
+    width: 100%;
+    max-width: 720px;
+    height: 220px;
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+}
+
+svg.histogram .bar     { fill: #4c78a8; }
+svg.histogram .axis    { stroke: var(--color-border); stroke-width: 1; }
+svg.histogram .label   { font-family: var(--font-sans); font-size: 11px; fill: var(--color-text); }
+svg.histogram .value   { font-family: var(--font-mono); font-size: 11px; fill: var(--color-text); }
+
+iframe.facets-embed {
+    width: 100%;
+    min-height: 600px;
+    border: 0;
+}
+
+.warning-box {
+    background: var(--color-crit);
+    color: #ffffff;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin: 12px 0;
+    font-weight: 600;
+}
+
+.footer-list {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.footer-list code { font-family: var(--font-mono); }
+
+@media print {
+    body { background: #ffffff; padding: 0; max-width: none; }
+    details { break-inside: avoid; border: 1px solid #ccc; }
+    iframe.facets-embed { min-height: 400px; }
+    .card, table, svg.histogram { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+    <header id="report-header">
+        <h1>GiGL Data Analysis Report</h1>
+        <p class="meta" id="report-meta"></p>
+        <p class="config-summary" id="report-config-summary"></p>
+    </header>
+
+    <section id="overview">
+        <h2>Overview</h2>
+        <div class="card-grid" id="overview-cards"></div>
+    </section>
+
+    <section id="data-quality">
+        <h2>Data Quality</h2>
+        <details open>
+            <summary>NULL rates per column</summary>
+            <div id="null-rates-container"></div>
+        </details>
+        <details open>
+            <summary>Integrity checks</summary>
+            <div id="integrity-container"></div>
+        </details>
+    </section>
+
+    <section id="feature-statistics" hidden>
+        <h2>Feature Statistics</h2>
+        <div id="feature-statistics-container"></div>
+    </section>
+
+    <section id="graph-structure">
+        <h2>Graph Structure</h2>
+        <details open>
+            <summary>Node and edge counts</summary>
+            <div id="counts-container"></div>
+        </details>
+        <details open>
+            <summary>Degree distribution</summary>
+            <div id="degree-container"></div>
+        </details>
+        <details open>
+            <summary>Top-20 hubs</summary>
+            <div id="hubs-container"></div>
+        </details>
+        <div id="super-hub-warning" hidden></div>
+    </section>
+
+    <section id="advanced" hidden>
+        <h2>Advanced Metrics</h2>
+        <div id="advanced-container"></div>
+    </section>
+
+    <footer id="report-footer">
+        <h2>References and Artifacts</h2>
+        <div id="footer-container"></div>
+    </footer>
+
+    <script id="analysis-data" type="application/json">{"duplicate_node_counts": {"user": 0}, "dangling_edge_counts": {"follows": 0}, "referential_integrity_violations": {"follows": 0}, "node_counts": {"user": 1000000}, "edge_counts": {"follows": 5000000}, "null_rates": {"p.d.nodes": {"age": 0.05, "country": 0.12}}, "duplicate_edge_counts": {"follows": 150}, "self_loop_counts": {"follows": 0}, "isolated_node_counts": {"user": 8000}, "degree_stats": {"follows_out": {"min": 0, "max": 50000, "mean": 10.0, "median": 5, "p90": 25, "p99": 200, "p999": 5000, "percentiles": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100], "buckets": {"0-1": 100000, "2-10": 600000, "11-100": 250000, "101-1K": 45000, "1K-10K": 4500, "10K+": 500}}}, "top_hubs": {"follows_out": [["hub_1", 50000], ["hub_2", 35000]]}, "super_hub_int16_clamp_count": {"follows_out": 2}, "cold_start_node_counts": {"user": 100000}, "feature_memory_bytes": {"user": 8000000000}, "neighbor_explosion_estimate": {"follows": 75000}, "class_imbalance": {}, "label_coverage": {}, "edge_type_distribution": {}, "edge_type_node_coverage": {}, "reciprocity": {}, "power_law_exponent": {}}</script>
+    <script id="profile-data" type="application/json">{}</script>
+    <script>(function () {
+    "use strict";
+
+    // Bucket order for degree histograms; must match GraphStructureAnalyzer output.
+    const BUCKET_ORDER = ["0-1", "2-10", "11-100", "101-1K", "1K-10K", "10K+"];
+
+    function parseJSONTag(id) {
+        const node = document.getElementById(id);
+        if (!node) return {};
+        const raw = (node.textContent || "").trim();
+        if (!raw) return {};
+        try {
+            return JSON.parse(raw);
+        } catch (e) {
+            console.error("Failed to parse JSON tag #" + id, e);
+            return {};
+        }
+    }
+
+    function createElement(tag, attrs, ...children) {
+        const el = document.createElement(tag);
+        if (attrs) {
+            for (const key of Object.keys(attrs)) {
+                const val = attrs[key];
+                if (val === null || val === undefined || val === false) continue;
+                if (key === "className") el.className = val;
+                else if (key === "text") el.textContent = val;
+                else if (key === "hidden") el.hidden = Boolean(val);
+                else el.setAttribute(key, val);
+            }
+        }
+        for (const child of children) {
+            if (child === null || child === undefined) continue;
+            if (typeof child === "string" || typeof child === "number") {
+                el.appendChild(document.createTextNode(String(child)));
+            } else {
+                el.appendChild(child);
+            }
+        }
+        return el;
+    }
+
+    function formatNumber(n) {
+        if (n === null || n === undefined) return "-";
+        if (typeof n !== "number") return String(n);
+        return n.toLocaleString("en-US");
+    }
+
+    function formatPercent(fraction) {
+        if (fraction === null || fraction === undefined) return "-";
+        return (fraction * 100).toFixed(2) + "%";
+    }
+
+    function classForThreshold(value, green, yellow) {
+        // value <= green -> green, value <= yellow -> yellow, else red.
+        if (value <= green) return "status-green";
+        if (value <= yellow) return "status-yellow";
+        return "status-red";
+    }
+
+    function classForNullRate(rate) {
+        if (rate > 0.9) return "status-red";
+        if (rate > 0.5) return "status-yellow";
+        return "status-green";
+    }
+
+    function sumValues(obj) {
+        if (!obj) return 0;
+        let total = 0;
+        for (const key of Object.keys(obj)) {
+            const v = obj[key];
+            if (typeof v === "number") total += v;
+        }
+        return total;
+    }
+
+    function hasAnyPositive(obj) {
+        if (!obj) return false;
+        for (const key of Object.keys(obj)) {
+            if (obj[key] > 0) return true;
+        }
+        return false;
+    }
+
+    // ---- Rendering ----
+
+    function renderHeader(analysis) {
+        const metaEl = document.getElementById("report-meta");
+        const cfgEl = document.getElementById("report-config-summary");
+        const now = new Date().toISOString();
+        metaEl.textContent = "Generated at " + now;
+
+        const nodeTypes = Object.keys(analysis.node_counts || {});
+        const edgeTypes = Object.keys(analysis.edge_counts || {});
+        cfgEl.textContent =
+            "Node tables: " + (nodeTypes.length ? nodeTypes.join(", ") : "(none)") +
+            " | Edge tables: " + (edgeTypes.length ? edgeTypes.join(", ") : "(none)");
+    }
+
+    function overallStatus(analysis) {
+        // Hard fails -> red.
+        if (hasAnyPositive(analysis.duplicate_node_counts) ||
+            hasAnyPositive(analysis.dangling_edge_counts) ||
+            hasAnyPositive(analysis.referential_integrity_violations) ||
+            hasAnyPositive(analysis.super_hub_int16_clamp_count)) {
+            return "status-red";
+        }
+        // Check thresholded metrics for yellow.
+        const totalNodes = sumValues(analysis.node_counts);
+        if (totalNodes > 0) {
+            const isolatedFrac = sumValues(analysis.isolated_node_counts) / totalNodes;
+            const coldFrac = sumValues(analysis.cold_start_node_counts) / totalNodes;
+            if (isolatedFrac > 0.05 || coldFrac > 0.10) return "status-red";
+            if (isolatedFrac > 0.01 || coldFrac > 0.05) return "status-yellow";
+        }
+        // NULL rates.
+        const nullRates = analysis.null_rates || {};
+        for (const table of Object.keys(nullRates)) {
+            for (const col of Object.keys(nullRates[table])) {
+                const r = nullRates[table][col];
+                if (r > 0.9) return "status-red";
+            }
+        }
+        return "status-green";
+    }
+
+    function renderOverview(analysis) {
+        const container = document.getElementById("overview-cards");
+        const totalNodes = sumValues(analysis.node_counts);
+        const totalEdges = sumValues(analysis.edge_counts);
+        const nodeTypes = Object.keys(analysis.node_counts || {}).length;
+        const edgeTypes = Object.keys(analysis.edge_counts || {}).length;
+        const status = overallStatus(analysis);
+
+        const cards = [
+            ["Total nodes", formatNumber(totalNodes)],
+            ["Total edges", formatNumber(totalEdges)],
+            ["Node types", formatNumber(nodeTypes)],
+            ["Edge types", formatNumber(edgeTypes)],
+        ];
+        for (const [label, value] of cards) {
+            container.appendChild(createElement("div", { className: "card" },
+                createElement("div", { className: "card-label", text: label }),
+                createElement("div", { className: "card-value data-value", text: value })
+            ));
+        }
+        const statusLabel = status === "status-green" ? "OK" :
+                            status === "status-yellow" ? "WARNING" : "CRITICAL";
+        container.appendChild(createElement("div", { className: "card" },
+            createElement("div", { className: "card-label", text: "Overall status" }),
+            createElement("div", { className: "card-value" },
+                createElement("span", { className: status, text: statusLabel }))
+        ));
+    }
+
+    function renderNullRates(analysis) {
+        const container = document.getElementById("null-rates-container");
+        const rates = analysis.null_rates || {};
+        const rows = [];
+        for (const table of Object.keys(rates)) {
+            for (const col of Object.keys(rates[table])) {
+                rows.push({ table: table, column: col, rate: rates[table][col] });
+            }
+        }
+        if (rows.length === 0) {
+            container.appendChild(createElement("p", { text: "No NULL rate data available." }));
+            return;
+        }
+        rows.sort((a, b) => b.rate - a.rate);
+        const thead = createElement("thead", null,
+            createElement("tr", null,
+                createElement("th", { text: "Table" }),
+                createElement("th", { text: "Column" }),
+                createElement("th", { text: "NULL rate" })));
+        const tbody = createElement("tbody");
+        for (const r of rows) {
+            const cls = classForNullRate(r.rate);
+            tbody.appendChild(createElement("tr", null,
+                createElement("td", { text: r.table }),
+                createElement("td", { text: r.column }),
+                createElement("td", { className: "numeric" },
+                    createElement("span", { className: cls, text: formatPercent(r.rate) }))));
+        }
+        container.appendChild(createElement("table", null, thead, tbody));
+    }
+
+    function renderIntegrity(analysis) {
+        const container = document.getElementById("integrity-container");
+        const rows = [
+            ["Duplicate nodes", analysis.duplicate_node_counts],
+            ["Duplicate edges", analysis.duplicate_edge_counts],
+            ["Dangling edges", analysis.dangling_edge_counts],
+            ["Referential integrity violations", analysis.referential_integrity_violations],
+            ["Self loops", analysis.self_loop_counts],
+            ["Isolated nodes", analysis.isolated_node_counts],
+            ["Cold-start nodes (degree 0-1)", analysis.cold_start_node_counts],
+        ];
+        const thead = createElement("thead", null,
+            createElement("tr", null,
+                createElement("th", { text: "Check" }),
+                createElement("th", { text: "Per-type counts" }),
+                createElement("th", { text: "Total" })));
+        const tbody = createElement("tbody");
+        for (const [label, obj] of rows) {
+            const total = sumValues(obj);
+            const isHardFail = (label === "Duplicate nodes" ||
+                                label === "Dangling edges" ||
+                                label === "Referential integrity violations");
+            const cls = isHardFail
+                ? (total > 0 ? "status-red" : "status-green")
+                : (total > 0 ? "status-yellow" : "status-green");
+            const detail = obj && Object.keys(obj).length
+                ? Object.keys(obj).map(k => k + ": " + formatNumber(obj[k])).join(", ")
+                : "(none)";
+            tbody.appendChild(createElement("tr", null,
+                createElement("td", { text: label }),
+                createElement("td", { className: "data-value", text: detail }),
+                createElement("td", { className: "numeric" },
+                    createElement("span", { className: cls, text: formatNumber(total) }))));
+        }
+        container.appendChild(createElement("table", null, thead, tbody));
+    }
+
+    function renderFeatureStatistics(profile) {
+        const section = document.getElementById("feature-statistics");
+        const container = document.getElementById("feature-statistics-container");
+        const facets = (profile && profile.facets_html_paths) || {};
+        const keys = Object.keys(facets);
+        if (keys.length === 0) {
+            section.hidden = true;
+            return;
+        }
+        section.hidden = false;
+        for (const tableName of keys) {
+            const srcdoc = facets[tableName] || "";
+            container.appendChild(createElement("details", { open: "" },
+                createElement("summary", { text: "FACETS: " + tableName }),
+                createElement("iframe", {
+                    className: "facets-embed",
+                    srcdoc: srcdoc,
+                    sandbox: "allow-scripts allow-same-origin",
+                })));
+        }
+    }
+
+    function renderCounts(analysis) {
+        const container = document.getElementById("counts-container");
+        const thead = createElement("thead", null,
+            createElement("tr", null,
+                createElement("th", { text: "Type" }),
+                createElement("th", { text: "Kind" }),
+                createElement("th", { text: "Count" })));
+        const tbody = createElement("tbody");
+        for (const [name, count] of Object.entries(analysis.node_counts || {})) {
+            tbody.appendChild(createElement("tr", null,
+                createElement("td", { text: name }),
+                createElement("td", { text: "node" }),
+                createElement("td", { className: "numeric data-value", text: formatNumber(count) })));
+        }
+        for (const [name, count] of Object.entries(analysis.edge_counts || {})) {
+            tbody.appendChild(createElement("tr", null,
+                createElement("td", { text: name }),
+                createElement("td", { text: "edge" }),
+                createElement("td", { className: "numeric data-value", text: formatNumber(count) })));
+        }
+        container.appendChild(createElement("table", null, thead, tbody));
+    }
+
+    function renderDegreeHistogram(buckets) {
+        // Returns an SVG element for the given bucket counts.
+        const width = 720;
+        const height = 220;
+        const padLeft = 50;
+        const padRight = 10;
+        const padTop = 16;
+        const padBottom = 40;
+        const innerW = width - padLeft - padRight;
+        const innerH = height - padTop - padBottom;
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "histogram");
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+
+        const counts = BUCKET_ORDER.map(k => (buckets && buckets[k]) || 0);
+        const maxCount = Math.max(1, ...counts);
+        const barWidth = innerW / BUCKET_ORDER.length;
+
+        // Axis lines.
+        const axis = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        axis.setAttribute("class", "axis");
+        axis.setAttribute("x1", padLeft);
+        axis.setAttribute("y1", padTop + innerH);
+        axis.setAttribute("x2", padLeft + innerW);
+        axis.setAttribute("y2", padTop + innerH);
+        svg.appendChild(axis);
+
+        for (let i = 0; i < BUCKET_ORDER.length; i++) {
+            const c = counts[i];
+            const h = (c / maxCount) * innerH;
+            const x = padLeft + i * barWidth + 4;
+            const y = padTop + innerH - h;
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute("class", "bar");
+            rect.setAttribute("x", x);
+            rect.setAttribute("y", y);
+            rect.setAttribute("width", Math.max(1, barWidth - 8));
+            rect.setAttribute("height", h);
+            svg.appendChild(rect);
+
+            const valueLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            valueLabel.setAttribute("class", "value");
+            valueLabel.setAttribute("x", x + (barWidth - 8) / 2);
+            valueLabel.setAttribute("y", y - 4);
+            valueLabel.setAttribute("text-anchor", "middle");
+            valueLabel.textContent = formatNumber(c);
+            svg.appendChild(valueLabel);
+
+            const xLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            xLabel.setAttribute("class", "label");
+            xLabel.setAttribute("x", x + (barWidth - 8) / 2);
+            xLabel.setAttribute("y", padTop + innerH + 16);
+            xLabel.setAttribute("text-anchor", "middle");
+            xLabel.textContent = BUCKET_ORDER[i];
+            svg.appendChild(xLabel);
+        }
+
+        // Y-axis max label.
+        const maxLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        maxLabel.setAttribute("class", "label");
+        maxLabel.setAttribute("x", padLeft - 6);
+        maxLabel.setAttribute("y", padTop + 10);
+        maxLabel.setAttribute("text-anchor", "end");
+        maxLabel.textContent = formatNumber(maxCount);
+        svg.appendChild(maxLabel);
+
+        return svg;
+    }
+
+    function renderDegree(analysis) {
+        const container = document.getElementById("degree-container");
+        const degrees = analysis.degree_stats || {};
+        const keys = Object.keys(degrees);
+        if (keys.length === 0) {
+            container.appendChild(createElement("p", { text: "No degree stats available." }));
+            return;
+        }
+        for (const edgeType of keys) {
+            const stats = degrees[edgeType];
+            const median = stats.median || 1;
+            const ratio = stats.p99 / Math.max(1, median);
+            const ratioClass = classForThreshold(ratio, 50, 100);
+
+            const statsLine = createElement("p", { className: "data-value" },
+                "min=" + formatNumber(stats.min) +
+                ", mean=" + (stats.mean !== undefined ? stats.mean.toFixed(2) : "-") +
+                ", median=" + formatNumber(stats.median) +
+                ", p90=" + formatNumber(stats.p90) +
+                ", p99=" + formatNumber(stats.p99) +
+                ", p99.9=" + formatNumber(stats.p999) +
+                ", max=" + formatNumber(stats.max) +
+                " | p99/median=",
+                createElement("span", { className: ratioClass, text: ratio.toFixed(1) }));
+
+            container.appendChild(createElement("h3", { text: edgeType }));
+            container.appendChild(statsLine);
+            container.appendChild(renderDegreeHistogram(stats.buckets || {}));
+        }
+    }
+
+    function renderHubs(analysis) {
+        const container = document.getElementById("hubs-container");
+        const hubs = analysis.top_hubs || {};
+        const keys = Object.keys(hubs);
+        if (keys.length === 0) {
+            container.appendChild(createElement("p", { text: "No hub data available." }));
+            return;
+        }
+        for (const edgeType of keys) {
+            container.appendChild(createElement("h3", { text: edgeType }));
+            const thead = createElement("thead", null,
+                createElement("tr", null,
+                    createElement("th", { text: "Rank" }),
+                    createElement("th", { text: "Node ID" }),
+                    createElement("th", { text: "Degree" })));
+            const tbody = createElement("tbody");
+            const rows = (hubs[edgeType] || []).slice(0, 20);
+            rows.forEach((entry, i) => {
+                const nodeId = Array.isArray(entry) ? entry[0] : entry.node_id;
+                const degree = Array.isArray(entry) ? entry[1] : entry.degree;
+                tbody.appendChild(createElement("tr", null,
+                    createElement("td", { text: String(i + 1) }),
+                    createElement("td", { className: "data-value", text: String(nodeId) }),
+                    createElement("td", { className: "numeric data-value", text: formatNumber(degree) })));
+            });
+            container.appendChild(createElement("table", null, thead, tbody));
+        }
+    }
+
+    function renderSuperHubWarning(analysis) {
+        const box = document.getElementById("super-hub-warning");
+        const clamps = analysis.super_hub_int16_clamp_count || {};
+        const totalClamps = sumValues(clamps);
+        if (totalClamps <= 0) {
+            box.hidden = true;
+            return;
+        }
+        box.hidden = false;
+        box.className = "warning-box";
+        const detail = Object.keys(clamps)
+            .map(k => k + ": " + formatNumber(clamps[k]))
+            .join(", ");
+        box.appendChild(createElement("strong", { text: "Super-hub int16 clamp warning. " }));
+        box.appendChild(document.createTextNode(
+            formatNumber(totalClamps) + " node(s) exceed the int16 degree limit (32,767) and " +
+            "will be silently clamped by GiGL. Per-type: " + detail
+        ));
+    }
+
+    function renderAdvanced(analysis) {
+        const section = document.getElementById("advanced");
+        const container = document.getElementById("advanced-container");
+
+        const classImb = analysis.class_imbalance || {};
+        const labelCov = analysis.label_coverage || {};
+        const edgeDist = analysis.edge_type_distribution || {};
+        const reciprocity = analysis.reciprocity || {};
+        const powerLaw = analysis.power_law_exponent || {};
+
+        const hasTier3 = Object.keys(classImb).length ||
+                         Object.keys(labelCov).length ||
+                         Object.keys(edgeDist).length;
+        const hasTier4 = Object.keys(reciprocity).length ||
+                         Object.keys(powerLaw).length;
+
+        if (!hasTier3 && !hasTier4) {
+            section.hidden = true;
+            return;
+        }
+        section.hidden = false;
+
+        if (Object.keys(classImb).length) {
+            container.appendChild(createElement("h3", { text: "Class imbalance" }));
+            for (const nodeType of Object.keys(classImb)) {
+                const counts = classImb[nodeType];
+                const values = Object.values(counts);
+                const maxC = Math.max(...values);
+                const minC = Math.max(1, Math.min(...values));
+                const ratio = maxC / minC;
+                const cls = ratio > 10 ? "status-red" : ratio > 5 ? "status-yellow" : "status-green";
+                container.appendChild(createElement("p", { className: "data-value" },
+                    nodeType + " max/min ratio = ",
+                    createElement("span", { className: cls, text: "1:" + ratio.toFixed(1) })));
+                const tbody = createElement("tbody");
+                for (const [label, count] of Object.entries(counts)) {
+                    tbody.appendChild(createElement("tr", null,
+                        createElement("td", { text: String(label) }),
+                        createElement("td", { className: "numeric data-value", text: formatNumber(count) })));
+                }
+                container.appendChild(createElement("table", null,
+                    createElement("thead", null, createElement("tr", null,
+                        createElement("th", { text: "Class" }),
+                        createElement("th", { text: "Count" }))),
+                    tbody));
+            }
+        }
+
+        if (Object.keys(labelCov).length) {
+            container.appendChild(createElement("h3", { text: "Label coverage" }));
+            const tbody = createElement("tbody");
+            for (const [nodeType, frac] of Object.entries(labelCov)) {
+                tbody.appendChild(createElement("tr", null,
+                    createElement("td", { text: nodeType }),
+                    createElement("td", { className: "numeric data-value", text: formatPercent(frac) })));
+            }
+            container.appendChild(createElement("table", null,
+                createElement("thead", null, createElement("tr", null,
+                    createElement("th", { text: "Node type" }),
+                    createElement("th", { text: "Coverage" }))),
+                tbody));
+        }
+
+        if (Object.keys(edgeDist).length) {
+            container.appendChild(createElement("h3", { text: "Edge type distribution" }));
+            const total = sumValues(edgeDist);
+            const tbody = createElement("tbody");
+            for (const [edgeType, count] of Object.entries(edgeDist)) {
+                const frac = total > 0 ? count / total : 0;
+                let cls = "status-green";
+                if (frac < 0.001) cls = "status-red";
+                else if (frac > 0.9) cls = "status-red";
+                else if (frac > 0.8) cls = "status-yellow";
+                tbody.appendChild(createElement("tr", null,
+                    createElement("td", { text: edgeType }),
+                    createElement("td", { className: "numeric data-value", text: formatNumber(count) }),
+                    createElement("td", { className: "numeric" },
+                        createElement("span", { className: cls, text: formatPercent(frac) }))));
+            }
+            container.appendChild(createElement("table", null,
+                createElement("thead", null, createElement("tr", null,
+                    createElement("th", { text: "Edge type" }),
+                    createElement("th", { text: "Count" }),
+                    createElement("th", { text: "Share" }))),
+                tbody));
+        }
+
+        if (Object.keys(reciprocity).length) {
+            container.appendChild(createElement("h3", { text: "Reciprocity" }));
+            const tbody = createElement("tbody");
+            for (const [edgeType, val] of Object.entries(reciprocity)) {
+                tbody.appendChild(createElement("tr", null,
+                    createElement("td", { text: edgeType }),
+                    createElement("td", { className: "numeric data-value", text: formatPercent(val) })));
+            }
+            container.appendChild(createElement("table", null,
+                createElement("thead", null, createElement("tr", null,
+                    createElement("th", { text: "Edge type" }),
+                    createElement("th", { text: "Reciprocity" }))),
+                tbody));
+        }
+
+        if (Object.keys(powerLaw).length) {
+            container.appendChild(createElement("h3", { text: "Power-law exponent" }));
+            const tbody = createElement("tbody");
+            for (const [edgeType, alpha] of Object.entries(powerLaw)) {
+                const cls = alpha < 2 ? "status-red" : alpha < 2.5 ? "status-yellow" : "status-green";
+                tbody.appendChild(createElement("tr", null,
+                    createElement("td", { text: edgeType }),
+                    createElement("td", { className: "numeric" },
+                        createElement("span", { className: cls, text: alpha.toFixed(2) }))));
+            }
+            container.appendChild(createElement("table", null,
+                createElement("thead", null, createElement("tr", null,
+                    createElement("th", { text: "Edge type" }),
+                    createElement("th", { text: "Alpha" }))),
+                tbody));
+        }
+    }
+
+    function renderFooter(analysis, profile) {
+        const container = document.getElementById("footer-container");
+
+        const artifacts = [];
+        const paths = (profile && profile.facets_html_paths) || {};
+        for (const [k, v] of Object.entries(paths)) {
+            artifacts.push("FACETS " + k + ": " + v);
+        }
+        const statsPaths = (profile && profile.stats_paths) || {};
+        for (const [k, v] of Object.entries(statsPaths)) {
+            artifacts.push("Stats " + k + ": " + v);
+        }
+
+        if (artifacts.length) {
+            container.appendChild(createElement("h3", { text: "Raw artifacts" }));
+            const ul = createElement("ul", { className: "footer-list" });
+            for (const a of artifacts) {
+                ul.appendChild(createElement("li", null, createElement("code", { text: a })));
+            }
+            container.appendChild(ul);
+        }
+
+        container.appendChild(createElement("h3", { text: "References" }));
+        const refs = [
+            "PinSage (Pinterest, KDD 2018)",
+            "PinnerSage (Pinterest, KDD 2020)",
+            "BLADE (Amazon, WSDM 2023)",
+            "LiGNN (LinkedIn, KDD 2024)",
+            "TwHIN (Twitter/X, KDD 2022)",
+            "GiGL (Snap, KDD 2025)",
+            "AliGraph (Alibaba, VLDB 2019)",
+            "GraphSMOTE (WSDM 2021)",
+            "Beyond Homophily (NeurIPS 2020)",
+            "Uber Fraud Detection + Grab Spade (VLDB 2023)",
+            "Google Maps ETA (CIKM 2021)",
+            "Feature Propagation (ICLR 2022)",
+            "GraphBFF (Feb 2026)",
+            "DQuaG (EDBT 2025)",
+            "LinkedIn Cross-Domain GNN (June 2025)",
+            "Oversmoothing/Oversquashing Complexity (March 2026)",
+            "Demystifying Common Beliefs (ICLR 2026)",
+            "Meta GEM and Adaptive Ranking (2025-2026)",
+        ];
+        const refUl = createElement("ul", { className: "footer-list" });
+        for (const r of refs) {
+            refUl.appendChild(createElement("li", { text: r }));
+        }
+        container.appendChild(refUl);
+    }
+
+    function main() {
+        const analysis = parseJSONTag("analysis-data");
+        const profile = parseJSONTag("profile-data");
+        renderHeader(analysis);
+        renderOverview(analysis);
+        renderNullRates(analysis);
+        renderIntegrity(analysis);
+        renderFeatureStatistics(profile);
+        renderCounts(analysis);
+        renderDegree(analysis);
+        renderHubs(analysis);
+        renderSuperHubWarning(analysis);
+        renderAdvanced(analysis);
+        renderFooter(analysis, profile);
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", main);
+    } else {
+        main();
+    }
+})();
+</script>
+</body>
+</html>
