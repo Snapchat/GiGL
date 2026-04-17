@@ -2,14 +2,14 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
-from gigl.analytics.data_analyzer.config import (
-    DataAnalyzerConfig,
-    load_analyzer_config,
-)
+from gigl.analytics.data_analyzer.config import DataAnalyzerConfig, load_analyzer_config
 from tests.test_assets.test_case import TestCase
 
 SAMPLE_CONFIG_PATH = (
-    Path(__file__).parents[3] / "test_assets" / "analytics" / "sample_analyzer_config.yaml"
+    Path(__file__).parents[3]
+    / "test_assets"
+    / "analytics"
+    / "sample_analyzer_config.yaml"
 )
 
 

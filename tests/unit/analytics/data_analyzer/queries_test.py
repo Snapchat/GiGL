@@ -57,18 +57,14 @@ class DuplicateNodeCountQueryTest(TestCase):
 
 class DegreeDistributionQueryTest(TestCase):
     def test_contains_approx_quantiles(self) -> None:
-        sql = DEGREE_DISTRIBUTION_QUERY.format(
-            table=EDGE_TABLE, id_column="src_uid"
-        )
+        sql = DEGREE_DISTRIBUTION_QUERY.format(table=EDGE_TABLE, id_column="src_uid")
         self.assertIn("APPROX_QUANTILES", sql)
         self.assertIn("src_uid", sql)
 
 
 class DegreeBucketQueryTest(TestCase):
     def test_contains_countif_buckets(self) -> None:
-        sql = DEGREE_BUCKET_QUERY.format(
-            table=EDGE_TABLE, id_column="src_uid"
-        )
+        sql = DEGREE_BUCKET_QUERY.format(table=EDGE_TABLE, id_column="src_uid")
         self.assertIn("COUNTIF", sql)
         self.assertIn("src_uid", sql)
 
@@ -87,17 +83,13 @@ class NullRatesQueryTest(TestCase):
 
 class SuperHubInt16ClampQueryTest(TestCase):
     def test_contains_32767_threshold(self) -> None:
-        sql = SUPER_HUB_INT16_CLAMP_QUERY.format(
-            table=EDGE_TABLE, id_column="src_uid"
-        )
+        sql = SUPER_HUB_INT16_CLAMP_QUERY.format(table=EDGE_TABLE, id_column="src_uid")
         self.assertIn("32767", sql)
 
 
 class TopKHubsQueryTest(TestCase):
     def test_contains_limit(self) -> None:
-        sql = TOP_K_HUBS_QUERY.format(
-            table=EDGE_TABLE, id_column="src_uid", k=20
-        )
+        sql = TOP_K_HUBS_QUERY.format(table=EDGE_TABLE, id_column="src_uid", k=20)
         self.assertIn("LIMIT 20", sql)
         self.assertIn("ORDER BY", sql)
         self.assertIn("DESC", sql)
