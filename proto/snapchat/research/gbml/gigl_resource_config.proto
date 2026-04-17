@@ -145,6 +145,19 @@ message VertexAiResourceConfig {
   // If unset, and no accelerators are available, will use 1.
   int32 compute_cluster_local_world_size = 3;
  }
+
+// Lets user-defined launchers be piped in.
+// The callable referenced by `launcher_fn` is imported at runtime and
+// receives the opaque `launcher_args` map, e.g. a custom Ray or Kubernetes
+// entry point.
+message CustomResourceConfig {
+  // Fully-qualified Python import path to a callable.
+  // e.g. "my_project.launchers.ray.launch"
+  string launcher_fn = 1;
+  // Opaque key/value args forwarded to the launcher.
+  map<string, string> launcher_args = 2;
+}
+
 // (deprecated)
 // Configuration for distributed training resources
 message DistributedTrainerConfig {
@@ -162,6 +175,7 @@ message TrainerResourceConfig {
    KFPResourceConfig kfp_trainer_config = 2;
    LocalResourceConfig local_trainer_config = 3;
    VertexAiGraphStoreConfig vertex_ai_graph_store_trainer_config = 4;
+   CustomResourceConfig custom_trainer_config = 5;
  }
 }
 
@@ -172,6 +186,7 @@ message InferencerResourceConfig {
    DataflowResourceConfig dataflow_inferencer_config = 2;
    LocalResourceConfig local_inferencer_config = 3;
    VertexAiGraphStoreConfig vertex_ai_graph_store_inferencer_config = 4;
+   CustomResourceConfig custom_inferencer_config = 5;
  }
 }
 

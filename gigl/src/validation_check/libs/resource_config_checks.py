@@ -145,6 +145,7 @@ def check_if_trainer_resource_config_valid(
         gigl_resource_config_pb2.VertexAiResourceConfig,
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
+        gigl_resource_config_pb2.CustomResourceConfig,
     ] = wrapper.trainer_config
     _validate_machine_config(config=trainer_config)
 
@@ -218,6 +219,7 @@ def _validate_machine_config(
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
         gigl_resource_config_pb2.DataflowResourceConfig,
+        gigl_resource_config_pb2.CustomResourceConfig,
     ],
 ) -> None:
     if isinstance(config, gigl_resource_config_pb2.LocalResourceConfig):
@@ -247,6 +249,11 @@ def _validate_machine_config(
         )
         _validate_accelerator_type(proto_config=config.compute_pool)
         _validate_cloud_machine_config(config=config.compute_pool)
+    elif isinstance(config, gigl_resource_config_pb2.CustomResourceConfig):
+        # CustomResourceConfig is validated by the launcher itself; semantic
+        # validation (e.g. import-resolvability, dry-run) is out of scope for
+        # this function.
+        assert_proto_field_value_is_truthy(proto=config, field_name="launcher_fn")
     else:
         raise ValueError(
             f"""Expected distributed config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},

@@ -241,6 +241,23 @@ class TestGiglResourceConfigWrapper(TestCase):
         wrapper = GiglResourceConfigWrapper(resource_config=config)
         self.assertEqual(wrapper.trainer_config, trainer_config)
 
+    def test_trainer_config_custom(self):
+        """Test trainer_config with Custom (user-supplied launcher) configuration."""
+        config = self._create_gigl_resource_config_with_direct_shared_config()
+        trainer_config = gigl_resource_config_pb2.CustomResourceConfig(
+            launcher_fn="my_project.launchers.ray.launch",
+            launcher_args={"cluster": "dev", "num_workers": "4"},
+        )
+        config.trainer_resource_config.custom_trainer_config.CopyFrom(
+            copy.deepcopy(trainer_config)
+        )
+
+        wrapper = GiglResourceConfigWrapper(resource_config=config)
+        self.assertIsInstance(
+            wrapper.trainer_config, gigl_resource_config_pb2.CustomResourceConfig
+        )
+        self.assertEqual(wrapper.trainer_config, trainer_config)
+
     def test_trainer_config_missing(self):
         """Test that ValueError is raised when trainer config is missing."""
         config = self._create_gigl_resource_config_with_direct_shared_config()
@@ -353,6 +370,23 @@ class TestGiglResourceConfigWrapper(TestCase):
         )
 
         wrapper = GiglResourceConfigWrapper(resource_config=config)
+        self.assertEqual(wrapper.inferencer_config, inferencer_config)
+
+    def test_inferencer_config_custom(self):
+        """Test inferencer_config with Custom (user-supplied launcher) configuration."""
+        config = self._create_gigl_resource_config_with_direct_shared_config()
+        inferencer_config = gigl_resource_config_pb2.CustomResourceConfig(
+            launcher_fn="my_project.launchers.ray.launch",
+            launcher_args={"cluster": "prod", "shards": "8"},
+        )
+        config.inferencer_resource_config.custom_inferencer_config.CopyFrom(
+            copy.deepcopy(inferencer_config)
+        )
+
+        wrapper = GiglResourceConfigWrapper(resource_config=config)
+        self.assertIsInstance(
+            wrapper.inferencer_config, gigl_resource_config_pb2.CustomResourceConfig
+        )
         self.assertEqual(wrapper.inferencer_config, inferencer_config)
 
     def test_inferencer_config_missing(self):

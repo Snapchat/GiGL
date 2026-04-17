@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n1snapchat/research/gbml/gigl_resource_config.proto\x12\x16snapchat.research.gbml\"Y\n\x13SparkResourceConfig\x12\x14\n\x0cmachine_type\x18\x01 \x01(\t\x12\x16\n\x0enum_local_ssds\x18\x02 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x03 \x01(\r\"\x83\x01\n\x16\x44\x61taflowResourceConfig\x12\x13\n\x0bnum_workers\x18\x01 \x01(\r\x12\x17\n\x0fmax_num_workers\x18\x02 \x01(\r\x12\x14\n\x0cmachine_type\x18\x03 \x01(\t\x12\x14\n\x0c\x64isk_size_gb\x18\x04 \x01(\r\x12\x0f\n\x07timeout\x18\x05 \x01(\r\"\xbc\x01\n\x16\x44\x61taPreprocessorConfig\x12P\n\x18\x65\x64ge_preprocessor_config\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfig\x12P\n\x18node_preprocessor_config\x18\x02 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfig\"h\n\x15VertexAiTrainerConfig\x12\x14\n\x0cmachine_type\x18\x01 \x01(\t\x12\x10\n\x08gpu_type\x18\x02 \x01(\t\x12\x11\n\tgpu_limit\x18\x03 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x04 \x01(\r\"z\n\x10KFPTrainerConfig\x12\x13\n\x0b\x63pu_request\x18\x01 \x01(\t\x12\x16\n\x0ememory_request\x18\x02 \x01(\t\x12\x10\n\x08gpu_type\x18\x03 \x01(\t\x12\x11\n\tgpu_limit\x18\x04 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x05 \x01(\r\")\n\x12LocalTrainerConfig\x12\x13\n\x0bnum_workers\x18\x01 \x01(\r\"\xcf\x01\n\x16VertexAiResourceConfig\x12\x14\n\x0cmachine_type\x18\x01 \x01(\t\x12\x10\n\x08gpu_type\x18\x02 \x01(\t\x12\x11\n\tgpu_limit\x18\x03 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x04 \x01(\r\x12\x0f\n\x07timeout\x18\x05 \x01(\r\x12\x1b\n\x13gcp_region_override\x18\x06 \x01(\t\x12\x1b\n\x13scheduling_strategy\x18\x07 \x01(\t\x12\x19\n\x11\x62oot_disk_size_gb\x18\x08 \x01(\r\"{\n\x11KFPResourceConfig\x12\x13\n\x0b\x63pu_request\x18\x01 \x01(\t\x12\x16\n\x0ememory_request\x18\x02 \x01(\t\x12\x10\n\x08gpu_type\x18\x03 \x01(\t\x12\x11\n\tgpu_limit\x18\x04 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x05 \x01(\r\"*\n\x13LocalResourceConfig\x12\x13\n\x0bnum_workers\x18\x01 \x01(\r\"\xd4\x01\n\x18VertexAiGraphStoreConfig\x12H\n\x10graph_store_pool\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfig\x12\x44\n\x0c\x63ompute_pool\x18\x02 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfig\x12(\n compute_cluster_local_world_size\x18\x03 \x01(\x05\"\x93\x02\n\x18\x44istributedTrainerConfig\x12Q\n\x18vertex_ai_trainer_config\x18\x01 \x01(\x0b\x32-.snapchat.research.gbml.VertexAiTrainerConfigH\x00\x12\x46\n\x12kfp_trainer_config\x18\x02 \x01(\x0b\x32(.snapchat.research.gbml.KFPTrainerConfigH\x00\x12J\n\x14local_trainer_config\x18\x03 \x01(\x0b\x32*.snapchat.research.gbml.LocalTrainerConfigH\x00\x42\x10\n\x0etrainer_config\"\xf5\x02\n\x15TrainerResourceConfig\x12R\n\x18vertex_ai_trainer_config\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfigH\x00\x12G\n\x12kfp_trainer_config\x18\x02 \x01(\x0b\x32).snapchat.research.gbml.KFPResourceConfigH\x00\x12K\n\x14local_trainer_config\x18\x03 \x01(\x0b\x32+.snapchat.research.gbml.LocalResourceConfigH\x00\x12`\n$vertex_ai_graph_store_trainer_config\x18\x04 \x01(\x0b\x32\x30.snapchat.research.gbml.VertexAiGraphStoreConfigH\x00\x42\x10\n\x0etrainer_config\"\x91\x03\n\x18InferencerResourceConfig\x12U\n\x1bvertex_ai_inferencer_config\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfigH\x00\x12T\n\x1a\x64\x61taflow_inferencer_config\x18\x02 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfigH\x00\x12N\n\x17local_inferencer_config\x18\x03 \x01(\x0b\x32+.snapchat.research.gbml.LocalResourceConfigH\x00\x12\x63\n\'vertex_ai_graph_store_inferencer_config\x18\x04 \x01(\x0b\x32\x30.snapchat.research.gbml.VertexAiGraphStoreConfigH\x00\x42\x13\n\x11inferencer_config\"\xa3\x04\n\x14SharedResourceConfig\x12Y\n\x0fresource_labels\x18\x01 \x03(\x0b\x32@.snapchat.research.gbml.SharedResourceConfig.ResourceLabelsEntry\x12_\n\x15\x63ommon_compute_config\x18\x02 \x01(\x0b\x32@.snapchat.research.gbml.SharedResourceConfig.CommonComputeConfig\x1a\x97\x02\n\x13\x43ommonComputeConfig\x12\x0f\n\x07project\x18\x01 \x01(\t\x12\x0e\n\x06region\x18\x02 \x01(\t\x12\x1a\n\x12temp_assets_bucket\x18\x03 \x01(\t\x12#\n\x1btemp_regional_assets_bucket\x18\x04 \x01(\t\x12\x1a\n\x12perm_assets_bucket\x18\x05 \x01(\t\x12#\n\x1btemp_assets_bq_dataset_name\x18\x06 \x01(\t\x12!\n\x19\x65mbedding_bq_dataset_name\x18\x07 \x01(\t\x12!\n\x19gcp_service_account_email\x18\x08 \x01(\t\x12\x17\n\x0f\x64\x61taflow_runner\x18\x0b \x01(\t\x1a\x35\n\x13ResourceLabelsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xc8\x05\n\x12GiglResourceConfig\x12$\n\x1ashared_resource_config_uri\x18\x01 \x01(\tH\x00\x12N\n\x16shared_resource_config\x18\x02 \x01(\x0b\x32,.snapchat.research.gbml.SharedResourceConfigH\x00\x12K\n\x13preprocessor_config\x18\x0c \x01(\x0b\x32..snapchat.research.gbml.DataPreprocessorConfig\x12L\n\x17subgraph_sampler_config\x18\r \x01(\x0b\x32+.snapchat.research.gbml.SparkResourceConfig\x12K\n\x16split_generator_config\x18\x0e \x01(\x0b\x32+.snapchat.research.gbml.SparkResourceConfig\x12L\n\x0etrainer_config\x18\x0f \x01(\x0b\x32\x30.snapchat.research.gbml.DistributedTrainerConfigB\x02\x18\x01\x12M\n\x11inferencer_config\x18\x10 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfigB\x02\x18\x01\x12N\n\x17trainer_resource_config\x18\x11 \x01(\x0b\x32-.snapchat.research.gbml.TrainerResourceConfig\x12T\n\x1ainferencer_resource_config\x18\x12 \x01(\x0b\x32\x30.snapchat.research.gbml.InferencerResourceConfigB\x11\n\x0fshared_resource*\xf3\x01\n\tComponent\x12\x15\n\x11\x43omponent_Unknown\x10\x00\x12\x1e\n\x1a\x43omponent_Config_Validator\x10\x01\x12\x1e\n\x1a\x43omponent_Config_Populator\x10\x02\x12\x1f\n\x1b\x43omponent_Data_Preprocessor\x10\x03\x12\x1e\n\x1a\x43omponent_Subgraph_Sampler\x10\x04\x12\x1d\n\x19\x43omponent_Split_Generator\x10\x05\x12\x15\n\x11\x43omponent_Trainer\x10\x06\x12\x18\n\x14\x43omponent_Inferencer\x10\x07\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n1snapchat/research/gbml/gigl_resource_config.proto\x12\x16snapchat.research.gbml\"Y\n\x13SparkResourceConfig\x12\x14\n\x0cmachine_type\x18\x01 \x01(\t\x12\x16\n\x0enum_local_ssds\x18\x02 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x03 \x01(\r\"\x83\x01\n\x16\x44\x61taflowResourceConfig\x12\x13\n\x0bnum_workers\x18\x01 \x01(\r\x12\x17\n\x0fmax_num_workers\x18\x02 \x01(\r\x12\x14\n\x0cmachine_type\x18\x03 \x01(\t\x12\x14\n\x0c\x64isk_size_gb\x18\x04 \x01(\r\x12\x0f\n\x07timeout\x18\x05 \x01(\r\"\xbc\x01\n\x16\x44\x61taPreprocessorConfig\x12P\n\x18\x65\x64ge_preprocessor_config\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfig\x12P\n\x18node_preprocessor_config\x18\x02 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfig\"h\n\x15VertexAiTrainerConfig\x12\x14\n\x0cmachine_type\x18\x01 \x01(\t\x12\x10\n\x08gpu_type\x18\x02 \x01(\t\x12\x11\n\tgpu_limit\x18\x03 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x04 \x01(\r\"z\n\x10KFPTrainerConfig\x12\x13\n\x0b\x63pu_request\x18\x01 \x01(\t\x12\x16\n\x0ememory_request\x18\x02 \x01(\t\x12\x10\n\x08gpu_type\x18\x03 \x01(\t\x12\x11\n\tgpu_limit\x18\x04 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x05 \x01(\r\")\n\x12LocalTrainerConfig\x12\x13\n\x0bnum_workers\x18\x01 \x01(\r\"\xcf\x01\n\x16VertexAiResourceConfig\x12\x14\n\x0cmachine_type\x18\x01 \x01(\t\x12\x10\n\x08gpu_type\x18\x02 \x01(\t\x12\x11\n\tgpu_limit\x18\x03 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x04 \x01(\r\x12\x0f\n\x07timeout\x18\x05 \x01(\r\x12\x1b\n\x13gcp_region_override\x18\x06 \x01(\t\x12\x1b\n\x13scheduling_strategy\x18\x07 \x01(\t\x12\x19\n\x11\x62oot_disk_size_gb\x18\x08 \x01(\r\"{\n\x11KFPResourceConfig\x12\x13\n\x0b\x63pu_request\x18\x01 \x01(\t\x12\x16\n\x0ememory_request\x18\x02 \x01(\t\x12\x10\n\x08gpu_type\x18\x03 \x01(\t\x12\x11\n\tgpu_limit\x18\x04 \x01(\r\x12\x14\n\x0cnum_replicas\x18\x05 \x01(\r\"*\n\x13LocalResourceConfig\x12\x13\n\x0bnum_workers\x18\x01 \x01(\r\"\xd4\x01\n\x18VertexAiGraphStoreConfig\x12H\n\x10graph_store_pool\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfig\x12\x44\n\x0c\x63ompute_pool\x18\x02 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfig\x12(\n compute_cluster_local_world_size\x18\x03 \x01(\x05\"\xb7\x01\n\x14\x43ustomResourceConfig\x12\x13\n\x0blauncher_fn\x18\x01 \x01(\t\x12U\n\rlauncher_args\x18\x02 \x03(\x0b\x32>.snapchat.research.gbml.CustomResourceConfig.LauncherArgsEntry\x1a\x33\n\x11LauncherArgsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x93\x02\n\x18\x44istributedTrainerConfig\x12Q\n\x18vertex_ai_trainer_config\x18\x01 \x01(\x0b\x32-.snapchat.research.gbml.VertexAiTrainerConfigH\x00\x12\x46\n\x12kfp_trainer_config\x18\x02 \x01(\x0b\x32(.snapchat.research.gbml.KFPTrainerConfigH\x00\x12J\n\x14local_trainer_config\x18\x03 \x01(\x0b\x32*.snapchat.research.gbml.LocalTrainerConfigH\x00\x42\x10\n\x0etrainer_config\"\xc4\x03\n\x15TrainerResourceConfig\x12R\n\x18vertex_ai_trainer_config\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfigH\x00\x12G\n\x12kfp_trainer_config\x18\x02 \x01(\x0b\x32).snapchat.research.gbml.KFPResourceConfigH\x00\x12K\n\x14local_trainer_config\x18\x03 \x01(\x0b\x32+.snapchat.research.gbml.LocalResourceConfigH\x00\x12`\n$vertex_ai_graph_store_trainer_config\x18\x04 \x01(\x0b\x32\x30.snapchat.research.gbml.VertexAiGraphStoreConfigH\x00\x12M\n\x15\x63ustom_trainer_config\x18\x05 \x01(\x0b\x32,.snapchat.research.gbml.CustomResourceConfigH\x00\x42\x10\n\x0etrainer_config\"\xe3\x03\n\x18InferencerResourceConfig\x12U\n\x1bvertex_ai_inferencer_config\x18\x01 \x01(\x0b\x32..snapchat.research.gbml.VertexAiResourceConfigH\x00\x12T\n\x1a\x64\x61taflow_inferencer_config\x18\x02 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfigH\x00\x12N\n\x17local_inferencer_config\x18\x03 \x01(\x0b\x32+.snapchat.research.gbml.LocalResourceConfigH\x00\x12\x63\n\'vertex_ai_graph_store_inferencer_config\x18\x04 \x01(\x0b\x32\x30.snapchat.research.gbml.VertexAiGraphStoreConfigH\x00\x12P\n\x18\x63ustom_inferencer_config\x18\x05 \x01(\x0b\x32,.snapchat.research.gbml.CustomResourceConfigH\x00\x42\x13\n\x11inferencer_config\"\xa3\x04\n\x14SharedResourceConfig\x12Y\n\x0fresource_labels\x18\x01 \x03(\x0b\x32@.snapchat.research.gbml.SharedResourceConfig.ResourceLabelsEntry\x12_\n\x15\x63ommon_compute_config\x18\x02 \x01(\x0b\x32@.snapchat.research.gbml.SharedResourceConfig.CommonComputeConfig\x1a\x97\x02\n\x13\x43ommonComputeConfig\x12\x0f\n\x07project\x18\x01 \x01(\t\x12\x0e\n\x06region\x18\x02 \x01(\t\x12\x1a\n\x12temp_assets_bucket\x18\x03 \x01(\t\x12#\n\x1btemp_regional_assets_bucket\x18\x04 \x01(\t\x12\x1a\n\x12perm_assets_bucket\x18\x05 \x01(\t\x12#\n\x1btemp_assets_bq_dataset_name\x18\x06 \x01(\t\x12!\n\x19\x65mbedding_bq_dataset_name\x18\x07 \x01(\t\x12!\n\x19gcp_service_account_email\x18\x08 \x01(\t\x12\x17\n\x0f\x64\x61taflow_runner\x18\x0b \x01(\t\x1a\x35\n\x13ResourceLabelsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xc8\x05\n\x12GiglResourceConfig\x12$\n\x1ashared_resource_config_uri\x18\x01 \x01(\tH\x00\x12N\n\x16shared_resource_config\x18\x02 \x01(\x0b\x32,.snapchat.research.gbml.SharedResourceConfigH\x00\x12K\n\x13preprocessor_config\x18\x0c \x01(\x0b\x32..snapchat.research.gbml.DataPreprocessorConfig\x12L\n\x17subgraph_sampler_config\x18\r \x01(\x0b\x32+.snapchat.research.gbml.SparkResourceConfig\x12K\n\x16split_generator_config\x18\x0e \x01(\x0b\x32+.snapchat.research.gbml.SparkResourceConfig\x12L\n\x0etrainer_config\x18\x0f \x01(\x0b\x32\x30.snapchat.research.gbml.DistributedTrainerConfigB\x02\x18\x01\x12M\n\x11inferencer_config\x18\x10 \x01(\x0b\x32..snapchat.research.gbml.DataflowResourceConfigB\x02\x18\x01\x12N\n\x17trainer_resource_config\x18\x11 \x01(\x0b\x32-.snapchat.research.gbml.TrainerResourceConfig\x12T\n\x1ainferencer_resource_config\x18\x12 \x01(\x0b\x32\x30.snapchat.research.gbml.InferencerResourceConfigB\x11\n\x0fshared_resource*\xf3\x01\n\tComponent\x12\x15\n\x11\x43omponent_Unknown\x10\x00\x12\x1e\n\x1a\x43omponent_Config_Validator\x10\x01\x12\x1e\n\x1a\x43omponent_Config_Populator\x10\x02\x12\x1f\n\x1b\x43omponent_Data_Preprocessor\x10\x03\x12\x1e\n\x1a\x43omponent_Subgraph_Sampler\x10\x04\x12\x1d\n\x19\x43omponent_Split_Generator\x10\x05\x12\x15\n\x11\x43omponent_Trainer\x10\x06\x12\x18\n\x14\x43omponent_Inferencer\x10\x07\x62\x06proto3')
 
 _COMPONENT = DESCRIPTOR.enum_types_by_name['Component']
 Component = enum_type_wrapper.EnumTypeWrapper(_COMPONENT)
@@ -39,6 +39,8 @@ _VERTEXAIRESOURCECONFIG = DESCRIPTOR.message_types_by_name['VertexAiResourceConf
 _KFPRESOURCECONFIG = DESCRIPTOR.message_types_by_name['KFPResourceConfig']
 _LOCALRESOURCECONFIG = DESCRIPTOR.message_types_by_name['LocalResourceConfig']
 _VERTEXAIGRAPHSTORECONFIG = DESCRIPTOR.message_types_by_name['VertexAiGraphStoreConfig']
+_CUSTOMRESOURCECONFIG = DESCRIPTOR.message_types_by_name['CustomResourceConfig']
+_CUSTOMRESOURCECONFIG_LAUNCHERARGSENTRY = _CUSTOMRESOURCECONFIG.nested_types_by_name['LauncherArgsEntry']
 _DISTRIBUTEDTRAINERCONFIG = DESCRIPTOR.message_types_by_name['DistributedTrainerConfig']
 _TRAINERRESOURCECONFIG = DESCRIPTOR.message_types_by_name['TrainerResourceConfig']
 _INFERENCERRESOURCECONFIG = DESCRIPTOR.message_types_by_name['InferencerResourceConfig']
@@ -116,6 +118,21 @@ VertexAiGraphStoreConfig = _reflection.GeneratedProtocolMessageType('VertexAiGra
   })
 _sym_db.RegisterMessage(VertexAiGraphStoreConfig)
 
+CustomResourceConfig = _reflection.GeneratedProtocolMessageType('CustomResourceConfig', (_message.Message,), {
+
+  'LauncherArgsEntry' : _reflection.GeneratedProtocolMessageType('LauncherArgsEntry', (_message.Message,), {
+    'DESCRIPTOR' : _CUSTOMRESOURCECONFIG_LAUNCHERARGSENTRY,
+    '__module__' : 'snapchat.research.gbml.gigl_resource_config_pb2'
+    # @@protoc_insertion_point(class_scope:snapchat.research.gbml.CustomResourceConfig.LauncherArgsEntry)
+    })
+  ,
+  'DESCRIPTOR' : _CUSTOMRESOURCECONFIG,
+  '__module__' : 'snapchat.research.gbml.gigl_resource_config_pb2'
+  # @@protoc_insertion_point(class_scope:snapchat.research.gbml.CustomResourceConfig)
+  })
+_sym_db.RegisterMessage(CustomResourceConfig)
+_sym_db.RegisterMessage(CustomResourceConfig.LauncherArgsEntry)
+
 DistributedTrainerConfig = _reflection.GeneratedProtocolMessageType('DistributedTrainerConfig', (_message.Message,), {
   'DESCRIPTOR' : _DISTRIBUTEDTRAINERCONFIG,
   '__module__' : 'snapchat.research.gbml.gigl_resource_config_pb2'
@@ -170,14 +187,16 @@ _sym_db.RegisterMessage(GiglResourceConfig)
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
+  _CUSTOMRESOURCECONFIG_LAUNCHERARGSENTRY._options = None
+  _CUSTOMRESOURCECONFIG_LAUNCHERARGSENTRY._serialized_options = b'8\001'
   _SHAREDRESOURCECONFIG_RESOURCELABELSENTRY._options = None
   _SHAREDRESOURCECONFIG_RESOURCELABELSENTRY._serialized_options = b'8\001'
   _GIGLRESOURCECONFIG.fields_by_name['trainer_config']._options = None
   _GIGLRESOURCECONFIG.fields_by_name['trainer_config']._serialized_options = b'\030\001'
   _GIGLRESOURCECONFIG.fields_by_name['inferencer_config']._options = None
   _GIGLRESOURCECONFIG.fields_by_name['inferencer_config']._serialized_options = b'\030\001'
-  _COMPONENT._serialized_start=3684
-  _COMPONENT._serialized_end=3927
+  _COMPONENT._serialized_start=4031
+  _COMPONENT._serialized_end=4274
   _SPARKRESOURCECONFIG._serialized_start=77
   _SPARKRESOURCECONFIG._serialized_end=166
   _DATAFLOWRESOURCECONFIG._serialized_start=169
@@ -198,18 +217,22 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _LOCALRESOURCECONFIG._serialized_end=1143
   _VERTEXAIGRAPHSTORECONFIG._serialized_start=1146
   _VERTEXAIGRAPHSTORECONFIG._serialized_end=1358
-  _DISTRIBUTEDTRAINERCONFIG._serialized_start=1361
-  _DISTRIBUTEDTRAINERCONFIG._serialized_end=1636
-  _TRAINERRESOURCECONFIG._serialized_start=1639
-  _TRAINERRESOURCECONFIG._serialized_end=2012
-  _INFERENCERRESOURCECONFIG._serialized_start=2015
-  _INFERENCERRESOURCECONFIG._serialized_end=2416
-  _SHAREDRESOURCECONFIG._serialized_start=2419
-  _SHAREDRESOURCECONFIG._serialized_end=2966
-  _SHAREDRESOURCECONFIG_COMMONCOMPUTECONFIG._serialized_start=2632
-  _SHAREDRESOURCECONFIG_COMMONCOMPUTECONFIG._serialized_end=2911
-  _SHAREDRESOURCECONFIG_RESOURCELABELSENTRY._serialized_start=2913
-  _SHAREDRESOURCECONFIG_RESOURCELABELSENTRY._serialized_end=2966
-  _GIGLRESOURCECONFIG._serialized_start=2969
-  _GIGLRESOURCECONFIG._serialized_end=3681
+  _CUSTOMRESOURCECONFIG._serialized_start=1361
+  _CUSTOMRESOURCECONFIG._serialized_end=1544
+  _CUSTOMRESOURCECONFIG_LAUNCHERARGSENTRY._serialized_start=1493
+  _CUSTOMRESOURCECONFIG_LAUNCHERARGSENTRY._serialized_end=1544
+  _DISTRIBUTEDTRAINERCONFIG._serialized_start=1547
+  _DISTRIBUTEDTRAINERCONFIG._serialized_end=1822
+  _TRAINERRESOURCECONFIG._serialized_start=1825
+  _TRAINERRESOURCECONFIG._serialized_end=2277
+  _INFERENCERRESOURCECONFIG._serialized_start=2280
+  _INFERENCERRESOURCECONFIG._serialized_end=2763
+  _SHAREDRESOURCECONFIG._serialized_start=2766
+  _SHAREDRESOURCECONFIG._serialized_end=3313
+  _SHAREDRESOURCECONFIG_COMMONCOMPUTECONFIG._serialized_start=2979
+  _SHAREDRESOURCECONFIG_COMMONCOMPUTECONFIG._serialized_end=3258
+  _SHAREDRESOURCECONFIG_RESOURCELABELSENTRY._serialized_start=3260
+  _SHAREDRESOURCECONFIG_RESOURCELABELSENTRY._serialized_end=3313
+  _GIGLRESOURCECONFIG._serialized_start=3316
+  _GIGLRESOURCECONFIG._serialized_end=4028
 # @@protoc_insertion_point(module_scope)

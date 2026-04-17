@@ -355,6 +355,49 @@ class VertexAiGraphStoreConfig(google.protobuf.message.Message):
 
 global___VertexAiGraphStoreConfig = VertexAiGraphStoreConfig
 
+class CustomResourceConfig(google.protobuf.message.Message):
+    """Lets user-defined launchers be piped in.
+    The callable referenced by `launcher_fn` is imported at runtime and
+    receives the opaque `launcher_args` map, e.g. a custom Ray or Kubernetes
+    entry point.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    class LauncherArgsEntry(google.protobuf.message.Message):
+        DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: builtins.int
+        VALUE_FIELD_NUMBER: builtins.int
+        key: builtins.str
+        value: builtins.str
+        def __init__(
+            self,
+            *,
+            key: builtins.str = ...,
+            value: builtins.str = ...,
+        ) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["key", b"key", "value", b"value"]) -> None: ...
+
+    LAUNCHER_FN_FIELD_NUMBER: builtins.int
+    LAUNCHER_ARGS_FIELD_NUMBER: builtins.int
+    launcher_fn: builtins.str
+    """Fully-qualified Python import path to a callable.
+    e.g. "my_project.launchers.ray.launch"
+    """
+    @property
+    def launcher_args(self) -> google.protobuf.internal.containers.ScalarMap[builtins.str, builtins.str]:
+        """Opaque key/value args forwarded to the launcher."""
+    def __init__(
+        self,
+        *,
+        launcher_fn: builtins.str = ...,
+        launcher_args: collections.abc.Mapping[builtins.str, builtins.str] | None = ...,
+    ) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["launcher_args", b"launcher_args", "launcher_fn", b"launcher_fn"]) -> None: ...
+
+global___CustomResourceConfig = CustomResourceConfig
+
 class DistributedTrainerConfig(google.protobuf.message.Message):
     """(deprecated)
     Configuration for distributed training resources
@@ -393,6 +436,7 @@ class TrainerResourceConfig(google.protobuf.message.Message):
     KFP_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
     LOCAL_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
     VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
+    CUSTOM_TRAINER_CONFIG_FIELD_NUMBER: builtins.int
     @property
     def vertex_ai_trainer_config(self) -> global___VertexAiResourceConfig: ...
     @property
@@ -401,6 +445,8 @@ class TrainerResourceConfig(google.protobuf.message.Message):
     def local_trainer_config(self) -> global___LocalResourceConfig: ...
     @property
     def vertex_ai_graph_store_trainer_config(self) -> global___VertexAiGraphStoreConfig: ...
+    @property
+    def custom_trainer_config(self) -> global___CustomResourceConfig: ...
     def __init__(
         self,
         *,
@@ -408,10 +454,11 @@ class TrainerResourceConfig(google.protobuf.message.Message):
         kfp_trainer_config: global___KFPResourceConfig | None = ...,
         local_trainer_config: global___LocalResourceConfig | None = ...,
         vertex_ai_graph_store_trainer_config: global___VertexAiGraphStoreConfig | None = ...,
+        custom_trainer_config: global___CustomResourceConfig | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing_extensions.Literal["kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing_extensions.Literal["trainer_config", b"trainer_config"]) -> typing_extensions.Literal["vertex_ai_trainer_config", "kfp_trainer_config", "local_trainer_config", "vertex_ai_graph_store_trainer_config"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["custom_trainer_config", b"custom_trainer_config", "kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["custom_trainer_config", b"custom_trainer_config", "kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["trainer_config", b"trainer_config"]) -> typing_extensions.Literal["vertex_ai_trainer_config", "kfp_trainer_config", "local_trainer_config", "vertex_ai_graph_store_trainer_config", "custom_trainer_config"] | None: ...
 
 global___TrainerResourceConfig = TrainerResourceConfig
 
@@ -424,6 +471,7 @@ class InferencerResourceConfig(google.protobuf.message.Message):
     DATAFLOW_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
     LOCAL_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
     VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
+    CUSTOM_INFERENCER_CONFIG_FIELD_NUMBER: builtins.int
     @property
     def vertex_ai_inferencer_config(self) -> global___VertexAiResourceConfig: ...
     @property
@@ -432,6 +480,8 @@ class InferencerResourceConfig(google.protobuf.message.Message):
     def local_inferencer_config(self) -> global___LocalResourceConfig: ...
     @property
     def vertex_ai_graph_store_inferencer_config(self) -> global___VertexAiGraphStoreConfig: ...
+    @property
+    def custom_inferencer_config(self) -> global___CustomResourceConfig: ...
     def __init__(
         self,
         *,
@@ -439,10 +489,11 @@ class InferencerResourceConfig(google.protobuf.message.Message):
         dataflow_inferencer_config: global___DataflowResourceConfig | None = ...,
         local_inferencer_config: global___LocalResourceConfig | None = ...,
         vertex_ai_graph_store_inferencer_config: global___VertexAiGraphStoreConfig | None = ...,
+        custom_inferencer_config: global___CustomResourceConfig | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing_extensions.Literal["dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing_extensions.Literal["inferencer_config", b"inferencer_config"]) -> typing_extensions.Literal["vertex_ai_inferencer_config", "dataflow_inferencer_config", "local_inferencer_config", "vertex_ai_graph_store_inferencer_config"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["custom_inferencer_config", b"custom_inferencer_config", "dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["custom_inferencer_config", b"custom_inferencer_config", "dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["inferencer_config", b"inferencer_config"]) -> typing_extensions.Literal["vertex_ai_inferencer_config", "dataflow_inferencer_config", "local_inferencer_config", "vertex_ai_graph_store_inferencer_config", "custom_inferencer_config"] | None: ...
 
 global___InferencerResourceConfig = InferencerResourceConfig
 

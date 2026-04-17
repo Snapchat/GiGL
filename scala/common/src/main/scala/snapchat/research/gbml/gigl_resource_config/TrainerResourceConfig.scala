@@ -32,6 +32,10 @@ final case class TrainerResourceConfig(
         val __value = trainerConfig.vertexAiGraphStoreTrainerConfig.get
         __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
       };
+      if (trainerConfig.customTrainerConfig.isDefined) {
+        val __value = trainerConfig.customTrainerConfig.get
+        __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
+      };
       __size += unknownFields.serializedSize
       __size
     }
@@ -69,6 +73,12 @@ final case class TrainerResourceConfig(
         _output__.writeUInt32NoTag(__m.serializedSize)
         __m.writeTo(_output__)
       };
+      trainerConfig.customTrainerConfig.foreach { __v =>
+        val __m = __v
+        _output__.writeTag(5, 2)
+        _output__.writeUInt32NoTag(__m.serializedSize)
+        __m.writeTo(_output__)
+      };
       unknownFields.writeTo(_output__)
     }
     def getVertexAiTrainerConfig: snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig = trainerConfig.vertexAiTrainerConfig.getOrElse(snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig.defaultInstance)
@@ -79,6 +89,8 @@ final case class TrainerResourceConfig(
     def withLocalTrainerConfig(__v: snapchat.research.gbml.gigl_resource_config.LocalResourceConfig): TrainerResourceConfig = copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.LocalTrainerConfig(__v))
     def getVertexAiGraphStoreTrainerConfig: snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig = trainerConfig.vertexAiGraphStoreTrainerConfig.getOrElse(snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig.defaultInstance)
     def withVertexAiGraphStoreTrainerConfig(__v: snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig): TrainerResourceConfig = copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.VertexAiGraphStoreTrainerConfig(__v))
+    def getCustomTrainerConfig: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig = trainerConfig.customTrainerConfig.getOrElse(snapchat.research.gbml.gigl_resource_config.CustomResourceConfig.defaultInstance)
+    def withCustomTrainerConfig(__v: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig): TrainerResourceConfig = copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.CustomTrainerConfig(__v))
     def clearTrainerConfig: TrainerResourceConfig = copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.Empty)
     def withTrainerConfig(__v: snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig): TrainerResourceConfig = copy(trainerConfig = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
@@ -89,6 +101,7 @@ final case class TrainerResourceConfig(
         case 2 => trainerConfig.kfpTrainerConfig.orNull
         case 3 => trainerConfig.localTrainerConfig.orNull
         case 4 => trainerConfig.vertexAiGraphStoreTrainerConfig.orNull
+        case 5 => trainerConfig.customTrainerConfig.orNull
       }
     }
     def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -98,6 +111,7 @@ final case class TrainerResourceConfig(
         case 2 => trainerConfig.kfpTrainerConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
         case 3 => trainerConfig.localTrainerConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
         case 4 => trainerConfig.vertexAiGraphStoreTrainerConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
+        case 5 => trainerConfig.customTrainerConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
       }
     }
     def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -123,6 +137,8 @@ object TrainerResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.
           __trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.LocalTrainerConfig(__trainerConfig.localTrainerConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.LocalResourceConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
         case 34 =>
           __trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.VertexAiGraphStoreTrainerConfig(__trainerConfig.vertexAiGraphStoreTrainerConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+        case 42 =>
+          __trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.CustomTrainerConfig(__trainerConfig.customTrainerConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
         case tag =>
           if (_unknownFields__ == null) {
             _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -143,12 +159,13 @@ object TrainerResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.
             .orElse[snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.KFPResourceConfig]]).map(snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.KfpTrainerConfig(_)))
             .orElse[snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(3).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.LocalResourceConfig]]).map(snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.LocalTrainerConfig(_)))
             .orElse[snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(4).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig]]).map(snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.VertexAiGraphStoreTrainerConfig(_)))
+            .orElse[snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig]]).map(snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.CustomTrainerConfig(_)))
             .getOrElse(snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.Empty)
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
-  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(11)
-  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(11)
+  def javaDescriptor: _root_.com.google.protobuf.Descriptors.Descriptor = GiglResourceConfigProto.javaDescriptor.getMessageTypes().get(12)
+  def scalaDescriptor: _root_.scalapb.descriptors.Descriptor = GiglResourceConfigProto.scalaDescriptor.messages(12)
   def messageCompanionForFieldNumber(__number: _root_.scala.Int): _root_.scalapb.GeneratedMessageCompanion[_] = {
     var __out: _root_.scalapb.GeneratedMessageCompanion[_] = null
     (__number: @_root_.scala.unchecked) match {
@@ -156,6 +173,7 @@ object TrainerResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.
       case 2 => __out = snapchat.research.gbml.gigl_resource_config.KFPResourceConfig
       case 3 => __out = snapchat.research.gbml.gigl_resource_config.LocalResourceConfig
       case 4 => __out = snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig
+      case 5 => __out = snapchat.research.gbml.gigl_resource_config.CustomResourceConfig
     }
     __out
   }
@@ -171,10 +189,12 @@ object TrainerResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.
     def isKfpTrainerConfig: _root_.scala.Boolean = false
     def isLocalTrainerConfig: _root_.scala.Boolean = false
     def isVertexAiGraphStoreTrainerConfig: _root_.scala.Boolean = false
+    def isCustomTrainerConfig: _root_.scala.Boolean = false
     def vertexAiTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = _root_.scala.None
     def kfpTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.KFPResourceConfig] = _root_.scala.None
     def localTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.LocalResourceConfig] = _root_.scala.None
     def vertexAiGraphStoreTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig] = _root_.scala.None
+    def customTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = _root_.scala.None
   }
   object TrainerConfig {
     @SerialVersionUID(0L)
@@ -214,18 +234,27 @@ object TrainerResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.
       override def vertexAiGraphStoreTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig] = Some(value)
       override def number: _root_.scala.Int = 4
     }
+    @SerialVersionUID(0L)
+    final case class CustomTrainerConfig(value: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig) extends snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig {
+      type ValueType = snapchat.research.gbml.gigl_resource_config.CustomResourceConfig
+      override def isCustomTrainerConfig: _root_.scala.Boolean = true
+      override def customTrainerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = Some(value)
+      override def number: _root_.scala.Int = 5
+    }
   }
   implicit class TrainerResourceConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig](_l) {
     def vertexAiTrainerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig] = field(_.getVertexAiTrainerConfig)((c_, f_) => c_.copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.VertexAiTrainerConfig(f_)))
     def kfpTrainerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.KFPResourceConfig] = field(_.getKfpTrainerConfig)((c_, f_) => c_.copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.KfpTrainerConfig(f_)))
     def localTrainerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.LocalResourceConfig] = field(_.getLocalTrainerConfig)((c_, f_) => c_.copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.LocalTrainerConfig(f_)))
     def vertexAiGraphStoreTrainerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig] = field(_.getVertexAiGraphStoreTrainerConfig)((c_, f_) => c_.copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.VertexAiGraphStoreTrainerConfig(f_)))
+    def customTrainerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = field(_.getCustomTrainerConfig)((c_, f_) => c_.copy(trainerConfig = snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig.CustomTrainerConfig(f_)))
     def trainerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig] = field(_.trainerConfig)((c_, f_) => c_.copy(trainerConfig = f_))
   }
   final val VERTEX_AI_TRAINER_CONFIG_FIELD_NUMBER = 1
   final val KFP_TRAINER_CONFIG_FIELD_NUMBER = 2
   final val LOCAL_TRAINER_CONFIG_FIELD_NUMBER = 3
   final val VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG_FIELD_NUMBER = 4
+  final val CUSTOM_TRAINER_CONFIG_FIELD_NUMBER = 5
   def of(
     trainerConfig: snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig.TrainerConfig
   ): _root_.snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig = _root_.snapchat.research.gbml.gigl_resource_config.TrainerResourceConfig(
