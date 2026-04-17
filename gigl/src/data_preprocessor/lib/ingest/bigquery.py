@@ -43,9 +43,6 @@ def _get_bigquery_ptransform(
             ),
         )
 
-
-# Below type ignores are due to star expansion issues with the type checker.
-# See: https://github.com/python/mypy/issues/6799 (general Python typing limitation)
 @dataclass(frozen=True)
 class BigqueryNodeDataReference(NodeDataReference):
     """

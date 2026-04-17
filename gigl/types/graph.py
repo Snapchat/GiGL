@@ -390,10 +390,7 @@ _GraphEntity = TypeVar(
     list,
     str,
     int,
-    # TODO(kmonte): Add GLT Partition book here
-    # We cannot at the moment as we type-ignore GLT
-    # And adding it as a type here will break the type checker.
-    # PartitionBook
+    PartitionBook,
 )
 
 
