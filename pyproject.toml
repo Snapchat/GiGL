@@ -107,6 +107,8 @@ dev = [
   {include-group = "test"},
   {include-group = "typing-stubs"},
   "pre-commit==3.3.2",
+  "scikit-build-core>=0.10",
+  "pybind11>=2.12",
 ]
 docs = [
   "astroid==3.3.11", # Newer versions of astroid are not compatible with sphinx==7.4.7
@@ -227,14 +229,25 @@ torch_spline_conv = [
 
 
 # ===================== Build/Project Configurations ===========================
+# gigl releases two wheels (pyg27-torch28-cpu and pyg27-torch28-cu128), one
+# built against CPU torch headers and one against CUDA torch headers. See
+# release.yml for the build matrix. CMakeLists.txt auto-discovers python_*.cu
+# files alongside python_*.cpp, so CUDA kernels can be added without changes
+# to the build configuration.
 [build-system]
-requires      = ["setuptools>=61.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = [
+    "scikit-build-core>=0.10",
+    "pybind11>=2.12",
+    "torch==2.8",  # needed for torch headers at C++ compile time
+]
+build-backend = "scikit_build_core.build"
 
-
-[tool.setuptools.packages.find]
-where = ["."]  # list of folders that contain the packages
-include = ["gigl*", "snapchat*"]  # Include only packages that match the specified patterns
+[tool.scikit-build]
+cmake.version    = ">=3.18"
+build-dir        = ".cache/cmake_build"
+wheel.packages   = ["gigl", "snapchat"]
+editable.mode    = "redirect"  # on import, checks if .cpp sources changed and rebuilds
+editable.rebuild = true
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"

@@ -9,6 +9,7 @@ WORKDIR /gigl
 # See https://beam.apache.org/documentation/sdks/python-pipxeline-dependencies/#create-reproducible-environments.
 WORKDIR /gigl
 
+COPY CMakeLists.txt CMakeLists.txt
 COPY MANIFEST.in MANIFEST.in
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
@@ -21,4 +22,3 @@ COPY tests tests
 COPY examples examples
 
 RUN uv pip install -e .
-RUN uv run python -m scripts.build_cpp_extensions build_ext --inplace

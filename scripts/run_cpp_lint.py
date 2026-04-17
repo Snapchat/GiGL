@@ -24,7 +24,7 @@ _DIAGNOSTIC_RE = re.compile(r"^E\[[\d:.]+\] (\[.+\] .+)$")
 def _check_file(source: Path) -> tuple[Path, list[str]]:
     result = subprocess.run(
         [
-            "clangd",
+            "clangd-15",
             f"--check={source}",
             f"--compile-commands-dir={_COMPILE_COMMANDS.parent}",
         ],

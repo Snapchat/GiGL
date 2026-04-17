@@ -7,13 +7,11 @@
 # Called by `make install_dev_deps` alongside install_py_deps.sh and
 # install_scala_deps.sh.
 #
-# NOTE: On Linux, this script calls apt-get and update-alternatives, which
-# require root privileges. Run as root or prefix with sudo.
+# NOTE: On Linux, this script calls apt-get, which requires root privileges.
+# Run as root or prefix with sudo.
 
 set -e
 set -x
-
-CLANG_VERSION=15
 
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
@@ -24,10 +22,10 @@ if is_running_on_mac; then
     # macOS ships its own Apple Clang via Xcode Command Line Tools. Homebrew
     # intentionally does not put its llvm binaries on PATH to avoid shadowing
     # Apple's clang. We therefore have to add the Homebrew llvm bin directory
-    # to PATH ourselves so that `clang-format` and `clang-tidy` resolve to the
-    # Homebrew versions rather than being missing entirely.
-    brew install llvm cmake
-    LLVM_BIN="$(brew --prefix llvm)/bin"
+    # to PATH ourselves so that `clang-format-15` and `clang-tidy-15` resolve
+    # to the correct versions rather than being missing entirely.
+    brew install llvm@15 cmake
+    LLVM_BIN="$(brew --prefix llvm@15)/bin"
 
     # Append to any shell rc files that exist and don't already include it.
     for rc_file in ~/.zshrc ~/.bashrc; do
@@ -43,13 +41,10 @@ if is_running_on_mac; then
     export PATH="$LLVM_BIN:$PATH"
 else
     # On Linux, apt-get installs versioned binaries (e.g. clang-format-15) directly
-    # into /usr/bin. update-alternatives wires up the bare names (clang-format,
-    # clang-tidy) so callers don't need to specify the version suffix. No PATH
-    # changes are needed since /usr/bin is already on PATH.
-    apt-get install -y "clang-format-${CLANG_VERSION}" "clang-tidy-${CLANG_VERSION}" "clangd-${CLANG_VERSION}" cmake
-    update-alternatives --install /usr/bin/clang-format clang-format "/usr/bin/clang-format-${CLANG_VERSION}" 100
-    update-alternatives --install /usr/bin/clang-tidy   clang-tidy   "/usr/bin/clang-tidy-${CLANG_VERSION}"   100
-    update-alternatives --install /usr/bin/clangd       clangd       "/usr/bin/clangd-${CLANG_VERSION}"       100
+    # into /usr/bin. No PATH changes are needed since /usr/bin is already on PATH.
+    # Callers use the versioned names (clang-format-15, clang-tidy-15, clangd-15)
+    # directly so the version is explicit and greppable across the codebase.
+    apt-get install -y clang-format-15 clang-tidy-15 clangd-15 cmake
 fi
 
 echo "Finished installing C++ tooling"
