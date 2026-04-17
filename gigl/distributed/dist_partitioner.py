@@ -249,37 +249,37 @@ class DistPartitioner:
             # We check that the input tensor node types match the registered node types.
             if is_subset:
                 node_diff = set(input_entity.keys()) - set(self._node_types)
-                assert (
-                    not node_diff
-                ), f"Found node types {node_diff} not contained in registered node types {self._node_types}"
+                assert not node_diff, (
+                    f"Found node types {node_diff} not contained in registered node types {self._node_types}"
+                )
             else:
-                assert self._node_types == sorted(
-                    input_entity.keys()
-                ), f"Found different node input types {sorted(input_entity.keys())} from registered node types {self._node_types}"
+                assert self._node_types == sorted(input_entity.keys()), (
+                    f"Found different node input types {sorted(input_entity.keys())} from registered node types {self._node_types}"
+                )
         else:
             # We check that the input tensor edge types match the registered edge types.
             if is_subset:
                 edge_diff = set(input_entity.keys()) - set(self._edge_types)
-                assert (
-                    not edge_diff
-                ), f"Found edge types {edge_diff} not contained in registered edge types {self._edge_types}"
+                assert not edge_diff, (
+                    f"Found edge types {edge_diff} not contained in registered edge types {self._edge_types}"
+                )
             else:
-                assert self._edge_types == sorted(
-                    input_entity.keys()
-                ), f"Found different edge input types {sorted(input_entity.keys())} from registered edge types {self._edge_types}"
+                assert self._edge_types == sorted(input_entity.keys()), (
+                    f"Found different edge input types {sorted(input_entity.keys())} from registered edge types {self._edge_types}"
+                )
 
     def _assert_and_get_rpc_setup(self) -> None:
         """
         Asserts RPC and worker context have been initialized. If this is the first time this is called,
         sets the rank, world_size, and partition manager fields of the partitioner class from the distributed context.
         """
-        assert (
-            get_context() is not None
-        ), "Distributed context must be initialized by the user prior to partitioning or registering fields by calling glt.distributed.init_worker_group()"
+        assert get_context() is not None, (
+            "Distributed context must be initialized by the user prior to partitioning or registering fields by calling glt.distributed.init_worker_group()"
+        )
 
-        assert (
-            glt_rpc.rpc_is_initialized()
-        ), "rpc must be initialized by the user prior to partitioning or registering fields to partitioning by calling glt.distributed.init_rpc()"
+        assert glt_rpc.rpc_is_initialized(), (
+            "rpc must be initialized by the user prior to partitioning or registering fields to partitioning by calling glt.distributed.init_rpc()"
+        )
 
         # If rank, world size, and partition_manager are not set, we set them once we know the context and rpc has been initialized.
         if not self._is_rpc_initialized:
@@ -379,9 +379,9 @@ class DistPartitioner:
             input_node_entity=node_ids
         )
 
-        assert (
-            input_node_ids
-        ), "Node ids is an empty dictionary. Please provide node ids to register."
+        assert input_node_ids, (
+            "Node ids is an empty dictionary. Please provide node ids to register."
+        )
 
         self._node_types = sorted(input_node_ids.keys())
 
@@ -405,9 +405,9 @@ class DistPartitioner:
         # num_nodes_on_rank and max_node_id_on_rank are ints.
         # Gathered_node_info is then used to identify the number of nodes and max node id on each rank,
         # allowing us to access the total number of nodes and max node id across all ranks
-        gathered_node_info: dict[
-            str, Tuple[int, dict[NodeType, Tuple[int, int]]]
-        ] = glt_rpc.all_gather((self._rank, node_type_to_num_nodes_and_max_node))
+        gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]] = (
+            glt_rpc.all_gather((self._rank, node_type_to_num_nodes_and_max_node))
+        )
 
         for (
             _,
@@ -449,9 +449,9 @@ class DistPartitioner:
             input_edge_entity=edge_index
         )
 
-        assert (
-            input_edge_index
-        ), "Edge Index is an empty dictionary. Please provide edge indices to register."
+        assert input_edge_index, (
+            "Edge Index is an empty dictionary. Please provide edge indices to register."
+        )
 
         self._edge_types = sorted(input_edge_index.keys())
 
@@ -531,9 +531,9 @@ class DistPartitioner:
             input_node_entity=node_features
         )
 
-        assert (
-            input_node_features
-        ), "Node features is an empty dictionary. Please provide node features to register."
+        assert input_node_features, (
+            "Node features is an empty dictionary. Please provide node features to register."
+        )
 
         self._node_feat = convert_to_tensor(input_node_features, dtype=torch.float32)
         self._node_feat_dim = {}
@@ -576,9 +576,9 @@ class DistPartitioner:
             input_node_entity=node_labels
         )
 
-        assert (
-            input_node_labels
-        ), "Node labels is an empty dictionary. Please provide node labels to register."
+        assert input_node_labels, (
+            "Node labels is an empty dictionary. Please provide node labels to register."
+        )
 
         self._node_labels = convert_to_tensor(input_node_labels, dtype=torch.int64)
 
@@ -614,9 +614,9 @@ class DistPartitioner:
             input_edge_entity=edge_features
         )
 
-        assert (
-            input_edge_features
-        ), "Edge features is an empty dictionary. Please provide edge features to register."
+        assert input_edge_features, (
+            "Edge features is an empty dictionary. Please provide edge features to register."
+        )
 
         self._edge_feat = convert_to_tensor(input_edge_features, dtype=torch.float32)
         self._edge_feat_dim = {}
@@ -659,9 +659,9 @@ class DistPartitioner:
             input_edge_entity=label_edge_index
         )
 
-        assert (
-            input_label_edge_index
-        ), "Label edge index is an empty dictionary. Please provide label edge indices to register."
+        assert input_label_edge_index, (
+            "Label edge index is an empty dictionary. Please provide label edge indices to register."
+        )
 
         if is_positive:
             logger.info("Registering Positive Labels ...")
@@ -689,9 +689,9 @@ class DistPartitioner:
         """
         field = getattr(self, field_name)
         if field is not None:
-            assert isinstance(
-                field, dict
-            ), f"Field {field_name} is not a dict, got {type(field)}"
+            assert isinstance(field, dict), (
+                f"Field {field_name} is not a dict, got {type(field)}"
+            )
             if entity_key in field:
                 del field[entity_key]
                 if len(field) == 0:
@@ -827,9 +827,9 @@ class DistPartitioner:
         PartitionBook: The partition book of graph nodes.
         """
 
-        assert (
-            self._num_nodes is not None
-        ), "Must have registered nodes prior to partitioning them"
+        assert self._num_nodes is not None, (
+            "Must have registered nodes prior to partitioning them"
+        )
 
         start_time = time.time()
 
@@ -858,9 +858,9 @@ class DistPartitioner:
             generate_pb=True,
         )
 
-        assert isinstance(
-            node_partition_book, torch.Tensor
-        ), "Ensure `generate_pb` is set to true prior to calling _partition_by_chunk for node partitioning"
+        assert isinstance(node_partition_book, torch.Tensor), (
+            "Ensure `generate_pb` is set to true prior to calling _partition_by_chunk for node partitioning"
+        )
 
         del local_node_ids
 
@@ -1235,14 +1235,14 @@ class DistPartitioner:
 
         target_node_partition_book = node_partition_book[edge_type.src_node_type]
         if is_positive:
-            assert (
-                self._positive_label_edge_index is not None
-            ), "Must register positive labels prior to partitioning them"
+            assert self._positive_label_edge_index is not None, (
+                "Must register positive labels prior to partitioning them"
+            )
             label_edge_index = self._positive_label_edge_index[edge_type]
         else:
-            assert (
-                self._negative_label_edge_index is not None
-            ), "Must register negative labels prior to partitioning them"
+            assert self._negative_label_edge_index is not None, (
+                "Must register negative labels prior to partitioning them"
+            )
             label_edge_index = self._negative_label_edge_index[edge_type]
 
         def _label_pfn(source_node_ids, _):
@@ -1268,19 +1268,19 @@ class DistPartitioner:
         del label_edge_index
 
         if is_positive:
-            # This assert is added to pass the type checker, in practice we will not see this fail
-            assert (
-                self._positive_label_edge_index is not None
-            ), "Must register positive labels prior to partitioning them"
+            # This assert is added to pass mypy type check, in practice we will not see this fail
+            assert self._positive_label_edge_index is not None, (
+                "Must register positive labels prior to partitioning them"
+            )
 
             del self._positive_label_edge_index[edge_type]
             if len(self._positive_label_edge_index) == 0:
                 self._positive_label_edge_index = None
         else:
-            # This assert is added to pass the type checker, in practice we will not see this fail
-            assert (
-                self._negative_label_edge_index is not None
-            ), "Must register negative labels prior to partitioning them"
+            # This assert is added to pass mypy type check, in practice we will not see this fail
+            assert self._negative_label_edge_index is not None, (
+                "Must register negative labels prior to partitioning them"
+            )
 
             del self._negative_label_edge_index[edge_type]
             if len(self._negative_label_edge_index) == 0:
@@ -1320,9 +1320,9 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
-        assert (
-            self._num_nodes is not None
-        ), "Must have registered nodes prior to partitioning them"
+        assert self._num_nodes is not None, (
+            "Must have registered nodes prior to partitioning them"
+        )
 
         logger.info("Partitioning Nodes ...")
         start_time = time.time()
@@ -1376,9 +1376,9 @@ class DistPartitioner:
             Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of node features.
             Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of node labels.
         """
-        assert (
-            self._num_nodes is not None and self._node_ids is not None
-        ), "Node ids must be registered prior to partitioning."
+        assert self._num_nodes is not None and self._node_ids is not None, (
+            "Node ids must be registered prior to partitioning."
+        )
 
         self._assert_and_get_rpc_setup()
 
@@ -1428,13 +1428,13 @@ class DistPartitioner:
                 node_partition_book=transformed_node_partition_book, node_type=node_type
             )
             if partitioned_node_features_for_node_type is not None:
-                partitioned_node_features[
-                    node_type
-                ] = partitioned_node_features_for_node_type
+                partitioned_node_features[node_type] = (
+                    partitioned_node_features_for_node_type
+                )
             if partitioned_node_labels_for_node_type is not None:
-                partitioned_node_labels[
-                    node_type
-                ] = partitioned_node_labels_for_node_type
+                partitioned_node_labels[node_type] = (
+                    partitioned_node_labels_for_node_type
+                )
 
         elapsed_time = time.time() - start_time
         logger.info(f"Node Feature Partitioning finished, took {elapsed_time:.3f}s")
@@ -1535,9 +1535,9 @@ class DistPartitioner:
             if partitioned_edge_features_per_edge_type is not None:
                 assert edge_partition_book_per_edge_type is not None
                 edge_partition_book[edge_type] = edge_partition_book_per_edge_type
-                partitioned_edge_features[
-                    edge_type
-                ] = partitioned_edge_features_per_edge_type
+                partitioned_edge_features[edge_type] = (
+                    partitioned_edge_features_per_edge_type
+                )
 
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")
@@ -1588,18 +1588,18 @@ class DistPartitioner:
         self._assert_and_get_rpc_setup()
 
         if is_positive:
-            assert (
-                self._positive_label_edge_index is not None
-            ), "Must register positive labels prior to partitioning them"
+            assert self._positive_label_edge_index is not None, (
+                "Must register positive labels prior to partitioning them"
+            )
 
             edge_label_types = sorted(self._positive_label_edge_index.keys())
 
             logger.info("Partitioning Positive Labels ...")
 
         else:
-            assert (
-                self._negative_label_edge_index is not None
-            ), "Must register negative labels partitioning them"
+            assert self._negative_label_edge_index is not None, (
+                "Must register negative labels partitioning them"
+            )
 
             edge_label_types = sorted(self._negative_label_edge_index.keys())
 

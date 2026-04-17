@@ -25,9 +25,9 @@ def write_pb_tfrecord_shards_to_uri(
     """
 
     if raise_exception_if_no_pb_samples:
-        assert len(
-            pb_samples
-        ), f"Found empty list of {sample_type_for_logging} samples to write to TFRecord files."
+        assert len(pb_samples), (
+            f"Found empty list of {sample_type_for_logging} samples to write to TFRecord files."
+        )
 
     def batch(list_of_items: Sequence[T], chunk_size: int) -> Iterable[Sequence[T]]:
         length_of_list = len(list_of_items)

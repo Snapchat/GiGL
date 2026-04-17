@@ -20,18 +20,16 @@ def build_and_write_supervised_node_classification_subgraph_samples_from_mocked_
         mocked_dataset_info=mocked_dataset_info
     )
 
-    samples: list[
-        training_samples_schema_pb2.SupervisedNodeClassificationSample
-    ] = pyg_to_training_samples.build_supervised_node_classification_samples_from_pyg_heterodata(
-        hetero_data=hetero_data,
-        root_node_type=root_node_type,
-        graph_metadata_pb_wrapper=mocked_dataset_info.graph_metadata_pb_wrapper,
+    samples: list[training_samples_schema_pb2.SupervisedNodeClassificationSample] = (
+        pyg_to_training_samples.build_supervised_node_classification_samples_from_pyg_heterodata(
+            hetero_data=hetero_data,
+            root_node_type=root_node_type,
+            graph_metadata_pb_wrapper=mocked_dataset_info.graph_metadata_pb_wrapper,
+        )
     )
 
     # Write out to GbmlConfig-specified paths
-    output_paths = (
-        gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
-    )
+    output_paths = gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
     labeled_sample_tfrecord_uri = UriFactory.create_uri(
         output_paths.labeled_tfrecord_uri_prefix
     )
@@ -80,9 +78,7 @@ def build_and_write_node_anchor_link_prediction_subgraph_samples_from_mocked_dat
     )
 
     # Write out to GbmlConfig-specified paths
-    output_paths = (
-        gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
-    )
+    output_paths = gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
     main_sample_tfrecord_uri_prefix = UriFactory.create_uri(
         output_paths.tfrecord_uri_prefix
     )

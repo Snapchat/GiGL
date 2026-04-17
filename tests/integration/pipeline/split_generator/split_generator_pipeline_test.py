@@ -176,17 +176,15 @@ class SplitGeneratorPipelineTest(TestCase):
         tmp_dir_path = tempfile.mkdtemp()
         tmp_split_generator_dir = LocalUri.join(tmp_dir_path, "split_generator")
 
-        outputPaths = (
-            gbml_config_pb.shared_config.dataset_metadata.supervised_node_classification_dataset
-        )
+        outputPaths = gbml_config_pb.shared_config.dataset_metadata.supervised_node_classification_dataset
         outputPaths.train_data_uri = LocalUri.join(
-            tmp_split_generator_dir, "train/" "samples/"
+            tmp_split_generator_dir, "train/samples/"
         ).uri
         outputPaths.val_data_uri = LocalUri.join(
-            tmp_split_generator_dir, "val/" "samples/"
+            tmp_split_generator_dir, "val/samples/"
         ).uri
         outputPaths.test_data_uri = LocalUri.join(
-            tmp_split_generator_dir, "test/" "samples/"
+            tmp_split_generator_dir, "test/samples/"
         ).uri
         frozen_gbml_config_uri = LocalUri.join(
             tmp_split_generator_dir, "splitgen_supervised_node_classification.yaml"
@@ -225,17 +223,15 @@ class SplitGeneratorPipelineTest(TestCase):
         tmp_dir_path = tempfile.mkdtemp()
         tmp_split_generator_dir = LocalUri.join(tmp_dir_path, "split_generator")
 
-        outputPaths = (
-            gbml_config_pb.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
-        )
+        outputPaths = gbml_config_pb.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
         outputPaths.train_main_data_uri = LocalUri.join(
-            tmp_split_generator_dir, "train/" "main_samples/"
+            tmp_split_generator_dir, "train/main_samples/"
         ).uri
         outputPaths.val_main_data_uri = LocalUri.join(
-            tmp_split_generator_dir, "val/" "main_samples/"
+            tmp_split_generator_dir, "val/main_samples/"
         ).uri
         outputPaths.test_main_data_uri = LocalUri.join(
-            tmp_split_generator_dir, "test/" "main_samples/"
+            tmp_split_generator_dir, "test/main_samples/"
         ).uri
         task_metadata_pb_wrapper = TaskMetadataPbWrapper(
             task_metadata_pb=gbml_config_pb.task_metadata
@@ -248,30 +244,30 @@ class SplitGeneratorPipelineTest(TestCase):
         )
 
         for node_type in random_negative_node_types:
-            outputPaths.train_node_type_to_random_negative_data_uri[
-                node_type
-            ] = LocalUri.join(
-                tmp_split_generator_dir,
-                "train/",
-                "random_negative_samples/",
-                f"{node_type}/",
-            ).uri
-            outputPaths.val_node_type_to_random_negative_data_uri[
-                node_type
-            ] = LocalUri.join(
-                tmp_split_generator_dir,
-                "val/",
-                "random_negative_samples/",
-                f"{node_type}/",
-            ).uri
-            outputPaths.test_node_type_to_random_negative_data_uri[
-                node_type
-            ] = LocalUri.join(
-                tmp_split_generator_dir,
-                "test/",
-                "random_negative_samples/",
-                f"{node_type}/",
-            ).uri
+            outputPaths.train_node_type_to_random_negative_data_uri[node_type] = (
+                LocalUri.join(
+                    tmp_split_generator_dir,
+                    "train/",
+                    "random_negative_samples/",
+                    f"{node_type}/",
+                ).uri
+            )
+            outputPaths.val_node_type_to_random_negative_data_uri[node_type] = (
+                LocalUri.join(
+                    tmp_split_generator_dir,
+                    "val/",
+                    "random_negative_samples/",
+                    f"{node_type}/",
+                ).uri
+            )
+            outputPaths.test_node_type_to_random_negative_data_uri[node_type] = (
+                LocalUri.join(
+                    tmp_split_generator_dir,
+                    "test/",
+                    "random_negative_samples/",
+                    f"{node_type}/",
+                ).uri
+            )
 
         frozen_gbml_config_uri = LocalUri.join(
             tmp_split_generator_dir,
@@ -314,9 +310,7 @@ class SplitGeneratorPipelineTest(TestCase):
         gcs_dir: GcsUri,
         local_dir: LocalUri,
     ):
-        flattened_output_dataset = (
-            gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
-        )
+        flattened_output_dataset = gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
 
         flattened_output_dataset.tfrecord_uri_prefix = (
             flattened_output_dataset.tfrecord_uri_prefix.replace(
@@ -326,9 +320,7 @@ class SplitGeneratorPipelineTest(TestCase):
         for (
             node_type,
             random_negative_tfrecord_uri_prefix,
-        ) in (
-            flattened_output_dataset.node_type_to_random_negative_tfrecord_uri_prefix.items()
-        ):
+        ) in flattened_output_dataset.node_type_to_random_negative_tfrecord_uri_prefix.items():
             flattened_output_dataset.node_type_to_random_negative_tfrecord_uri_prefix[
                 node_type
             ] = random_negative_tfrecord_uri_prefix.replace(gcs_dir.uri, local_dir.uri)
@@ -339,9 +331,7 @@ class SplitGeneratorPipelineTest(TestCase):
         gcs_dir: GcsUri,
         local_dir: LocalUri,
     ):
-        flattened_output_dataset = (
-            gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
-        )
+        flattened_output_dataset = gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
 
         flattened_output_dataset.labeled_tfrecord_uri_prefix = (
             flattened_output_dataset.labeled_tfrecord_uri_prefix.replace(
@@ -418,9 +408,9 @@ class SplitGeneratorPipelineTest(TestCase):
             proto_cls=training_samples_schema_pb2.SupervisedNodeClassificationSample,
         )
 
-        assert (
-            len(train_split_samples) > 0
-        ), "We should have more than 0 training samples"
+        assert len(train_split_samples) > 0, (
+            "We should have more than 0 training samples"
+        )
 
         val_split_samples = self.__read_training_sample_protos_from_tfrecords(
             uri_prefix=UriFactory.create_uri(
@@ -585,9 +575,7 @@ class SplitGeneratorPipelineTest(TestCase):
             == training_samples_schema_pb2.SupervisedNodeClassificationSample
         )
 
-        node_classification_dataset_pb = (
-            gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.supervised_node_classification_dataset
-        )
+        node_classification_dataset_pb = gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.supervised_node_classification_dataset
         (
             train_split,
             val_split,
@@ -744,10 +732,7 @@ class SplitGeneratorPipelineTest(TestCase):
     ):
         # Transductive node anchor based link prediction SplitStrategy constants
         transductive_node_anchor_based_link_prediction_assigner_cls_path = (
-            "splitgenerator."
-            "lib."
-            "assigners."
-            "TransductiveEdgeToLinkSplitHashingAssigner"
+            "splitgenerator.lib.assigners.TransductiveEdgeToLinkSplitHashingAssigner"
         )
         transductive_node_anchor_based_link_prediction_split_strategy_cls_path = (
             "splitgenerator."
@@ -797,7 +782,7 @@ class SplitGeneratorPipelineTest(TestCase):
     ):
         # Transductive Supervised Node Classification SplitStrategy constants
         transductive_supervised_node_classification_assigner_cls_path = (
-            "splitgenerator." "lib." "assigners." "NodeToDatasetSplitHashingAssigner"
+            "splitgenerator.lib.assigners.NodeToDatasetSplitHashingAssigner"
         )
         transductive_supervised_node_classification_split_strategy_cls_path = (
             "splitgenerator."
@@ -849,7 +834,7 @@ class SplitGeneratorPipelineTest(TestCase):
     ):
         # Inductive Supervised Node Classification SplitStrategy constants
         inductive_supervised_node_classification_assigner_cls_path = (
-            "splitgenerator." "lib." "assigners." "NodeToDatasetSplitHashingAssigner"
+            "splitgenerator.lib.assigners.NodeToDatasetSplitHashingAssigner"
         )
         inductive_supervised_node_classification_split_strategy_cls_path = (
             "splitgenerator."

@@ -85,9 +85,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
     Note that this function is only recommended for small graphs.
     """
 
-    node_anchor_based_link_prediction_output = (
-        gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
-    )
+    node_anchor_based_link_prediction_output = gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
 
     node_type_to_rooted_neighborhood_samples: dict[
         NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]
@@ -95,9 +93,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
     for (
         node_type,
         random_negative_tfrecord_uri_prefix,
-    ) in (
-        node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix.items()
-    ):
+    ) in node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix.items():
         node_type_to_rooted_neighborhood_samples[NodeType(node_type)].extend(
             read_training_sample_protos_from_tfrecords(
                 uri_prefix=UriFactory.create_uri(
@@ -106,13 +102,13 @@ def read_output_nablp_samples_from_subgraph_sampler(
                 proto_cls=training_samples_schema_pb2.RootedNodeNeighborhood,
             )
         )
-    samples: list[
-        training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample
-    ] = read_training_sample_protos_from_tfrecords(
-        uri_prefix=UriFactory.create_uri(
-            uri=node_anchor_based_link_prediction_output.tfrecord_uri_prefix
-        ),
-        proto_cls=training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+    samples: list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample] = (
+        read_training_sample_protos_from_tfrecords(
+            uri_prefix=UriFactory.create_uri(
+                uri=node_anchor_based_link_prediction_output.tfrecord_uri_prefix
+            ),
+            proto_cls=training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
+        )
     )
     return (node_type_to_rooted_neighborhood_samples, samples)
 
@@ -129,9 +125,7 @@ def read_output_node_based_task_samples_from_subgraph_sampler(
     Note that this function is only recommended for small graphs.
     """
 
-    node_based_task_output = (
-        gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
-    )
+    node_based_task_output = gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
 
     labeled_rooted_neighborhood_samples = read_training_sample_protos_from_tfrecords(
         uri_prefix=UriFactory.create_uri(
@@ -324,13 +318,13 @@ def bidirectionalize_feasible_adjacency_list_map(
     Note that bidirectionalization logic is only valid for homogeneous graphs.
     """
 
-    assert (
-        not gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
-    ), "Bidirectionalizing adjacency list map is only supported for homogeneous graphs."
+    assert not gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous, (
+        "Bidirectionalizing adjacency list map is only supported for homogeneous graphs."
+    )
 
-    bidirectional_adjacency_list_map: dict[
-        NodePbWrapper, list[EdgePbWrapper]
-    ] = defaultdict(list)
+    bidirectional_adjacency_list_map: dict[NodePbWrapper, list[EdgePbWrapper]] = (
+        defaultdict(list)
+    )
     for _, edge_pbws in src_node_to_edge_map.items():
         for edge_pbw in edge_pbws:
             (
@@ -363,9 +357,9 @@ def bidirectionalize_edge_type_to_edge_to_features_map(
     Note that bidirectionalization logic is only valid for homogeneous graphs.
     """
 
-    assert (
-        not gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous
-    ), "Bidirectionalizing edge type to edge to features map is only supported for homogeneous graphs."
+    assert not gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous, (
+        "Bidirectionalizing edge type to edge to features map is only supported for homogeneous graphs."
+    )
 
     bidirectional_edge_type_to_edge_to_features_map: dict[
         EdgeType, dict[EdgePbWrapper, list[float]]
@@ -376,9 +370,9 @@ def bidirectionalize_edge_type_to_edge_to_features_map(
             bidirectional_edge_pbw = edge_pbw.flip_edge()
             bidirectional_edge_to_features_map[edge_pbw] = features
             bidirectional_edge_to_features_map[bidirectional_edge_pbw] = features
-        bidirectional_edge_type_to_edge_to_features_map[
-            edge_type
-        ] = bidirectional_edge_to_features_map
+        bidirectional_edge_type_to_edge_to_features_map[edge_type] = (
+            bidirectional_edge_to_features_map
+        )
 
     return bidirectional_edge_type_to_edge_to_features_map
 
@@ -460,14 +454,8 @@ def overwrite_subgraph_sampler_output_paths_to_local(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_type
         == TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
     ):
-        flattened_nablp_output_dataset = (
-            gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
-        )
-        for (
-            node_type
-        ) in (
-            flattened_nablp_output_dataset.node_type_to_random_negative_tfrecord_uri_prefix
-        ):
+        flattened_nablp_output_dataset = gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
+        for node_type in flattened_nablp_output_dataset.node_type_to_random_negative_tfrecord_uri_prefix:
             flattened_nablp_output_dataset.node_type_to_random_negative_tfrecord_uri_prefix[
                 node_type
             ] = LocalUri.join(
@@ -478,12 +466,10 @@ def overwrite_subgraph_sampler_output_paths_to_local(
             ).uri
 
         # TODO(nshah-sc): This should be revisited when NABLP Output proto supports multiple supervision edge types.
-        supervision_edge_types = (
-            gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
+        supervision_edge_types = gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
+        assert len(supervision_edge_types) == 1, (
+            "Only one supervision edge type is currently supported."
         )
-        assert (
-            len(supervision_edge_types) == 1
-        ), "Only one supervision edge type is currently supported."
         supervision_edge_type = GbmlProtosTranslator.edge_type_from_EdgeTypePb(
             edge_type_pb=supervision_edge_types[0]
         )
@@ -500,18 +486,16 @@ def overwrite_subgraph_sampler_output_paths_to_local(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_type
         == TaskMetadataType.NODE_BASED_TASK
     ):
-        flattened_node_based_task_output_dataset = (
-            gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
-        )
+        flattened_node_based_task_output_dataset = gbml_config_pb_wrapper.gbml_config_pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
 
         # TODO(nshah-sc): This should be revisited when SNC Output proto supports multiple supervision node types.
         supervision_node_types = [
             NodeType(node_type)
             for node_type in gbml_config_pb_wrapper.task_metadata_pb_wrapper.task_metadata_pb.node_based_task_metadata.supervision_node_types
         ]
-        assert (
-            len(supervision_node_types) == 1
-        ), "Only one supervision node type is currently supported."
+        assert len(supervision_node_types) == 1, (
+            "Only one supervision node type is currently supported."
+        )
         supervision_node_type = supervision_node_types[0]
         flattened_node_based_task_output_dataset.labeled_tfrecord_uri_prefix = (
             LocalUri.join(

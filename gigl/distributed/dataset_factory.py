@@ -2,6 +2,7 @@
 DatasetFactory is responsible for building and returning a DistDataset class or subclass. It does this by spawning a
 process which initializes rpc + worker group, loads and builds a partitioned dataset, and shuts down the rpc + worker group.
 """
+
 import time
 from collections.abc import Mapping
 from distutils.util import strtobool
@@ -84,12 +85,12 @@ def _load_and_build_partitioned_dataset(
         DistDataset: Initialized dataset with partitioned graph information
 
     """
-    assert (
-        get_context() is not None
-    ), "Context must be setup prior to calling `load_and_build_partitioned_dataset` through glt.distributed.init_worker_group()"
-    assert (
-        rpc_is_initialized()
-    ), "RPC must be setup prior to calling `load_and_build_partitioned_dataset` through glt.distributed.init_rpc()"
+    assert get_context() is not None, (
+        "Context must be setup prior to calling `load_and_build_partitioned_dataset` through glt.distributed.init_worker_group()"
+    )
+    assert rpc_is_initialized(), (
+        "RPC must be setup prior to calling `load_and_build_partitioned_dataset` through glt.distributed.init_rpc()"
+    )
 
     rank: int = get_context().rank
     world_size: int = get_context().world_size
@@ -117,16 +118,18 @@ def _load_and_build_partitioned_dataset(
         if isinstance(loaded_graph_tensors.edge_index, Mapping):
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
             # we can remove this assert.
-            assert isinstance(
-                splitter, DistNodeAnchorLinkSplitter
-            ), f"Only {DistNodeAnchorLinkSplitter.__name__} supports self-supervised positive label selection, got {type(splitter)}"
+            assert isinstance(splitter, DistNodeAnchorLinkSplitter), (
+                f"Only {DistNodeAnchorLinkSplitter.__name__} supports self-supervised positive label selection, got {type(splitter)}"
+            )
             positive_label_edges = {}
             for supervision_edge_type in splitter._supervision_edge_types:
-                positive_label_edges[
-                    supervision_edge_type
-                ] = select_ssl_positive_label_edges(
-                    edge_index=loaded_graph_tensors.edge_index[supervision_edge_type],
-                    positive_label_percentage=_ssl_positive_label_percentage,
+                positive_label_edges[supervision_edge_type] = (
+                    select_ssl_positive_label_edges(
+                        edge_index=loaded_graph_tensors.edge_index[
+                            supervision_edge_type
+                        ],
+                        positive_label_percentage=_ssl_positive_label_percentage,
+                    )
                 )
         elif isinstance(loaded_graph_tensors.edge_index, torch.Tensor):
             positive_label_edges = select_ssl_positive_label_edges(
@@ -271,9 +274,9 @@ def _build_dataset_process(
         group_name=get_process_group_name(process_number_on_current_machine),
     )
 
-    assert (
-        len(master_dataset_building_ports) == 2
-    ), f"Expected master_dataset_building_ports to be a tuple of two ports, got {master_dataset_building_ports}"
+    assert len(master_dataset_building_ports) == 2, (
+        f"Expected master_dataset_building_ports to be a tuple of two ports, got {master_dataset_building_ports}"
+    )
     rpc_port = master_dataset_building_ports[0]
     splitter_port = master_dataset_building_ports[1]
 
@@ -375,9 +378,9 @@ def build_dataset(
             "passing `distributed_context` argument."
         )
 
-    assert (
-        sample_edge_direction == "in" or sample_edge_direction == "out"
-    ), f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
+    assert sample_edge_direction == "in" or sample_edge_direction == "out", (
+        f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
+    )
 
     if splitter is not None:
         logger.info(f"Received splitter {type(splitter)}.")
@@ -411,7 +414,9 @@ def build_dataset(
         node_world_size = torch.distributed.get_world_size()
         node_rank = torch.distributed.get_rank()
         master_ip_address = get_internal_ip_from_master_node()
-        master_dataset_building_ports = tuple(get_free_ports_from_master_node(num_ports=2))  # type: ignore[assignment]
+        master_dataset_building_ports = tuple(
+            get_free_ports_from_master_node(num_ports=2)
+        )  # type: ignore[assignment]
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
@@ -463,7 +468,7 @@ def build_dataset(
     output_dataset: DistDataset = output_dict["dataset"]
 
     logger.info(
-        f"Dataset Building finished on rank {node_rank} of {node_world_size}, which took {time.time()-dataset_building_start_time:.2f} seconds"
+        f"Dataset Building finished on rank {node_rank} of {node_world_size}, which took {time.time() - dataset_building_start_time:.2f} seconds"
     )
 
     return output_dataset
@@ -575,7 +580,9 @@ def build_dataset_from_task_config_uri(
     assert sample_edge_direction in (
         "in",
         "out",
-    ), f"Provided edge direction from args must be one of `in` or `out`, got {sample_edge_direction}"
+    ), (
+        f"Provided edge direction from args must be one of `in` or `out`, got {sample_edge_direction}"
+    )
 
     should_use_range_partitioning = bool(
         strtobool(args.get("should_use_range_partitioning", "True"))

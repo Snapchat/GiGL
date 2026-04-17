@@ -219,9 +219,9 @@ class DistNeighborLoader(BaseDistLoader):
 
         # Mode-specific setup
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
-            assert isinstance(
-                dataset, DistDataset
-            ), "When using colocated mode, dataset must be a DistDataset."
+            assert isinstance(dataset, DistDataset), (
+                "When using colocated mode, dataset must be a DistDataset."
+            )
             input_data, worker_options, dataset_schema = self._setup_for_colocated(
                 input_nodes=input_nodes,
                 dataset=dataset,
@@ -237,9 +237,9 @@ class DistNeighborLoader(BaseDistLoader):
                 num_cpu_threads=num_cpu_threads,
             )
         else:
-            assert isinstance(
-                dataset, RemoteDistDataset
-            ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
+            assert isinstance(dataset, RemoteDistDataset), (
+                "When using Graph Store mode, dataset must be a RemoteDistDataset."
+            )
             if prefetch_size is None:
                 logger.info(f"prefetch_size is not provided, using default of 4")
                 prefetch_size = 4
@@ -276,14 +276,14 @@ class DistNeighborLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            producer: Union[
-                DistSamplingProducer, Callable[..., int]
-            ] = BaseDistLoader.create_mp_producer(
-                dataset=dataset,
-                sampler_input=input_data,
-                sampling_config=sampling_config,
-                worker_options=worker_options,
-                sampler_options=sampler_options,
+            producer: Union[DistSamplingProducer, Callable[..., int]] = (
+                BaseDistLoader.create_mp_producer(
+                    dataset=dataset,
+                    sampler_input=input_data,
+                    sampling_config=sampling_config,
+                    worker_options=worker_options,
+                    sampler_options=sampler_options,
+                )
             )
         else:
             producer = GiglDistServer.create_sampling_producer
@@ -481,9 +481,9 @@ class DistNeighborLoader(BaseDistLoader):
                 node_type = None
         else:
             node_type, node_ids = input_nodes
-            assert isinstance(
-                dataset.node_ids, abc.Mapping
-            ), "Dataset must be heterogeneous if provided input nodes are a tuple."
+            assert isinstance(dataset.node_ids, abc.Mapping), (
+                "Dataset must be heterogeneous if provided input nodes are a tuple."
+            )
 
         curr_process_nodes = shard_nodes_by_process(
             input_nodes=node_ids,

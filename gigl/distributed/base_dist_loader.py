@@ -139,12 +139,12 @@ class BaseDistLoader(DistLoader):
         should_cleanup_distributed_context: bool = False
 
         if context:
-            assert (
-                local_process_world_size is not None
-            ), "context: DistributedContext provided, so local_process_world_size must be provided."
-            assert (
-                local_process_rank is not None
-            ), "context: DistributedContext provided, so local_process_rank must be provided."
+            assert local_process_world_size is not None, (
+                "context: DistributedContext provided, so local_process_world_size must be provided."
+            )
+            assert local_process_rank is not None, (
+                "context: DistributedContext provided, so local_process_rank must be provided."
+            )
 
             master_ip_address = context.main_worker_ip_address
             node_world_size = context.global_world_size
@@ -723,8 +723,7 @@ class BaseDistLoader(DistLoader):
             )
         if not ctx.is_client():
             raise RuntimeError(
-                f"'{self.__class__.__name__}': must be used on a client "
-                f"worker process."
+                f"'{self.__class__.__name__}': must be used on a client worker process."
             )
 
         # Move input to CPU before sending to server

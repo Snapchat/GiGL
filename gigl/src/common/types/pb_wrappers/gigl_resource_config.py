@@ -66,9 +66,7 @@ class GiglResourceConfigWrapper:
         ]
     ] = None
 
-    _split_gen_config: Union[
-        SparkResourceConfig, DataflowResourceConfig
-    ] = None  # type: ignore
+    _split_gen_config: Union[SparkResourceConfig, DataflowResourceConfig] = None  # type: ignore
 
     @property
     def shared_resource_config(self) -> SharedResourceConfig:
@@ -216,9 +214,7 @@ class GiglResourceConfigWrapper:
         """
         Returns the BigQuery dataset name for the temporary assets specified in the resource config.
         """
-        return (
-            self.shared_resource_config.common_compute_config.temp_assets_bq_dataset_name
-        )
+        return self.shared_resource_config.common_compute_config.temp_assets_bq_dataset_name
 
     @property
     def embedding_bq_dataset_name(self) -> str:
@@ -310,7 +306,10 @@ class GiglResourceConfigWrapper:
                     LocalResourceConfig,
                     VertexAiGraphStoreConfig,
                 ]
-                if deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_TRAINER_CONFIG:  # type: ignore[arg-type]
+                if (
+                    deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _VERTEX_AI_TRAINER_CONFIG
+                ):
                     logger.info(
                         f"Casting VertexAiTrainerConfig: ({deprecated_config.vertex_ai_trainer_config}) to VertexAiResourceConfig"
                     )
@@ -320,7 +319,10 @@ class GiglResourceConfigWrapper:
                         gpu_limit=deprecated_config.vertex_ai_trainer_config.gpu_limit,
                         num_replicas=deprecated_config.vertex_ai_trainer_config.num_replicas,
                     )
-                elif deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD) == _KFP_TRAINER_CONFIG:  # type: ignore[arg-type]
+                elif (
+                    deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _KFP_TRAINER_CONFIG
+                ):
                     logger.info(
                         f"Casting KFPTrainerConfig: ({deprecated_config.kfp_trainer_config}) to KFPResourceConfig"
                     )
@@ -331,7 +333,10 @@ class GiglResourceConfigWrapper:
                         gpu_limit=deprecated_config.kfp_trainer_config.gpu_limit,
                         num_replicas=deprecated_config.kfp_trainer_config.num_replicas,
                     )
-                elif deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD) == _LOCAL_TRAINER_CONFIG:  # type: ignore[arg-type]
+                elif (
+                    deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _LOCAL_TRAINER_CONFIG
+                ):
                     logger.info(
                         f"Casting LocalTrainerConfig: ({deprecated_config.local_trainer_config}) to LocalResourceConfig"
                     )
@@ -346,13 +351,19 @@ class GiglResourceConfigWrapper:
                 config: TrainerResourceConfig = (
                     self.resource_config.trainer_resource_config
                 )
-                if config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_TRAINER_CONFIG:  # type: ignore[arg-type]
+                if (
+                    config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _VERTEX_AI_TRAINER_CONFIG
+                ):
                     _trainer_config = config.vertex_ai_trainer_config
                 elif config.WhichOneof(_TRAINER_CONFIG_FIELD) == _KFP_TRAINER_CONFIG:  # type: ignore[arg-type]
                     _trainer_config = config.kfp_trainer_config
                 elif config.WhichOneof(_TRAINER_CONFIG_FIELD) == _LOCAL_TRAINER_CONFIG:  # type: ignore[arg-type]
                     _trainer_config = config.local_trainer_config
-                elif config.WhichOneof(_TRAINER_CONFIG_FIELD) == _VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG:  # type: ignore[arg-type]
+                elif (
+                    config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG
+                ):
                     _trainer_config = config.vertex_ai_graph_store_trainer_config
                 else:
                     raise ValueError(f"Invalid trainer_config type: {config}")
@@ -388,13 +399,25 @@ class GiglResourceConfigWrapper:
                 self._inference_config = self.resource_config.inferencer_config
             elif self.resource_config.HasField("inferencer_resource_config"):
                 config = self.resource_config.inferencer_resource_config
-                if config.WhichOneof(_INFERENCER_CONFIG_FIELD) == _DATAFLOW_INFERENCER_CONFIG:  # type: ignore[arg-type]
+                if (
+                    config.WhichOneof(_INFERENCER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _DATAFLOW_INFERENCER_CONFIG
+                ):
                     self._inference_config = config.dataflow_inferencer_config
-                elif config.WhichOneof(_INFERENCER_CONFIG_FIELD) == _LOCAL_INFERENCER_CONFIG:  # type: ignore[arg-type]
+                elif (
+                    config.WhichOneof(_INFERENCER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _LOCAL_INFERENCER_CONFIG
+                ):
                     self._inference_config = config.local_inferencer_config
-                elif config.WhichOneof(_INFERENCER_CONFIG_FIELD) == _VERTEX_AI_INFERENCER_CONFIG:  # type: ignore[arg-type]
+                elif (
+                    config.WhichOneof(_INFERENCER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _VERTEX_AI_INFERENCER_CONFIG
+                ):
                     self._inference_config = config.vertex_ai_inferencer_config
-                elif config.WhichOneof(_INFERENCER_CONFIG_FIELD) == _VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG:  # type: ignore[arg-type]
+                elif (
+                    config.WhichOneof(_INFERENCER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG
+                ):
                     self._inference_config = (
                         config.vertex_ai_graph_store_inferencer_config
                     )

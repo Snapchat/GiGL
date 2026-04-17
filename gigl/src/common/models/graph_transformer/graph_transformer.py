@@ -137,7 +137,7 @@ class FeedForwardNetwork(nn.Module):
                 set(_ACTIVATION_FNS.keys()) | set(_XGLU_BASE_ACTIVATIONS.keys())
             )
             raise ValueError(
-                f"Unsupported activation '{activation}'. " f"Supported: {supported}"
+                f"Unsupported activation '{activation}'. Supported: {supported}"
             )
 
         self._is_xglu = self._activation_name in _XGLU_BASE_ACTIVATIONS
@@ -256,8 +256,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         super().__init__()
         if model_dim % num_heads != 0:
             raise ValueError(
-                f"model_dim ({model_dim}) must be divisible by "
-                f"num_heads ({num_heads})"
+                f"model_dim ({model_dim}) must be divisible by num_heads ({num_heads})"
             )
 
         self._num_heads = num_heads

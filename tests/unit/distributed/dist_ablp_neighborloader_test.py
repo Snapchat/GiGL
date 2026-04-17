@@ -104,9 +104,9 @@ def _assert_labels(
     - The values in `y` do not match the values in `expected`
     """
     supplied_global_nodes = anchor_nodes[list(y.keys())]
-    assert set(supplied_global_nodes.tolist()) == set(
-        expected.keys()
-    ), f"Expected keys {expected.keys()} != {supplied_global_nodes.tolist()}"
+    assert set(supplied_global_nodes.tolist()) == set(expected.keys()), (
+        f"Expected keys {expected.keys()} != {supplied_global_nodes.tolist()}"
+    )
     for local_anchor in y:
         global_id = int(anchor_nodes[local_anchor].item())
         global_nodes = supervision_nodes[y[local_anchor]]
@@ -200,9 +200,9 @@ def _run_dblp_supervised(
     dataset: DistDataset,
     supervision_edge_types: list[EdgeType],
 ):
-    assert (
-        len(supervision_edge_types) == 1
-    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    assert len(supervision_edge_types) == 1, (
+        "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    )
     supervision_edge_type = supervision_edge_types[0]
     anchor_node_type = supervision_edge_type.src_node_type
     supervision_node_type = supervision_edge_type.dst_node_type
@@ -243,9 +243,9 @@ def _run_toy_heterogeneous_ablp(
 ):
     anchor_node_type = NodeType("user")
     supervision_node_type = NodeType("story")
-    assert (
-        len(supervision_edge_types) == 1
-    ), "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    assert len(supervision_edge_types) == 1, (
+        "TODO (mkolodner-sc): Support multiple supervision edge types in dataloading"
+    )
     supervision_edge_type = supervision_edge_types[0]
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
@@ -344,9 +344,9 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
             dim=0,
         )
     assert hasattr(datum, "y_positive")
-    assert set(datum.y_positive.keys()) == set(
-        expected_positive_labels.keys()
-    ), f"{datum.y_positive.keys()} != {expected_positive_labels.keys()}"
+    assert set(datum.y_positive.keys()) == set(expected_positive_labels.keys()), (
+        f"{datum.y_positive.keys()} != {expected_positive_labels.keys()}"
+    )
     anchor_index = 0
     supervision_index = 2
     for edge_type in datum.y_positive.keys():
@@ -373,12 +373,12 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
             for edge_type, edges in expected_edges.items()
         }
     dsts, srcs, *_ = datum.coo()
-    assert set(expected_edges.keys()) == set(
-        dsts.keys()
-    ), f"{expected_edges.keys()} != {dsts.keys()}"
-    assert set(expected_edges.keys()) == set(
-        srcs.keys()
-    ), f"{expected_edges.keys()} != {srcs.keys()}"
+    assert set(expected_edges.keys()) == set(dsts.keys()), (
+        f"{expected_edges.keys()} != {dsts.keys()}"
+    )
+    assert set(expected_edges.keys()) == set(srcs.keys()), (
+        f"{expected_edges.keys()} != {srcs.keys()}"
+    )
     for edge_type in expected_edges.keys():
         assert_tensor_equality(
             datum[edge_type[0]].node[dsts[edge_type]],
@@ -904,19 +904,21 @@ class DistABLPLoaderTest(TestCase):
         )
         dataset = DistDataset(rank=0, world_size=1, edge_dir=edge_dir)
         dataset.build(partition_output=partition_output)
-        mp.spawn(
-            fn=_run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types,
-            args=(
-                (NodeType("a"), torch.tensor([10])),  # input_nodes
-                dataset,  # dataset
-                supervision_edge_types,  # supervision_edge_types
-                expected_node,  # expected_node
-                expected_batch,  # expected_batch
-                expected_edges,  # expected_edges
-                expected_positive_labels,  # expected_positive_labels
-                expected_negative_labels,  # expected_negative_labels
+        (
+            mp.spawn(
+                fn=_run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types,
+                args=(
+                    (NodeType("a"), torch.tensor([10])),  # input_nodes
+                    dataset,  # dataset
+                    supervision_edge_types,  # supervision_edge_types
+                    expected_node,  # expected_node
+                    expected_batch,  # expected_batch
+                    expected_edges,  # expected_edges
+                    expected_positive_labels,  # expected_positive_labels
+                    expected_negative_labels,  # expected_negative_labels
+                ),
             ),
-        ),
+        )
 
     @parameterized.expand(
         [
