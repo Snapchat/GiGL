@@ -4,8 +4,6 @@ from omegaconf import OmegaConf
 
 from gigl.analytics.data_analyzer.config import (
     DataAnalyzerConfig,
-    EdgeTableSpec,
-    NodeTableSpec,
     load_analyzer_config,
 )
 from tests.test_assets.test_case import TestCase
