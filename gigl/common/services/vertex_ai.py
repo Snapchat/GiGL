@@ -92,8 +92,9 @@ DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 class VertexAiJobConfig:
     """Configuration for a Vertex AI CustomJob worker pool.
 
-    ``reservation_affinity`` maps to ``MachineSpec.reservation_affinity``;
-    leave it ``None`` for the Vertex AI default.
+    Each field maps to a property on the ``WorkerPoolSpec`` /
+    ``MachineSpec`` / ``DiskSpec`` / ``ContainerSpec`` protos that Vertex AI
+    uses to describe a CustomJob.
 
     Example:
         >>> from google.cloud.aiplatform_v1.types import ReservationAffinity
@@ -105,6 +106,35 @@ class VertexAiJobConfig:
 
     See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
     for reservation prerequisites.
+
+    Args:
+        job_name: Display name and base ID used for the Vertex AI CustomJob.
+        container_uri: Docker image URI containing the job binary.
+        command: Entrypoint command executed inside the container.
+        args: Optional command-line arguments appended after ``command``.
+        environment_variables: Optional env vars injected into each worker
+            replica.
+        machine_type: Compute Engine machine type (e.g. ``n1-standard-4``).
+        accelerator_type: Accelerator type string (e.g.
+            ``NVIDIA_TESLA_A100``). ``ACCELERATOR_TYPE_UNSPECIFIED`` — the
+            default — means CPU-only.
+        accelerator_count: Number of accelerators per replica. Set to 0 for
+            CPU-only jobs.
+        replica_count: Number of worker replicas in the pool.
+        boot_disk_type: Boot disk type for each replica (e.g. ``pd-ssd``).
+        boot_disk_size_gb: Boot disk size in GB for each replica.
+        labels: Optional key/value labels attached to the job (e.g. for
+            billing / cost attribution).
+        timeout_s: Optional job timeout in seconds. Falls back to
+            ``DEFAULT_CUSTOM_JOB_TIMEOUT_S`` when ``None``.
+        enable_web_access: Enables interactive shell access to workers via
+            the Vertex AI web console.
+        scheduling_strategy: Optional
+            ``aiplatform.gapic.Scheduling.Strategy`` (e.g. spot,
+            flex-start). ``None`` uses the Vertex AI default.
+        reservation_affinity: Optional ``ReservationAffinity`` that maps to
+            ``MachineSpec.reservation_affinity``. ``None`` uses the Vertex
+            AI default (no reservation).
     """
 
     job_name: str
@@ -116,12 +146,10 @@ class VertexAiJobConfig:
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
     replica_count: int = 1
-    boot_disk_type: str = "pd-ssd"  # Persistent Disk SSD
-    boot_disk_size_gb: int = 100  # Default disk size in GB
+    boot_disk_type: str = "pd-ssd"
+    boot_disk_size_gb: int = 100
     labels: Optional[dict[str, str]] = None
-    timeout_s: Optional[int] = (
-        None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
-    )
+    timeout_s: Optional[int] = None
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
     reservation_affinity: Optional[ReservationAffinity] = None
