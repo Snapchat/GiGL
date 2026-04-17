@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GiGL Data Analysis Report</title>
+    <style>/* INJECT_STYLES */</style>
+</head>
+<body>
+    <header id="report-header">
+        <h1>GiGL Data Analysis Report</h1>
+        <p class="meta" id="report-meta"></p>
+        <p class="config-summary" id="report-config-summary"></p>
+    </header>
+
+    <section id="overview">
+        <h2>Overview</h2>
+        <div class="card-grid" id="overview-cards"></div>
+    </section>
+
+    <section id="data-quality">
+        <h2>Data Quality</h2>
+        <details open>
+            <summary>NULL rates per column</summary>
+            <div id="null-rates-container"></div>
+        </details>
+        <details open>
+            <summary>Integrity checks</summary>
+            <div id="integrity-container"></div>
+        </details>
+    </section>
+
+    <section id="feature-statistics" hidden>
+        <h2>Feature Statistics</h2>
+        <div id="feature-statistics-container"></div>
+    </section>
+
+    <section id="graph-structure">
+        <h2>Graph Structure</h2>
+        <details open>
+            <summary>Node and edge counts</summary>
+            <div id="counts-container"></div>
+        </details>
+        <details open>
+            <summary>Degree distribution</summary>
+            <div id="degree-container"></div>
+        </details>
+        <details open>
+            <summary>Top-20 hubs</summary>
+            <div id="hubs-container"></div>
+        </details>
+        <div id="super-hub-warning" hidden></div>
+    </section>
+
+    <section id="advanced" hidden>
+        <h2>Advanced Metrics</h2>
+        <div id="advanced-container"></div>
+    </section>
+
+    <footer id="report-footer">
+        <h2>References and Artifacts</h2>
+        <div id="footer-container"></div>
+    </footer>
+
+    <script id="analysis-data" type="application/json">/* INJECT_ANALYSIS_DATA */</script>
+    <script id="profile-data" type="application/json">/* INJECT_PROFILE_DATA */</script>
+    <script>/* INJECT_SCRIPTS */</script>
+</body>
+</html>
