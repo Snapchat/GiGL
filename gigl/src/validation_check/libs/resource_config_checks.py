@@ -1,8 +1,10 @@
-from typing import Union
+from typing import Optional, Union
 
 from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 
+from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
@@ -147,6 +149,13 @@ def check_if_trainer_resource_config_valid(
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
         gigl_resource_config_pb2.CustomResourceConfig,
     ] = wrapper.trainer_config
+    if isinstance(trainer_config, gigl_resource_config_pb2.CustomResourceConfig):
+        logger.info(
+            "Skipping trainer machine-shape validation: trainer_config is a "
+            "CustomResourceConfig (launcher-pluggable; no concrete machine "
+            "spec to validate)."
+        )
+        return
     _validate_machine_config(config=trainer_config)
 
 
@@ -160,6 +169,13 @@ def check_if_inferencer_resource_config_valid(
         resource_config=resource_config_pb
     )
     inferencer_config = resource_config_wrapper.inferencer_config
+    if isinstance(inferencer_config, gigl_resource_config_pb2.CustomResourceConfig):
+        logger.info(
+            "Skipping inferencer machine-shape validation: inferencer_config "
+            "is a CustomResourceConfig (launcher-pluggable; no concrete "
+            "machine spec to validate)."
+        )
+        return
     _validate_machine_config(config=inferencer_config)
 
 
@@ -219,7 +235,6 @@ def _validate_machine_config(
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
         gigl_resource_config_pb2.DataflowResourceConfig,
-        gigl_resource_config_pb2.CustomResourceConfig,
     ],
 ) -> None:
     if isinstance(config, gigl_resource_config_pb2.LocalResourceConfig):
@@ -249,11 +264,6 @@ def _validate_machine_config(
         )
         _validate_accelerator_type(proto_config=config.compute_pool)
         _validate_cloud_machine_config(config=config.compute_pool)
-    elif isinstance(config, gigl_resource_config_pb2.CustomResourceConfig):
-        # CustomResourceConfig is validated by the launcher itself; semantic
-        # validation (e.g. import-resolvability, dry-run) is out of scope for
-        # this function.
-        assert_proto_field_value_is_truthy(proto=config, field_name="launcher_fn")
     else:
         raise ValueError(
             f"""Expected distributed config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},
@@ -262,6 +272,99 @@ def _validate_machine_config(
             or {gigl_resource_config_pb2.VertexAiGraphStoreConfig.__name__}.
             Got {type(config)}"""
         )
+
+
+def check_if_custom_resource_config_dry_run_valid(
+    resource_config_pb: gigl_resource_config_pb2.GiglResourceConfig,
+    task_config_uri: Uri,
+    resource_config_uri: Uri,
+    applied_task_identifier: str,
+    cpu_docker_uri: Optional[str],
+    cuda_docker_uri: Optional[str],
+    component: GiGLComponents,
+) -> None:
+    """Invoke the custom launcher with ``is_dry_run=True`` for early validation.
+
+    Resolves the component's resource config through the wrapper; if it is not
+    a ``CustomResourceConfig`` this helper is a no-op. Otherwise it dispatches
+    through ``launch_custom(..., is_dry_run=True)`` so the user-supplied
+    launcher can validate its inputs without actually spawning remote jobs.
+
+    The import of ``launch_custom`` is intentionally lazy: the dry-run hook is
+    only reachable when the caller opts in via
+    ``--check_custom_launcher_dry_run``, and keeping the import inside the
+    function ensures ``assert_yaml_configs_parse`` (and other static config
+    validators) do not transitively pull in launcher-side dependencies (which
+    may be cluster-management clients such as a Ray platform SDK).
+
+    Auth note: dry-run submission may call out to managed services that the
+    launcher integrates with; the submitter must have whatever credentials
+    those services require. See the custom launcher's own documentation for
+    specifics.
+
+    Args:
+        resource_config_pb: The resource config to inspect. The trainer or
+            inferencer oneof (depending on ``component``) is pulled out of the
+            wrapper and, if it resolves to ``CustomResourceConfig``, dispatched
+            to the launcher.
+        task_config_uri: URI of the GbmlConfig YAML.
+        resource_config_uri: URI of the GiglResourceConfig YAML.
+        applied_task_identifier: Stable identifier for the job.
+        cpu_docker_uri: Optional CPU Docker image URI forwarded to the launcher.
+        cuda_docker_uri: Optional CUDA Docker image URI forwarded to the launcher.
+        component: Which GiGL component to dry-run. Must be Trainer or
+            Inferencer; other components never carry a ``CustomResourceConfig``.
+
+    Raises:
+        ValueError: If ``component`` is not Trainer or Inferencer.
+    """
+    # Lazy import — assert_yaml_configs_parse must stay import-free of
+    # launcher-side deps (the resolved launcher may pull in a cluster SDK).
+    from gigl.src.common.custom_launcher import launch_custom
+
+    if component not in {GiGLComponents.Trainer, GiGLComponents.Inferencer}:
+        raise ValueError(
+            f"check_if_custom_resource_config_dry_run_valid only supports "
+            f"Trainer and Inferencer components; got {component}."
+        )
+
+    wrapper = GiglResourceConfigWrapper(resource_config=resource_config_pb)
+    component_config: Union[
+        gigl_resource_config_pb2.LocalResourceConfig,
+        gigl_resource_config_pb2.VertexAiResourceConfig,
+        gigl_resource_config_pb2.KFPResourceConfig,
+        gigl_resource_config_pb2.VertexAiGraphStoreConfig,
+        gigl_resource_config_pb2.DataflowResourceConfig,
+        gigl_resource_config_pb2.CustomResourceConfig,
+    ]
+    if component == GiGLComponents.Trainer:
+        component_config = wrapper.trainer_config
+    else:
+        component_config = wrapper.inferencer_config
+
+    if not isinstance(component_config, gigl_resource_config_pb2.CustomResourceConfig):
+        logger.info(
+            f"Skipping custom-launcher dry-run for {component.value}: "
+            f"{type(component_config).__name__} is not a CustomResourceConfig."
+        )
+        return
+
+    logger.info(
+        f"Invoking custom launcher dry-run for {component.value} via "
+        f"{component_config.launcher_fn}."
+    )
+    launch_custom(
+        custom_resource_config=component_config,
+        applied_task_identifier=applied_task_identifier,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        process_command="",
+        process_runtime_args={},
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+        component=component,
+        is_dry_run=True,
+    )
 
 
 def check_if_trainer_graph_store_storage_command_valid(

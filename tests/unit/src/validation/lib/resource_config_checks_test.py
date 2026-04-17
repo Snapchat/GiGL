@@ -1,11 +1,16 @@
+from unittest.mock import patch
+
 from absl.testing import absltest
 
+from gigl.common import Uri
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.validation_check.libs.resource_config_checks import (
     _check_if_dataflow_resource_config_valid,
     _check_if_spark_resource_config_valid,
     _validate_accelerator_type,
     _validate_machine_config,
+    check_if_custom_resource_config_dry_run_valid,
     check_if_inferencer_graph_store_storage_command_valid,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
@@ -16,7 +21,12 @@ from gigl.src.validation_check.libs.resource_config_checks import (
     check_if_trainer_resource_config_valid,
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
+from tests.test_assets import custom_launcher_fixtures
 from tests.test_assets.test_case import TestCase
+
+_FAKE_LAUNCHER_PATH = (
+    "tests.test_assets.custom_launcher_fixtures.fake_launcher_callable"
+)
 
 # Helper functions for creating valid configurations
 
@@ -201,6 +211,32 @@ def _create_valid_local_inferencer_config() -> (
     """Create a valid GiglResourceConfig with local inferencer config."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
     config.inferencer_resource_config.local_inferencer_config.num_workers = 4
+    return config
+
+
+def _create_valid_custom_trainer_config(
+    launcher_fn: str = _FAKE_LAUNCHER_PATH,
+    launcher_args: dict[str, str] | None = None,
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    """Create a GiglResourceConfig with a CustomResourceConfig trainer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    config.trainer_resource_config.custom_trainer_config.launcher_fn = launcher_fn
+    for key, value in (launcher_args or {}).items():
+        config.trainer_resource_config.custom_trainer_config.launcher_args[key] = value
+    return config
+
+
+def _create_valid_custom_inferencer_config(
+    launcher_fn: str = _FAKE_LAUNCHER_PATH,
+    launcher_args: dict[str, str] | None = None,
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    """Create a GiglResourceConfig with a CustomResourceConfig inferencer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    config.inferencer_resource_config.custom_inferencer_config.launcher_fn = launcher_fn
+    for key, value in (launcher_args or {}).items():
+        config.inferencer_resource_config.custom_inferencer_config.launcher_args[
+            key
+        ] = value
     return config
 
 
@@ -789,6 +825,160 @@ class TestInferencerGraphStoreStorageCommand(TestCase):
         gbml_config = _create_gbml_config_without_graph_stores()
         # Should not raise any exception - no graph store means nothing to validate
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
+
+
+class TestCustomResourceConfigBypass(TestCase):
+    """Test suite for CustomResourceConfig caller-level bypass.
+
+    ``CustomResourceConfig`` is launcher-pluggable: it has no concrete machine
+    shape to validate. The callers (``check_if_trainer_resource_config_valid``
+    and ``check_if_inferencer_resource_config_valid``) short-circuit before
+    reaching ``_validate_machine_config``, which keeps that helper's contract
+    ("validate a concrete machine spec") intact.
+    """
+
+    def test_trainer_custom_config_bypasses_machine_validation(self):
+        """CustomResourceConfig trainer bypasses _validate_machine_config entirely."""
+        config = _create_valid_custom_trainer_config(
+            launcher_args={"cluster_size": "4"}
+        )
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_trainer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_not_called()
+
+    def test_inferencer_custom_config_bypasses_machine_validation(self):
+        """CustomResourceConfig inferencer bypasses _validate_machine_config entirely."""
+        config = _create_valid_custom_inferencer_config(
+            launcher_args={"cluster_size": "4"}
+        )
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_inferencer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_not_called()
+
+    def test_vertex_ai_trainer_still_calls_machine_validation(self):
+        """Sanity: non-custom trainer still dispatches to _validate_machine_config."""
+        config = _create_valid_vertex_ai_trainer_config()
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_trainer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_called_once()
+
+    def test_vertex_ai_inferencer_still_calls_machine_validation(self):
+        """Sanity: non-custom inferencer still dispatches to _validate_machine_config."""
+        config = _create_valid_vertex_ai_inferencer_config()
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_inferencer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_called_once()
+
+    def test_empty_launcher_fn_raises_via_dry_run(self):
+        """Empty launcher_fn is caught by launch_custom's guard at dry-run time."""
+        config = _create_valid_custom_trainer_config(launcher_fn="")
+        with self.assertRaises(ValueError):
+            check_if_custom_resource_config_dry_run_valid(
+                resource_config_pb=config,
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                applied_task_identifier="job-empty-fn",
+                cpu_docker_uri=None,
+                cuda_docker_uri=None,
+                component=GiGLComponents.Trainer,
+            )
+
+
+class TestCustomResourceConfigDryRun(TestCase):
+    """Test suite for ``check_if_custom_resource_config_dry_run_valid``."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        custom_launcher_fixtures.FAKE_LAUNCHER_CALLS.clear()
+
+    def test_trainer_dry_run_invokes_launcher_with_flag(self):
+        """Trainer CustomResourceConfig routes to launch_custom with is_dry_run=True."""
+        config = _create_valid_custom_trainer_config(
+            launcher_args={"cluster_size": "4"}
+        )
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-trainer-dry-run",
+            cpu_docker_uri="gcr.io/p/cpu:tag",
+            cuda_docker_uri="gcr.io/p/cuda:tag",
+            component=GiGLComponents.Trainer,
+        )
+        calls = custom_launcher_fixtures.FAKE_LAUNCHER_CALLS
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["is_dry_run"], True)
+        self.assertEqual(calls[0]["component"], GiGLComponents.Trainer)
+        self.assertEqual(calls[0]["launcher_args"], {"cluster_size": "4"})
+
+    def test_inferencer_dry_run_invokes_launcher_with_flag(self):
+        """Inferencer CustomResourceConfig routes to launch_custom with is_dry_run=True."""
+        config = _create_valid_custom_inferencer_config(
+            launcher_args={"cluster_size": "8"}
+        )
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-inferencer-dry-run",
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Inferencer,
+        )
+        calls = custom_launcher_fixtures.FAKE_LAUNCHER_CALLS
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["is_dry_run"], True)
+        self.assertEqual(calls[0]["component"], GiGLComponents.Inferencer)
+
+    def test_non_custom_trainer_is_no_op(self):
+        """Non-custom trainer config is a no-op (doesn't invoke launcher)."""
+        config = _create_valid_vertex_ai_trainer_config()
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-noop",
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Trainer,
+        )
+        self.assertEqual(custom_launcher_fixtures.FAKE_LAUNCHER_CALLS, [])
+
+    def test_non_custom_inferencer_is_no_op(self):
+        """Non-custom inferencer config is a no-op (doesn't invoke launcher)."""
+        config = _create_valid_vertex_ai_inferencer_config()
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-noop",
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Inferencer,
+        )
+        self.assertEqual(custom_launcher_fixtures.FAKE_LAUNCHER_CALLS, [])
+
+    def test_unsupported_component_raises(self):
+        """Only Trainer and Inferencer are supported; other components raise ValueError."""
+        config = _create_valid_custom_trainer_config()
+        with self.assertRaises(ValueError):
+            check_if_custom_resource_config_dry_run_valid(
+                resource_config_pb=config,
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                applied_task_identifier="job-bad-component",
+                cpu_docker_uri=None,
+                cuda_docker_uri=None,
+                component=GiGLComponents.DataPreprocessor,
+            )
 
 
 if __name__ == "__main__":

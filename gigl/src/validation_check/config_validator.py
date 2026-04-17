@@ -16,6 +16,7 @@ from gigl.src.validation_check.libs.frozen_config_path_checks import (
     assert_trained_model_exists,
 )
 from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
+    check_custom_resource_config_requires_glt_backend,
     check_inferencer_graph_store_compatibility,
     check_trainer_graph_store_compatibility,
 )
@@ -23,6 +24,7 @@ from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
 from gigl.src.validation_check.libs.resource_config_checks import (
+    check_if_custom_resource_config_dry_run_valid,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
     check_if_shared_resource_config_valid,
@@ -202,25 +204,31 @@ START_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS = {
     GiGLComponents.ConfigPopulator.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_resource_config_requires_glt_backend,
     ],
     GiGLComponents.DataPreprocessor.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_resource_config_requires_glt_backend,
     ],
     GiGLComponents.SubgraphSampler.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_resource_config_requires_glt_backend,
     ],
     GiGLComponents.SplitGenerator.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_resource_config_requires_glt_backend,
     ],
     GiGLComponents.Trainer.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_resource_config_requires_glt_backend,
     ],
     GiGLComponents.Inferencer.value: [
         check_inferencer_graph_store_compatibility,
+        check_custom_resource_config_requires_glt_backend,
     ],
     # PostProcessor doesn't need graph store compatibility checks
 }
@@ -275,6 +283,9 @@ def kfp_validation_checks(
     start_at: str,
     resource_config_uri: Uri,
     stop_after: Optional[str] = None,
+    check_custom_launcher_dry_run: bool = False,
+    cpu_docker_uri: Optional[str] = None,
+    cuda_docker_uri: Optional[str] = None,
 ) -> None:
     # check if job_name is valid
     check_if_kfp_pipeline_job_name_valid(job_name=job_name)
@@ -347,6 +358,22 @@ def kfp_validation_checks(
         resource_config_wrapper=resource_config_wrapper,
     )
 
+    # Optional: invoke any CustomResourceConfig launchers in dry-run mode so
+    # they can validate their inputs without spawning remote jobs. Default is
+    # False because the dry-run submission may require LCA credentials that
+    # CI does not have; users opt in with --check_custom_launcher_dry_run.
+    if check_custom_launcher_dry_run:
+        for component in (GiGLComponents.Trainer, GiGLComponents.Inferencer):
+            check_if_custom_resource_config_dry_run_valid(
+                resource_config_pb=resource_config_pb,
+                task_config_uri=task_config_uri,
+                resource_config_uri=resource_config_uri,
+                applied_task_identifier=job_name,
+                cpu_docker_uri=cpu_docker_uri,
+                cuda_docker_uri=cuda_docker_uri,
+                component=component,
+            )
+
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
@@ -383,6 +410,29 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--check_custom_launcher_dry_run",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, invoke any CustomResourceConfig-backed trainer/inferencer "
+            "launcher with is_dry_run=True for early validation. Off by "
+            "default because the dry-run call may require LCA credentials "
+            "that CI does not have; authors run this locally with creds."
+        ),
+    )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        default=None,
+        help="Optional CPU Docker image URI forwarded to the custom launcher dry-run.",
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        default=None,
+        help="Optional CUDA Docker image URI forwarded to the custom launcher dry-run.",
+    )
     args = parser.parse_args()
 
     kfp_validation_checks(
@@ -391,4 +441,7 @@ if __name__ == "__main__":
         start_at=args.start_at,
         resource_config_uri=UriFactory.create_uri(args.resource_config_uri),
         stop_after=args.stop_after,
+        check_custom_launcher_dry_run=args.check_custom_launcher_dry_run,
+        cpu_docker_uri=args.cpu_docker_uri,
+        cuda_docker_uri=args.cuda_docker_uri,
     )

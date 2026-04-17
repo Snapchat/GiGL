@@ -5,11 +5,16 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
+    check_custom_resource_config_requires_glt_backend,
     check_inferencer_graph_store_compatibility,
     check_trainer_graph_store_compatibility,
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
+
+_FAKE_LAUNCHER_PATH = (
+    "tests.test_assets.custom_launcher_fixtures.fake_launcher_callable"
+)
 
 # Helper functions for creating VertexAiGraphStoreConfig
 
@@ -212,6 +217,102 @@ class TestInferencerGraphStoreCompatibility(TestCase):
                 gbml_config_pb_wrapper=gbml_config,
                 resource_config_wrapper=resource_config,
             )
+
+
+# Helper functions for custom + glt-backend compatibility tests
+
+
+def _create_gbml_config_with_glt_flag(value: str) -> GbmlConfigPbWrapper:
+    """Create a GbmlConfig whose feature_flags.should_run_glt_backend is set.
+
+    Note the raw YAML key is ``should_run_glt_backend`` (not
+    ``should_use_glt_backend``). The wrapper's ``should_use_glt_backend``
+    property reads this key from the ``feature_flags`` map and converts it to
+    a bool.
+    """
+    gbml_config = gbml_config_pb2.GbmlConfig()
+    gbml_config.feature_flags["should_run_glt_backend"] = value
+    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
+
+
+def _create_resource_config_with_custom_trainer() -> GiglResourceConfigWrapper:
+    """Create a GiglResourceConfig whose trainer is a CustomResourceConfig."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    _create_shared_resource_config(config)
+    config.trainer_resource_config.custom_trainer_config.launcher_fn = (
+        _FAKE_LAUNCHER_PATH
+    )
+    # Inferencer uses a built-in config so only the trainer path is custom.
+    config.inferencer_resource_config.vertex_ai_inferencer_config.CopyFrom(
+        _create_vertex_ai_resource_config()
+    )
+    return GiglResourceConfigWrapper(resource_config=config)
+
+
+def _create_resource_config_with_custom_inferencer() -> GiglResourceConfigWrapper:
+    """Create a GiglResourceConfig whose inferencer is a CustomResourceConfig."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    _create_shared_resource_config(config)
+    config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
+        _create_vertex_ai_resource_config()
+    )
+    config.inferencer_resource_config.custom_inferencer_config.launcher_fn = (
+        _FAKE_LAUNCHER_PATH
+    )
+    return GiglResourceConfigWrapper(resource_config=config)
+
+
+class TestCustomResourceConfigRequiresGltBackend(TestCase):
+    """Test suite for the CustomResourceConfig + GLT-backend compatibility guard.
+
+    Because v1 trainer/inferencer dispatchers don't consult the custom oneof,
+    pairing a ``CustomResourceConfig`` with
+    ``feature_flags.should_run_glt_backend = "False"`` must be caught at
+    validation time rather than at runtime.
+    """
+
+    def test_custom_trainer_without_glt_raises(self):
+        """CustomResourceConfig trainer + glt=False raises a clear ValueError."""
+        gbml_config = _create_gbml_config_with_glt_flag("False")
+        resource_config = _create_resource_config_with_custom_trainer()
+        with self.assertRaises(ValueError) as ctx:
+            check_custom_resource_config_requires_glt_backend(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("should_run_glt_backend", str(ctx.exception))
+        self.assertIn("custom_trainer_config", str(ctx.exception))
+
+    def test_custom_inferencer_without_glt_raises(self):
+        """CustomResourceConfig inferencer + glt=False raises a clear ValueError."""
+        gbml_config = _create_gbml_config_with_glt_flag("False")
+        resource_config = _create_resource_config_with_custom_inferencer()
+        with self.assertRaises(ValueError) as ctx:
+            check_custom_resource_config_requires_glt_backend(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("custom_inferencer_config", str(ctx.exception))
+
+    def test_custom_trainer_with_glt_passes(self):
+        """CustomResourceConfig trainer + glt=True passes validation."""
+        gbml_config = _create_gbml_config_with_glt_flag("True")
+        resource_config = _create_resource_config_with_custom_trainer()
+        # Should not raise any exception
+        check_custom_resource_config_requires_glt_backend(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
+
+    def test_no_custom_config_passes_without_glt(self):
+        """No CustomResourceConfig at all passes regardless of glt flag."""
+        gbml_config = _create_gbml_config_with_glt_flag("False")
+        resource_config = _create_resource_config_without_graph_stores()
+        # Should not raise any exception: no custom oneof means nothing to enforce.
+        check_custom_resource_config_requires_glt_backend(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
 
 
 if __name__ == "__main__":
