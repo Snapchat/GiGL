@@ -22,7 +22,7 @@ import subprocess
 from pathlib import Path
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
-_CMAKE_BUILD_DIR: Path = _REPO_ROOT / ".cache" / "cmake_build"
+_CMAKE_BUILD_DIR: Path = _REPO_ROOT / ".cache" / "cmake_build_lint"
 _COMPILE_COMMANDS: Path = _REPO_ROOT / ".cache" / "compile_commands.json"
 
 
