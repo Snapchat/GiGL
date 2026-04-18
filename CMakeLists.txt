@@ -33,6 +33,17 @@ endif()
 
 find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
+# torch_python provides the pybind11 type casters for at::Tensor. It is not
+# included in TORCH_LIBRARIES but is required for extensions that pass tensors
+# across the Python/C++ boundary.
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c
+        "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
+    OUTPUT_VARIABLE TORCH_LIB_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED)
+
 set(GIGL_COMPILE_FLAGS -O3 -Wall -Wextra -Wno-unused-parameter)
 
 # ---------------------------------------------------------------------------
@@ -63,7 +74,10 @@ foreach(_py_src IN LISTS _PYTHON_SRCS)
     file(RELATIVE_PATH _rel_dir "${CMAKE_SOURCE_DIR}" "${_dir}")
 
     pybind11_add_module("${_name}" ${_sources})
-    target_link_libraries("${_name}" PRIVATE "${TORCH_LIBRARIES}")
+    target_link_libraries("${_name}" PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}")
     target_compile_options("${_name}" PRIVATE ${GIGL_COMPILE_FLAGS})
+    # TORCH_EXTENSION_NAME is used in PYBIND11_MODULE() to name the module.
+    # PyTorch's own build system sets this; we must define it explicitly here.
+    target_compile_definitions("${_name}" PRIVATE "TORCH_EXTENSION_NAME=${_name}")
     install(TARGETS "${_name}" DESTINATION "${_rel_dir}")
 endforeach()
