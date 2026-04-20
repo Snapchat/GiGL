@@ -151,3 +151,26 @@ Enforced via `readability-identifier-naming`:
 | `modernize-loop-convert.NamingStyle`                       | `CamelCase`       | Auto-generated loop variable names use CamelCase                                                                                                                                      |
 | `readability-function-size.LineThreshold`                  | `1000`            | Functions over 1000 lines are flagged                                                                                                                                                 |
 | `readability-braces-around-statements.ShortStatementLines` | `0`               | Braces required for all control-flow bodies, even single-line                                                                                                                         |
+
+______________________________________________________________________
+
+## pybind11 Extension Modules
+
+Extension modules live under `gigl/csrc/`.
+
+### Naming convention
+
+| File                       | Purpose                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `python_<name>.cpp`        | pybind11 bindings — contains the `PYBIND11_MODULE` definition                                        |
+| `<name>.cpp` / `<name>.cu` | Implementation — function and class definitions                                                      |
+| `<name>.h`                 | Declarations (function signatures, class definitions, constants) shared across multiple `.cpp` files |
+
+Example: to add a `my_op` extension under `gigl/csrc/sampling/`:
+
+```
+gigl/csrc/sampling/python_my_op.cpp   ← pybind11 bindings
+gigl/csrc/sampling/my_op.cpp          ← implementation
+```
+
+The compiled `.so` is installed to the same directory and importable as `gigl.csrc.sampling.my_op`.
