@@ -25,11 +25,6 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-# Our extensions have no CUDA kernels. When a CUDA-enabled torch is installed
-# but the CUDA toolkit is absent (e.g. CPU-only CI), Caffe2Config.cmake aborts
-# unless we disable the CUDA check before calling find_package(Torch).
-set(CAFFE2_USE_CUDA OFF CACHE BOOL "" FORCE)
-
 find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
 # torch_python provides the pybind11 type casters for at::Tensor. It is not
