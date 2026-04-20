@@ -236,7 +236,6 @@ torch_spline_conv = [
 requires = [
     "scikit-build-core>=0.10",
     "pybind11>=2.12",
-    "torch==2.8",  # needed for torch headers at C++ compile time
 ]
 build-backend = "scikit_build_core.build"
 
@@ -251,12 +250,6 @@ Homepage = "https://github.com/snapchat/gigl"
 
 [project.scripts]
 gigl-post-install = "gigl.scripts.post_install:main"
-
-[tool.setuptools.package-data]
-# Include dep_vars.env from the root directory
-"gigl" = ["dep_vars.env", "**/*.yaml"]
-"gigl.scripts" = ["*.sh"]
-
 
 [tool.ruff]
 # Skip generated proto files.
