@@ -1,5 +1,6 @@
 """Main orchestrator and CLI entry point for the BQ Data Analyzer."""
 import argparse
+from pathlib import Path
 from typing import Optional
 
 from gigl.analytics.data_analyzer.config import DataAnalyzerConfig, load_analyzer_config
@@ -9,10 +10,35 @@ from gigl.analytics.data_analyzer.graph_structure_analyzer import (
 )
 from gigl.analytics.data_analyzer.report.report_generator import generate_report
 from gigl.analytics.data_analyzer.types import FeatureProfileResult, GraphAnalysisResult
-from gigl.common import Uri
+from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.gcs import GcsUtils
 
 logger = Logger()
+
+
+def _write_report(html: str, output_gcs_path: str) -> str:
+    """Write the HTML report to a GCS URI or local path.
+
+    Args:
+        html: Rendered HTML string.
+        output_gcs_path: Output directory. If it starts with ``gs://`` the
+            report is uploaded via ``GcsUtils``. Otherwise it is written to
+            the local filesystem (the directory is created if missing).
+
+    Returns:
+        The full path to the written ``report.html`` file.
+    """
+    trimmed = output_gcs_path.rstrip("/")
+    report_path = f"{trimmed}/report.html"
+    if trimmed.startswith("gs://"):
+        GcsUtils().upload_from_string(GcsUri(report_path), html)
+    else:
+        local_path = Path(report_path).expanduser().resolve()
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_text(html)
+        report_path = str(local_path)
+    return report_path
 
 
 class DataAnalyzer:
@@ -30,14 +56,18 @@ class DataAnalyzer:
         config: DataAnalyzerConfig,
         resource_config_uri: Optional[Uri] = None,
     ) -> str:
-        """Run the full analysis pipeline and generate an HTML report.
+        """Run the full analysis pipeline and write an HTML report.
+
+        The report is written to ``{config.output_gcs_path}/report.html`` via
+        ``GcsUtils`` when the output path is a ``gs://`` URI, or to the local
+        filesystem otherwise (the parent directory is created if missing).
 
         Args:
             config: Analyzer configuration.
             resource_config_uri: Optional resource config for Dataflow sizing.
 
         Returns:
-            GCS path to the generated HTML report.
+            The path to the written ``report.html`` (GCS URI or local path).
         """
         analysis_result: GraphAnalysisResult
         profile_result: Optional[FeatureProfileResult] = None
@@ -57,11 +87,9 @@ class DataAnalyzer:
             config=config,
         )
 
-        report_gcs_path = f"{config.output_gcs_path.rstrip('/')}/report.html"
-        logger.info(f"Generated report; would upload to {report_gcs_path}")
-        # TODO: wire up GCS upload via gigl.common.utils.gcs.GcsUtils
-
-        return report_gcs_path
+        report_path = _write_report(html, config.output_gcs_path)
+        logger.info(f"Report written to {report_path}")
+        return report_path
 
 
 def main() -> None:
