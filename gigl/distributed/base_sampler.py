@@ -1,4 +1,3 @@
-import gc
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Union
@@ -150,9 +149,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # We need to sample from the supervision nodes as well, and ensure
         # that we are sampling from the correct node type.
         metadata: dict[str, torch.Tensor] = {}
-        input_seeds_builder: dict[
-            Union[str, NodeType], list[torch.Tensor]
-        ] = defaultdict(list)
+        input_seeds_builder: dict[Union[str, NodeType], list[torch.Tensor]] = (
+            defaultdict(list)
+        )
         input_seeds_builder[input_type].append(input_seeds)
 
         for edge_type, label_tensor in inputs.positive_label_by_edge_types.items():
@@ -164,9 +163,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             )
             # Update the metadata per positive label edge type.
             # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
-            metadata[
-                f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
-            ] = label_tensor
+            metadata[f"{POSITIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"] = (
+                label_tensor
+            )
 
         for edge_type, label_tensor in inputs.negative_label_by_edge_types.items():
             filtered_label_tensor = label_tensor[label_tensor != PADDING_NODE].to(
@@ -177,9 +176,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             )
             # Update the metadata per negative label edge type.
             # We do this because GLT only supports dict[str, torch.Tensor] for metadata.
-            metadata[
-                f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"
-            ] = label_tensor
+            metadata[f"{NEGATIVE_LABEL_METADATA_KEY}{str(tuple(edge_type))}"] = (
+                label_tensor
+            )
 
         nodes_to_sample: dict[Union[str, NodeType], torch.Tensor] = {
             # Keep first-occurrence order so anchor seeds remain at the front of
@@ -189,18 +188,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             )
             for node_type, seeds in input_seeds_builder.items()
         }
-
-        # Memory cleanup — only del loop vars if any labels were processed
-        has_labels = bool(
-            inputs.positive_label_by_edge_types or inputs.negative_label_by_edge_types
-        )
-        if has_labels:
-            del filtered_label_tensor, label_tensor
-        for value in input_seeds_builder.values():
-            value.clear()
-        input_seeds_builder.clear()
-        del input_seeds_builder
-        gc.collect()
 
         return SampleLoopInputs(
             nodes_to_sample=nodes_to_sample,

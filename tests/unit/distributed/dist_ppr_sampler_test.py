@@ -234,22 +234,22 @@ def _extract_hetero_ppr_scores(
     ntype_to_sampler_ppr: dict[str, dict[int, float]] = {}
     for ntype in node_types:
         ppr_edge_type = (seed_type, "ppr", ntype)
-        assert (
-            ppr_edge_type in datum.edge_types
-        ), f"Missing PPR edge type {ppr_edge_type} on HeteroData"
+        assert ppr_edge_type in datum.edge_types, (
+            f"Missing PPR edge type {ppr_edge_type} on HeteroData"
+        )
 
         ppr_edge_index = datum[ppr_edge_type].edge_index
         ppr_weights = datum[ppr_edge_type].edge_attr
 
-        assert (
-            ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
-        ), f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
+            f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        )
         assert ppr_weights.dim() == 1
         assert ppr_edge_index.size(1) == ppr_weights.size(0)
         assert (ppr_weights > 0).all(), f"PPR weights for {ntype} must be positive"
-        assert (
-            ppr_edge_index[0] == 0
-        ).all(), "All src indices must be 0 for batch_size=1"
+        assert (ppr_edge_index[0] == 0).all(), (
+            "All src indices must be 0 for batch_size=1"
+        )
 
         global_node_ids = datum[ntype].node
         type_ppr: dict[int, float] = {}
@@ -335,17 +335,17 @@ def _run_ppr_loader_correctness_check(
         ppr_edge_index = datum.edge_index
         ppr_weights = datum.edge_attr
 
-        assert (
-            ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
-        ), f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
+            f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        )
         assert ppr_weights.dim() == 1, f"Expected 1D weights, got {ppr_weights.dim()}D"
-        assert ppr_edge_index.size(1) == ppr_weights.size(
-            0
-        ), f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_weights.size(0)}"
+        assert ppr_edge_index.size(1) == ppr_weights.size(0), (
+            f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_weights.size(0)}"
+        )
         assert (ppr_weights > 0).all(), "PPR weights must be positive"
-        assert (
-            ppr_edge_index[0] == 0
-        ).all(), "All src indices must be 0 for batch_size=1"
+        assert (ppr_edge_index[0] == 0).all(), (
+            "All src indices must be 0 for batch_size=1"
+        )
 
         # Map local indices to global IDs
         global_node_ids = datum.node
@@ -386,9 +386,9 @@ def _run_ppr_loader_correctness_check(
 
         batches_checked += 1
 
-    assert (
-        batches_checked == _NUM_TEST_NODES
-    ), f"Expected {_NUM_TEST_NODES} batches, got {batches_checked}"
+    assert batches_checked == _NUM_TEST_NODES, (
+        f"Expected {_NUM_TEST_NODES} batches, got {batches_checked}"
+    )
     shutdown_rpc()
 
 
@@ -446,15 +446,15 @@ def _run_ppr_hetero_loader_correctness_check(
         )
 
         for edge_type in datum.edge_types:
-            assert (
-                edge_type[1] == "ppr"
-            ), f"Non-PPR edge type {edge_type} found in PPR sampler output"
+            assert edge_type[1] == "ppr", (
+                f"Non-PPR edge type {edge_type} found in PPR sampler output"
+            )
 
         batches_checked += 1
 
-    assert (
-        batches_checked == _NUM_TEST_USERS
-    ), f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
+    assert batches_checked == _NUM_TEST_USERS, (
+        f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
+    )
     shutdown_rpc()
 
 
@@ -537,9 +537,9 @@ def _run_ppr_ablp_loader_correctness_check(
         # on the label edges, making deterministic reference computation complex.
         for ntype in [USER, STORY]:
             ppr_edge_type = (STORY, "ppr", ntype)
-            assert (
-                ppr_edge_type in datum.edge_types
-            ), f"Missing PPR edge type {ppr_edge_type} on HeteroData"
+            assert ppr_edge_type in datum.edge_types, (
+                f"Missing PPR edge type {ppr_edge_type} on HeteroData"
+            )
 
             ppr_edge_index = datum[ppr_edge_type].edge_index
             ppr_weights = datum[ppr_edge_type].edge_attr
@@ -553,9 +553,9 @@ def _run_ppr_ablp_loader_correctness_check(
             assert (ppr_edge_index[1] < datum[ntype].node.size(0)).all()
 
         for edge_type in datum.edge_types:
-            assert (
-                edge_type[1] == "ppr"
-            ), f"Non-PPR edge type {edge_type} found in PPR sampler output"
+            assert edge_type[1] == "ppr", (
+                f"Non-PPR edge type {edge_type} found in PPR sampler output"
+            )
 
         batches_checked += 1
 
@@ -602,12 +602,12 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
 
     # STORY must appear in the PPR output even though it has no outgoing edges.
     ppr_edge_type = (USER, "ppr", STORY)
-    assert (
-        ppr_edge_type in datum.edge_types
-    ), f"Missing PPR edge type {ppr_edge_type} — destination-only STORY was dropped"
-    assert (
-        datum[ppr_edge_type].edge_index.shape[1] > 0
-    ), "Expected at least one PPR edge to STORY"
+    assert ppr_edge_type in datum.edge_types, (
+        f"Missing PPR edge type {ppr_edge_type} — destination-only STORY was dropped"
+    )
+    assert datum[ppr_edge_type].edge_index.shape[1] > 0, (
+        "Expected at least one PPR edge to STORY"
+    )
     assert (datum[ppr_edge_type].edge_attr > 0).all()
 
     shutdown_rpc()
@@ -661,14 +661,14 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
 
     # story 1 is reachable only via the positive label edge from user 0.
     # It must not appear in user 0's PPR neighborhood.
-    assert (
-        1 not in sampler_ppr[str(STORY)]
-    ), "story 1 appeared in user 0's PPR output — label edge was incorrectly traversed"
+    assert 1 not in sampler_ppr[str(STORY)], (
+        "story 1 appeared in user 0's PPR output — label edge was incorrectly traversed"
+    )
 
     # story 0 is reachable via message-passing and must be present.
-    assert (
-        0 in sampler_ppr[str(STORY)]
-    ), "story 0 missing from user 0's PPR output — message-passing edge was not traversed"
+    assert 0 in sampler_ppr[str(STORY)], (
+        "story 0 missing from user 0's PPR output — message-passing edge was not traversed"
+    )
 
     shutdown_rpc()
 

@@ -106,9 +106,9 @@ class RootedNodeNeighborhoodBatch:
                 builder.add_graph_data(graph_data=graph_data)
         batch_graph_data = builder.build()
 
-        node_mapping: dict[
-            Node, Node
-        ] = batch_graph_data.global_node_to_subgraph_node_mapping
+        node_mapping: dict[Node, Node] = (
+            batch_graph_data.global_node_to_subgraph_node_mapping
+        )
 
         condensed_node_type_to_subgraph_id_to_global_node_id: dict[
             CondensedNodeType, dict[NodeId, NodeId]
@@ -138,9 +138,9 @@ class RootedNodeNeighborhoodBatch:
                     node_type
                 ]
             )
-            condensed_node_type_to_root_node_indices_map[
-                condensed_node_type
-            ] = torch.LongTensor(root_node_indices_list)
+            condensed_node_type_to_root_node_indices_map[condensed_node_type] = (
+                torch.LongTensor(root_node_indices_list)
+            )
         batch_graph_data.coalesce()
         batch_graph_data = cast_graph_for_training(
             batch_graph_data=batch_graph_data,

@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Final, Union
 
 from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 
@@ -14,6 +14,10 @@ from gigl.src.validation_check.libs.utils import (
 from snapchat.research.gbml import gigl_resource_config_pb2
 
 logger = Logger()
+
+_VALID_RESERVATION_AFFINITY_TYPES: Final[frozenset[str]] = frozenset(
+    {"NO_RESERVATION", "ANY_RESERVATION", "SPECIFIC_RESERVATION"}
+)
 
 
 def _check_if_dataflow_resource_config_valid(
@@ -69,9 +73,9 @@ def check_if_shared_resource_config_valid(
 
     logger.info("Config validation check: if resource config shared_resource is valid.")
     wrapper = GiglResourceConfigWrapper(resource_config=resource_config_pb)
-    assert (
-        wrapper.shared_resource_config
-    ), "Invalid 'shared_resource_config'; must provide shared_resource_config."
+    assert wrapper.shared_resource_config, (
+        "Invalid 'shared_resource_config'; must provide shared_resource_config."
+    )
     assert_proto_has_field(
         proto=wrapper.shared_resource_config, field_name="common_compute_config"
     )
@@ -136,9 +140,9 @@ def check_if_trainer_resource_config_valid(
 ) -> None:
     logger.info("Config validation check: if resource config trainer_config is valid.")
     wrapper = GiglResourceConfigWrapper(resource_config=resource_config_pb)
-    assert (
-        wrapper.trainer_config
-    ), "Invalid 'trainer_config'; must provide trainer_config."
+    assert wrapper.trainer_config, (
+        "Invalid 'trainer_config'; must provide trainer_config."
+    )
 
     trainer_config: Union[
         gigl_resource_config_pb2.LocalResourceConfig,
@@ -173,6 +177,47 @@ def _validate_vertex_ai_resource_config(
     )
 
 
+def _validate_reservation_affinity(
+    vertex_ai_resource_config_pb: gigl_resource_config_pb2.VertexAiResourceConfig,
+) -> None:
+    """Validate ``VertexAiResourceConfig.reservation_affinity``.
+
+    Rules:
+        - Empty ``type`` with empty ``reservation_resource_names`` is valid (unset).
+        - Empty ``type`` with non-empty names is an error.
+        - ``type`` must be one of ``NO_RESERVATION``, ``ANY_RESERVATION``,
+          ``SPECIFIC_RESERVATION`` (``TYPE_UNSPECIFIED`` is rejected).
+        - ``SPECIFIC_RESERVATION`` requires at least one name.
+        - ``NO_RESERVATION`` / ``ANY_RESERVATION`` must not carry any names.
+
+    The reservation-name *format* is not parsed here because Google Cloud
+    does not publish a stability guarantee for that string. Vertex AI
+    rejects malformed or cross-region names at submit time.
+    """
+    affinity = vertex_ai_resource_config_pb.reservation_affinity
+    names = list(affinity.reservation_resource_names)
+    if not affinity.type:
+        assert not names, (
+            "reservation_resource_names is set but reservation_affinity.type is empty."
+        )
+        return
+
+    assert affinity.type in _VALID_RESERVATION_AFFINITY_TYPES, (
+        f"Invalid reservation_affinity.type {affinity.type!r}. "
+        f"Expected one of {sorted(_VALID_RESERVATION_AFFINITY_TYPES)}."
+    )
+
+    if affinity.type == "SPECIFIC_RESERVATION":
+        assert names, (
+            "SPECIFIC_RESERVATION requires at least one "
+            "reservation_resource_names entry."
+        )
+    else:
+        assert not names, (
+            f"reservation_resource_names must be empty for type {affinity.type}."
+        )
+
+
 def _validate_accelerator_type(
     proto_config: Union[
         gigl_resource_config_pb2.VertexAiResourceConfig,
@@ -198,7 +243,7 @@ def _validate_cloud_machine_config(
     config: Union[
         gigl_resource_config_pb2.VertexAiResourceConfig,
         gigl_resource_config_pb2.KFPResourceConfig,
-    ]
+    ],
 ) -> None:
     """
     Checks if the provided cloud machine configuration is valid.
@@ -218,7 +263,7 @@ def _validate_machine_config(
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
         gigl_resource_config_pb2.DataflowResourceConfig,
-    ]
+    ],
 ) -> None:
     if isinstance(config, gigl_resource_config_pb2.LocalResourceConfig):
         assert_proto_field_value_is_truthy(proto=config, field_name="num_workers")
@@ -235,18 +280,13 @@ def _validate_machine_config(
         _validate_vertex_ai_resource_config(vertex_ai_resource_config_pb=config)
         _validate_accelerator_type(proto_config=config)
         _validate_cloud_machine_config(config=config)
+        _validate_reservation_affinity(vertex_ai_resource_config_pb=config)
     elif isinstance(config, gigl_resource_config_pb2.VertexAiGraphStoreConfig):
-        _validate_vertex_ai_resource_config(
-            vertex_ai_resource_config_pb=config.graph_store_pool
-        )
-        _validate_accelerator_type(proto_config=config.graph_store_pool)
-        _validate_cloud_machine_config(config=config.graph_store_pool)
-
-        _validate_vertex_ai_resource_config(
-            vertex_ai_resource_config_pb=config.compute_pool
-        )
-        _validate_accelerator_type(proto_config=config.compute_pool)
-        _validate_cloud_machine_config(config=config.compute_pool)
+        for pool in (config.graph_store_pool, config.compute_pool):
+            _validate_vertex_ai_resource_config(vertex_ai_resource_config_pb=pool)
+            _validate_accelerator_type(proto_config=pool)
+            _validate_cloud_machine_config(config=pool)
+            _validate_reservation_affinity(vertex_ai_resource_config_pb=pool)
     else:
         raise ValueError(
             f"""Expected distributed config to be one of {gigl_resource_config_pb2.LocalResourceConfig.__name__},

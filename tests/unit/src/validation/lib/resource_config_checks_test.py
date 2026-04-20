@@ -151,32 +151,16 @@ def _create_valid_vertex_ai_graph_store_trainer_config() -> (
     config = gigl_resource_config_pb2.GiglResourceConfig()
 
     # Graph store pool config
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = (
-        "n1-highmem-8"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_type = (
-        "ACCELERATOR_TYPE_UNSPECIFIED"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_limit = (
-        0
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.num_replicas = (
-        2
-    )
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = "n1-highmem-8"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_type = "ACCELERATOR_TYPE_UNSPECIFIED"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.gpu_limit = 0
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.num_replicas = 2
 
     # Compute pool config
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.machine_type = (
-        "n1-standard-16"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_type = (
-        "NVIDIA_TESLA_T4"
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = (
-        2
-    )
-    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.num_replicas = (
-        3
-    )
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.machine_type = "n1-standard-16"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_type = "NVIDIA_TESLA_T4"
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = 2
+    config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.num_replicas = 3
 
     return config
 
@@ -364,9 +348,7 @@ class TestSharedResourceConfig(TestCase):
     def test_missing_temp_regional_assets_bucket(self):
         """Test that missing temp_regional_assets_bucket raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.temp_regional_assets_bucket = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.temp_regional_assets_bucket = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
@@ -380,27 +362,21 @@ class TestSharedResourceConfig(TestCase):
     def test_missing_temp_assets_bq_dataset_name(self):
         """Test that missing temp_assets_bq_dataset_name raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.temp_assets_bq_dataset_name = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.temp_assets_bq_dataset_name = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
     def test_missing_embedding_bq_dataset_name(self):
         """Test that missing embedding_bq_dataset_name raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.embedding_bq_dataset_name = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.embedding_bq_dataset_name = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
     def test_missing_gcp_service_account_email(self):
         """Test that missing gcp_service_account_email raises an assertion error."""
         config = _create_valid_shared_resource_config()
-        config.shared_resource_config.common_compute_config.gcp_service_account_email = (
-            ""
-        )
+        config.shared_resource_config.common_compute_config.gcp_service_account_email = ""
         with self.assertRaises(AssertionError):
             check_if_shared_resource_config_valid(config)
 
@@ -573,18 +549,14 @@ class TestTrainerResourceConfig(TestCase):
     def test_invalid_vertex_ai_graph_store_trainer_config_graph_store_pool(self):
         """Test that invalid graph store pool config raises an assertion error."""
         config = _create_valid_vertex_ai_graph_store_trainer_config()
-        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = (
-            ""
-        )
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.graph_store_pool.machine_type = ""
         with self.assertRaises(AssertionError):
             check_if_trainer_resource_config_valid(config)
 
     def test_invalid_vertex_ai_graph_store_trainer_config_compute_pool(self):
         """Test that invalid compute pool config raises an assertion error."""
         config = _create_valid_vertex_ai_graph_store_trainer_config()
-        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = (
-            0  # Should be > 0 for GPU
-        )
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.compute_pool.gpu_limit = 0  # Should be > 0 for GPU
         with self.assertRaises(AssertionError):
             check_if_trainer_resource_config_valid(config)
 
@@ -817,6 +789,78 @@ class TestInferencerGraphStoreStorageCommand(TestCase):
         gbml_config = _create_gbml_config_without_graph_stores()
         # Should not raise any exception - no graph store means nothing to validate
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
+
+
+class TestReservationAffinityValidation(TestCase):
+    """Validate VertexAiResourceConfig.reservation_affinity handling."""
+
+    def test_unset_reservation_passes(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        check_if_trainer_resource_config_valid(config)
+
+    def test_specific_reservation_with_valid_name_passes(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        affinity = (
+            config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity
+        )
+        affinity.type = "SPECIFIC_RESERVATION"
+        affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        check_if_trainer_resource_config_valid(config)
+
+    def test_specific_reservation_without_names_fails(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity.type = "SPECIFIC_RESERVATION"
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_empty_type_with_names_fails(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_type_unspecified_is_rejected(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity.type = "TYPE_UNSPECIFIED"
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_any_reservation_with_names_fails(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        affinity = (
+            config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity
+        )
+        affinity.type = "ANY_RESERVATION"
+        affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_graph_store_per_pool_reservations_pass(self):
+        config = _create_valid_vertex_ai_graph_store_trainer_config()
+        graph_store_cfg = (
+            config.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        )
+        graph_store_cfg.compute_pool.reservation_affinity.type = "SPECIFIC_RESERVATION"
+        graph_store_cfg.compute_pool.reservation_affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        graph_store_cfg.graph_store_pool.reservation_affinity.type = "NO_RESERVATION"
+        check_if_trainer_resource_config_valid(config)
+
+    def test_graph_store_pool_with_invalid_type_fails(self):
+        config = _create_valid_vertex_ai_graph_store_trainer_config()
+        graph_store_cfg = (
+            config.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        )
+        graph_store_cfg.graph_store_pool.reservation_affinity.type = "TYPE_UNSPECIFIED"
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
 
 
 if __name__ == "__main__":

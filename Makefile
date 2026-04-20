@@ -104,9 +104,8 @@ unit_test_cpp:
 unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
 check_format_py:
-	uv run autoflake --check --config pyproject.toml ${PYTHON_DIRS}
-	uv run isort --check-only --settings-path=pyproject.toml ${PYTHON_DIRS}
-	uv run black --check --config=pyproject.toml ${PYTHON_DIRS}
+	uv run ruff check --config pyproject.toml ${PYTHON_DIRS}
+	uv run ruff format --check --config pyproject.toml ${PYTHON_DIRS}
 
 check_format_scala:
 	( cd scala; sbt "scalafmtCheckAll; scalafixAll --check"; )
@@ -117,7 +116,7 @@ check_format_md:
 	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
-	$(if $(CPP_SOURCES), clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
+	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
 
 check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
@@ -139,9 +138,8 @@ mock_assets:
 	uv run python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test
 
 format_py:
-	uv run autoflake --config pyproject.toml ${PYTHON_DIRS}
-	uv run isort --settings-path=pyproject.toml ${PYTHON_DIRS}
-	uv run black --config=pyproject.toml ${PYTHON_DIRS}
+	uv run ruff check --fix --config pyproject.toml ${PYTHON_DIRS}
+	uv run ruff format --config pyproject.toml ${PYTHON_DIRS}
 
 format_scala:
 	# We run "clean" before the formatting because otherwise some "scalafix.sbt.ScalafixFailed: NoFilesError" may get thrown after switching branches...
@@ -154,7 +152,7 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	$(if $(CPP_SOURCES), clang-format-15 -i --style=file $(CPP_SOURCES))
+	clang-format-15 -i --style=file $(CPP_SOURCES)
 
 format: format_py format_cpp format_scala format_md
 
@@ -168,13 +166,13 @@ generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
 
 check_lint_cpp:
-	$(if $(CPP_SOURCES), uv run python -m scripts.run_cpp_lint $(CPP_SOURCES))
+	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES), clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES))
+	clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES)
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

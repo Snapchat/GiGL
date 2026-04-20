@@ -153,9 +153,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # on every neighbor during sampling.  Computing it here (rather than in
         # the dataset) also keeps the door open for edge-specific degree
         # strategies.  If memory becomes a bottleneck, revisit this.
-        self._node_type_to_total_degree: dict[
-            NodeType, torch.Tensor
-        ] = self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
+        self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = (
+            self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
+        )
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
         # NodeType / EdgeType keys are only used at the Python boundary
@@ -656,9 +656,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 for ntype, flat_ids in ntype_to_flat_ids.items():
                     ppr_edge_type: EdgeType = (seed_type, "ppr", ntype)
                     valid_counts = ntype_to_valid_counts[ntype]
-                    ppr_edge_type_to_flat_weights[
-                        ppr_edge_type
-                    ] = ntype_to_flat_weights[ntype]
+                    ppr_edge_type_to_flat_weights[ppr_edge_type] = (
+                        ntype_to_flat_weights[ntype]
+                    )
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types

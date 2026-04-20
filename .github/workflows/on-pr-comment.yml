@@ -64,6 +64,26 @@ jobs:
         command: |
           make unit_test_py
 
+  unit-test-cpp:
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_cpp') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: Run C++ Unit Tests
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "C++ Unit Test"
+        setup_gcloud: "true"
+        use_cloud_run: "true"
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: |
+          make unit_test_cpp
+
   unit-test-scala:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest

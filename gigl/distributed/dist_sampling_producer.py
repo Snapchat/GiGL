@@ -37,13 +37,8 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
-from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
-from gigl.distributed.sampler_options import (
-    KHopNeighborSamplerOptions,
-    PPRSamplerOptions,
-    SamplerOptions,
-)
+from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.utils.dist_sampler import create_dist_sampler
 
 logger = Logger()
 
@@ -100,19 +95,14 @@ def _sampling_worker_loop(
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
 
-        # Shared args for all sampler types (positional args to DistNeighborSampler.__init__)
-        shared_sampler_args = (
-            data,
-            sampling_config.num_neighbors,
-            sampling_config.with_edge,
-            sampling_config.with_neg,
-            sampling_config.with_weight,
-            sampling_config.edge_dir,
-            sampling_config.collect_features,
-            channel,
-            worker_options.use_all2all,
-            worker_options.worker_concurrency,
-            current_device,
+        dist_sampler = create_dist_sampler(
+            data=data,
+            sampling_config=sampling_config,
+            worker_options=worker_options,
+            channel=channel,
+            sampler_options=sampler_options,
+            degree_tensors=degree_tensors,
+            current_device=current_device,
         )
 
         if isinstance(sampler_options, KHopNeighborSamplerOptions):
@@ -237,7 +227,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                 self.num_workers * self.worker_options.worker_concurrency
             )
             self._task_queues.append(task_queue)
-            w = mp_context.Process(
+            worker = mp_context.Process(
                 target=_sampling_worker_loop,
                 args=(
                     rank,
@@ -254,7 +244,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     self._degree_tensors,
                 ),
             )
-            w.daemon = True
-            w.start()
-            self._workers.append(w)
+            worker.daemon = True
+            worker.start()
+            self._workers.append(worker)
         barrier.wait()

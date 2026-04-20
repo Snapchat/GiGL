@@ -220,9 +220,7 @@ class TestLightGCN(TestCase):
             num_nodes=self.num_nodes,
             embedding_dim=self.embedding_dim,
             num_layers=self.num_layers,
-        ).to(
-            self.device
-        )  # <<< move model to device
+        ).to(self.device)  # <<< move model to device
 
         with torch.no_grad():
             ref.embedding.weight[:] = self.test_embeddings.to(

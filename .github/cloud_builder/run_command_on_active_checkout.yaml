@@ -3,7 +3,7 @@ substitutions:
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:b34c863a2168c8df5a6da1f6385e5d374f0175d2.91.1
+  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:30e4e309ebff6ac167c09efa0ae70cc80b2c22c9.96.1
     entrypoint: /bin/bash
     args:
       - -c
@@ -29,7 +29,7 @@ steps:
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
-        uv pip install -e .
+        uv pip install -e . --no-build-isolation
         # The builder operates in its own user dir, usually /workspace,
         # so we need to copy the gigl tools dir to the current cloud_builder's user dir.
         # See: containers/Dockerfile.builder.

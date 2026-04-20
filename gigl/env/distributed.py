@@ -6,9 +6,9 @@ from typing import Final
 
 from gigl.common import Uri
 
-COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: Final[
-    str
-] = "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"
+COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: Final[str] = (
+    "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE"
+)
 
 
 @dataclass(frozen=True)

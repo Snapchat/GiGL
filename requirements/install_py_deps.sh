@@ -138,12 +138,17 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
+    # --no-install-project: skip building and installing the gigl package itself here.
+    # The project is installed separately via `uv pip install -e . --no-build-isolation`
+    # (see Makefile install_dev_deps/install_deps targets and the *.src Dockerfiles).
+    # This avoids scikit-build-core requiring all source files (e.g. README.md, CMakeLists.txt)
+    # to be present in environments that only need the dependencies (e.g. base Docker images).
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
-        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
+        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-project
     else
-        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
+        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match} --no-install-project
     fi
 
     # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
@@ -151,7 +156,10 @@ install_gigl_lib_deps() {
     if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
     then
         SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-        uv run python $SCRIPT_DIR/../gigl/scripts/post_install.py
+        # --no-project: prevents uv from trying to install the gigl project before running
+        # the script. We intentionally skipped installing it above (--no-install-project),
+        # and post_install.py only runs install_glt.sh — it does not need gigl installed.
+        uv run --no-project python $SCRIPT_DIR/../gigl/scripts/post_install.py
     fi
 }
 

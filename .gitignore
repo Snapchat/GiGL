@@ -51,3 +51,6 @@ gha-creds-*.json
 
 # Compiled C++ extension modules
 gigl/csrc/**/*.so
+
+# Local-only scripts with hardcoded internal identifiers
+scripts/_local/

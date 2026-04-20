@@ -5,7 +5,9 @@ FROM $BASE_IMAGE
 # Copy the source
 WORKDIR /gigl
 
+COPY CMakeLists.txt CMakeLists.txt
 COPY MANIFEST.in MANIFEST.in
+COPY README.md README.md
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY gigl/dep_vars.env gigl/dep_vars.env
@@ -13,6 +15,7 @@ COPY deployment deployment
 COPY gigl gigl
 COPY snapchat snapchat
 COPY tests tests
-RUN uv pip install -e .
+RUN uv pip install scikit-build-core pybind11
+RUN uv pip install -e . --no-build-isolation
 
 WORKDIR /

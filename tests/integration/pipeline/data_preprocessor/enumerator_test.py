@@ -299,7 +299,7 @@ class EnumeratorTest(TestCase):
 
         # Check that all the rows have unique ids and feature values.
         result = self.__bq_utils.run_query(
-            query=f"""SELECT {node_id_field}, {', '.join(expected_node_id_fields)}
+            query=f"""SELECT {node_id_field}, {", ".join(expected_node_id_fields)}
             FROM `{person_enumerated_node_type_metadata.enumerated_node_data_reference.reference_uri}`
             """,
             labels=get_resource_config().get_resource_labels(),
@@ -396,7 +396,7 @@ class EnumeratorTest(TestCase):
                 self.__bq_utils.run_query(
                     query=f"""SELECT {_MESSAGES_EDGE_SRC_IDENTIFIER_FIELD},
                     {_MESSAGES_EDGE_DST_IDENTIFIER_FIELD},
-                    {', '.join(expected_edge_feature_fields)}
+                    {", ".join(expected_edge_feature_fields)}
                     FROM `{table_name}`""",
                     labels=get_resource_config().get_resource_labels(),
                 )
@@ -518,10 +518,10 @@ class EnumeratorTest(TestCase):
         # Under the hood executes "SELECT original_node_id, enumerated_node_id FROM bq_unique_node_ids_enumerated_table"
         # to build a dict[int -> str] mapping. Also validates enumeration correctness by checking that
         # integer IDs are sequential (0 to n-1), within bounds, and that row count matches expected node count.
-        int_to_orig_node_id_map: dict[
-            int, str
-        ] = self.fetch_enumerated_node_map_and_assert_correctness(
-            map_enum_node_type_metadata=map_enum_node_type_metadata
+        int_to_orig_node_id_map: dict[int, str] = (
+            self.fetch_enumerated_node_map_and_assert_correctness(
+                map_enum_node_type_metadata=map_enum_node_type_metadata
+            )
         )
 
         # Validates that node features are preserved during enumeration by:
