@@ -160,11 +160,11 @@ Extension modules live under `gigl/csrc/`.
 
 ### Naming convention
 
-| File                       | Purpose                                                                                              |
-| -------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `python_<name>.cpp`        | pybind11 bindings — contains the `PYBIND11_MODULE` definition                                        |
-| `<name>.cpp` / `<name>.cu` | Implementation — function and class definitions                                                      |
-| `<name>.h`                 | Declarations (function signatures, class definitions, constants) shared across multiple `.cpp` files |
+| File                       | Purpose                                                          |
+| -------------------------- | ---------------------------------------------------------------- |
+| `python_<name>.cpp`        | pybind11 bindings — contains the `PYBIND11_MODULE` definition    |
+| `<name>.cpp` / `<name>.cu` | Implementation — function and class definitions                  |
+| `<name>.h`                 | Declarations (function signatures, class definitions, constants) |
 
 Example: to add a `my_op` extension under `gigl/csrc/sampling/`:
 
