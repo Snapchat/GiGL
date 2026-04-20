@@ -5,56 +5,51 @@ catch data quality and structural issues that silently degrade model quality.
 
 Two subpackages:
 
-- [`data_analyzer/`](data_analyzer/) — end-to-end `DataAnalyzer` that runs 4 tiers of BigQuery checks and produces a
-  single self-contained HTML report. **Start here.**
+- [`data_analyzer/`](data_analyzer/) — end-to-end `DataAnalyzer` that runs BigQuery checks and produces a single
+  self-contained HTML report. **Start here.**
 - [`graph_validation/`](graph_validation/) — lightweight standalone validators (currently: `BQGraphValidator` for
   dangling-edge checks). Use when you only need one check and not the full report.
 
 ## Quickstart
 
-Three steps to a working report.
-
-### 1. Authenticate to BigQuery
+**Prerequisites.** Follow the [GiGL installation guide](../../docs/user_guide/getting_started/installation.md) so that
+`uv` and GiGL's Python dependencies are available. Then authenticate to BigQuery:
 
 ```bash
 gcloud auth application-default login
 ```
 
-### 2. Write a YAML config
-
-Save as `my_analyzer_config.yaml`:
+**1. Write a YAML config.** Save as `my_analyzer_config.yaml`:
 
 ```yaml
 node_tables:
   - bq_table: "your-project.your_dataset.user_nodes"
     node_type: "user"
     id_column: "user_id"
-    feature_columns: ["age", "country"]
-    # label_column: "label"  # optional, enables Tier 3 checks
+    feature_columns: ["age", "country"]  # optional; [] or omit if the node has no features
+    # label_column: "label"              # optional; enables Tier 3 label checks
 
 edge_tables:
   - bq_table: "your-project.your_dataset.user_edges"
     edge_type: "follows"
     src_id_column: "src_user_id"
     dst_id_column: "dst_user_id"
-    # timestamp_column: "ts"  # optional, enables temporal freshness
 
-# Where to write the HTML report. Use a local path for quick iteration
-# or a gs:// URI to upload to GCS.
+# Where to write the HTML report. Local path for quick iteration, or a gs:// URI.
 output_gcs_path: "/tmp/my_analysis/"
 
-# Optional: sizing for neighbor-explosion estimates (fan-out per GNN layer).
+# Optional: sizing for the neighbor-explosion estimate (fan-out per GNN layer).
 fan_out: [15, 10, 5]
 ```
 
-### 3. Run the analyzer
+**2. Run the analyzer.**
 
 ```bash
 uv run python -m gigl.analytics.data_analyzer \
     --analyzer_config_uri my_analyzer_config.yaml
 ```
 
-When it finishes you will see:
+**3. Open the report.** When the run completes:
 
 ```
 [INFO] Report written to /tmp/my_analysis/report.html
@@ -64,37 +59,34 @@ Open the file in any browser. No server, no external dependencies, fully offline
 
 ## What it checks
 
-The analyzer organizes checks into four tiers. Tiers 1 and 2 always run; tier 3 auto-enables when your config supports
-it; tier 4 is opt-in.
+The analyzer organizes checks into four tiers. Tiers 1 and 2 always run; Tier 3 auto-enables when your config supports
+it; Tier 4 is opt-in.
 
-| Tier                         | When                                                                                 | What it checks                                                                                                                                                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. Hard fails**            | Always                                                                               | Dangling edges, referential integrity (edges to non-existent nodes), duplicate nodes. Raises `DataQualityError` — report still generated to show partial results.                                                                       |
-| **2. Core metrics**          | Always                                                                               | Node/edge counts, degree distribution (in/out), degree buckets, top-K hubs, super-hub int16 clamp count, cold-start node count, self-loops, duplicate edges, NULL rates per column, feature memory budget, neighbor-explosion estimate. |
-| **3. Label + heterogeneous** | Auto when `label_column` is set on any node table, or when multiple edge types exist | Class imbalance, label coverage, edge type distribution, per-edge-type node coverage.                                                                                                                                                   |
-| **4. Advanced**              | Opt-in via config flags                                                              | Reciprocity, homophily, connected components, clustering coefficient. Runs on full data (no sampling).                                                                                                                                  |
+| Tier                         | When                                                                                 | What it checks                                                                                                                                                                                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Hard fails**            | Always                                                                               | Dangling edges (NULL src/dst), referential integrity (edges pointing to nodes not in the node table), duplicate nodes. Raises `DataQualityError` — the report still renders to show partial results.                                                                                   |
+| **2. Core metrics**          | Always                                                                               | Node/edge counts, degree distribution (in/out) with percentiles, degree buckets, top-K hubs, super-hub int16 clamp count, cold-start node count, self-loops, duplicate edges, NULL rates per column, feature memory budget estimate, neighbor-explosion estimate (requires `fan_out`). |
+| **3. Label + heterogeneous** | Auto when `label_column` is set on any node table, or when multiple edge types exist | Class imbalance, label coverage, edge type distribution, per-edge-type node coverage.                                                                                                                                                                                                  |
+| **4. Advanced**              | Opt-in via config flags                                                              | Power-law exponent (implemented as a degree-stats approximation). Reciprocity, homophily, connected components, clustering coefficient are **not yet implemented** — the flags are accepted but currently no-op.                                                                       |
 
-Full per-check rationale with literature citations lives in the
-[design doc](../../docs/plans/20260415-bq-data-analyzer.md) and
-[literature review](../../docs/plans/20260415-bq-data-analyzer-references.md).
+The thresholds below come from a review of production GNN papers (PinSage, BLADE, LiGNN, TwHIN, AliGraph, GraphSMOTE,
+Beyond Homophily, Feature Propagation, and others). See the inline citations in the threshold table for what each paper
+contributes.
 
 ## Interpreting the report
 
-The report color-codes every numeric finding against thresholds drawn from 18 production GNN papers. Summary:
+The report color-codes every numeric finding. Summary of the most important thresholds:
 
-| Metric                                                   | Green | Yellow     | Red     | What to do when yellow/red                                                                                                                    |
-| -------------------------------------------------------- | ----- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dangling edges / referential integrity / duplicate nodes | 0     | —          | any > 0 | Fix the input tables. Training will fail or silently corrupt otherwise.                                                                       |
-| Feature missing rate                                     | < 10% | 10–50%     | > 90%   | Plan an imputation strategy; at > 95% the Feature Propagation phase transition hits and GNNs stop recovering signal well.                     |
-| Isolated node fraction                                   | < 1%  | 1–5%       | > 5%    | Filter isolated nodes or densify (LiGNN-style) for cold-start cohorts.                                                                        |
-| Cold-start fraction (degree 0–1)                         | < 5%  | 5–10%      | > 10%   | Candidates for graph densification; also flag for special handling at serving time.                                                           |
-| Super-hub int16 clamp (degree > 32,767)                  | 0     | —          | any > 0 | GiGL silently truncates super-hub degrees. Either cap the hub's edges upstream or plan to fix the clamp.                                      |
-| Degree p99/median                                        | < 50  | 50–100     | > 100   | Use importance sampling (PinSage) or degree-adaptive neighborhoods (BLADE).                                                                   |
-| Class imbalance ratio                                    | < 1:5 | 1:5 – 1:10 | > 1:10  | Message passing amplifies label imbalance 2-3x in representation space (GraphSMOTE). Consider resampling or GraphSMOTE-style synthetic nodes. |
-| Edge homophily (Tier 4)                                  | > 0.7 | 0.3 – 0.7  | < 0.3   | Standard GCN/GAT fail at low h. Consider H2GCN-style architectures; at h < 0.2 an MLP often wins.                                             |
-
-Full threshold table with citations:
-[`docs/plans/20260415-bq-data-analyzer-references.md`](../../docs/plans/20260415-bq-data-analyzer-references.md#19-consolidated-threshold-table).
+| Metric                                                   | Green | Yellow     | Red     | What to do when yellow/red                                                                                                                                    |
+| -------------------------------------------------------- | ----- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dangling edges / referential integrity / duplicate nodes | 0     | —          | any > 0 | Fix the input tables. Training will fail or silently corrupt otherwise.                                                                                       |
+| Feature missing rate                                     | < 10% | 10–50%     | > 90%   | Plan an imputation strategy; above ~95% the Feature Propagation phase transition (Rossi et al., ICLR 2022) hits and GNNs stop recovering signal reliably.     |
+| Isolated node fraction                                   | < 1%  | 1–5%       | > 5%    | Filter isolated nodes or densify (LiGNN, KDD 2024) for cold-start cohorts.                                                                                    |
+| Cold-start fraction (degree 0–1)                         | < 5%  | 5–10%      | > 10%   | Candidates for graph densification; also flag for special handling at serving time.                                                                           |
+| Super-hub int16 clamp (degree > 32,767)                  | 0     | —          | any > 0 | GiGL silently truncates super-hub degrees in `gigl/distributed/utils/degree.py`. Either cap the hub's edges upstream or plan to address the clamp.            |
+| Degree p99 / median                                      | < 50  | 50–100     | > 100   | Use importance sampling (PinSage, KDD 2018) or degree-adaptive neighborhoods (BLADE, WSDM 2023) — degree skew is the single biggest lever in production GNNs. |
+| Class imbalance ratio                                    | < 1:5 | 1:5 – 1:10 | > 1:10  | Message passing amplifies label imbalance 2–3× in representation space (GraphSMOTE, WSDM 2021). Consider resampling or GraphSMOTE-style synthetic nodes.      |
+| Edge homophily (Tier 4, future)                          | > 0.7 | 0.3 – 0.7  | < 0.3   | Standard GCN/GAT fail at low h (Zhu et al., NeurIPS 2020). Consider H2GCN-style architectures; below h ≈ 0.2 a plain MLP often wins.                          |
 
 ## Advanced config
 
@@ -106,24 +98,28 @@ node_tables:
   - bq_table: ...
     label_column: "label"
 
-# Enable Tier 4 temporal freshness for an edge type:
-edge_tables:
-  - bq_table: ...
-    timestamp_column: "created_at"
-
 # Neighbor explosion estimation — the fan-out per GNN layer you plan to train with:
 fan_out: [15, 10, 5]
 
-# Opt-in Tier 4 checks. Default false; all run on full data (no sampling).
+# Tier 4 opt-in flags. Default false.
+# NOTE: Only `compute_reciprocity` is wired into the analyzer today and it logs a
+# warning rather than computing a result. The other three flags are placeholders
+# for future work (see "Scope and limitations" below).
 compute_reciprocity: true
 compute_homophily: true
 compute_connected_components: true
 compute_clustering: true
+
+# Per-edge-type timestamp hint. NOTE: accepted by the config schema but not yet
+# consumed by any Tier 4 query (temporal freshness check is planned).
+edge_tables:
+  - bq_table: ...
+    timestamp_column: "created_at"
 ```
 
 ## Python API
 
-The CLI wraps a regular class. Call from your own code when you want programmatic access to the result dataclass:
+The CLI wraps a regular class. Call from your own code when you want programmatic access to the `GraphAnalysisResult`:
 
 ```python
 from gigl.analytics.data_analyzer import DataAnalyzer
@@ -132,11 +128,10 @@ from gigl.analytics.data_analyzer.config import load_analyzer_config
 config = load_analyzer_config("my_analyzer_config.yaml")
 analyzer = DataAnalyzer()
 report_path = analyzer.run(config=config)
-# report_path points to the written report.html
+# report_path points to the written report.html (local path or gs:// URI)
 ```
 
-The underlying `GraphStructureAnalyzer` is also callable directly if you only want the raw `GraphAnalysisResult`
-dataclass and no HTML:
+The underlying `GraphStructureAnalyzer` is also callable directly if you want the raw result dataclass and no HTML:
 
 ```python
 from gigl.analytics.data_analyzer.graph_structure_analyzer import GraphStructureAnalyzer
@@ -144,6 +139,10 @@ from gigl.analytics.data_analyzer.graph_structure_analyzer import GraphStructure
 result = GraphStructureAnalyzer().analyze(config)
 print(result.degree_stats)
 ```
+
+See a rendered report example at
+[`tests/test_assets/analytics/golden_report.html`](../../tests/test_assets/analytics/golden_report.html) to preview the
+output format before authenticating to BQ.
 
 ## graph_validation
 
@@ -161,26 +160,29 @@ has_dangling = BQGraphValidator.does_edge_table_have_dangling_edges(
 ```
 
 The `DataAnalyzer` runs this check (and many more) as part of Tier 1, so prefer the full analyzer unless you
-specifically need to script a one-line gate.
+specifically need a one-line gate (e.g., inside an Airflow task or a preprocessing job). This subpackage is the intended
+home for additional standalone validators in the future.
 
 ## Scope and limitations
 
-The v1 analyzer has two deliberate scope cuts:
+Current implementation status:
 
-- **FeatureProfiler is a stub.** The class is wired in but the TFDV/Dataflow pipeline that produces FACETS HTML per
+- **FeatureProfiler is a stub.** The class is wired in but the TFDV/Dataflow pipeline that would produce FACETS HTML per
   table is deferred to a follow-up PR. Calling it today logs a warning and returns an empty `FeatureProfileResult`. The
   main report is fully functional without it.
-- **Tier 4 queries are not implemented.** Reciprocity, homophily, connected components, and clustering coefficient
-  config flags are accepted but currently no-op. The power-law exponent (Tier 4) is computed from degree stats as an
-  approximation.
+- **Tier 4 checks are partial.** Power-law exponent is computed as a degree-stats approximation. Reciprocity, homophily,
+  connected components, and clustering coefficient config flags are accepted but currently no-op. The `timestamp_column`
+  edge field is accepted but no temporal-freshness query runs yet.
+- **Heterogeneous graphs: referential integrity caveat.** For each edge table, the referential-integrity check joins
+  against `config.node_tables[0]`. On heterogeneous graphs where different edges reference different node types, the
+  current implementation will under-report integrity violations — fix is tracked for a follow-up.
+- **GCS upload** works via `GcsUtils.upload_from_string` when `output_gcs_path` is a `gs://` URI, and falls back to
+  local filesystem write otherwise.
 
-## Deeper reading
+## Related documents
 
-- [Design doc](../../docs/plans/20260415-bq-data-analyzer.md) — architecture, 4-tier validation, cost control, tradeoff
-  analysis
-- [Literature review](../../docs/plans/20260415-bq-data-analyzer-references.md) — 18 production GNN papers, 100+
-  findings, consolidated threshold table
-- [1-pager](../../docs/plans/20260416-data-analyzer-1-pager.md) — executive summary
-- [Engineering spec](../../docs/plans/20260416-data-analyzer-engineering-spec.md) — per-layer implementation contract
-- [Report PRD](data_analyzer/report/PRD.md) — product intent for the HTML report
-- [Report SPEC](data_analyzer/report/SPEC.md) — technical contract for regenerating the HTML/JS/CSS assets
+Within this module:
+
+- [`data_analyzer/report/PRD.md`](data_analyzer/report/PRD.md) — product intent for the HTML report (AI-owned)
+- [`data_analyzer/report/SPEC.md`](data_analyzer/report/SPEC.md) — technical contract for the AI-owned HTML/JS/CSS
+  assets

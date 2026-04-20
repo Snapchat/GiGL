@@ -61,3 +61,22 @@ class DataAnalyzerConfigTest(TestCase):
         with self.assertRaises(Exception):
             merged = OmegaConf.merge(OmegaConf.structured(DataAnalyzerConfig), raw)
             OmegaConf.to_object(merged)
+
+    def test_node_table_without_feature_columns(self) -> None:
+        """Nodes with no features are legal; feature_columns defaults to []."""
+        yaml_str = """
+        node_tables:
+          - bq_table: "p.d.t"
+            node_type: "user"
+            id_column: "uid"
+        edge_tables:
+          - bq_table: "p.d.e"
+            edge_type: "follows"
+            src_id_column: "src"
+            dst_id_column: "dst"
+        output_gcs_path: "gs://bucket/out/"
+        """
+        raw = OmegaConf.create(yaml_str)
+        merged = OmegaConf.merge(OmegaConf.structured(DataAnalyzerConfig), raw)
+        config = cast(DataAnalyzerConfig, OmegaConf.to_object(merged))
+        self.assertEqual(config.node_tables[0].feature_columns, [])

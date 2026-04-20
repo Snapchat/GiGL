@@ -15,7 +15,7 @@ class NodeTableSpec:
     bq_table: str = MISSING
     node_type: str = MISSING
     id_column: str = MISSING
-    feature_columns: list[str] = MISSING
+    feature_columns: list[str] = field(default_factory=list)
     label_column: Optional[str] = None
 
 
