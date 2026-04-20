@@ -5,6 +5,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Enable CUDA only when the toolkit is present; allows the same CMakeLists.txt
+# to build on CPU-only machines without requiring nvcc.
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+endif()
+
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 # Locate pybind11's cmake config via the Python interpreter so this works
@@ -53,10 +63,16 @@ set(GIGL_COMPILE_FLAGS -O3 -Wall -Wextra -Wno-unused-parameter)
 # build_cpp_extensions.py: no changes here are needed to add new extensions.
 # ---------------------------------------------------------------------------
 
-file(GLOB_RECURSE _PYTHON_SRCS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/gigl/csrc/**/python_*.cpp"
-    "${CMAKE_SOURCE_DIR}/gigl/csrc/**/python_*.cu"
-)
+if(CMAKE_CUDA_COMPILER)
+    file(GLOB_RECURSE _PYTHON_SRCS CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/gigl/csrc/**/python_*.cpp"
+        "${CMAKE_SOURCE_DIR}/gigl/csrc/**/python_*.cu"
+    )
+else()
+    file(GLOB_RECURSE _PYTHON_SRCS CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/gigl/csrc/**/python_*.cpp"
+    )
+endif()
 
 foreach(_py_src IN LISTS _PYTHON_SRCS)
     get_filename_component(_dir  "${_py_src}" DIRECTORY)
@@ -64,11 +80,12 @@ foreach(_py_src IN LISTS _PYTHON_SRCS)
     string(REGEX REPLACE "^python_" "" _name "${_stem}")
 
     set(_sources "${_py_src}")
-    foreach(_ext IN ITEMS cpp cu)
-        if(EXISTS "${_dir}/${_name}.${_ext}")
-            list(APPEND _sources "${_dir}/${_name}.${_ext}")
-        endif()
-    endforeach()
+    if(EXISTS "${_dir}/${_name}.cpp")
+        list(APPEND _sources "${_dir}/${_name}.cpp")
+    endif()
+    if(CMAKE_CUDA_COMPILER AND EXISTS "${_dir}/${_name}.cu")
+        list(APPEND _sources "${_dir}/${_name}.cu")
+    endif()
 
     file(RELATIVE_PATH _rel_dir "${CMAKE_SOURCE_DIR}" "${_dir}")
 

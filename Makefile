@@ -22,7 +22,10 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
-CPP_SOURCES:=$(shell find gigl/csrc -name "*.cpp" 2>/dev/null)
+CPP_SOURCES:=$(shell find gigl/csrc -name "*.cpp" -o -name "*.cu" 2>/dev/null)
+# clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
+# Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
+CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -166,13 +169,13 @@ generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
 
 check_lint_cpp:
-	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES)
+	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES)
+	clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA)
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

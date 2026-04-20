@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+endif()
+
 # ---------------------------------------------------------------------------
 # GoogleTest via FetchContent
 # ---------------------------------------------------------------------------
@@ -29,7 +37,11 @@ enable_testing()
 # automatically compiled into its own test binary and registered with CTest.
 # To add a new test suite, drop a *_test.cpp file here — no changes to this
 # file required.  This matches the *_test.py convention used for Python tests.
-file(GLOB_RECURSE TEST_SOURCES "*_test.cpp")
+if(CMAKE_CUDA_COMPILER)
+    file(GLOB_RECURSE TEST_SOURCES "*_test.cpp" "*_test.cu")
+else()
+    file(GLOB_RECURSE TEST_SOURCES "*_test.cpp")
+endif()
 
 foreach(test_source ${TEST_SOURCES})
     # Derive the binary name from the filename, e.g.:
