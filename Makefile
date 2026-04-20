@@ -117,7 +117,7 @@ check_format_md:
 	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
-	$(if $(CPP_SOURCES), clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
+	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
 
 check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
@@ -154,7 +154,7 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	$(if $(CPP_SOURCES), clang-format-15 -i --style=file $(CPP_SOURCES))
+	clang-format-15 -i --style=file $(CPP_SOURCES)
 
 format: format_py format_cpp format_scala format_md
 
@@ -168,13 +168,13 @@ generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
 
 check_lint_cpp:
-	$(if $(CPP_SOURCES), uv run python -m scripts.run_cpp_lint $(CPP_SOURCES))
+	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES), clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES))
+	clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES)
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

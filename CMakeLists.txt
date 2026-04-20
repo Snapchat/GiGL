@@ -25,11 +25,10 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-# CUDA torch's CMake unconditionally calls enable_language(CUDA), which requires nvcc.
-# nvcc may not be on PATH even when the CUDA toolkit is installed; find it explicitly.
-if(NOT CMAKE_CUDA_COMPILER)
-    find_program(CMAKE_CUDA_COMPILER nvcc PATHS "/usr/local/cuda/bin")
-endif()
+# Our extensions have no CUDA kernels. When a CUDA-enabled torch is installed
+# but the CUDA toolkit is absent (e.g. CPU-only CI), Caffe2Config.cmake aborts
+# unless we disable the CUDA check before calling find_package(Torch).
+set(CAFFE2_USE_CUDA OFF CACHE BOOL "" FORCE)
 
 find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
@@ -43,6 +42,11 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED)
+
+# Preserve torch lib dir in the installed .so RPATH so the extension loads
+# libtorch.so without requiring `import torch` to pre-populate the symbol table.
+set(CMAKE_INSTALL_RPATH "${TORCH_LIB_DIR}")
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
 set(GIGL_COMPILE_FLAGS -O3 -Wall -Wextra -Wno-unused-parameter)
 
