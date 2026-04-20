@@ -53,27 +53,23 @@ class NodeAnchorLinkSplitter(Protocol):
     def __call__(
         self,
         edge_index: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        ...
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         edge_index: Mapping[EdgeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-        ...
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self, *args, **kwargs
     ) -> Union[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
-        ...
+    ]: ...
 
     @property
-    def should_convert_labels_to_edges(self):
-        ...
+    def should_convert_labels_to_edges(self): ...
 
 
 @runtime_checkable
@@ -90,23 +86,20 @@ class NodeSplitter(Protocol):
     def __call__(
         self,
         node_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        ...
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         node_ids: Mapping[NodeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-        ...
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self, *args, **kwargs
     ) -> Union[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ]:
-        ...
+    ]: ...
 
 
 def _fast_hash(x: torch.Tensor) -> torch.Tensor:
@@ -261,15 +254,13 @@ class DistNodeAnchorLinkSplitter:
     def __call__(
         self,
         edge_index: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        ...
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         edge_index: Mapping[EdgeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-        ...
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self,
@@ -446,15 +437,13 @@ class DistNodeSplitter:
     def __call__(
         self,
         node_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        ...
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         node_ids: Mapping[NodeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-        ...
+    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self,
@@ -612,6 +601,9 @@ def get_labels_for_anchor_nodes(
         raise ValueError(
             "The dataset must be heterogeneous to select labels for anchor nodes."
         )
+    if node_ids.numel() == 0:
+        empty = torch.empty((0, 0), dtype=torch.int64)
+        return empty, empty if negative_label_edge_type is not None else None
     positive_node_topo = dataset.graph[positive_label_edge_type].topo
     if negative_label_edge_type is not None:
         negative_node_topo = dataset.graph[negative_label_edge_type].topo

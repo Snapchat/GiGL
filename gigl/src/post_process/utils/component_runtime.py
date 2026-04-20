@@ -31,5 +31,5 @@ def assert_component_runtimes_match_expected_parameters(
         expected_runtime_sec = expected_runtime_hr * 3600
         if runtime_sec > expected_runtime_sec:
             raise ValueError(
-                f"Component {component_name} took longer than expected runtime of {expected_runtime_hr} hrs. Actual runtime was {t_finish- t_start}."
+                f"Component {component_name} took longer than expected runtime of {expected_runtime_hr} hrs. Actual runtime was {t_finish - t_start}."
             )

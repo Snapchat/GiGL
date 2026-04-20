@@ -69,6 +69,7 @@ COMPILING A PIPELINE:
             This passes additional_spark35_jar_file_uris="gs://path/to/jar" to subgraph_sampler at compile time and
             some_other_arg="value" to split_generator at compile time.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -389,9 +390,9 @@ if __name__ == "__main__":
                 additional_job_args=parsed_additional_job_args,
                 tag=args.pipeline_tag,
             )
-            assert (
-                path == compiled_pipeline_path
-            ), f"Compiled pipeline path {path} does not match provided path {compiled_pipeline_path}"
+            assert path == compiled_pipeline_path, (
+                f"Compiled pipeline path {path} does not match provided path {compiled_pipeline_path}"
+            )
 
         run = orchestrator.run(
             applied_task_identifier=applied_task_identifier,

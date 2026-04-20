@@ -98,14 +98,14 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
             )
             node_features_outputs = node_feature_fields
 
-            node_data_ref_to_preprocessing_specs[
-                node_data_ref
-            ] = NodeDataPreprocessingSpec(
-                identifier_output=node_output_id,
-                features_outputs=node_features_outputs,
-                labels_outputs=node_labels_outputs,
-                feature_spec_fn=feature_spec_fn,
-                preprocessing_fn=preprocessing_fn,
+            node_data_ref_to_preprocessing_specs[node_data_ref] = (
+                NodeDataPreprocessingSpec(
+                    identifier_output=node_output_id,
+                    features_outputs=node_features_outputs,
+                    labels_outputs=node_labels_outputs,
+                    feature_spec_fn=feature_spec_fn,
+                    preprocessing_fn=preprocessing_fn,
+                )
             )
 
         return node_data_ref_to_preprocessing_specs
@@ -160,19 +160,19 @@ class PassthroughPreprocessorConfigForMockedAssets(DataPreprocessorConfig):
 
             preprocessing_fn = build_passthrough_transform_preprocessing_fn()
 
-            edge_data_ref_to_preprocessing_specs[
-                main_edge_data_ref
-            ] = EdgeDataPreprocessingSpec(
-                identifier_output=edge_output_id,
-                features_outputs=default_edge_feature_fields,
-                feature_spec_fn=build_ingestion_feature_spec_fn(
-                    fixed_int_fields=[
-                        self.__mocked_dataset.edge_src_column_name,
-                        self.__mocked_dataset.edge_dst_column_name,
-                    ],
-                    fixed_float_fields=default_edge_feature_fields,
-                ),
-                preprocessing_fn=preprocessing_fn,
+            edge_data_ref_to_preprocessing_specs[main_edge_data_ref] = (
+                EdgeDataPreprocessingSpec(
+                    identifier_output=edge_output_id,
+                    features_outputs=default_edge_feature_fields,
+                    feature_spec_fn=build_ingestion_feature_spec_fn(
+                        fixed_int_fields=[
+                            self.__mocked_dataset.edge_src_column_name,
+                            self.__mocked_dataset.edge_dst_column_name,
+                        ],
+                        fixed_float_fields=default_edge_feature_fields,
+                    ),
+                    preprocessing_fn=preprocessing_fn,
+                )
             )
 
             should_use_user_defined_labels_for_this_edge_type = (

@@ -6,6 +6,7 @@ compared to parquet files.
 However, if we switch to an on-line upload scheme, where we upload the embeddings as they are generated,
 then we should look into if parquet or orc files are more performant in that modality.
 """
+
 import io
 import os
 import time
@@ -193,7 +194,7 @@ class GcsExporter:
         self._buffer = io.BytesIO()
 
         logger.info(
-            f"Upload the {buff_size:,} bytes Avro data took {time.perf_counter()- start:.2f} seconds"
+            f"Upload the {buff_size:,} bytes Avro data took {time.perf_counter() - start:.2f} seconds"
         )
         self._num_records_written = 0
         self._write_time = 0.0

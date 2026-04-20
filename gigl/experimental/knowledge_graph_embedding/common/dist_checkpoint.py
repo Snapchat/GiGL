@@ -69,9 +69,9 @@ def load_checkpoint_from_uri(
     state_dict: STATE_DICT_TYPE,
     checkpoint_id: Uri,
 ):
-    assert isinstance(checkpoint_id, LocalUri) or isinstance(
-        checkpoint_id, GcsUri
-    ), "checkpoint_id must be a LocalUri or GcsUri."
+    assert isinstance(checkpoint_id, LocalUri) or isinstance(checkpoint_id, GcsUri), (
+        "checkpoint_id must be a LocalUri or GcsUri."
+    )
 
     created_temp_local_uri = False
     if isinstance(checkpoint_id, GcsUri):
@@ -137,9 +137,9 @@ def save_checkpoint_to_uri(
 
         return checkpoint_id
 
-    assert isinstance(checkpoint_id, LocalUri) or isinstance(
-        checkpoint_id, GcsUri
-    ), "checkpoint_id must be a LocalUri or GcsUri."
+    assert isinstance(checkpoint_id, LocalUri) or isinstance(checkpoint_id, GcsUri), (
+        "checkpoint_id must be a LocalUri or GcsUri."
+    )
     local_uri = (
         checkpoint_id
         if isinstance(checkpoint_id, LocalUri)

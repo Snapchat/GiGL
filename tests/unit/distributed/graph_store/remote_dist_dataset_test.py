@@ -11,7 +11,12 @@ from absl.testing import absltest
 import gigl.distributed.graph_store.dist_server as dist_server_module
 from gigl.common import LocalUri
 from gigl.distributed.graph_store.dist_server import DistServer, _call_func_on_server
+from gigl.distributed.graph_store.messages import (
+    FetchABLPInputRequest,
+    FetchNodesRequest,
+)
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -700,6 +705,566 @@ class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):
             )
 
 
+class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
+    """Tests for fetch_node_ids and fetch_ablp_input with contiguous server assignments."""
+
+    def _make_rank_aware_async_mock(
+        self,
+        server_data: dict[int, Any],
+        captured_requests: Optional[list[tuple[int, Any]]] = None,
+    ) -> Callable[..., torch.futures.Future]:
+        """Create an async mock that returns pre-set data per server rank.
+
+        Args:
+            server_data: Maps server_rank to the value that server should return.
+                Can be a tensor (for node ID tests) or a tuple (for ABLP tests).
+            captured_requests: Optional list populated with ``(server_rank, request)``
+                tuples for later assertions.
+        """
+
+        def _mock(
+            server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+        ) -> torch.futures.Future:
+            assert not kwargs
+            assert len(args) == 1
+            request = args[0]
+            if captured_requests is not None:
+                captured_requests.append((server_rank, request))
+
+            future: torch.futures.Future = torch.futures.Future()
+            response = server_data[server_rank]
+            if isinstance(request, FetchNodesRequest):
+                if request.server_slice is not None:
+                    assert isinstance(response, torch.Tensor)
+                    response = request.server_slice.slice_tensor(response)
+            elif isinstance(request, FetchABLPInputRequest):
+                if request.server_slice is not None:
+                    anchors, positive_labels, negative_labels = response
+                    response = (
+                        request.server_slice.slice_tensor(anchors),
+                        request.server_slice.slice_tensor(positive_labels),
+                        (
+                            request.server_slice.slice_tensor(negative_labels)
+                            if negative_labels is not None
+                            else None
+                        ),
+                    )
+            future.set_result(response)
+            return future
+
+        return _mock
+
+    @staticmethod
+    def _mock_request_server_homogeneous(
+        server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        """Mock request_server that returns None for node/edge types (homogeneous)."""
+        if func == DistServer.get_node_types:
+            return None
+        if func == DistServer.get_edge_types:
+            return None
+        return _mock_request_server(server_rank, func, *args, **kwargs)
+
+    def test_fetch_node_ids_contiguous_even_split(self) -> None:
+        """CONTIGUOUS with 2 storage nodes and 2 compute nodes: each rank gets one server."""
+        server_data: dict[int, torch.Tensor] = {
+            0: torch.arange(10),
+            1: torch.arange(10, 20),
+        }
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=2, num_compute_nodes=2
+        )
+
+        with _patch_remote_requests(mock_fn, self._mock_request_server_homogeneous):
+            ds = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: gets all of server 0, empty from server 1
+            result = ds.fetch_node_ids(
+                rank=0,
+                world_size=2,
+            )
+            self.assert_tensor_equality(result[0], torch.arange(10))
+            self.assertEqual(result[1].numel(), 0)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
+
+            # Rank 1: empty from server 0, gets all of server 1
+            captured_requests.clear()
+            result = ds.fetch_node_ids(
+                rank=1,
+                world_size=2,
+            )
+            self.assertEqual(result[0].numel(), 0)
+            self.assert_tensor_equality(result[1], torch.arange(10, 20))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
+
+    def test_fetch_node_ids_contiguous_fractional_split(self) -> None:
+        """CONTIGUOUS with 3 storage nodes and 2 compute nodes: server 1 is fractionally split."""
+        server_data: dict[int, torch.Tensor] = {
+            0: torch.arange(10),
+            1: torch.arange(10, 20),
+            2: torch.arange(20, 30),
+        }
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=3, num_compute_nodes=2
+        )
+
+        with _patch_remote_requests(mock_fn, self._mock_request_server_homogeneous):
+            ds = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: all of server 0, first half of server 1, nothing from server 2
+            result = ds.fetch_node_ids(
+                rank=0,
+                world_size=2,
+            )
+            self.assert_tensor_equality(result[0], torch.arange(10))
+            self.assert_tensor_equality(result[1], torch.arange(10, 15))
+            self.assertEqual(result[2].numel(), 0)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        1,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_numerator=0,
+                                end_numerator=1,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
+
+            # Rank 1: nothing from server 0, second half of server 1, all of server 2
+            captured_requests.clear()
+            result = ds.fetch_node_ids(
+                rank=1,
+                world_size=2,
+            )
+            self.assertEqual(result[0].numel(), 0)
+            self.assert_tensor_equality(result[1], torch.arange(15, 20))
+            self.assert_tensor_equality(result[2], torch.arange(20, 30))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_numerator=1,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        2,
+                        FetchNodesRequest(
+                            split=None,
+                            node_type=None,
+                            server_slice=ServerSlice(
+                                server_rank=2,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
+
+    def test_with_split_filtering(self) -> None:
+        """CONTIGUOUS strategy with split='train' filtering."""
+        server_data: dict[int, torch.Tensor] = {
+            0: torch.tensor([0, 1, 2, 3]),
+            1: torch.tensor([10, 11, 12, 13]),
+        }
+        mock_fn = self._make_rank_aware_async_mock(server_data)
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=2, num_compute_nodes=2
+        )
+
+        with _patch_remote_requests(mock_fn, self._mock_request_server_homogeneous):
+            ds = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            result = ds.fetch_node_ids(
+                rank=0,
+                world_size=2,
+                split="train",
+            )
+            self.assert_tensor_equality(result[0], torch.tensor([0, 1, 2, 3]))
+            self.assertEqual(result[1].numel(), 0)
+
+    def test_requires_both_rank_and_world_size(self) -> None:
+        """Providing only one of rank/world_size raises ValueError."""
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=2, num_compute_nodes=2
+        )
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_node_ids(
+                rank=0,
+            )
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_node_ids(
+                world_size=2,
+            )
+
+    def test_labeled_homogeneous_auto_inference(self) -> None:
+        """Auto-infers DEFAULT_HOMOGENEOUS_NODE_TYPE for labeled homogeneous datasets."""
+        _create_server_with_splits(
+            edge_indices={
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                    [[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]
+                )
+            },
+            src_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        )
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+
+        with _patch_remote_requests(_mock_async_request_server, _mock_request_server):
+            remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            result = remote_dataset.fetch_node_ids(
+                rank=0,
+                world_size=1,
+                split="train",
+            )
+            self.assert_tensor_equality(
+                result[0],
+                torch.tensor([0, 1, 2]),
+            )
+
+    def test_fetch_ablp_input_contiguous_even_split(self) -> None:
+        """ABLP CONTIGUOUS with 2 storage nodes and 2 compute nodes."""
+        server_data: dict[
+            int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+        ] = {
+            0: (
+                torch.tensor([0, 1, 2]),
+                torch.tensor([[0, 1], [1, 2], [2, 3]]),
+                torch.tensor([[4], [5], [6]]),
+            ),
+            1: (
+                torch.tensor([10, 11, 12]),
+                torch.tensor([[10, 11], [11, 12], [12, 13]]),
+                torch.tensor([[14], [15], [16]]),
+            ),
+        }
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=2, num_compute_nodes=2
+        )
+
+        with _patch_remote_requests(mock_fn, self._mock_request_server_homogeneous):
+            ds = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: gets all of server 0, empty from server 1
+            result = ds.fetch_ablp_input(
+                split="train",
+                rank=0,
+                world_size=2,
+            )
+            ablp_0 = result[0]
+            self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1, 2]))
+            pos, neg = ablp_0.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(pos, torch.tensor([[0, 1], [1, 2], [2, 3]]))
+            assert neg is not None
+            self.assert_tensor_equality(neg, torch.tensor([[4], [5], [6]]))
+
+            ablp_1 = result[1]
+            self.assertEqual(ablp_1.anchor_nodes.numel(), 0)
+            pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assertEqual(pos_1.numel(), 0)
+            self.assertIsNone(neg_1)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
+
+            # Rank 1: empty from server 0, gets all of server 1
+            captured_requests.clear()
+            result = ds.fetch_ablp_input(
+                split="train",
+                rank=1,
+                world_size=2,
+            )
+            ablp_0 = result[0]
+            self.assertEqual(ablp_0.anchor_nodes.numel(), 0)
+
+            ablp_1 = result[1]
+            self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([10, 11, 12]))
+            pos, neg = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(
+                pos, torch.tensor([[10, 11], [11, 12], [12, 13]])
+            )
+            assert neg is not None
+            self.assert_tensor_equality(neg, torch.tensor([[14], [15], [16]]))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    )
+                ],
+            )
+
+    def test_fetch_ablp_input_contiguous_fractional_split(self) -> None:
+        """ABLP CONTIGUOUS with 3 storage nodes and 2 compute nodes: server 1 fractionally split."""
+        server_data: dict[
+            int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+        ] = {
+            0: (
+                torch.tensor([0, 1, 2, 3]),
+                torch.tensor([[0, 1], [1, 2], [2, 3], [3, 4]]),
+                torch.tensor([[10], [11], [12], [13]]),
+            ),
+            1: (
+                torch.tensor([10, 11, 12, 13]),
+                torch.tensor([[10, 11], [11, 12], [12, 13], [13, 14]]),
+                torch.tensor([[20], [21], [22], [23]]),
+            ),
+            2: (
+                torch.tensor([20, 21, 22, 23]),
+                torch.tensor([[20, 21], [21, 22], [22, 23], [23, 24]]),
+                torch.tensor([[30], [31], [32], [33]]),
+            ),
+        }
+        captured_requests: list[tuple[int, Any]] = []
+        mock_fn = self._make_rank_aware_async_mock(server_data, captured_requests)
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=3, num_compute_nodes=2
+        )
+
+        with _patch_remote_requests(mock_fn, self._mock_request_server_homogeneous):
+            ds = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+            # Rank 0: all of server 0, first half of server 1, nothing from server 2
+            result = ds.fetch_ablp_input(
+                split="train",
+                rank=0,
+                world_size=2,
+            )
+            ablp_0 = result[0]
+            self.assert_tensor_equality(ablp_0.anchor_nodes, torch.tensor([0, 1, 2, 3]))
+            pos, neg = ablp_0.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(
+                pos, torch.tensor([[0, 1], [1, 2], [2, 3], [3, 4]])
+            )
+            assert neg is not None
+            self.assert_tensor_equality(neg, torch.tensor([[10], [11], [12], [13]]))
+
+            ablp_1 = result[1]
+            self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([10, 11]))
+            pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(pos_1, torch.tensor([[10, 11], [11, 12]]))
+            assert neg_1 is not None
+            self.assert_tensor_equality(neg_1, torch.tensor([[20], [21]]))
+
+            ablp_2 = result[2]
+            self.assertEqual(ablp_2.anchor_nodes.numel(), 0)
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        0,
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=0,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        1,
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_numerator=0,
+                                end_numerator=1,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
+
+            # Rank 1: nothing from server 0, second half of server 1, all of server 2
+            captured_requests.clear()
+            result = ds.fetch_ablp_input(
+                split="train",
+                rank=1,
+                world_size=2,
+            )
+            self.assertEqual(result[0].anchor_nodes.numel(), 0)
+
+            ablp_1 = result[1]
+            self.assert_tensor_equality(ablp_1.anchor_nodes, torch.tensor([12, 13]))
+            pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(pos_1, torch.tensor([[12, 13], [13, 14]]))
+            assert neg_1 is not None
+            self.assert_tensor_equality(neg_1, torch.tensor([[22], [23]]))
+
+            ablp_2 = result[2]
+            self.assert_tensor_equality(
+                ablp_2.anchor_nodes, torch.tensor([20, 21, 22, 23])
+            )
+            pos_2, neg_2 = ablp_2.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+            self.assert_tensor_equality(
+                pos_2,
+                torch.tensor([[20, 21], [21, 22], [22, 23], [23, 24]]),
+            )
+            assert neg_2 is not None
+            self.assert_tensor_equality(neg_2, torch.tensor([[30], [31], [32], [33]]))
+            self.assertEqual(
+                captured_requests,
+                [
+                    (
+                        1,
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=1,
+                                start_numerator=1,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                    (
+                        2,
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            server_slice=ServerSlice(
+                                server_rank=2,
+                                start_numerator=0,
+                                end_numerator=2,
+                                denominator=2,
+                            ),
+                        ),
+                    ),
+                ],
+            )
+
+    def test_ablp_requires_both_rank_and_world_size(self) -> None:
+        """ABLP with only one of rank/world_size raises ValueError."""
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=2, num_compute_nodes=2
+        )
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_ablp_input(
+                split="train",
+                rank=0,
+            )
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_ablp_input(
+                split="train",
+                world_size=2,
+            )
+
+
 def _test_fetch_free_ports_on_storage_cluster(
     rank: int,
     world_size: int,
@@ -735,9 +1300,9 @@ def _test_fetch_free_ports_on_storage_cluster(
         dist.all_gather_object(gathered_ports, ports)
 
         for i, rank_ports in enumerate(gathered_ports):
-            assert (
-                rank_ports == mock_ports
-            ), f"Rank {i} got {rank_ports}, expected {mock_ports}"
+            assert rank_ports == mock_ports, (
+                f"Rank {i} got {rank_ports}, expected {mock_ports}"
+            )
     finally:
         dist.destroy_process_group()
 

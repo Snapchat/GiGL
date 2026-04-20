@@ -89,7 +89,7 @@ class E2ETest:
     wait_for_completion: bool = True
     run_labels: dict[str, str] = field(
         default_factory=lambda: {
-            "gigl_commit": "${git_hash:}",
+            "git_commit": "${git_hash:}",
             "gigl_version": f"{__version__.replace('.', '_')}",
         }
     )

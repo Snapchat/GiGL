@@ -285,9 +285,9 @@ class DistABLPLoader(BaseDistLoader):
 
         # Mode-specific setup
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
-            assert isinstance(
-                dataset, DistDataset
-            ), "When using colocated mode, dataset must be a DistDataset."
+            assert isinstance(dataset, DistDataset), (
+                "When using colocated mode, dataset must be a DistDataset."
+            )
             # Validate input_nodes type for colocated mode
             if isinstance(input_nodes, dict):
                 raise ValueError(
@@ -309,17 +309,17 @@ class DistABLPLoader(BaseDistLoader):
                 channel_size=channel_size,
                 num_cpu_threads=num_cpu_threads,
             )
-            sampler_input: Union[
-                ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]
-            ] = setup_info[0]
+            sampler_input: Union[ABLPNodeSamplerInput, list[ABLPNodeSamplerInput]] = (
+                setup_info[0]
+            )
             worker_options: Union[
                 MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
             ] = setup_info[1]
             dataset_schema: DatasetSchema = setup_info[2]
         else:  # Graph Store mode
-            assert isinstance(
-                dataset, RemoteDistDataset
-            ), "When using Graph Store mode, dataset must be a RemoteDistDataset."
+            assert isinstance(dataset, RemoteDistDataset), (
+                "When using Graph Store mode, dataset must be a RemoteDistDataset."
+            )
             # Validate input_nodes type for Graph Store mode
             if not isinstance(input_nodes, dict):
                 raise ValueError(
@@ -367,14 +367,14 @@ class DistABLPLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            producer: Union[
-                DistSamplingProducer, Callable[..., int]
-            ] = BaseDistLoader.create_mp_producer(
-                dataset=dataset,
-                sampler_input=sampler_input,
-                sampling_config=sampling_config,
-                worker_options=worker_options,
-                sampler_options=sampler_options,
+            producer: Union[DistSamplingProducer, Callable[..., int]] = (
+                BaseDistLoader.create_mp_producer(
+                    dataset=dataset,
+                    sampler_input=sampler_input,
+                    sampling_config=sampling_config,
+                    worker_options=worker_options,
+                    sampler_options=sampler_options,
+                )
             )
         else:
             producer = DistServer.create_sampling_producer
@@ -464,10 +464,10 @@ class DistABLPLoader(BaseDistLoader):
             # TODO (mkolodner-sc): We currently assume supervision edges are directed outward, revisit in future if
             # this assumption is no longer valid and/or is too opinionated
             for supervision_edge_type in self._supervision_edge_types:
-                assert (
-                    supervision_edge_type[0] == anchor_node_type
-                ), f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
+                assert supervision_edge_type[0] == anchor_node_type, (
+                    f"Label EdgeType are currently expected to be provided in outward edge direction as tuple (`anchor_node_type`,`relation`,`supervision_node_type`), \
                     got supervision edge type {supervision_edge_type} with anchor node type {anchor_node_type}"
+                )
             if dataset.edge_dir == "in":
                 self._supervision_edge_types = [
                     reverse_edge_type(supervision_edge_type)
@@ -539,13 +539,13 @@ class DistABLPLoader(BaseDistLoader):
                 positive_label_edge_type=positive_label_edge_type,
                 negative_label_edge_type=negative_label_edge_type,
             )
-            positive_labels_by_label_edge_type[
-                positive_label_edge_type
-            ] = positive_labels
+            positive_labels_by_label_edge_type[positive_label_edge_type] = (
+                positive_labels
+            )
             if negative_label_edge_type is not None and negative_labels is not None:
-                negative_labels_by_label_edge_type[
-                    negative_label_edge_type
-                ] = negative_labels
+                negative_labels_by_label_edge_type[negative_label_edge_type] = (
+                    negative_labels
+                )
 
         sampler_input = ABLPNodeSamplerInput(
             node=curr_process_nodes,
@@ -666,7 +666,12 @@ class DistABLPLoader(BaseDistLoader):
         # Extract supervision edge types and derive label edge types from the
         # ABLPInputNodes.labels dict (keyed by supervision edge type).
         self._supervision_edge_types = list(first_input.labels.keys())
-        has_negatives = any(neg is not None for _, neg in first_input.labels.values())
+        has_negatives = False
+        for ablp_input in input_nodes.values():
+            for maybe_negative_labels in ablp_input.labels.values():
+                if maybe_negative_labels is not None:
+                    has_negatives = True
+                    break
 
         self._positive_label_edge_types = [
             message_passing_to_positive_label(et) for et in self._supervision_edge_types
@@ -776,9 +781,9 @@ class DistABLPLoader(BaseDistLoader):
                 node_type_to_local_node_to_global_node[e_type[0]] = data[e_type[0]].node
                 node_type_to_local_node_to_global_node[e_type[2]] = data[e_type[2]].node
         else:
-            node_type_to_local_node_to_global_node[
-                DEFAULT_HOMOGENEOUS_NODE_TYPE
-            ] = data.node
+            node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = (
+                data.node
+            )
         output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
             dict
         )

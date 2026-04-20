@@ -62,9 +62,9 @@ class PostProcessor:
             logger.info(
                 f"Running user post processor class: {post_processor.__class__}, with config: {gbml_config_pb}"
             )
-            post_processor_metrics: Optional[
-                EvalMetricsCollection
-            ] = post_processor.run_post_process(gbml_config_pb=gbml_config_pb)
+            post_processor_metrics: Optional[EvalMetricsCollection] = (
+                post_processor.run_post_process(gbml_config_pb=gbml_config_pb)
+            )
             if post_processor_metrics is not None:
                 self.__write_post_processor_metrics_to_uri(
                     model_eval_metrics=post_processor_metrics,
