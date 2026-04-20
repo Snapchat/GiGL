@@ -89,6 +89,8 @@ class SamplingBackendState:
         runtime: The shared sampling backend runtime.
         active_channels: Set of channel IDs currently registered on this backend.
         lock: A reentrant lock guarding backend-level operations.
+        init_complete: Whether ``runtime.init_backend()`` has completed successfully.
+        init_error: If ``runtime.init_backend()`` raised, the exception; otherwise ``None``.
     """
 
     backend_id: int
@@ -96,6 +98,8 @@ class SamplingBackendState:
     runtime: SharedDistSamplingBackend
     active_channels: set[int] = field(default_factory=set)
     lock: threading.RLock = field(default_factory=threading.RLock)
+    init_complete: bool = False
+    init_error: Optional[BaseException] = None
 
 
 @dataclass
@@ -117,7 +121,7 @@ class DistServer:
 
     Args:
       dataset (DistDataset): The ``DistDataset`` object of a partition of graph
-        data and feature data, along with distributed patition books.
+        data and feature data, along with distributed partition books.
       log_every_n (int): Log aggregated ``fetch_one_sampled_message`` timing
         stats after every ``N`` fetch attempts per channel.
     """
@@ -140,6 +144,7 @@ class DistServer:
             self._backend_id_by_backend_key.clear()
             self._backend_state_by_backend_id.clear()
             self._channel_state_by_channel_id.clear()
+            self._fetch_stats_by_channel_id.clear()
         for backend_state in backends:
             try:
                 backend_state.runtime.shutdown()
@@ -470,8 +475,10 @@ class DistServer:
     def init_sampling_backend(self, opts: InitSamplingBackendRequest) -> int:
         """Create or reuse a shared sampling backend for one loader instance.
 
-        If a backend with the same ``backend_key`` already exists, returns
-        its ID without creating a new one.
+        If a backend with the same ``backend_key`` already exists, blocks
+        until the original initializer has finished, then returns its ID.
+        If the original initializer failed, re-raises that failure so the
+        second caller does not see a half-initialized backend.
 
         Args:
             opts: The initialization request containing the backend key,
@@ -479,45 +486,82 @@ class DistServer:
 
         Returns:
             The unique backend ID.
+
+        Raises:
+            RuntimeError: If a prior concurrent initialization for the same
+                ``backend_key`` failed.
         """
         request_start_time = time.monotonic()
+        is_first = False
         with self._lock:
             backend_id = self._backend_id_by_backend_key.get(opts.backend_key)
             if backend_id is not None:
-                return backend_id
-            backend_id = self._next_backend_id
-            self._next_backend_id += 1
-            backend_state = SamplingBackendState(
-                backend_id=backend_id,
-                backend_key=opts.backend_key,
-                runtime=SharedDistSamplingBackend(
-                    data=self.dataset,
-                    worker_options=opts.worker_options,
-                    sampling_config=opts.sampling_config,
-                    sampler_options=opts.sampler_options,
-                    # We only need degree tensor for PPR sampling
-                    degree_tensors=self.dataset.degree_tensor
-                    if isinstance(opts.sampler_options, PPRSamplerOptions)
-                    else None,
-                ),
-            )
-            self._backend_id_by_backend_key[opts.backend_key] = backend_id
-            self._backend_state_by_backend_id[backend_id] = backend_state
-        init_start_time = time.monotonic()
-        try:
-            backend_state.runtime.init_backend()
-        except Exception:
-            with self._lock:
-                self._backend_id_by_backend_key.pop(opts.backend_key, None)
-                self._backend_state_by_backend_id.pop(backend_id, None)
-            raise
-        init_elapsed = time.monotonic() - init_start_time
-        total_elapsed = time.monotonic() - request_start_time
-        logger.info(
-            f"Initialized sampling backend backend_key={opts.backend_key} "
-            f"backend_id={backend_id} "
-            f"init_backend={init_elapsed:.2f}s total={total_elapsed:.2f}s"
-        )
+                backend_state = self._backend_state_by_backend_id[backend_id]
+            else:
+                backend_id = self._next_backend_id
+                self._next_backend_id += 1
+                backend_state = SamplingBackendState(
+                    backend_id=backend_id,
+                    backend_key=opts.backend_key,
+                    runtime=SharedDistSamplingBackend(
+                        data=self.dataset,
+                        worker_options=opts.worker_options,
+                        sampling_config=opts.sampling_config,
+                        sampler_options=opts.sampler_options,
+                        # We only need degree tensor for PPR sampling
+                        degree_tensors=self.dataset.degree_tensor
+                        if isinstance(opts.sampler_options, PPRSamplerOptions)
+                        else None,
+                    ),
+                )
+                self._backend_id_by_backend_key[opts.backend_key] = backend_id
+                self._backend_state_by_backend_id[backend_id] = backend_state
+                # Acquire backend_state.lock while still holding self._lock.
+                # We're about to release self._lock and run init_backend()
+                # outside it (init spawns workers and blocks on a Barrier;
+                # holding self._lock across that would block every other
+                # RPC). Without this overlap a second caller could arrive
+                # after we release self._lock but before we acquire
+                # backend_state.lock, win the lock, and observe an
+                # uninitialized backend. Acquiring here guarantees the
+                # first caller reaches backend_state.lock first.
+                backend_state.lock.acquire()
+                is_first = True
+
+        if is_first:
+            try:
+                init_start_time = time.monotonic()
+                backend_state.runtime.init_backend()
+                backend_state.init_complete = True
+                init_elapsed = time.monotonic() - init_start_time
+                total_elapsed = time.monotonic() - request_start_time
+                logger.info(
+                    f"Initialized sampling backend backend_key={opts.backend_key} "
+                    f"backend_id={backend_id} "
+                    f"init_backend={init_elapsed:.2f}s total={total_elapsed:.2f}s"
+                )
+            except BaseException as e:
+                backend_state.init_error = e
+                with self._lock:
+                    self._backend_id_by_backend_key.pop(opts.backend_key, None)
+                    self._backend_state_by_backend_id.pop(backend_id, None)
+                raise
+            finally:
+                # Manual release: this lock crosses the self._lock boundary
+                # (acquired above while holding self._lock) so `with` cannot
+                # be used.
+                backend_state.lock.release()
+        else:
+            # Second-caller path. Block on backend_state.lock until the
+            # first caller finishes init (or fails). Ordering is enforced
+            # by the acquire-before-self._lock-release invariant above.
+            with backend_state.lock:
+                if backend_state.init_error is not None:
+                    raise RuntimeError(
+                        f"init_sampling_backend: prior initialization failed "
+                        f"for backend_key={opts.backend_key}"
+                    ) from backend_state.init_error
+                assert backend_state.init_complete
         return backend_id
 
     def register_sampling_input(self, opts: RegisterBackendRequest) -> int:
@@ -543,6 +587,10 @@ class DistServer:
             )
             self._channel_state_by_channel_id[channel_id] = channel_state
             backend_state.active_channels.add(channel_id)
+            # Snapshot the count under self._lock so the log message
+            # reflects state at the moment of registration, not a later
+            # value that could be mutated by concurrent register/destroy.
+            active_channels_at_register = len(backend_state.active_channels)
 
         sampler_input = opts.sampler_input
         if isinstance(sampler_input, RemoteSamplerInput):
@@ -566,7 +614,7 @@ class DistServer:
         logger.info(
             f"Registered sampling input backend_id={opts.backend_id} "
             f"channel_id={channel_id} worker_key={opts.worker_key} "
-            f"active_channels={len(backend_state.active_channels)} "
+            f"active_channels={active_channels_at_register} "
             f"in {time.monotonic() - request_start_time:.2f}s"
         )
         return channel_id
@@ -574,25 +622,53 @@ class DistServer:
     def destroy_sampling_input(self, channel_id: int) -> None:
         """Destroy one registered sampling channel and maybe its backend.
 
-        If this is the last channel on the backend, the backend is shut down
-        and removed.
+        If this is the last channel on the backend, the backend is shut
+        down and removed.
+
+        Caller contract: callers must have drained the channel (i.e.,
+        observed :meth:`fetch_one_sampled_message` return ``(None, True)``)
+        before calling destroy. This is required because
+        :meth:`fetch_one_sampled_message` holds ``channel_state.lock`` for
+        the duration of its recv loop; a destroy issued mid-epoch will
+        block waiting for the fetch to exit, and if the producer is stuck,
+        destroy will block indefinitely. All in-tree callers satisfy this
+        contract via ``BaseDistLoader``'s teardown sequence.
 
         Args:
             channel_id: The ID of the channel to destroy.
         """
-        self._fetch_stats_by_channel_id.pop(channel_id, None)
         with self._lock:
-            channel_state = self._channel_state_by_channel_id.pop(channel_id, None)
+            channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
                 return
             backend_state = self._backend_state_by_backend_id.get(
                 channel_state.backend_id
             )
-        if backend_state is None:
-            return
 
-        with backend_state.lock:
-            backend_state.runtime.unregister_input(channel_id)
+        # Hold channel_state.lock to serialize destroy against in-flight
+        # start_new_epoch_sampling and any remaining
+        # fetch_one_sampled_message. Pre-PR #578, the old
+        # destroy_sampling_producer and start_new_epoch_sampling shared
+        # the same _producer_lock, so destroy/start_epoch were serialized;
+        # this restores that invariant via the two-phase API's
+        # per-channel lock.
+        with channel_state.lock:
+            with self._lock:
+                self._channel_state_by_channel_id.pop(channel_id, None)
+                # Pop fetch stats inside self._lock for consistency with
+                # how neighboring dicts are mutated. Does not close the
+                # race with _log_fetch_stats_if_due (which runs under
+                # channel_state.lock but not self._lock); a concurrent
+                # in-flight fetch may still recreate the entry — the
+                # orphan is benign and cleared on next shutdown or
+                # channel reuse.
+                self._fetch_stats_by_channel_id.pop(channel_id, None)
+
+            if backend_state is None:
+                return
+
+            with backend_state.lock:
+                backend_state.runtime.unregister_input(channel_id)
 
         should_shutdown_backend = False
         with self._lock:
@@ -661,6 +737,9 @@ class DistServer:
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
 
+        No-op if this channel has already started ``epoch`` or a later
+        epoch (idempotent — safe to call repeatedly from retries).
+
         Args:
             channel_id: The ID of the channel to start the epoch on.
             epoch: The epoch number to start.
@@ -683,14 +762,20 @@ class DistServer:
                 f"backend_id={channel_state.backend_id} not found"
             )
 
-        if channel_state.epoch >= epoch:
-            return
-        channel_state.epoch = epoch
-        logger.info(
-            f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
-            f"epoch={epoch}"
-        )
-        backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+        # Serialize check/update/dispatch under channel_state.lock so
+        # concurrent callers with different epoch values cannot interleave
+        # the check-then-set on channel_state.epoch, and so a concurrent
+        # fetch cannot observe channel_state.epoch bumped before
+        # runtime.start_new_epoch_sampling has been dispatched.
+        with channel_state.lock:
+            if channel_state.epoch >= epoch:
+                return
+            channel_state.epoch = epoch
+            logger.info(
+                f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
+                f"epoch={epoch}"
+            )
+            backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
 
     def _log_fetch_stats_if_due(
         self, channel_id: int, worker_key: str, elapsed: float
@@ -758,6 +843,8 @@ class DistServer:
                     )
                     return msg, False
                 except QueueTimeoutError:
+                    # Timeout is expected whenever the producer has
+                    # nothing ready; poll is_channel_epoch_done and loop.
                     if (
                         backend_state.runtime.is_channel_epoch_done(
                             channel_id, channel_state.epoch
@@ -804,7 +891,7 @@ def init_server(
       server_rank (int): Rank of the current process withing the server group (it
         should be a number between 0 and ``num_servers``-1).
       dataset (DistDataset): The ``DistDataset`` object of a partition of graph
-        data and feature data, along with distributed patition book info.
+        data and feature data, along with distributed partition book info.
       master_addr (str): The master TCP address for RPC connection between all
         servers and clients, the value of this parameter should be same for all
         servers and clients.

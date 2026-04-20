@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -754,6 +755,208 @@ class TestDistServerSampling(TestCase):
         self.server.start_new_epoch_sampling(channel_id, 0)
 
         runtime.start_new_epoch_sampling.assert_called_once_with(channel_id, 0)
+
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_init_same_key_reuses_backend(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        """Regression test for PR #578 Comment 3 (race in init_sampling_backend).
+
+        Two concurrent callers with the same ``backend_key`` must return the
+        same ``backend_id`` and ``init_backend`` must run exactly once. The
+        second caller must block until the first caller completes init.
+        """
+        runtime = mock_backend_cls.return_value
+        init_entered = threading.Event()
+        release_init = threading.Event()
+
+        def blocking_init_backend() -> None:
+            init_entered.set()
+            release_init.wait(timeout=5.0)
+
+        runtime.init_backend.side_effect = blocking_init_backend
+
+        def call_init() -> int:
+            return self.server.init_sampling_backend(
+                InitSamplingBackendRequest(
+                    backend_key="neighbor_loader_0",
+                    worker_options=self.worker_options,
+                    sampler_options=self.sampler_options,
+                    sampling_config=self.sampling_config,
+                )
+            )
+
+        results: dict[str, int] = {}
+
+        def run_first() -> None:
+            results["first"] = call_init()
+
+        def run_second() -> None:
+            results["second"] = call_init()
+
+        thread_a = threading.Thread(target=run_first)
+        thread_a.start()
+        # Wait until A is inside init_backend so A already holds
+        # backend_state.lock (acquired under self._lock before releasing).
+        self.assertTrue(init_entered.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_second)
+        thread_b.start()
+        # B should be blocked on backend_state.lock until A finishes.
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_init.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+        self.assertFalse(thread_a.is_alive())
+        self.assertFalse(thread_b.is_alive())
+
+        self.assertEqual(results["first"], results["second"])
+        mock_backend_cls.assert_called_once()
+        runtime.init_backend.assert_called_once()
+
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_init_failure_propagates_to_second_caller(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        """Regression test for PR #578 Comment 3 failure-path bug.
+
+        If the first initializer raises, the second caller must observe a
+        meaningful ``RuntimeError`` chained to the original exception
+        (via ``__cause__``), not a ``KeyError`` from a rolled-back map.
+        """
+        runtime = mock_backend_cls.return_value
+        init_entered = threading.Event()
+        release_init = threading.Event()
+        original_error = ValueError("init failed")
+
+        def failing_init_backend() -> None:
+            init_entered.set()
+            release_init.wait(timeout=5.0)
+            raise original_error
+
+        runtime.init_backend.side_effect = failing_init_backend
+
+        def call_init() -> int:
+            return self.server.init_sampling_backend(
+                InitSamplingBackendRequest(
+                    backend_key="neighbor_loader_0",
+                    worker_options=self.worker_options,
+                    sampler_options=self.sampler_options,
+                    sampling_config=self.sampling_config,
+                )
+            )
+
+        first_error: dict[str, BaseException] = {}
+        second_error: dict[str, BaseException] = {}
+
+        def run_first() -> None:
+            try:
+                call_init()
+            except BaseException as e:
+                first_error["e"] = e
+
+        def run_second() -> None:
+            try:
+                call_init()
+            except BaseException as e:
+                second_error["e"] = e
+
+        thread_a = threading.Thread(target=run_first)
+        thread_a.start()
+        self.assertTrue(init_entered.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_second)
+        thread_b.start()
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_init.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+
+        self.assertIs(first_error["e"], original_error)
+        self.assertIsInstance(second_error["e"], RuntimeError)
+        self.assertIs(second_error["e"].__cause__, original_error)
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_start_epoch_dispatches_monotonically(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        """Regression test for PR #578 Comment 7 (race in start_new_epoch_sampling).
+
+        Two concurrent callers with different ``epoch`` values must not
+        dispatch to ``runtime.start_new_epoch_sampling`` in decreasing
+        order. The check/update/dispatch must be serialized under
+        ``channel_state.lock``.
+        """
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        first_started = threading.Event()
+        release_first = threading.Event()
+
+        def blocking_start(ch_id: int, epoch: int) -> None:
+            # Only the first dispatch (epoch=0) blocks; the second
+            # dispatch (epoch=1) returns immediately once it reaches
+            # the runtime.
+            if epoch == 0:
+                first_started.set()
+                release_first.wait(timeout=5.0)
+
+        runtime.start_new_epoch_sampling.side_effect = blocking_start
+
+        def run_epoch_0() -> None:
+            self.server.start_new_epoch_sampling(channel_id, 0)
+
+        def run_epoch_1() -> None:
+            self.server.start_new_epoch_sampling(channel_id, 1)
+
+        thread_a = threading.Thread(target=run_epoch_0)
+        thread_a.start()
+        self.assertTrue(first_started.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_epoch_1)
+        thread_b.start()
+        # B is blocked on channel_state.lock until A finishes; without
+        # the fix, B would enter, observe epoch=-1 (A hasn't set epoch
+        # yet if it's stuck in dispatch), and race.
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_first.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+
+        dispatched_epochs = [
+            call.args[1] for call in runtime.start_new_epoch_sampling.call_args_list
+        ]
+        # Monotonic non-decreasing dispatch.
+        self.assertEqual(dispatched_epochs, sorted(dispatched_epochs))
+        # Final epoch must be 1 (the max requested).
+        channel_state = self.server._channel_state_by_channel_id[channel_id]
+        self.assertEqual(channel_state.epoch, 1)
 
     def test_shutdown_cleans_all_backends(self) -> None:
         runtime_1 = MagicMock()
