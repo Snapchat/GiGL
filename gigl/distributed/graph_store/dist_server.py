@@ -479,6 +479,8 @@ class DistServer:
         until the original initializer has finished, then returns its ID.
         If the original initializer failed, re-raises that failure so the
         second caller does not see a half-initialized backend.
+        Exactly one caller initializes each backend; concurrent callers wait
+        on the per-backend lock and observe that final success or failure.
 
         Args:
             opts: The initialization request containing the backend key,
@@ -491,6 +493,10 @@ class DistServer:
             RuntimeError: If a prior concurrent initialization for the same
                 ``backend_key`` failed.
         """
+        # Exactly one caller per backend_key creates the backend and runs
+        # runtime.init_backend(). Concurrent callers reuse the published
+        # backend_state and wait for that initialization to finish. `is_first`
+        # records which role this request took once we leave self._lock.
         request_start_time = time.monotonic()
         is_first = False
         with self._lock:
@@ -516,18 +522,23 @@ class DistServer:
                 )
                 self._backend_id_by_backend_key[opts.backend_key] = backend_id
                 self._backend_state_by_backend_id[backend_id] = backend_state
-                # Acquire backend_state.lock while still holding self._lock.
-                # We're about to release self._lock and run init_backend()
-                # outside it (init spawns workers and blocks on a Barrier;
-                # holding self._lock across that would block every other
-                # RPC). Without this overlap a second caller could arrive
-                # after we release self._lock but before we acquire
-                # backend_state.lock, win the lock, and observe an
-                # uninitialized backend. Acquiring here guarantees the
-                # first caller reaches backend_state.lock first.
+                # Publish the new backend_state under self._lock, then take
+                # backend_state.lock before releasing self._lock. This makes
+                # the first caller the owner of the per-backend gate that
+                # later callers will block on while init_backend() runs.
+                #
+                # Without this overlap, a second caller could observe the
+                # published backend_state after self._lock is released,
+                # acquire backend_state.lock first, and proceed before
+                # initialization had been serialized. Taking the lock here
+                # establishes the handoff: first caller initializes, later
+                # callers wait.
                 backend_state.lock.acquire()
                 is_first = True
 
+        # Run init_backend() outside self._lock so one slow initialization
+        # does not block unrelated RPCs. `is_first` now chooses whether this
+        # caller performs initialization or waits for the initializer.
         if is_first:
             try:
                 init_start_time = time.monotonic()
@@ -547,14 +558,15 @@ class DistServer:
                     self._backend_state_by_backend_id.pop(backend_id, None)
                 raise
             finally:
-                # Manual release: this lock crosses the self._lock boundary
-                # (acquired above while holding self._lock) so `with` cannot
-                # be used.
+                # backend_state.lock was acquired manually while still under
+                # self._lock so the first caller could carry ownership across
+                # the lock boundary. Release it manually here to wake waiters.
                 backend_state.lock.release()
         else:
-            # Second-caller path. Block on backend_state.lock until the
-            # first caller finishes init (or fails). Ordering is enforced
-            # by the acquire-before-self._lock-release invariant above.
+            # Wait for the first caller to release backend_state.lock after
+            # either storing init_error or marking init_complete. Once we
+            # enter this block, initialization has finished and the outcome
+            # can be observed safely.
             with backend_state.lock:
                 if backend_state.init_error is not None:
                     raise RuntimeError(
