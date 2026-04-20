@@ -45,7 +45,7 @@ jobs:
       - name: Install necessary doc dependencies
         run: |
           uv sync --group docs --inexact
-          uv pip install -e .
+          uv pip install -e . --no-build-isolation
       - name: Sphinx build
         run: |
           make build_docs
