@@ -7,6 +7,7 @@ WORKDIR /gigl
 
 COPY CMakeLists.txt CMakeLists.txt
 COPY MANIFEST.in MANIFEST.in
+COPY README.md README.md
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY gigl/dep_vars.env gigl/dep_vars.env
