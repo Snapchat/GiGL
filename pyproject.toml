@@ -246,8 +246,7 @@ build-backend = "scikit_build_core.build"
 cmake.version    = ">=3.18"
 build-dir        = ".cache/cmake_build"
 wheel.packages   = ["gigl", "snapchat"]
-editable.mode    = "redirect"  # on import, checks if .cpp sources changed and rebuilds
-editable.rebuild = true
+editable.mode    = "redirect"
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"
