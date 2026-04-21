@@ -416,15 +416,15 @@ def _run_compute_multiple_loaders_test(
         backend_ids == gathered_neighbor_loader_1_backends[0]
         for backend_ids in gathered_neighbor_loader_1_backends
     ), "All ranks should share the same backend ids for one logical loader."
-    assert (
-        ablp_loader_1._backend_id_list != ablp_loader_2._backend_id_list
-    ), "Concurrent ABLP loaders must use distinct backends."
-    assert (
-        neighbor_loader_1._backend_id_list != neighbor_loader_2._backend_id_list
-    ), "Concurrent neighbor loaders must use distinct backends."
-    assert (
-        ablp_loader_1._backend_id_list != neighbor_loader_1._backend_id_list
-    ), "ABLP and neighbor loaders must not share a backend."
+    assert ablp_loader_1._backend_id_list != ablp_loader_2._backend_id_list, (
+        "Concurrent ABLP loaders must use distinct backends."
+    )
+    assert neighbor_loader_1._backend_id_list != neighbor_loader_2._backend_id_list, (
+        "Concurrent neighbor loaders must use distinct backends."
+    )
+    assert ablp_loader_1._backend_id_list != neighbor_loader_1._backend_id_list, (
+        "ABLP and neighbor loaders must not share a backend."
+    )
     logger.info(
         f"Rank {rank} / {world_size} phase 1: loading batches from 4 parallel loaders"
     )
