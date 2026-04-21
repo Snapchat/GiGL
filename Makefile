@@ -22,7 +22,10 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
-CPP_SOURCES:=$(shell find gigl/csrc -name "*.cpp" 2>/dev/null)
+CPP_SOURCES:=$(shell find gigl/csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
+# clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
+# Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
+CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -51,7 +54,7 @@ install_dev_deps: check_if_valid_env
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	bash ./requirements/install_cpp_deps.sh
-	uv pip install -e . --no-build-isolation
+	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 # Production environments, if you are developing use `make install_dev_deps` instead
@@ -59,7 +62,7 @@ install_deps:
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./requirements/install_py_deps.sh
 	bash ./requirements/install_scala_deps.sh
-	uv pip install -e . --no-build-isolation
+	uv pip install -e .
 
 # These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
@@ -116,7 +119,7 @@ check_format_md:
 	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
-	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
+	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
 
 check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
@@ -152,7 +155,7 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	clang-format-15 -i --style=file $(CPP_SOURCES)
+	$(if $(CPP_SOURCES),clang-format-15 -i --style=file $(CPP_SOURCES))
 
 format: format_py format_cpp format_scala format_md
 
@@ -160,19 +163,19 @@ type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
 build_cpp_extensions:
-	uv pip install -e . --no-build-isolation
+	uv pip install -e .
 
 generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
 
 check_lint_cpp:
-	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES)
+	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES)
+	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA))
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

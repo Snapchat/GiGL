@@ -44,12 +44,14 @@ def write_compile_commands() -> None:
     raw_path = _CMAKE_BUILD_DIR / "compile_commands.json"
     entries: list[dict] = json.loads(raw_path.read_text())
 
-    # Replace the first token of each command (the compiler binary) with clang++-15
-    # so clangd uses clang-native implicit include paths instead of guessing GCC's.
+    # Replace the compiler for .cpp entries with clang++-15 so clangd uses
+    # clang-native implicit include paths instead of guessing GCC's.
+    # Leave .cu entries unchanged so nvcc handles them correctly.
     for entry in entries:
-        tokens = entry["command"].split()
-        tokens[0] = "clang++-15"
-        entry["command"] = " ".join(tokens)
+        if not entry.get("file", "").endswith(".cu"):
+            tokens = entry["command"].split()
+            tokens[0] = "clang++-15"
+            entry["command"] = " ".join(tokens)
 
     _COMPILE_COMMANDS.write_text(json.dumps(entries, indent=2))
 
