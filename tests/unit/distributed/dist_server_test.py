@@ -679,13 +679,45 @@ class TestDistServerSampling(TestCase):
                 sampler_input=NodeSamplerInput(torch.arange(10)),
                 sampling_config=self.sampling_config,
                 buffer_capacity=2,
-                buffer_size="1MB",
+                buffer_size="2MB",
             )
         )
 
         self.assertEqual(channel_id, 0)
         runtime.register_input.assert_called_once()
-        mock_channel_cls.assert_called_once_with(2, "1MB")
+        mock_channel_cls.assert_called_once_with(2, "2MB")
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_register_empty_channel(
+        self,
+        mock_backend_cls: MagicMock,
+        mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=NodeSamplerInput(torch.tensor([])),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,  # Should be overridden to 1 for empty channels
+                buffer_size="2MB",  # Should be overridden to 1MB for empty channels
+            )
+        )
+
+        self.assertEqual(channel_id, 0)
+        runtime.register_input.assert_called_once()
+        mock_channel_cls.assert_called_once_with(1, "1MB")
 
     @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
     @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
