@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 from absl.testing import absltest
-from graphlearn_torch.sampler import SamplingConfig, SamplingType
+from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
 from gigl.distributed.graph_store import dist_server
 from gigl.distributed.graph_store.messages import (
@@ -676,7 +676,7 @@ class TestDistServerSampling(TestCase):
             RegisterBackendRequest(
                 backend_id=backend_id,
                 worker_key="neighbor_loader_0_compute_rank_0",
-                sampler_input=MagicMock(),
+                sampler_input=NodeSamplerInput(torch.arange(10)),
                 sampling_config=self.sampling_config,
                 buffer_capacity=2,
                 buffer_size="1MB",
