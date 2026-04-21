@@ -575,11 +575,26 @@ class DistServer:
             The unique channel ID for this input.
         """
         request_start_time = time.monotonic()
+        sampler_input = opts.sampler_input
+
+        if isinstance(sampler_input, RemoteSamplerInput):
+            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
+
         with self._lock:
             backend_state = self._backend_state_by_backend_id[opts.backend_id]
             channel_id = self._next_channel_id
             self._next_channel_id += 1
-            channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
+            # If the sampler input is empty, we create a channel with 1 slot and 1MB size
+            # We do this to save on memory usage for empty inputs.
+            # NOTE: We must keep creating these channels as we need to "register input" for
+            # all nodes on the storage cluster, as they the `NeighborSampler` is responsible for
+            # serving incoming sampling requests as well as sending them out.
+            # TODO(kmonte): Look into either supporting truly empty channels or having a shared
+            # DistSampler.
+            if len(sampler_input) == 0:
+                channel = ShmChannel(1, "1MB")
+            else:
+                channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
             channel_state = ChannelState(
                 backend_id=opts.backend_id,
                 worker_key=opts.worker_key,
@@ -591,10 +606,6 @@ class DistServer:
             # reflects state at the moment of registration, not a later
             # value that could be mutated by concurrent register/destroy.
             active_channels_at_register = len(backend_state.active_channels)
-
-        sampler_input = opts.sampler_input
-        if isinstance(sampler_input, RemoteSamplerInput):
-            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
         try:
             with backend_state.lock:
