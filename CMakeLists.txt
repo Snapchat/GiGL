@@ -54,6 +54,8 @@ set(CMAKE_INSTALL_RPATH "${TORCH_LIB_DIR}")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
 set(GIGL_COMPILE_FLAGS -O3 -Wall -Wextra -Wno-unused-parameter)
+# nvcc does not accept bare -Wall/-Wextra; wrap them with -Xcompiler for CUDA sources.
+set(GIGL_COMPILE_FLAGS_CUDA -O3 -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter)
 
 # ---------------------------------------------------------------------------
 # Extension modules — auto-discovered.
@@ -91,7 +93,10 @@ foreach(_py_src IN LISTS _PYTHON_SRCS)
 
     pybind11_add_module("${_name}" ${_sources})
     target_link_libraries("${_name}" PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}")
-    target_compile_options("${_name}" PRIVATE ${GIGL_COMPILE_FLAGS})
+    target_compile_options("${_name}" PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${GIGL_COMPILE_FLAGS}>
+        $<$<COMPILE_LANGUAGE:CUDA>:${GIGL_COMPILE_FLAGS_CUDA}>
+    )
     # TORCH_EXTENSION_NAME is used in PYBIND11_MODULE() to name the module.
     # PyTorch's own build system sets this; we must define it explicitly here.
     target_compile_definitions("${_name}" PRIVATE "TORCH_EXTENSION_NAME=${_name}")
