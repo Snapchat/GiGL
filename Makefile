@@ -54,7 +54,7 @@ install_dev_deps: check_if_valid_env
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	bash ./requirements/install_cpp_deps.sh
-	uv pip install -e . --no-build-isolation
+	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 # Production environments, if you are developing use `make install_dev_deps` instead
@@ -62,7 +62,7 @@ install_deps:
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./requirements/install_py_deps.sh
 	bash ./requirements/install_scala_deps.sh
-	uv pip install -e . --no-build-isolation
+	uv pip install -e .
 
 # These are a collection of tests that are run before anything is installed using tools available on host.
 # May include tests that check the sanity of the repo state i.e. ones that may even cause the failure of
@@ -163,7 +163,7 @@ type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
 build_cpp_extensions:
-	uv pip install -e . --no-build-isolation
+	uv pip install -e .
 
 generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands

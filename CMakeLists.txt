@@ -27,6 +27,13 @@ execute_process(
 )
 find_package(pybind11 CONFIG REQUIRED)
 
+# find_package(Torch) internally calls enable_language(CUDA) when torch was built with CUDA
+# support, which requires CMAKE_CUDA_COMPILER to be set. Provide the standard install path
+# as a hint so nvcc is found even when /usr/local/cuda/bin is not on PATH.
+if(NOT CMAKE_CUDA_COMPILER)
+    find_program(CMAKE_CUDA_COMPILER nvcc HINTS /usr/local/cuda/bin)
+endif()
+
 # Locate PyTorch headers via its own cmake prefix path (works for both CPU and CUDA torch).
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -c

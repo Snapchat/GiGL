@@ -22,4 +22,4 @@ COPY tests tests
 COPY examples examples
 
 RUN uv pip install scikit-build-core pybind11
-RUN uv pip install -e . --no-build-isolation
+RUN uv pip install -e .

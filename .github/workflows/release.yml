@@ -55,11 +55,10 @@ jobs:
       run: |
         uv pip install "torch==2.8" --index-url ${{ matrix.torch-index }} --inexact
 
-    # Build without isolation so the pre-installed torch variant above is used.
     # The build tag (e.g. 1cpu, 1cu128) differentiates the wheel filenames so
     # both can coexist in the same registry index.
     - name: Build Whl Distribution
-      run: uv build --wheel --no-build-isolation -C "wheel.build-tag=1${{ matrix.torch-variant }}"
+      run: uv build --wheel -C "wheel.build-tag=1${{ matrix.torch-variant }}"
 
     - name: Publish Package 🚀
       env:
