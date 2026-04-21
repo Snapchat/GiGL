@@ -39,15 +39,19 @@ MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG: Final[str] = "max_labels_per_anchor_node
 
 def validate_max_labels_per_anchor_node(
     max_labels_per_anchor_node: Optional[int],
-) -> Optional[int]:
-    """Validate the optional per-anchor label cap."""
-    if max_labels_per_anchor_node is None:
-        return None
-    if max_labels_per_anchor_node <= 0:
+) -> None:
+    """Validate the optional per-anchor label cap.
+
+    Args:
+        max_labels_per_anchor_node: The value to validate.
+
+    Raises:
+        ValueError: If max_labels_per_anchor_node is not None and not a positive integer.
+    """
+    if max_labels_per_anchor_node is not None and max_labels_per_anchor_node <= 0:
         raise ValueError(
             "max_labels_per_anchor_node must be a positive integer when provided."
         )
-    return max_labels_per_anchor_node
 
 
 def get_max_labels_per_anchor_node_from_runtime_args(
@@ -66,7 +70,7 @@ def get_max_labels_per_anchor_node_from_runtime_args(
             f"Invalid {MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG} value "
             f"{raw_max_labels_per_anchor_node!r}. Expected a positive integer."
         ) from exc
-    return validate_max_labels_per_anchor_node(parsed_max_labels_per_anchor_node)
+    return parsed_max_labels_per_anchor_node
 
 
 @runtime_checkable
@@ -690,9 +694,7 @@ def _get_padded_labels(
     Returns:
         The shape of the returned tensor is [N, max_number_of_labels].
     """
-    max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
-        max_labels_per_anchor_node
-    )
+    validate_max_labels_per_anchor_node(max_labels_per_anchor_node)
     # indptr is the ROW_INDEX of a CSR matrix.
     # and indices is the COL_INDEX of a CSR matrix.
     # See https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
