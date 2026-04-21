@@ -686,9 +686,9 @@ def _build_sequence_layout_from_ppr_edges(
     node_index_sequences[valid_batch_idx, valid_positions] = valid_dst_idx
     valid_mask[valid_batch_idx, valid_positions] = True
     if ppr_weight_sequences is not None:
-        ppr_weight_sequences[
-            valid_batch_idx, valid_positions, 0
-        ] = valid_weights.float()
+        ppr_weight_sequences[valid_batch_idx, valid_positions, 0] = (
+            valid_weights.float()
+        )
 
     return node_index_sequences, valid_mask, ppr_weight_sequences
 

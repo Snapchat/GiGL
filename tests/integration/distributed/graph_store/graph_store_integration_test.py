@@ -1,4 +1,3 @@
-import collections
 import multiprocessing.context as py_mp_context
 import os
 import socket
@@ -24,11 +23,11 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_proccess,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.graph_store.sharding import compute_server_assignments
 from gigl.distributed.graph_store.storage_utils import (
     build_storage_dataset,
     run_storage_server,
 )
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
 from gigl.distributed.utils.networking import get_free_port, get_free_ports
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.env.distributed import (
@@ -89,9 +88,9 @@ def _get_batch_seed_tensor(
     else:
         assert isinstance(datum, Data)
         batch = datum.batch
-    assert isinstance(
-        batch, torch.Tensor
-    ), f"Expected tensor batch field, got {type(batch)}"
+    assert isinstance(batch, torch.Tensor), (
+        f"Expected tensor batch field, got {type(batch)}"
+    )
     return _to_long_cpu(batch)
 
 
@@ -194,48 +193,48 @@ def _assert_ablp_input(
 ) -> None:
     """Assert the structure of the fetched ABLP input for the current rank."""
     assert isinstance(ablp_result, dict), f"Expected dict, got {type(ablp_result)}"
-    assert (
-        len(ablp_result) == cluster_info.num_storage_nodes
-    ), f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
+    assert len(ablp_result) == cluster_info.num_storage_nodes, (
+        f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
+    )
 
     for server_rank, ablp_input in ablp_result.items():
-        assert isinstance(
-            ablp_input, ABLPInputNodes
-        ), f"Expected ABLPInputNodes, got {type(ablp_input)}"
+        assert isinstance(ablp_input, ABLPInputNodes), (
+            f"Expected ABLPInputNodes, got {type(ablp_input)}"
+        )
 
         anchors = ablp_input.anchor_nodes
-        assert isinstance(
-            anchors, torch.Tensor
-        ), f"Anchors should be a tensor, got {type(anchors)}"
+        assert isinstance(anchors, torch.Tensor), (
+            f"Anchors should be a tensor, got {type(anchors)}"
+        )
         assert anchors.dim() == 1, f"Anchors should be 1D, got {anchors.dim()}D"
 
-        assert isinstance(
-            ablp_input.labels, dict
-        ), f"Labels should be a dict, got {type(ablp_input.labels)}"
+        assert isinstance(ablp_input.labels, dict), (
+            f"Labels should be a dict, got {type(ablp_input.labels)}"
+        )
         for edge_type, (
             positive_labels,
             negative_labels,
         ) in ablp_input.labels.items():
-            assert isinstance(
-                positive_labels, torch.Tensor
-            ), f"Positive labels should be a tensor, got {type(positive_labels)}"
-            assert (
-                positive_labels.dim() == 2
-            ), f"Positive labels should be 2D, got {positive_labels.dim()}D"
-            assert positive_labels.shape[0] == len(
-                anchors
-            ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
+            assert isinstance(positive_labels, torch.Tensor), (
+                f"Positive labels should be a tensor, got {type(positive_labels)}"
+            )
+            assert positive_labels.dim() == 2, (
+                f"Positive labels should be 2D, got {positive_labels.dim()}D"
+            )
+            assert positive_labels.shape[0] == len(anchors), (
+                f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
+            )
 
             if negative_labels is not None:
-                assert isinstance(
-                    negative_labels, torch.Tensor
-                ), f"Negative labels should be a tensor, got {type(negative_labels)}"
-                assert (
-                    negative_labels.dim() == 2
-                ), f"Negative labels should be 2D, got {negative_labels.dim()}D"
-                assert negative_labels.shape[0] == len(
-                    anchors
-                ), f"Negative labels first dim should match anchors length"
+                assert isinstance(negative_labels, torch.Tensor), (
+                    f"Negative labels should be a tensor, got {type(negative_labels)}"
+                )
+                assert negative_labels.dim() == 2, (
+                    f"Negative labels should be 2D, got {negative_labels.dim()}D"
+                )
+                assert negative_labels.shape[0] == len(anchors), (
+                    f"Negative labels first dim should match anchors length"
+                )
 
         has_negatives = any(neg is not None for _, neg in ablp_input.labels.values())
         logger.info(
@@ -285,16 +284,16 @@ def _run_compute_train_tests(
     for ablp_batch, random_negative_batch in zip_longest(
         ablp_loader, random_negative_loader
     ):
-        assert (
-            ablp_batch is not None
-        ), "ABLP loader exhausted before random negative loader"
-        assert (
-            random_negative_batch is not None
-        ), "Random negative loader exhausted before ABLP loader"
+        assert ablp_batch is not None, (
+            "ABLP loader exhausted before random negative loader"
+        )
+        assert random_negative_batch is not None, (
+            "Random negative loader exhausted before ABLP loader"
+        )
         assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
-        assert isinstance(
-            ablp_batch.y_positive, dict
-        ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        assert isinstance(ablp_batch.y_positive, dict), (
+            f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        )
         if node_type is not None:
             assert isinstance(ablp_batch, HeteroData)
             assert isinstance(random_negative_batch, HeteroData)
@@ -325,8 +324,6 @@ def _run_compute_train_tests(
         local_expected=local_expected_negative_seeds,
     )
 
-    ablp_loader.shutdown()
-    random_negative_loader.shutdown()
     shutdown_compute_proccess()
 
 
@@ -442,12 +439,12 @@ def _run_compute_multiple_loaders_test(
         assert ablp_batch_2 is not None, "ABLP loader 2 exhausted early in phase 1"
         assert neg_batch_1 is not None, "Neighbor loader 1 exhausted early in phase 1"
         assert neg_batch_2 is not None, "Neighbor loader 2 exhausted early in phase 1"
-        assert hasattr(
-            ablp_batch_1, "y_positive"
-        ), "ABLP batch 1 should have y_positive"
-        assert hasattr(
-            ablp_batch_2, "y_positive"
-        ), "ABLP batch 2 should have y_positive"
+        assert hasattr(ablp_batch_1, "y_positive"), (
+            "ABLP batch 1 should have y_positive"
+        )
+        assert hasattr(ablp_batch_2, "y_positive"), (
+            "ABLP batch 2 should have y_positive"
+        )
         phase1_ablp_loader_1_batches.append(
             _get_batch_seed_tensor(ablp_batch_1, node_type)
         )
@@ -518,9 +515,9 @@ def _run_compute_multiple_loaders_test(
     for ablp_batch_3, neg_batch_3 in zip_longest(ablp_loader_3, neighbor_loader_3):
         assert ablp_batch_3 is not None, "ABLP loader 3 exhausted early in phase 2"
         assert neg_batch_3 is not None, "Neighbor loader 3 exhausted early in phase 2"
-        assert hasattr(
-            ablp_batch_3, "y_positive"
-        ), "ABLP batch 3 should have y_positive"
+        assert hasattr(ablp_batch_3, "y_positive"), (
+            "ABLP batch 3 should have y_positive"
+        )
         phase2_ablp_loader_3_batches.append(
             _get_batch_seed_tensor(ablp_batch_3, node_type)
         )
@@ -570,15 +567,15 @@ def _run_compute_tests(
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    assert (
-        remote_dist_dataset.fetch_edge_dir() == "in"
-    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.fetch_edge_dir()}"
-    assert (
-        remote_dist_dataset.fetch_edge_feature_info() is not None
-    ), "Edge feature info must not be None for the test dataset"
-    assert (
-        remote_dist_dataset.fetch_node_feature_info() is not None
-    ), "Node feature info must not be None for the test dataset"
+    assert remote_dist_dataset.fetch_edge_dir() == "in", (
+        f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.fetch_edge_dir()}"
+    )
+    assert remote_dist_dataset.fetch_edge_feature_info() is not None, (
+        "Edge feature info must not be None for the test dataset"
+    )
+    assert remote_dist_dataset.fetch_node_feature_info() is not None, (
+        "Node feature info must not be None for the test dataset"
+    )
     ports = remote_dist_dataset.fetch_free_ports_on_storage_cluster(num_ports=2)
     assert len(ports) == 2, "Expected 2 free ports"
     if rank == 0:
@@ -591,9 +588,9 @@ def _run_compute_tests(
     if rank == 0:
         assert isinstance(all_ports, list)
         for i, received_ports in enumerate(all_ports):
-            assert (
-                received_ports == ports
-            ), f"Expected {ports} free ports, got {received_ports}"
+            assert received_ports == ports, (
+                f"Expected {ports} free ports, got {received_ports}"
+            )
 
     torch.distributed.barrier()
     logger.info("Verified that all ranks received the same free ports")
@@ -605,9 +602,9 @@ def _run_compute_tests(
     )
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
 
-    assert (
-        remote_dist_dataset.fetch_edge_types() == expected_edge_types
-    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.fetch_edge_types()}"
+    assert remote_dist_dataset.fetch_edge_types() == expected_edge_types, (
+        f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.fetch_edge_types()}"
+    )
 
     torch.distributed.barrier()
     if node_type is not None:
@@ -793,47 +790,42 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
 def _get_expected_input_nodes_by_rank(
     num_nodes: int, cluster_info: GraphStoreInfo
 ) -> dict[int, list[torch.Tensor]]:
-    """Get the expected sampler input for each compute rank.
+    """Get the expected sampler input for each compute rank using contiguous server assignments.
 
-    We generate the expected sampler input for each global rank by sharding the nodes across the global ranks.
-    We then append the generated nodes to the expected sampler input for each global rank.
-    Example for num_nodes = 16, num_processes_per_compute = 1, num_compute_nodes = 2, num_storage_nodes = 2
-    (compute_cluster_world_size = 2):
-    {
-    0: # global rank 0
-    [
-        [0, 1, 3, 4], # From storage rank 0
-        [8, 9, 11, 12] # From storage rank 1
-    ]
-    1: # global rank 1
-    [
-        [5, 6, 7, 8], # From storage rank 0
-        [13, 14, 15, 16] # From storage rank 1
-    ],
-    }
-
+    Each compute rank is assigned contiguous server(s) via
+    :func:`compute_server_assignments`. For each rank, we compute which
+    fraction of each server it owns and slice the server's node tensor
+    accordingly.
 
     Args:
-        num_nodes (int): The number of nodes in the graph.
-        cluster_info (GraphStoreInfo): The cluster information.
+        num_nodes: The number of nodes in the graph.
+        cluster_info: The cluster information.
 
     Returns:
-        dict[int, list[torch.Tensor]]: The expected sampler input for each compute rank.
+        A dict mapping each global rank to a list of tensors, one per
+        storage server (empty tensor for unassigned servers).
     """
     partition_book = build_partition_book(
         num_entities=num_nodes, rank=0, world_size=cluster_info.num_storage_nodes
     )
-    expected_sampler_input = collections.defaultdict(list)
-    for server_rank in range(cluster_info.num_storage_nodes):
-        server_nodes = get_ids_on_rank(partition_book=partition_book, rank=server_rank)
-        for global_rank in range(cluster_info.compute_cluster_world_size):
-            generated_nodes = shard_nodes_by_process(
-                input_nodes=server_nodes,
-                local_process_rank=global_rank,
-                local_process_world_size=cluster_info.compute_cluster_world_size,
+    expected_sampler_input: dict[int, list[torch.Tensor]] = {}
+    for global_rank in range(cluster_info.compute_cluster_world_size):
+        assignments = compute_server_assignments(
+            num_servers=cluster_info.num_storage_nodes,
+            num_compute_nodes=cluster_info.compute_cluster_world_size,
+            compute_rank=global_rank,
+        )
+        rank_nodes: list[torch.Tensor] = []
+        for server_rank in range(cluster_info.num_storage_nodes):
+            server_nodes = get_ids_on_rank(
+                partition_book=partition_book, rank=server_rank
             )
-            expected_sampler_input[global_rank].append(generated_nodes)
-    return dict(expected_sampler_input)
+            if server_rank in assignments:
+                rank_nodes.append(assignments[server_rank].slice_tensor(server_nodes))
+            else:
+                rank_nodes.append(torch.empty(0, dtype=torch.long))
+        expected_sampler_input[global_rank] = rank_nodes
+    return expected_sampler_input
 
 
 # ---------------------------------------------------------------------------

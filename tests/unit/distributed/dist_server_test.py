@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -11,6 +12,7 @@ from gigl.distributed.graph_store.messages import (
     InitSamplingBackendRequest,
     RegisterBackendRequest,
 )
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
@@ -91,10 +93,8 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Test with world_size=1, rank=0 (should get all nodes)
-        node_ids = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=1, node_type=None)
-        )
+        # No server_slice means all nodes are returned
+        node_ids = server.get_node_ids(FetchNodesRequest())
         self.assertIsInstance(node_ids, torch.Tensor)
         self.assertEqual(node_ids.shape[0], 10)
         self.assert_tensor_equality(node_ids, torch.arange(10))
@@ -107,67 +107,70 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Test with USER node type
-        user_node_ids = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=1, node_type=USER)
-        )
+        user_node_ids = server.get_node_ids(FetchNodesRequest(node_type=USER))
         self.assertIsInstance(user_node_ids, torch.Tensor)
         self.assertEqual(user_node_ids.shape[0], 5)
         self.assert_tensor_equality(user_node_ids, torch.arange(5))
 
         # Test with STORY node type
-        story_node_ids = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=1, node_type=STORY)
-        )
+        story_node_ids = server.get_node_ids(FetchNodesRequest(node_type=STORY))
         self.assertIsInstance(story_node_ids, torch.Tensor)
         self.assertEqual(story_node_ids.shape[0], 5)
         self.assert_tensor_equality(story_node_ids, torch.arange(5))
 
-    def test_get_node_ids_with_multiple_ranks(self) -> None:
-        """Test get_node_ids with multiple ranks to verify sharding."""
+    def test_get_node_ids_with_server_slicing(self) -> None:
+        """Test get_node_ids with server slices to verify sharding."""
         dataset = create_homogeneous_dataset(
             edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
         )
         server = dist_server.DistServer(dataset)
 
-        # Test with world_size=2
+        # Test with denominator=2 (split in half)
         rank_0_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=2, node_type=None)
+            FetchNodesRequest(
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=0, end_numerator=1, denominator=2
+                ),
+            )
         )
         rank_1_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=1, world_size=2, node_type=None)
+            FetchNodesRequest(
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=1, end_numerator=2, denominator=2
+                ),
+            )
         )
 
-        # Verify each rank gets different nodes
+        # Verify each slice gets different nodes
         self.assert_tensor_equality(rank_0_nodes, torch.arange(5))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(5, 10))
 
-        # Test with world_size=3 (uneven split)
+        # Test with denominator=3 (uneven split)
         rank_0_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=3, node_type=None)
+            FetchNodesRequest(
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=0, end_numerator=1, denominator=3
+                ),
+            )
         )
         rank_1_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=1, world_size=3, node_type=None)
+            FetchNodesRequest(
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=1, end_numerator=2, denominator=3
+                ),
+            )
         )
         rank_2_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=2, world_size=3, node_type=None)
+            FetchNodesRequest(
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=2, end_numerator=3, denominator=3
+                ),
+            )
         )
 
         self.assert_tensor_equality(rank_0_nodes, torch.arange(3))
         self.assert_tensor_equality(rank_1_nodes, torch.arange(3, 6))
         self.assert_tensor_equality(rank_2_nodes, torch.arange(6, 10))
-
-    def test_get_node_ids_rank_world_size_must_be_provided_together(self) -> None:
-        """Test get_node_ids raises ValueError when rank/world_size not provided together."""
-        dataset = create_homogeneous_dataset(
-            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
-        )
-        server = dist_server.DistServer(dataset)
-
-        with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=None))
-
-        with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=None, world_size=1))
 
     def test_get_node_ids_with_homogeneous_dataset_and_node_type(self) -> None:
         """Test get_node_ids with a homogeneous dataset and a node type raises error."""
@@ -176,7 +179,7 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=USER))
+            server.get_node_ids(FetchNodesRequest(node_type=USER))
 
     def test_get_node_ids_with_heterogeneous_dataset_and_no_node_type(
         self,
@@ -187,7 +190,7 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
         with self.assertRaises(ValueError):
-            server.get_node_ids(FetchNodesRequest(rank=0, world_size=1, node_type=None))
+            server.get_node_ids(FetchNodesRequest(node_type=None))
 
     def test_get_node_ids_with_train_split(self) -> None:
         """Test get_node_ids returns only training nodes when split='train'."""
@@ -244,8 +247,8 @@ class TestRemoteDataset(TestCase):
         )
         self.assert_tensor_equality(test_nodes, torch.tensor([4]))
 
-    def test_get_node_ids_with_split_and_sharding(self) -> None:
-        """Test get_node_ids with split and rank/world_size for sharding."""
+    def test_get_node_ids_with_split_and_server_slice(self) -> None:
+        """Test get_node_ids with split and server_slice for sharding."""
         create_test_process_group()
 
         positive_labels = {0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}
@@ -258,12 +261,24 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Train split has [0, 1, 2], shard across 2 ranks
+        # Train split has [0, 1, 2], shard across 2 slices
         rank_0_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=0, world_size=2, node_type=USER, split="train")
+            FetchNodesRequest(
+                node_type=USER,
+                split="train",
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=0, end_numerator=1, denominator=2
+                ),
+            )
         )
         rank_1_nodes = server.get_node_ids(
-            FetchNodesRequest(rank=1, world_size=2, node_type=USER, split="train")
+            FetchNodesRequest(
+                node_type=USER,
+                split="train",
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=1, end_numerator=2, denominator=2
+                ),
+            )
         )
 
         self.assert_tensor_equality(rank_0_nodes, torch.tensor([0]))
@@ -368,8 +383,6 @@ class TestRemoteDataset(TestCase):
                 anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
                     FetchABLPInputRequest(
                         split=split,
-                        rank=0,
-                        world_size=1,
                         node_type=USER,
                         supervision_edge_type=USER_TO_STORY,
                     )
@@ -391,8 +404,8 @@ class TestRemoteDataset(TestCase):
                 assert neg_labels is not None
                 self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
 
-    def test_get_ablp_input_multiple_ranks(self) -> None:
-        """Test get_ablp_input with multiple ranks to verify sharding."""
+    def test_get_ablp_input_with_server_slicing(self) -> None:
+        """Test get_ablp_input with server slices to verify sharding."""
         create_test_process_group()
         positive_labels = {
             0: [0, 1],
@@ -420,28 +433,27 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        # Get training input for rank 0 of 2
-
-        # Note that the rank and world size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
-        # e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        # Get training input for first half
         anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
-                rank=0,
-                world_size=2,
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=0, end_numerator=1, denominator=2
+                ),
             )
         )
 
-        # Get training input for rank 1 of 2
+        # Get training input for second half
         anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
-                rank=1,
-                world_size=2,
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
+                server_slice=ServerSlice(
+                    server_rank=0, start_numerator=1, end_numerator=2, denominator=2
+                ),
             )
         )
 
@@ -489,8 +501,6 @@ class TestRemoteDataset(TestCase):
             server.get_ablp_input(
                 FetchABLPInputRequest(
                     split="invalid",
-                    rank=0,
-                    world_size=1,
                     node_type=USER,
                     supervision_edge_type=USER_TO_STORY,
                 )
@@ -522,8 +532,6 @@ class TestRemoteDataset(TestCase):
         anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
-                rank=0,
-                world_size=1,
                 node_type=USER,
                 supervision_edge_type=USER_TO_STORY,
             )
@@ -538,6 +546,53 @@ class TestRemoteDataset(TestCase):
 
         # Negative labels should be None
         self.assertIsNone(neg_labels)
+
+    def test_get_ablp_input_with_server_slice(self) -> None:
+        """Test get_ablp_input computes labels only for the server-sliced anchors."""
+        create_test_process_group()
+        positive_labels = {
+            0: [0, 1],
+            1: [1, 2],
+            2: [2, 3],
+            3: [3, 4],
+            4: [4, 0],
+        }
+        negative_labels = {
+            0: [2],
+            1: [3],
+            2: [4],
+            3: [0],
+            4: [1],
+        }
+
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=[0, 1, 2, 3],
+            val_node_ids=[4],
+            test_node_ids=[],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        )
+        server = dist_server.DistServer(dataset)
+
+        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+            FetchABLPInputRequest(
+                split="train",
+                node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+                server_slice=ServerSlice(
+                    server_rank=0,
+                    start_numerator=1,
+                    end_numerator=2,
+                    denominator=2,
+                ),
+            )
+        )
+
+        self.assert_tensor_equality(anchor_nodes, torch.tensor([2, 3]))
+        self.assert_tensor_equality(pos_labels, torch.tensor([[2, 3], [3, 4]]), dim=1)
+        assert neg_labels is not None
+        self.assert_tensor_equality(neg_labels, torch.tensor([[4], [0]]))
 
 
 def _make_sampling_config() -> SamplingConfig:
@@ -663,11 +718,11 @@ class TestDistServerSampling(TestCase):
 
         runtime.unregister_input.assert_called_once_with(channel_id)
         runtime.shutdown.assert_called_once()
-        self.assertEqual(self.server._backend_state_by_id, {})
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
 
     def test_destroy_unknown_channel_noop(self) -> None:
         self.server.destroy_sampling_input(999)
-        self.assertEqual(self.server._backend_state_by_id, {})
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
 
     @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
     @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
@@ -701,10 +756,212 @@ class TestDistServerSampling(TestCase):
 
         runtime.start_new_epoch_sampling.assert_called_once_with(channel_id, 0)
 
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_init_same_key_reuses_backend(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        """Regression test for PR #578 Comment 3 (race in init_sampling_backend).
+
+        Two concurrent callers with the same ``backend_key`` must return the
+        same ``backend_id`` and ``init_backend`` must run exactly once. The
+        second caller must block until the first caller completes init.
+        """
+        runtime = mock_backend_cls.return_value
+        init_entered = threading.Event()
+        release_init = threading.Event()
+
+        def blocking_init_backend() -> None:
+            init_entered.set()
+            release_init.wait(timeout=5.0)
+
+        runtime.init_backend.side_effect = blocking_init_backend
+
+        def call_init() -> int:
+            return self.server.init_sampling_backend(
+                InitSamplingBackendRequest(
+                    backend_key="neighbor_loader_0",
+                    worker_options=self.worker_options,
+                    sampler_options=self.sampler_options,
+                    sampling_config=self.sampling_config,
+                )
+            )
+
+        results: dict[str, int] = {}
+
+        def run_first() -> None:
+            results["first"] = call_init()
+
+        def run_second() -> None:
+            results["second"] = call_init()
+
+        thread_a = threading.Thread(target=run_first)
+        thread_a.start()
+        # Wait until A is inside init_backend so A already holds
+        # backend_state.lock (acquired under self._lock before releasing).
+        self.assertTrue(init_entered.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_second)
+        thread_b.start()
+        # B should be blocked on backend_state.lock until A finishes.
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_init.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+        self.assertFalse(thread_a.is_alive())
+        self.assertFalse(thread_b.is_alive())
+
+        self.assertEqual(results["first"], results["second"])
+        mock_backend_cls.assert_called_once()
+        runtime.init_backend.assert_called_once()
+
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_init_failure_propagates_to_second_caller(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        """Regression test for PR #578 Comment 3 failure-path bug.
+
+        If the first initializer raises, the second caller must observe a
+        meaningful ``RuntimeError`` chained to the original exception
+        (via ``__cause__``), not a ``KeyError`` from a rolled-back map.
+        """
+        runtime = mock_backend_cls.return_value
+        init_entered = threading.Event()
+        release_init = threading.Event()
+        original_error = ValueError("init failed")
+
+        def failing_init_backend() -> None:
+            init_entered.set()
+            release_init.wait(timeout=5.0)
+            raise original_error
+
+        runtime.init_backend.side_effect = failing_init_backend
+
+        def call_init() -> int:
+            return self.server.init_sampling_backend(
+                InitSamplingBackendRequest(
+                    backend_key="neighbor_loader_0",
+                    worker_options=self.worker_options,
+                    sampler_options=self.sampler_options,
+                    sampling_config=self.sampling_config,
+                )
+            )
+
+        first_error: dict[str, BaseException] = {}
+        second_error: dict[str, BaseException] = {}
+
+        def run_first() -> None:
+            try:
+                call_init()
+            except BaseException as e:
+                first_error["e"] = e
+
+        def run_second() -> None:
+            try:
+                call_init()
+            except BaseException as e:
+                second_error["e"] = e
+
+        thread_a = threading.Thread(target=run_first)
+        thread_a.start()
+        self.assertTrue(init_entered.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_second)
+        thread_b.start()
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_init.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+
+        self.assertIs(first_error["e"], original_error)
+        self.assertIsInstance(second_error["e"], RuntimeError)
+        self.assertIs(second_error["e"].__cause__, original_error)
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_start_epoch_dispatches_monotonically(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        """Regression test for PR #578 Comment 7 (race in start_new_epoch_sampling).
+
+        Two concurrent callers with different ``epoch`` values must not
+        dispatch to ``runtime.start_new_epoch_sampling`` in decreasing
+        order. The check/update/dispatch must be serialized under
+        ``channel_state.lock``.
+        """
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        first_started = threading.Event()
+        release_first = threading.Event()
+
+        def blocking_start(ch_id: int, epoch: int) -> None:
+            # Only the first dispatch (epoch=0) blocks; the second
+            # dispatch (epoch=1) returns immediately once it reaches
+            # the runtime.
+            if epoch == 0:
+                first_started.set()
+                release_first.wait(timeout=5.0)
+
+        runtime.start_new_epoch_sampling.side_effect = blocking_start
+
+        def run_epoch_0() -> None:
+            self.server.start_new_epoch_sampling(channel_id, 0)
+
+        def run_epoch_1() -> None:
+            self.server.start_new_epoch_sampling(channel_id, 1)
+
+        thread_a = threading.Thread(target=run_epoch_0)
+        thread_a.start()
+        self.assertTrue(first_started.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_epoch_1)
+        thread_b.start()
+        # B is blocked on channel_state.lock until A finishes; without
+        # the fix, B would enter, observe epoch=-1 (A hasn't set epoch
+        # yet if it's stuck in dispatch), and race.
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_first.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+
+        dispatched_epochs = [
+            call.args[1] for call in runtime.start_new_epoch_sampling.call_args_list
+        ]
+        # Monotonic non-decreasing dispatch.
+        self.assertEqual(dispatched_epochs, sorted(dispatched_epochs))
+        # Final epoch must be 1 (the max requested).
+        channel_state = self.server._channel_state_by_channel_id[channel_id]
+        self.assertEqual(channel_state.epoch, 1)
+
     def test_shutdown_cleans_all_backends(self) -> None:
         runtime_1 = MagicMock()
         runtime_2 = MagicMock()
-        self.server._backend_state_by_id = {
+        self.server._backend_state_by_backend_id = {
             0: dist_server.SamplingBackendState(
                 backend_id=0,
                 backend_key="neighbor_loader_0",
@@ -716,7 +973,7 @@ class TestDistServerSampling(TestCase):
                 runtime=runtime_2,
             ),
         }
-        self.server._backend_key_to_id = {
+        self.server._backend_id_by_backend_key = {
             "neighbor_loader_0": 0,
             "neighbor_loader_1": 1,
         }
@@ -725,7 +982,7 @@ class TestDistServerSampling(TestCase):
 
         runtime_1.shutdown.assert_called_once()
         runtime_2.shutdown.assert_called_once()
-        self.assertEqual(self.server._backend_state_by_id, {})
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
 
     def test_create_sampling_producer_removed(self) -> None:
         self.assertFalse(hasattr(dist_server.DistServer, "create_sampling_producer"))

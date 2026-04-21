@@ -254,12 +254,12 @@ class BaseDistLoader(DistLoader):
         should_cleanup_distributed_context: bool = False
 
         if context:
-            assert (
-                local_process_world_size is not None
-            ), "context: DistributedContext provided, so local_process_world_size must be provided."
-            assert (
-                local_process_rank is not None
-            ), "context: DistributedContext provided, so local_process_rank must be provided."
+            assert local_process_world_size is not None, (
+                "context: DistributedContext provided, so local_process_world_size must be provided."
+            )
+            assert local_process_rank is not None, (
+                "context: DistributedContext provided, so local_process_rank must be provided."
+            )
 
             master_ip_address = context.main_worker_ip_address
             node_world_size = context.global_world_size
@@ -1024,6 +1024,11 @@ class BaseDistLoader(DistLoader):
                     self._epoch,
                 )
                 rpc_futures.append(fut)
+            # Match GLT's remote-loader ordering: do not begin fetching until
+            # every storage server has acknowledged the epoch start for this
+            # channel. Otherwise a fetch RPC can race ahead and block the
+            # corresponding start-epoch RPC on the server-side channel lock.
+            torch.futures.wait_all(rpc_futures)
             self._channel.reset()
         self._epoch += 1
         return self

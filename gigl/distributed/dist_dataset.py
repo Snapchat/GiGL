@@ -128,9 +128,9 @@ class DistDataset(glt.distributed.DistDataset):
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = negative_edge_label
 
-        self._node_ids: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-        ] = node_ids
+        self._node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = (
+            node_ids
+        )
 
         self._num_train = num_train
         self._num_val = num_val
@@ -552,9 +552,9 @@ class DistDataset(glt.distributed.DistDataset):
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
         if isinstance(partitioned_edge_index, GraphPartitionData):
-            edge_index: Union[
-                torch.Tensor, dict[EdgeType, torch.Tensor]
-            ] = partitioned_edge_index.edge_index
+            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+                partitioned_edge_index.edge_index
+            )
             edge_ids: Union[
                 Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
             ] = partitioned_edge_index.edge_ids
@@ -741,9 +741,9 @@ class DistDataset(glt.distributed.DistDataset):
 
         start_time = time.time()
 
-        assert (
-            partition_output.partitioned_edge_index is not None
-        ), "Edge index must be present in the partition output"
+        assert partition_output.partitioned_edge_index is not None, (
+            "Edge index must be present in the partition output"
+        )
 
         # We compute the node ids on the current machine, which will be used as input to the neighbor loaders.
         node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
@@ -1007,24 +1007,24 @@ def _append_non_split_node_ids(
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: None,
-) -> Tuple[None, None]:
-    ...
+) -> Tuple[None, None]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: FeaturePartitionData,
-) -> Tuple[torch.Tensor, TensorDataType]:
-    ...
+) -> Tuple[torch.Tensor, TensorDataType]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: dict[_EntityType, PartitionBook],
     partitioned_data: dict[_EntityType, FeaturePartitionData],
-) -> Tuple[dict[_EntityType, torch.Tensor], dict[_EntityType, TensorDataType],]:
-    ...
+) -> Tuple[
+    dict[_EntityType, torch.Tensor],
+    dict[_EntityType, TensorDataType],
+]: ...
 
 
 def _prepare_feature_data(
@@ -1081,19 +1081,19 @@ def _prepare_feature_data(
         return features, id_to_index
 
     elif isinstance(partitioned_data, Mapping):
-        assert (
-            len(partitioned_data) > 0
-        ), f"Expected at least one entity type in partitioned data, but got no entities. In heterogeneous settings, \
+        assert len(partitioned_data) > 0, (
+            f"Expected at least one entity type in partitioned data, but got no entities. In heterogeneous settings, \
             please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
+        )
         # Heterogeneous case
-        assert isinstance(
-            partition_book, Mapping
-        ), f"Found heterogeneous partitioned data, but no corresponding heterogeneous partition book. \
+        assert isinstance(partition_book, Mapping), (
+            f"Found heterogeneous partitioned data, but no corresponding heterogeneous partition book. \
             Got partition book of type {type(partition_book)}."
-        assert (
-            len(partition_book) > 0
-        ), f"Expected at least one entity type in partition book, but got no entities. In heterogeneous settings, \
+        )
+        assert len(partition_book) > 0, (
+            f"Expected at least one entity type in partition book, but got no entities. In heterogeneous settings, \
             please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
+        )
 
         # Extract features and IDs by type
         features_per_entity_type: dict[_EntityType, torch.Tensor] = {}
@@ -1104,9 +1104,9 @@ def _prepare_feature_data(
                     entity_key
                 ].feats
                 if isinstance(partition_book_instance, RangePartitionBook):
-                    id_to_index_per_entity_type[
-                        entity_key
-                    ] = partition_book_instance.id2index
+                    id_to_index_per_entity_type[entity_key] = (
+                        partition_book_instance.id2index
+                    )
                 else:
                     id_to_index_per_entity_type[entity_key] = id2idx(
                         partitioned_data[entity_key].ids
@@ -1164,7 +1164,7 @@ def _rebuild_distributed_dataset(
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
-    ]
+    ],
 ):
     dataset = DistDataset.from_ipc_handle(ipc_handle)
     return dataset

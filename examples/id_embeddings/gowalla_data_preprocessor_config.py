@@ -270,14 +270,14 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
 
         user_node_output_id = NodeOutputIdentifier(NODE_ID_COLUMN)
 
-        node_data_ref_to_preprocessing_specs[
-            user_node_data_ref
-        ] = NodeDataPreprocessingSpec(
-            identifier_output=user_node_output_id,
-            features_outputs=[],  # No features - LightGCN uses only node IDs
-            labels_outputs=[],  # No labels for unsupervised tasks
-            feature_spec_fn=user_feature_spec_fn,
-            preprocessing_fn=user_preprocessing_fn,
+        node_data_ref_to_preprocessing_specs[user_node_data_ref] = (
+            NodeDataPreprocessingSpec(
+                identifier_output=user_node_output_id,
+                features_outputs=[],  # No features - LightGCN uses only node IDs
+                labels_outputs=[],  # No labels for unsupervised tasks
+                feature_spec_fn=user_feature_spec_fn,
+                preprocessing_fn=user_preprocessing_fn,
+            )
         )
 
         # Item node preprocessing spec
@@ -295,14 +295,14 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
 
         item_node_output_id = NodeOutputIdentifier(NODE_ID_COLUMN)
 
-        node_data_ref_to_preprocessing_specs[
-            item_node_data_ref
-        ] = NodeDataPreprocessingSpec(
-            identifier_output=item_node_output_id,
-            features_outputs=[],  # No features - LightGCN uses only node IDs
-            labels_outputs=[],  # No labels for unsupervised tasks
-            feature_spec_fn=item_feature_spec_fn,
-            preprocessing_fn=item_preprocessing_fn,
+        node_data_ref_to_preprocessing_specs[item_node_data_ref] = (
+            NodeDataPreprocessingSpec(
+                identifier_output=item_node_output_id,
+                features_outputs=[],  # No features - LightGCN uses only node IDs
+                labels_outputs=[],  # No labels for unsupervised tasks
+                feature_spec_fn=item_feature_spec_fn,
+                preprocessing_fn=item_preprocessing_fn,
+            )
         )
 
         logger.info("Node preprocessing specs defined for users and items")
@@ -352,14 +352,14 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             build_passthrough_transform_preprocessing_fn()
         )
 
-        edge_data_ref_to_preprocessing_specs[
-            user_to_train_item_edge_ref
-        ] = EdgeDataPreprocessingSpec(
-            identifier_output=user_to_train_item_output_id,
-            features_outputs=[],
-            labels_outputs=[],
-            feature_spec_fn=user_to_train_item_feature_spec_fn,
-            preprocessing_fn=user_to_train_item_preprocessing_fn,
+        edge_data_ref_to_preprocessing_specs[user_to_train_item_edge_ref] = (
+            EdgeDataPreprocessingSpec(
+                identifier_output=user_to_train_item_output_id,
+                features_outputs=[],
+                labels_outputs=[],
+                feature_spec_fn=user_to_train_item_feature_spec_fn,
+                preprocessing_fn=user_to_train_item_preprocessing_fn,
+            )
         )
         logger.info("Forward training edge spec defined (user -> to_train -> item)")
 
@@ -383,14 +383,14 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             build_passthrough_transform_preprocessing_fn()
         )
 
-        edge_data_ref_to_preprocessing_specs[
-            user_to_test_item_edge_ref
-        ] = EdgeDataPreprocessingSpec(
-            identifier_output=user_to_test_item_output_id,
-            features_outputs=[],
-            labels_outputs=[],
-            feature_spec_fn=user_to_test_item_feature_spec_fn,
-            preprocessing_fn=user_to_test_item_preprocessing_fn,
+        edge_data_ref_to_preprocessing_specs[user_to_test_item_edge_ref] = (
+            EdgeDataPreprocessingSpec(
+                identifier_output=user_to_test_item_output_id,
+                features_outputs=[],
+                labels_outputs=[],
+                feature_spec_fn=user_to_test_item_feature_spec_fn,
+                preprocessing_fn=user_to_test_item_preprocessing_fn,
+            )
         )
         logger.info("Forward test edge spec defined (user -> to_test -> item)")
 
@@ -416,14 +416,14 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             build_passthrough_transform_preprocessing_fn()
         )
 
-        edge_data_ref_to_preprocessing_specs[
-            item_to_train_user_edge_ref
-        ] = EdgeDataPreprocessingSpec(
-            identifier_output=item_to_train_user_output_id,
-            features_outputs=[],
-            labels_outputs=[],
-            feature_spec_fn=item_to_train_user_feature_spec_fn,
-            preprocessing_fn=item_to_train_user_preprocessing_fn,
+        edge_data_ref_to_preprocessing_specs[item_to_train_user_edge_ref] = (
+            EdgeDataPreprocessingSpec(
+                identifier_output=item_to_train_user_output_id,
+                features_outputs=[],
+                labels_outputs=[],
+                feature_spec_fn=item_to_train_user_feature_spec_fn,
+                preprocessing_fn=item_to_train_user_preprocessing_fn,
+            )
         )
         logger.info("Reverse training edge spec defined (item -> to_train -> user)")
 
@@ -449,14 +449,14 @@ class GowallaDataPreprocessorConfig(DataPreprocessorConfig):
             build_passthrough_transform_preprocessing_fn()
         )
 
-        edge_data_ref_to_preprocessing_specs[
-            item_to_test_user_edge_ref
-        ] = EdgeDataPreprocessingSpec(
-            identifier_output=item_to_test_user_output_id,
-            features_outputs=[],
-            labels_outputs=[],
-            feature_spec_fn=item_to_test_user_feature_spec_fn,
-            preprocessing_fn=item_to_test_user_preprocessing_fn,
+        edge_data_ref_to_preprocessing_specs[item_to_test_user_edge_ref] = (
+            EdgeDataPreprocessingSpec(
+                identifier_output=item_to_test_user_output_id,
+                features_outputs=[],
+                labels_outputs=[],
+                feature_spec_fn=item_to_test_user_feature_spec_fn,
+                preprocessing_fn=item_to_test_user_preprocessing_fn,
+            )
         )
         logger.info("Reverse test edge spec defined (item -> to_test -> user)")
 

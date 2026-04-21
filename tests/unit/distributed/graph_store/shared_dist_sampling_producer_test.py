@@ -96,12 +96,8 @@ class DistSamplingProducerTest(TestCase):
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.get_context")
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.mp.get_context")
-    @patch(
-        "gigl.distributed.graph_store.shared_dist_sampling_producer._prepare_degree_tensors"
-    )
     def test_init_backend_prepares_worker_options(
         self,
-        mock_prepare_degree_tensors: MagicMock,
         mock_get_mp_context: MagicMock,
         mock_get_context: MagicMock,
     ) -> None:
@@ -117,6 +113,7 @@ class DistSamplingProducerTest(TestCase):
             worker_options=worker_options,
             sampling_config=_make_sampling_config(),
             sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
         )
 
         backend.init_backend()
@@ -128,7 +125,6 @@ class DistSamplingProducerTest(TestCase):
         self.assertEqual(len(backend._task_queues), 2)
         self.assertEqual(len(backend._workers), 2)
         self.assertTrue(backend._initialized)
-        mock_prepare_degree_tensors.assert_called_once()
 
     def test_start_new_epoch_sampling_shuffle_refreshes_per_epoch(self) -> None:
         worker_options = MagicMock()
@@ -139,11 +135,12 @@ class DistSamplingProducerTest(TestCase):
             worker_options=worker_options,
             sampling_config=_make_sampling_config(shuffle=True),
             sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
         )
         backend._initialized = True
         recorded: list[tuple[int, SharedMpCommand, object]] = []
-        backend._enqueue_worker_command = lambda worker_rank, command, payload: recorded.append(  # type: ignore[method-assign]
-            (worker_rank, command, payload)
+        backend._enqueue_worker_command = lambda worker_rank, command, payload: (  # type: ignore[method-assign]
+            recorded.append((worker_rank, command, payload))
         )
 
         channel = MagicMock()
@@ -200,6 +197,7 @@ class DistSamplingProducerTest(TestCase):
             worker_options=worker_options,
             sampling_config=_make_sampling_config(),
             sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
         )
         backend._initialized = True
         backend._event_queue = cast(mp.Queue, queue.Queue())

@@ -62,11 +62,11 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpecPygTrainingTest(TestCase):
         """
         Test that we can train with homogeneous data on Cora.
         """
-        metadata: (
-            MockedDatasetArtifactMetadata
-        ) = get_mocked_dataset_artifact_metadata()[
-            CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
+        metadata: MockedDatasetArtifactMetadata = (
+            get_mocked_dataset_artifact_metadata()[
+                CORA_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+            ]
+        )
         gbml_config_pb_wrapper = (
             GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
                 gbml_config_uri=metadata.frozen_gbml_config_uri
@@ -90,11 +90,11 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpecPygTrainingTest(TestCase):
         """
         Test that we can train with heterogeneous data on DBLP.
         """
-        metadata: (
-            MockedDatasetArtifactMetadata
-        ) = get_mocked_dataset_artifact_metadata()[
-            DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ]
+        metadata: MockedDatasetArtifactMetadata = (
+            get_mocked_dataset_artifact_metadata()[
+                DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+            ]
+        )
         gbml_config_pb_wrapper = (
             GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
                 gbml_config_uri=metadata.frozen_gbml_config_uri

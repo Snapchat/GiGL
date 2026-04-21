@@ -519,15 +519,15 @@ class DistributedDatasetTestCase(TestCase):
             should_load_tensors_in_parallel=True,
         )
 
-        assert isinstance(
-            dataset.positive_edge_label, Mapping
-        ), f"Positive edge indices must be a dictionary, got {type(dataset.positive_edge_label)}"
+        assert isinstance(dataset.positive_edge_label, Mapping), (
+            f"Positive edge indices must be a dictionary, got {type(dataset.positive_edge_label)}"
+        )
         self.assertTrue(labeled_edge_type in dataset.positive_edge_label)
         self.assertTrue(message_passing_edge_type not in dataset.positive_edge_label)
 
-        assert isinstance(
-            dataset.negative_edge_label, Mapping
-        ), f"Negative edge indices must be a dictionary, got {type(dataset.negative_edge_label)}"
+        assert isinstance(dataset.negative_edge_label, Mapping), (
+            f"Negative edge indices must be a dictionary, got {type(dataset.negative_edge_label)}"
+        )
         self.assertTrue(labeled_edge_type in dataset.negative_edge_label)
         self.assertTrue(message_passing_edge_type not in dataset.negative_edge_label)
 

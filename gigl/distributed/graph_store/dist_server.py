@@ -30,10 +30,11 @@ from gigl.distributed.graph_store.messages import (
     InitSamplingBackendRequest,
     RegisterBackendRequest,
 )
+from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     SharedDistSamplingBackend,
 )
-from gigl.distributed.utils.neighborloader import shard_nodes_by_process
+from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -77,6 +78,8 @@ class SamplingBackendState:
         runtime: The shared sampling backend runtime.
         active_channels: Set of channel IDs currently registered on this backend.
         lock: A reentrant lock guarding backend-level operations.
+        init_complete: Whether ``runtime.init_backend()`` has completed successfully.
+        init_error: If ``runtime.init_backend()`` raised, the exception; otherwise ``None``.
     """
 
     backend_id: int
@@ -84,6 +87,8 @@ class SamplingBackendState:
     runtime: SharedDistSamplingBackend
     active_channels: set[int] = field(default_factory=set)
     lock: threading.RLock = field(default_factory=threading.RLock)
+    init_complete: bool = False
+    init_error: Optional[BaseException] = None
 
 
 @dataclass
@@ -105,7 +110,9 @@ class DistServer:
 
     Args:
       dataset (DistDataset): The ``DistDataset`` object of a partition of graph
-        data and feature data, along with distributed patition books.
+        data and feature data, along with distributed partition books.
+      log_every_n (int): Log aggregated ``fetch_one_sampled_message`` timing
+        stats after every ``N`` fetch attempts per channel.
     """
 
     def __init__(self, dataset: DistDataset, log_every_n: int = 50) -> None:
@@ -114,18 +121,19 @@ class DistServer:
         self._exit = False
         self._next_backend_id = 0
         self._next_channel_id = 0
-        self._backend_key_to_id: dict[str, int] = {}
-        self._backend_state_by_id: dict[int, SamplingBackendState] = {}
-        self._channel_state: dict[int, ChannelState] = {}
+        self._backend_id_by_backend_key: dict[str, int] = {}
+        self._backend_state_by_backend_id: dict[int, SamplingBackendState] = {}
+        self._channel_state_by_channel_id: dict[int, ChannelState] = {}
+        self._fetch_stats_by_channel_id: dict[int, _ChannelFetchStats] = {}
         self._log_every_n = log_every_n
-        self._fetch_stats: dict[int, _ChannelFetchStats] = {}
 
     def shutdown(self) -> None:
         with self._lock:
-            backends = list(self._backend_state_by_id.values())
-            self._backend_key_to_id.clear()
-            self._backend_state_by_id.clear()
-            self._channel_state.clear()
+            backends = list(self._backend_state_by_backend_id.values())
+            self._backend_id_by_backend_key.clear()
+            self._backend_state_by_backend_id.clear()
+            self._channel_state_by_channel_id.clear()
+            self._fetch_stats_by_channel_id.clear()
         for backend_state in backends:
             try:
                 backend_state.runtime.shutdown()
@@ -324,14 +332,13 @@ class DistServer:
 
         Args:
             request: The node-fetch request, including split, node type,
-                and round-robin rank/world_size.
+                and an optional contiguous server slice.
 
         Returns:
             The node ids.
 
         Raises:
             ValueError:
-                * If the rank and world_size are not provided together
                 * If the split is invalid
                 * If the node ids are not a torch.Tensor or a dict[NodeType, torch.Tensor]
                 * If the node type is provided for a homogeneous dataset
@@ -341,47 +348,36 @@ class DistServer:
             split (train, val, or test) may be returned. This is useful when you need
             to sample neighbors during inference, as neighbor nodes may belong to any split.
         """
-        request.validate()
         return self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            rank=request.rank,
-            world_size=request.world_size,
+            server_slice=request.server_slice,
         )
 
     def _get_node_ids(
         self,
         split: Optional[Union[Literal["train", "val", "test"], str]],
         node_type: Optional[NodeType],
-        rank: Optional[int] = None,
-        world_size: Optional[int] = None,
+        server_slice: Optional[ServerSlice] = None,
     ) -> torch.Tensor:
-        """Core implementation for fetching node IDs by split, type, and sharding.
+        """Core implementation for fetching node IDs by split, type, and optional slicing.
 
         Args:
             split: The dataset split to fetch from (``"train"``, ``"val"``,
                 ``"test"``, or ``None`` for all nodes).
             node_type: The node type to select. Must be ``None`` for
                 homogeneous datasets.
-            rank: Round-robin rank for sharding. Must be provided together
-                with ``world_size``.
-            world_size: Total number of processes for sharding. Must be
-                provided together with ``rank``.
+            server_slice: An optional :class:`ServerSlice` to return only a
+                fraction of the nodes. When ``None``, all nodes are returned.
 
         Returns:
-            The node IDs tensor, optionally sharded by rank.
+            The node IDs tensor, optionally sliced by ``server_slice``.
 
         Raises:
-            ValueError: If rank/world_size are not provided together, the
-                split is invalid, or the node type is inconsistent with
-                the dataset type (homogeneous vs. heterogeneous).
+            ValueError: If the split is invalid, or the node type is
+                inconsistent with the dataset type (homogeneous vs.
+                heterogeneous).
         """
-        if (rank is None) ^ (world_size is None):
-            raise ValueError(
-                "rank and world_size must be provided together. "
-                f"Received rank={rank}, world_size={world_size}"
-            )
-
         if split == "train":
             nodes = self.dataset.train_node_ids
         elif split == "val":
@@ -407,8 +403,8 @@ class DistServer:
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."
             )
 
-        if rank is not None and world_size is not None:
-            return shard_nodes_by_process(nodes, rank, world_size)
+        if server_slice is not None:
+            return server_slice.slice_tensor(nodes)
         return nodes
 
     def get_edge_types(self) -> Optional[list[EdgeType]]:
@@ -437,14 +433,11 @@ class DistServer:
         self,
         request: FetchABLPInputRequest,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """Get the ABLP (Anchor Based Link Prediction) input for a specific rank in distributed processing.
-
-        Note: rank and world_size here are for the process group we're *fetching for*, not the process group we're *fetching from*.
-        e.g. if our compute cluster is of world size 4, and we have 2 storage nodes, then the world size this gets called with is 4, not 2.
+        """Get the ABLP (Anchor Based Link Prediction) input for distributed processing.
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and round-robin rank/world_size.
+                supervision edge type, and an optional contiguous server slice.
 
         Returns:
             A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
@@ -455,12 +448,10 @@ class DistServer:
         Raises:
             ValueError: If the split is invalid.
         """
-        request.validate()
         anchors = self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
-            rank=request.rank,
-            world_size=request.world_size,
+            server_slice=request.server_slice,
         )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
             request.supervision_edge_type, self.dataset.get_edge_types()
@@ -473,8 +464,12 @@ class DistServer:
     def init_sampling_backend(self, opts: InitSamplingBackendRequest) -> int:
         """Create or reuse a shared sampling backend for one loader instance.
 
-        If a backend with the same ``backend_key`` already exists, returns
-        its ID without creating a new one.
+        If a backend with the same ``backend_key`` already exists, blocks
+        until the original initializer has finished, then returns its ID.
+        If the original initializer failed, re-raises that failure so the
+        second caller does not see a half-initialized backend.
+        Exactly one caller initializes each backend; concurrent callers wait
+        on the per-backend lock and observe that final success or failure.
 
         Args:
             opts: The initialization request containing the backend key,
@@ -482,41 +477,92 @@ class DistServer:
 
         Returns:
             The unique backend ID.
+
+        Raises:
+            RuntimeError: If a prior concurrent initialization for the same
+                ``backend_key`` failed.
         """
+        # Exactly one caller per backend_key creates the backend and runs
+        # runtime.init_backend(). Concurrent callers reuse the published
+        # backend_state and wait for that initialization to finish. `is_first`
+        # records which role this request took once we leave self._lock.
         request_start_time = time.monotonic()
+        is_first = False
         with self._lock:
-            backend_id = self._backend_key_to_id.get(opts.backend_key)
+            backend_id = self._backend_id_by_backend_key.get(opts.backend_key)
             if backend_id is not None:
-                return backend_id
-            backend_id = self._next_backend_id
-            self._next_backend_id += 1
-            backend_state = SamplingBackendState(
-                backend_id=backend_id,
-                backend_key=opts.backend_key,
-                runtime=SharedDistSamplingBackend(
-                    data=self.dataset,
-                    worker_options=opts.worker_options,
-                    sampling_config=opts.sampling_config,
-                    sampler_options=opts.sampler_options,
-                ),
-            )
-            self._backend_key_to_id[opts.backend_key] = backend_id
-            self._backend_state_by_id[backend_id] = backend_state
-        init_start_time = time.monotonic()
-        try:
-            backend_state.runtime.init_backend()
-        except Exception:
-            with self._lock:
-                self._backend_key_to_id.pop(opts.backend_key, None)
-                self._backend_state_by_id.pop(backend_id, None)
-            raise
-        init_elapsed = time.monotonic() - init_start_time
-        total_elapsed = time.monotonic() - request_start_time
-        logger.info(
-            f"Initialized sampling backend backend_key={opts.backend_key} "
-            f"backend_id={backend_id} "
-            f"init_backend={init_elapsed:.2f}s total={total_elapsed:.2f}s"
-        )
+                backend_state = self._backend_state_by_backend_id[backend_id]
+            else:
+                backend_id = self._next_backend_id
+                self._next_backend_id += 1
+                backend_state = SamplingBackendState(
+                    backend_id=backend_id,
+                    backend_key=opts.backend_key,
+                    runtime=SharedDistSamplingBackend(
+                        data=self.dataset,
+                        worker_options=opts.worker_options,
+                        sampling_config=opts.sampling_config,
+                        sampler_options=opts.sampler_options,
+                        # We only need degree tensor for PPR sampling
+                        degree_tensors=self.dataset.degree_tensor
+                        if isinstance(opts.sampler_options, PPRSamplerOptions)
+                        else None,
+                    ),
+                )
+                self._backend_id_by_backend_key[opts.backend_key] = backend_id
+                self._backend_state_by_backend_id[backend_id] = backend_state
+                # Publish the new backend_state under self._lock, then take
+                # backend_state.lock before releasing self._lock. This makes
+                # the first caller the owner of the per-backend gate that
+                # later callers will block on while init_backend() runs.
+                #
+                # Without this overlap, a second caller could observe the
+                # published backend_state after self._lock is released,
+                # acquire backend_state.lock first, and proceed before
+                # initialization had been serialized. Taking the lock here
+                # establishes the handoff: first caller initializes, later
+                # callers wait.
+                backend_state.lock.acquire()
+                is_first = True
+
+        # Run init_backend() outside self._lock so one slow initialization
+        # does not block unrelated RPCs. `is_first` now chooses whether this
+        # caller performs initialization or waits for the initializer.
+        if is_first:
+            try:
+                init_start_time = time.monotonic()
+                backend_state.runtime.init_backend()
+                backend_state.init_complete = True
+                init_elapsed = time.monotonic() - init_start_time
+                total_elapsed = time.monotonic() - request_start_time
+                logger.info(
+                    f"Initialized sampling backend backend_key={opts.backend_key} "
+                    f"backend_id={backend_id} "
+                    f"init_backend={init_elapsed:.2f}s total={total_elapsed:.2f}s"
+                )
+            except BaseException as e:
+                backend_state.init_error = e
+                with self._lock:
+                    self._backend_id_by_backend_key.pop(opts.backend_key, None)
+                    self._backend_state_by_backend_id.pop(backend_id, None)
+                raise
+            finally:
+                # backend_state.lock was acquired manually while still under
+                # self._lock so the first caller could carry ownership across
+                # the lock boundary. Release it manually here to wake waiters.
+                backend_state.lock.release()
+        else:
+            # Wait for the first caller to release backend_state.lock after
+            # either storing init_error or marking init_complete. Once we
+            # enter this block, initialization has finished and the outcome
+            # can be observed safely.
+            with backend_state.lock:
+                if backend_state.init_error is not None:
+                    raise RuntimeError(
+                        f"init_sampling_backend: prior initialization failed "
+                        f"for backend_key={opts.backend_key}"
+                    ) from backend_state.init_error
+                assert backend_state.init_complete
         return backend_id
 
     def register_sampling_input(self, opts: RegisterBackendRequest) -> int:
@@ -531,7 +577,7 @@ class DistServer:
         """
         request_start_time = time.monotonic()
         with self._lock:
-            backend_state = self._backend_state_by_id[opts.backend_id]
+            backend_state = self._backend_state_by_backend_id[opts.backend_id]
             channel_id = self._next_channel_id
             self._next_channel_id += 1
             channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
@@ -540,8 +586,12 @@ class DistServer:
                 worker_key=opts.worker_key,
                 channel=channel,
             )
-            self._channel_state[channel_id] = channel_state
+            self._channel_state_by_channel_id[channel_id] = channel_state
             backend_state.active_channels.add(channel_id)
+            # Snapshot the count under self._lock so the log message
+            # reflects state at the moment of registration, not a later
+            # value that could be mutated by concurrent register/destroy.
+            active_channels_at_register = len(backend_state.active_channels)
 
         sampler_input = opts.sampler_input
         if isinstance(sampler_input, RemoteSamplerInput):
@@ -558,14 +608,14 @@ class DistServer:
                 )
         except Exception:
             with self._lock:
-                self._channel_state.pop(channel_id, None)
+                self._channel_state_by_channel_id.pop(channel_id, None)
                 backend_state.active_channels.discard(channel_id)
             raise
 
         logger.info(
             f"Registered sampling input backend_id={opts.backend_id} "
             f"channel_id={channel_id} worker_key={opts.worker_key} "
-            f"active_channels={len(backend_state.active_channels)} "
+            f"active_channels={active_channels_at_register} "
             f"in {time.monotonic() - request_start_time:.2f}s"
         )
         return channel_id
@@ -573,36 +623,69 @@ class DistServer:
     def destroy_sampling_input(self, channel_id: int) -> None:
         """Destroy one registered sampling channel and maybe its backend.
 
-        If this is the last channel on the backend, the backend is shut down
-        and removed.
+        If this is the last channel on the backend, the backend is shut
+        down and removed.
+
+        Caller contract: callers must have drained the channel (i.e.,
+        observed :meth:`fetch_one_sampled_message` return ``(None, True)``)
+        before calling destroy. This is required because
+        :meth:`fetch_one_sampled_message` holds ``channel_state.lock`` for
+        the duration of its recv loop; a destroy issued mid-epoch will
+        block waiting for the fetch to exit, and if the producer is stuck,
+        destroy will block indefinitely. All in-tree callers satisfy this
+        contract via ``BaseDistLoader``'s teardown sequence.
 
         Args:
             channel_id: The ID of the channel to destroy.
         """
-        self._fetch_stats.pop(channel_id, None)
         with self._lock:
-            channel_state = self._channel_state.pop(channel_id, None)
+            channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
                 return
-            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
-        if backend_state is None:
-            return
+            backend_state = self._backend_state_by_backend_id.get(
+                channel_state.backend_id
+            )
 
-        with backend_state.lock:
-            backend_state.runtime.unregister_input(channel_id)
+        # Hold channel_state.lock to serialize destroy against in-flight
+        # start_new_epoch_sampling and any remaining
+        # fetch_one_sampled_message. Pre-PR #578, the old
+        # destroy_sampling_producer and start_new_epoch_sampling shared
+        # the same _producer_lock, so destroy/start_epoch were serialized;
+        # this restores that invariant via the two-phase API's
+        # per-channel lock.
+        with channel_state.lock:
+            with self._lock:
+                self._channel_state_by_channel_id.pop(channel_id, None)
+                # Pop fetch stats inside self._lock for consistency with
+                # how neighboring dicts are mutated. Does not close the
+                # race with _log_fetch_stats_if_due (which runs under
+                # channel_state.lock but not self._lock); a concurrent
+                # in-flight fetch may still recreate the entry — the
+                # orphan is benign and cleared on next shutdown or
+                # channel reuse.
+                self._fetch_stats_by_channel_id.pop(channel_id, None)
+
+            if backend_state is None:
+                return
+
+            with backend_state.lock:
+                backend_state.runtime.unregister_input(channel_id)
 
         should_shutdown_backend = False
         with self._lock:
             backend_state.active_channels.discard(channel_id)
             if not backend_state.active_channels:
-                self._backend_state_by_id.pop(backend_state.backend_id, None)
-                self._backend_key_to_id.pop(backend_state.backend_key, None)
+                self._backend_state_by_backend_id.pop(backend_state.backend_id, None)
+                self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
                 should_shutdown_backend = True
         if should_shutdown_backend:
             backend_state.runtime.shutdown()
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
+
+        No-op if this channel has already started ``epoch`` or a later
+        epoch (idempotent — safe to call repeatedly from retries).
 
         Args:
             channel_id: The ID of the channel to start the epoch on.
@@ -612,44 +695,52 @@ class DistServer:
             RuntimeError: If the channel or its backend is not found.
         """
         with self._lock:
-            channel_state = self._channel_state.get(channel_id)
+            channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
                 raise RuntimeError(
                     f"start_new_epoch_sampling: channel_id={channel_id} not found"
                 )
-            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+            backend_state = self._backend_state_by_backend_id.get(
+                channel_state.backend_id
+            )
         if backend_state is None:
             raise RuntimeError(
                 f"start_new_epoch_sampling: backend for channel_id={channel_id} "
                 f"backend_id={channel_state.backend_id} not found"
             )
 
-        if channel_state.epoch >= epoch:
-            return
-        channel_state.epoch = epoch
-        logger.info(
-            f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
-            f"epoch={epoch}"
-        )
-        backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+        # Serialize check/update/dispatch under channel_state.lock so
+        # concurrent callers with different epoch values cannot interleave
+        # the check-then-set on channel_state.epoch, and so a concurrent
+        # fetch cannot observe channel_state.epoch bumped before
+        # runtime.start_new_epoch_sampling has been dispatched.
+        with channel_state.lock:
+            if channel_state.epoch >= epoch:
+                return
+            channel_state.epoch = epoch
+            logger.info(
+                f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
+                f"epoch={epoch}"
+            )
+            backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
 
     def _log_fetch_stats_if_due(
         self, channel_id: int, worker_key: str, elapsed: float
     ) -> None:
-        """Accumulate per-channel fetch timing and log aggregated stats every ``log_every_n`` calls.
+        """Accumulate per-channel fetch timing and log every ``self._log_every_n`` fetches.
 
-        Stats are keyed by ``channel_id`` so each channel's RPC thread updates
-        its own counters without contention.
+        ``log_every_n`` is tracked independently per ``channel_id``, so each
+        channel's RPC thread updates its own counters without contention.
 
         Args:
             channel_id: The channel whose stats to update.
             worker_key: The worker key for logging.
             elapsed: The elapsed time for this fetch call.
         """
-        stats = self._fetch_stats.get(channel_id)
+        stats = self._fetch_stats_by_channel_id.get(channel_id)
         if stats is None:
             stats = _ChannelFetchStats()
-            self._fetch_stats[channel_id] = stats
+            self._fetch_stats_by_channel_id[channel_id] = stats
         stats.fetch_count += 1
         stats.fetch_total_elapsed += elapsed
         if elapsed >= FETCH_SLOW_LOG_SECS:
@@ -679,10 +770,12 @@ class DistServer:
         """
         request_start_time = time.monotonic()
         with self._lock:
-            channel_state = self._channel_state.get(channel_id)
+            channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
                 return None, True
-            backend_state = self._backend_state_by_id.get(channel_state.backend_id)
+            backend_state = self._backend_state_by_backend_id.get(
+                channel_state.backend_id
+            )
         if backend_state is None:
             return None, True
 
@@ -697,6 +790,8 @@ class DistServer:
                     )
                     return msg, False
                 except QueueTimeoutError:
+                    # Timeout is expected whenever the producer has
+                    # nothing ready; poll is_channel_epoch_done and loop.
                     if (
                         backend_state.runtime.is_channel_epoch_done(
                             channel_id, channel_state.epoch
@@ -743,7 +838,7 @@ def init_server(
       server_rank (int): Rank of the current process withing the server group (it
         should be a number between 0 and ``num_servers``-1).
       dataset (DistDataset): The ``DistDataset`` object of a partition of graph
-        data and feature data, along with distributed patition book info.
+        data and feature data, along with distributed partition book info.
       master_addr (str): The master TCP address for RPC connection between all
         servers and clients, the value of this parameter should be same for all
         servers and clients.
@@ -811,7 +906,7 @@ def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
         logging.warning(
-            f"'_call_func_on_server': receive a non-callable " f"function target {func}"
+            f"'_call_func_on_server': receive a non-callable function target {func}"
         )
         return None
 
