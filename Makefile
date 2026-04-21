@@ -22,7 +22,7 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
-CPP_SOURCES:=$(shell find gigl/csrc -name "*.cpp" -o -name "*.cu" 2>/dev/null)
+CPP_SOURCES:=$(shell find gigl/csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
@@ -119,7 +119,7 @@ check_format_md:
 	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
-	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
+	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
 
 check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
@@ -155,7 +155,7 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	clang-format-15 -i --style=file $(CPP_SOURCES)
+	$(if $(CPP_SOURCES),clang-format-15 -i --style=file $(CPP_SOURCES))
 
 format: format_py format_cpp format_scala format_md
 
@@ -175,7 +175,7 @@ check_lint_cpp:
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing.
 fix_lint_cpp: generate_compile_commands
-	clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA)
+	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA))
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
