@@ -139,7 +139,7 @@ install_gigl_lib_deps() {
     fi
 
     # --no-install-project: skip building and installing the gigl package itself here.
-    # The project is installed separately via `uv pip install -e . --no-build-isolation`
+    # The project is installed separately via `uv pip install -e .`
     # (see Makefile install_dev_deps/install_deps targets and the *.src Dockerfiles).
     # This avoids scikit-build-core requiring all source files (e.g. README.md, CMakeLists.txt)
     # to be present in environments that only need the dependencies (e.g. base Docker images).
