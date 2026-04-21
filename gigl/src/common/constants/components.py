@@ -10,6 +10,7 @@ class GiGLComponents(Enum):
     Trainer = "trainer"
     Inferencer = "inferencer"
     PostProcessor = "post_processor"
+    DataAnalyzer = "data_analyzer"
 
     @property
     def kebab_case_value(self):

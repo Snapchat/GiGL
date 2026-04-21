@@ -18,13 +18,13 @@ WHERE {src_id_column} IS NULL OR {dst_id_column} IS NULL
 
 EDGE_REFERENTIAL_INTEGRITY_QUERY = """
 SELECT
-    COUNTIF(src_node.{node_id_column} IS NULL) AS missing_src_count,
-    COUNTIF(dst_node.{node_id_column} IS NULL) AS missing_dst_count
+    COUNTIF(src_node.{src_node_id_column} IS NULL) AS missing_src_count,
+    COUNTIF(dst_node.{dst_node_id_column} IS NULL) AS missing_dst_count
 FROM `{edge_table}` AS e
-LEFT JOIN `{node_table}` AS src_node
-    ON e.{src_id_column} = src_node.{node_id_column}
-LEFT JOIN `{node_table}` AS dst_node
-    ON e.{dst_id_column} = dst_node.{node_id_column}
+LEFT JOIN `{src_node_table}` AS src_node
+    ON e.{src_id_column} = src_node.{src_node_id_column}
+LEFT JOIN `{dst_node_table}` AS dst_node
+    ON e.{dst_id_column} = dst_node.{dst_node_id_column}
 """
 
 DUPLICATE_NODE_COUNT_QUERY = """
@@ -124,9 +124,12 @@ SELECT COUNT(*) AS cold_start_count FROM (
     SELECT n.{node_id_column}, COALESCE(e.degree, 0) AS degree
     FROM `{node_table}` AS n
     LEFT JOIN (
-        SELECT {src_id_column} AS nid, COUNT(*) AS degree
-        FROM `{edge_table}`
-        GROUP BY {src_id_column}
+        SELECT nid, COUNT(*) AS degree FROM (
+            SELECT {src_id_column} AS nid FROM `{edge_table}`
+            UNION ALL
+            SELECT {dst_id_column} AS nid FROM `{edge_table}`
+        )
+        GROUP BY nid
     ) AS e ON n.{node_id_column} = e.nid
     WHERE COALESCE(e.degree, 0) <= 1
 )

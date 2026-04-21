@@ -2,11 +2,10 @@ from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
 import apache_beam as beam
 import pyarrow as pa
-import tensorflow_data_validation as tfdv
 import tensorflow_transform
 import tfx_bsl
 from apache_beam.pvalue import PBegin, PCollection, PDone
-from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
+from tensorflow_metadata.proto.v0 import schema_pb2
 from tensorflow_transform import beam as tft_beam
 from tensorflow_transform.tf_metadata import schema_utils
 from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
@@ -115,35 +114,6 @@ class IngestRawFeatures(beam.PTransform):
             | "Transformed TFExamples to RecordBatches with TFXIO"
             >> self.beam_record_tfxio.BeamSource()
         )
-
-
-class GenerateAndVisualizeStats(beam.PTransform):
-    def __init__(self, facets_report_uri: GcsUri, stats_output_uri: GcsUri):
-        self.facets_report_uri = facets_report_uri
-        self.stats_output_uri = stats_output_uri
-
-    def expand(
-        self, features: PCollection[pa.RecordBatch]
-    ) -> PCollection[statistics_pb2.DatasetFeatureStatisticsList]:
-        stats = features | "Generate TFDV statistics" >> tfdv.GenerateStatistics()
-
-        _ = (
-            stats
-            | "Generate stats visualization"
-            >> beam.Map(tfdv.utils.display_util.get_statistics_html)
-            | "Write stats Facets report HTML"
-            >> beam.io.WriteToText(
-                self.facets_report_uri.uri, num_shards=1, shard_name_template=""
-            )
-        )
-
-        _ = (
-            stats
-            | "Write TFDV stats output TFRecord"
-            >> tfdv.WriteStatisticsToTFRecord(self.stats_output_uri.uri)
-        )
-
-        return stats
 
 
 class ReadExistingTFTransformFn(beam.PTransform):

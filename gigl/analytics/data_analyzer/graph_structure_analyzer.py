@@ -19,6 +19,7 @@ Tier 4 (opt-in)
 """
 
 import math
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from gigl.analytics.data_analyzer.config import (
@@ -124,6 +125,7 @@ class GraphStructureAnalyzer:
     ) -> None:
         """Run all tier 1 checks; raise DataQualityError on any violation."""
         violations: list[str] = []
+        node_tables_by_type = {nt.node_type: nt for nt in config.node_tables}
 
         # Duplicate nodes (per node table).
         for node_table in config.node_tables:
@@ -151,30 +153,47 @@ class GraphStructureAnalyzer:
                     f"edge_type={edge_table.edge_type} has {dangling} dangling edges"
                 )
 
-            # Referential integrity: join against the first node table (heterogeneous
-            # graphs with per-edge-type node types would refine this per edge table;
-            # for now we pair each edge table with config.node_tables[0]).
-            if config.node_tables:
-                node_table = config.node_tables[0]
-                ref_query = EDGE_REFERENTIAL_INTEGRITY_QUERY.format(
-                    edge_table=edge_table.bq_table,
-                    node_table=node_table.bq_table,
-                    src_id_column=edge_table.src_id_column,
-                    dst_id_column=edge_table.dst_id_column,
-                    node_id_column=node_table.id_column,
+            # Referential integrity: src and dst can resolve to different node
+            # tables on heterogeneous graphs. `load_analyzer_config` guarantees
+            # src_node_type / dst_node_type are populated and known.
+            if not config.node_tables:
+                continue
+            assert edge_table.src_node_type is not None, (
+                f"edge_type={edge_table.edge_type} has no src_node_type; "
+                "load the config via load_analyzer_config to backfill it."
+            )
+            assert edge_table.dst_node_type is not None, (
+                f"edge_type={edge_table.edge_type} has no dst_node_type; "
+                "load the config via load_analyzer_config to backfill it."
+            )
+            src_node_table = node_tables_by_type[edge_table.src_node_type]
+            dst_node_table = node_tables_by_type[edge_table.dst_node_type]
+            ref_query = EDGE_REFERENTIAL_INTEGRITY_QUERY.format(
+                edge_table=edge_table.bq_table,
+                src_node_table=src_node_table.bq_table,
+                dst_node_table=dst_node_table.bq_table,
+                src_id_column=edge_table.src_id_column,
+                dst_id_column=edge_table.dst_id_column,
+                src_node_id_column=src_node_table.id_column,
+                dst_node_id_column=dst_node_table.id_column,
+            )
+            rows = list(self._bq_utils.run_query(query=ref_query, labels={}))
+            if len(rows) != 1:
+                raise RuntimeError(
+                    f"Referential integrity query expected exactly 1 row; "
+                    f"got {len(rows)}. Query: {ref_query.strip()[:200]}"
                 )
-                rows = list(self._bq_utils.run_query(query=ref_query, labels={}))
-                missing_src = rows[0]["missing_src_count"] if rows else 0
-                missing_dst = rows[0]["missing_dst_count"] if rows else 0
-                total_missing = int(missing_src) + int(missing_dst)
-                result.referential_integrity_violations[
-                    edge_table.edge_type
-                ] = total_missing
-                if total_missing > 0:
-                    violations.append(
-                        f"edge_type={edge_table.edge_type} has {total_missing} "
-                        "referential integrity violations"
-                    )
+            missing_src = int(rows[0]["missing_src_count"] or 0)
+            missing_dst = int(rows[0]["missing_dst_count"] or 0)
+            total_missing = missing_src + missing_dst
+            result.referential_integrity_violations[
+                edge_table.edge_type
+            ] = total_missing
+            if total_missing > 0:
+                violations.append(
+                    f"edge_type={edge_table.edge_type} has {total_missing} "
+                    "referential integrity violations"
+                )
 
         if violations:
             msg = "Tier 1 data quality violations detected:\n  - " + "\n  - ".join(
@@ -190,19 +209,36 @@ class GraphStructureAnalyzer:
     def _run_tier2(
         self, config: DataAnalyzerConfig, result: GraphAnalysisResult
     ) -> None:
-        """Collect core structural metrics, fanning out BQ jobs in parallel."""
-        # Node-level metrics (counts + null rates).
-        for node_table in config.node_tables:
-            self._tier2_node_metrics(node_table, result)
+        """Collect core structural metrics, fanning out BQ jobs in parallel.
 
-        # Edge-level metrics. If a single node table exists, pair it with each
-        # edge table for isolated/cold-start joins; otherwise pair with the
-        # first node table (heterogeneous refinement is a TODO).
-        primary_node_table = config.node_tables[0] if config.node_tables else None
-        for edge_table in config.edge_tables:
-            self._tier2_edge_metrics(edge_table, primary_node_table, result)
+        Edge-level metrics are computed from the src-side perspective:
+        isolated/cold-start joins pair each edge with its src_node_type's
+        table. Hetero dst-perspective coverage is exposed separately via
+        Tier 3 edge_type_node_coverage.
 
-        # Python-side computations.
+        BQ jobs are I/O-bound so ThreadPoolExecutor is used. Each worker
+        writes to distinct keys of the shared `result` dict (one key per
+        node_type / edge_type), so no lock is required under CPython's GIL.
+        """
+        node_tables_by_type = {nt.node_type: nt for nt in config.node_tables}
+
+        with ThreadPoolExecutor(max_workers=_PARALLEL_BQ_WORKERS) as executor:
+            futures = []
+            for node_table in config.node_tables:
+                futures.append(
+                    executor.submit(self._tier2_node_metrics, node_table, result)
+                )
+            for edge_table in config.edge_tables:
+                src_node_table = node_tables_by_type.get(edge_table.src_node_type or "")
+                futures.append(
+                    executor.submit(
+                        self._tier2_edge_metrics, edge_table, src_node_table, result
+                    )
+                )
+            for future in futures:
+                future.result()  # re-raise any exception
+
+        # Python-side computations run after all BQ data is collected.
         self._compute_feature_memory_budget(config, result)
         self._compute_neighbor_explosion_estimate(config, result)
 
@@ -287,6 +323,7 @@ class GraphStructureAnalyzer:
                     edge_table=edge_table.bq_table,
                     node_id_column=node_table.id_column,
                     src_id_column=edge_table.src_id_column,
+                    dst_id_column=edge_table.dst_id_column,
                 ),
                 "cold_start_count",
             )
@@ -343,13 +380,15 @@ class GraphStructureAnalyzer:
         # We only have 100-bucket quantiles, so p999 ~= p99 as best-effort.
         p999 = p99
 
+        # Bucket keys must match BUCKET_ORDER in report/charts.ai.js for the
+        # histogram to render correctly; keep uppercase K.
         buckets: dict[str, int] = {
             "0-1": int(bucket_row["bucket_0_1"]),
             "2-10": int(bucket_row["bucket_2_10"]),
             "11-100": int(bucket_row["bucket_11_100"]),
-            "101-1k": int(bucket_row["bucket_101_1k"]),
-            "1k-10k": int(bucket_row["bucket_1k_10k"]),
-            "10k+": int(bucket_row["bucket_10k_plus"]),
+            "101-1K": int(bucket_row["bucket_101_1k"]),
+            "1K-10K": int(bucket_row["bucket_1k_10k"]),
+            "10K+": int(bucket_row["bucket_10k_plus"]),
         }
 
         return DegreeStats(
@@ -499,9 +538,24 @@ class GraphStructureAnalyzer:
     # ------------------------------------------------------------------ #
 
     def _query_scalar(self, query: str, column: str) -> int:
-        """Run a single-row, single-column query and return the scalar as int."""
+        """Run a single-row, single-column query and return the scalar as int.
+
+        Scalar queries (COUNT, COUNTIF) must return exactly one row with a
+        non-NULL value for the requested column. Any deviation indicates a
+        driver, auth, or schema mismatch rather than legitimate data — raise
+        loudly instead of silently coercing to 0, which would let a broken run
+        pass through as a green-light result.
+        """
         rows = list(self._bq_utils.run_query(query=query, labels={}))
-        if not rows:
-            return 0
+        if len(rows) != 1:
+            raise RuntimeError(
+                f"Scalar query expected exactly 1 row; got {len(rows)}. "
+                f"Query: {query.strip()[:200]}"
+            )
         value = rows[0][column]
-        return int(value) if value is not None else 0
+        if value is None:
+            raise RuntimeError(
+                f"Scalar query returned NULL for column '{column}'. "
+                f"Query: {query.strip()[:200]}"
+            )
+        return int(value)

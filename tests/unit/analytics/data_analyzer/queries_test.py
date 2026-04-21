@@ -1,4 +1,5 @@
 from gigl.analytics.data_analyzer.queries import (
+    COLD_START_NODE_COUNT_QUERY,
     DANGLING_EDGES_QUERY,
     DEGREE_BUCKET_QUERY,
     DEGREE_DISTRIBUTION_QUERY,
@@ -33,18 +34,44 @@ class DanglingEdgesQueryTest(TestCase):
 
 
 class EdgeReferentialIntegrityQueryTest(TestCase):
-    def test_contains_left_join(self) -> None:
+    def test_contains_left_join_homogeneous(self) -> None:
+        """Homogeneous case: src and dst resolve to the same node table."""
         sql = EDGE_REFERENTIAL_INTEGRITY_QUERY.format(
             edge_table=EDGE_TABLE,
-            node_table=NODE_TABLE,
+            src_node_table=NODE_TABLE,
+            dst_node_table=NODE_TABLE,
             src_id_column="src_uid",
             dst_id_column="dst_uid",
-            node_id_column="user_id",
+            src_node_id_column="user_id",
+            dst_node_id_column="user_id",
         )
         self.assertIn("LEFT JOIN", sql)
         self.assertIn(f"`{NODE_TABLE}`", sql)
         self.assertIn(f"`{EDGE_TABLE}`", sql)
         self.assertIn("IS NULL", sql)
+
+    def test_contains_left_join_heterogeneous(self) -> None:
+        """Heterogeneous case: src and dst resolve to different node tables.
+
+        Regression test for I3: previously the query took a single node_table
+        and always joined both sides against it, producing false-positive
+        missing_dst violations on bipartite graphs.
+        """
+        user_table = "project.dataset.user_nodes"
+        content_table = "project.dataset.content_nodes"
+        sql = EDGE_REFERENTIAL_INTEGRITY_QUERY.format(
+            edge_table=EDGE_TABLE,
+            src_node_table=user_table,
+            dst_node_table=content_table,
+            src_id_column="user_id",
+            dst_id_column="content_id",
+            src_node_id_column="uid",
+            dst_node_id_column="cid",
+        )
+        self.assertIn(f"`{user_table}`", sql)
+        self.assertIn(f"`{content_table}`", sql)
+        self.assertIn("e.user_id = src_node.uid", sql)
+        self.assertIn("e.content_id = dst_node.cid", sql)
 
 
 class DuplicateNodeCountQueryTest(TestCase):
@@ -93,3 +120,25 @@ class TopKHubsQueryTest(TestCase):
         self.assertIn("LIMIT 20", sql)
         self.assertIn("ORDER BY", sql)
         self.assertIn("DESC", sql)
+
+
+class ColdStartNodeCountQueryTest(TestCase):
+    def test_unions_src_and_dst_columns(self) -> None:
+        """Cold-start is a property of total degree, not out-degree alone.
+
+        Regression test for C2: previously the query only counted src-side
+        edges, which misclassified pure-destination node types (e.g., content
+        receiving likes) as cold-start regardless of in-degree.
+        """
+        sql = COLD_START_NODE_COUNT_QUERY.format(
+            node_table=NODE_TABLE,
+            edge_table=EDGE_TABLE,
+            node_id_column="user_id",
+            src_id_column="src_uid",
+            dst_id_column="dst_uid",
+        )
+        self.assertIn("src_uid", sql)
+        self.assertIn("dst_uid", sql)
+        self.assertIn("UNION ALL", sql)
+        self.assertIn(f"`{NODE_TABLE}`", sql)
+        self.assertIn(f"`{EDGE_TABLE}`", sql)

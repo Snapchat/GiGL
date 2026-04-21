@@ -1,16 +1,18 @@
 """Main orchestrator and CLI entry point for the BQ Data Analyzer."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
 from gigl.analytics.data_analyzer.config import DataAnalyzerConfig, load_analyzer_config
+from gigl.analytics.data_analyzer.feature_profiler import FeatureProfiler
 from gigl.analytics.data_analyzer.graph_structure_analyzer import (
     DataQualityError,
     GraphStructureAnalyzer,
 )
 from gigl.analytics.data_analyzer.report.report_generator import generate_report
 from gigl.analytics.data_analyzer.types import FeatureProfileResult, GraphAnalysisResult
-from gigl.common import GcsUri, Uri
+from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 
@@ -69,17 +71,28 @@ class DataAnalyzer:
         Returns:
             The path to the written ``report.html`` (GCS URI or local path).
         """
-        analysis_result: GraphAnalysisResult
-        profile_result: Optional[FeatureProfileResult] = None
-
         structure_analyzer = GraphStructureAnalyzer()
-        try:
-            analysis_result = structure_analyzer.analyze(config)
-        except DataQualityError as e:
-            logger.error(f"Tier 1 data quality failure: {e}")
-            analysis_result = e.partial_result
+        feature_profiler = FeatureProfiler()
 
-        # TODO: run feature profiler (TFDV/Dataflow) in parallel once implemented.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            structure_future = executor.submit(structure_analyzer.analyze, config)
+            profile_future = executor.submit(
+                feature_profiler.profile, config, resource_config_uri
+            )
+
+            analysis_result: GraphAnalysisResult
+            try:
+                analysis_result = structure_future.result()
+            except DataQualityError as e:
+                logger.error(f"Tier 1 data quality failure: {e}")
+                analysis_result = e.partial_result
+
+            profile_result: FeatureProfileResult
+            try:
+                profile_result = profile_future.result()
+            except Exception as e:
+                logger.exception(f"Feature profiler failed: {e}")
+                profile_result = FeatureProfileResult()
 
         html = generate_report(
             analysis_result=analysis_result,
@@ -110,8 +123,13 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_analyzer_config(args.analyzer_config_uri)
+    resource_config_uri: Optional[Uri] = (
+        UriFactory.create_uri(args.resource_config_uri)
+        if args.resource_config_uri
+        else None
+    )
     analyzer = DataAnalyzer()
-    report_path = analyzer.run(config=config)
+    report_path = analyzer.run(config=config, resource_config_uri=resource_config_uri)
     logger.info(f"Report generated at: {report_path}")
 
 

@@ -31,6 +31,8 @@ def _make_config(
             edge_type="follows",
             src_id_column="src",
             dst_id_column="dst",
+            src_node_type="user",
+            dst_node_type="user",
         )
     ]
     if extra_edge:
@@ -40,6 +42,8 @@ def _make_config(
                 edge_type="likes",
                 src_id_column="src",
                 dst_id_column="dst",
+                src_node_type="user",
+                dst_node_type="user",
             )
         )
     return DataAnalyzerConfig(
@@ -56,6 +60,37 @@ def _make_config(
         output_gcs_path="gs://bucket/out/",
         fan_out=[15, 10],
         compute_reciprocity=compute_reciprocity,
+    )
+
+
+def _make_heterogeneous_config() -> DataAnalyzerConfig:
+    """User -[viewed]-> content bipartite graph."""
+    return DataAnalyzerConfig(
+        node_tables=[
+            NodeTableSpec(
+                bq_table="p.d.users",
+                node_type="user",
+                id_column="uid",
+                feature_columns=["age"],
+            ),
+            NodeTableSpec(
+                bq_table="p.d.content",
+                node_type="content",
+                id_column="cid",
+                feature_columns=["topic"],
+            ),
+        ],
+        edge_tables=[
+            EdgeTableSpec(
+                bq_table="p.d.viewed",
+                edge_type="viewed",
+                src_id_column="user_id",
+                dst_id_column="content_id",
+                src_node_type="user",
+                dst_node_type="content",
+            )
+        ],
+        output_gcs_path="gs://bucket/out/",
     )
 
 
@@ -120,11 +155,15 @@ def _default_row_for_query(query: str) -> dict[str, Any]:
         return {"cold_start_count": 50}
     if "null_rate" in q:
         # Include any plausible column name ending in _null_rate with zero default.
+        # Extend this list when adding new feature columns to test configs.
         return {
             "total_rows": 1000,
             "f1_null_rate": 0.0,
             "f2_null_rate": 0.01,
             "uid_null_rate": 0.0,
+            "cid_null_rate": 0.0,
+            "age_null_rate": 0.0,
+            "topic_null_rate": 0.0,
             "is_active_null_rate": 0.0,
         }
     if "distinct_src_count" in q:
@@ -266,3 +305,92 @@ class GraphStructureAnalyzerTest(TestCase):
         result = analyzer.analyze(_make_config(extra_edge=True))
         self.assertIn("follows", result.edge_type_distribution)
         self.assertIn("likes", result.edge_type_distribution)
+
+    def test_degree_stats_bucket_keys_match_report_bucket_order(
+        self, mock_bq_cls: MagicMock
+    ) -> None:
+        """Bucket keys must exactly match BUCKET_ORDER in report/charts.ai.js.
+
+        Regression test for C1: previously, Python emitted lowercase 'k' keys
+        (e.g., '101-1k') while the JS renderer expected uppercase 'K', causing
+        the three highest buckets to silently render as zero.
+        """
+        mock_bq = mock_bq_cls.return_value
+        mock_bq.run_query.side_effect = lambda query, labels=None: _mock_row_iterator(
+            _default_rows_for_query(query)
+        )
+        analyzer = GraphStructureAnalyzer()
+        result = analyzer.analyze(_make_config())
+        self.assertIn("follows_out", result.degree_stats)
+        stats = result.degree_stats["follows_out"]
+        expected_bucket_keys = ["0-1", "2-10", "11-100", "101-1K", "1K-10K", "10K+"]
+        self.assertEqual(list(stats.buckets.keys()), expected_bucket_keys)
+
+    def test_cold_start_query_includes_both_src_and_dst_columns(
+        self, mock_bq_cls: MagicMock
+    ) -> None:
+        """Cold-start must be computed from total degree (src + dst).
+
+        Regression test for C2: previously only src-side edges were counted,
+        misclassifying pure-destination nodes as cold-start.
+        """
+        mock_bq = mock_bq_cls.return_value
+        mock_bq.run_query.side_effect = lambda query, labels=None: _mock_row_iterator(
+            _default_rows_for_query(query)
+        )
+        analyzer = GraphStructureAnalyzer()
+        analyzer.analyze(_make_config())
+        cold_start_queries = [
+            call.kwargs["query"]
+            for call in mock_bq.run_query.call_args_list
+            if "cold_start_count" in call.kwargs.get("query", "")
+        ]
+        self.assertGreaterEqual(len(cold_start_queries), 1)
+        for sql in cold_start_queries:
+            self.assertIn("src", sql)
+            self.assertIn("dst", sql)
+            self.assertIn("UNION ALL", sql)
+
+    def test_query_scalar_raises_on_empty_rows(self, mock_bq_cls: MagicMock) -> None:
+        """Scalar queries must fail loudly on unexpected empty results.
+
+        Regression test for I2: previously _query_scalar silently returned 0
+        when BQ returned no rows, hiding driver/auth/schema issues.
+        """
+        mock_bq = mock_bq_cls.return_value
+        mock_bq.run_query.side_effect = lambda query, labels=None: _mock_row_iterator(
+            []
+        )
+        analyzer = GraphStructureAnalyzer()
+        with self.assertRaises(RuntimeError) as ctx:
+            analyzer.analyze(_make_config())
+        self.assertIn("expected exactly 1 row", str(ctx.exception))
+
+    def test_heterogeneous_tier1_joins_correct_node_tables(
+        self, mock_bq_cls: MagicMock
+    ) -> None:
+        """For hetero edges, src and dst must join against their own node tables.
+
+        Regression test for I3: previously every edge table was joined against
+        node_tables[0] on both sides, producing false-positive missing_dst
+        violations for bipartite edges like user->content.
+        """
+        mock_bq = mock_bq_cls.return_value
+        mock_bq.run_query.side_effect = lambda query, labels=None: _mock_row_iterator(
+            _default_rows_for_query(query)
+        )
+        analyzer = GraphStructureAnalyzer()
+        result = analyzer.analyze(_make_heterogeneous_config())
+        self.assertEqual(result.referential_integrity_violations["viewed"], 0)
+        # Inspect the referential integrity query: src joins user_nodes, dst joins content_nodes.
+        ref_queries = [
+            call.kwargs["query"]
+            for call in mock_bq.run_query.call_args_list
+            if "missing_src_count" in call.kwargs.get("query", "")
+        ]
+        self.assertGreaterEqual(len(ref_queries), 1)
+        ref_sql = ref_queries[0]
+        self.assertIn("`p.d.users`", ref_sql)
+        self.assertIn("`p.d.content`", ref_sql)
+        self.assertIn("e.user_id = src_node.uid", ref_sql)
+        self.assertIn("e.content_id = dst_node.cid", ref_sql)
