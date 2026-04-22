@@ -21,6 +21,7 @@ import json
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CMAKE_BUILD_DIR: Path = _REPO_ROOT / ".cache" / "cmake_build_lint"
@@ -30,7 +31,7 @@ COMPILE_COMMANDS: Path = _REPO_ROOT / ".cache" / "compile_commands.json"
 def write_compile_commands() -> None:
     """Run CMake to generate .cache/compile_commands.json."""
     _CMAKE_BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    result = subprocess.run(
         [
             "cmake",
             "-S",
@@ -39,11 +40,16 @@ def write_compile_commands() -> None:
             str(_CMAKE_BUILD_DIR),
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         ],
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"CMake configure failed (exit {result.returncode}):\n{result.stderr}"
+        )
 
     raw_path = _CMAKE_BUILD_DIR / "compile_commands.json"
-    entries: list[dict] = json.loads(raw_path.read_text())
+    entries: list[dict[str, Any]] = json.loads(raw_path.read_text())
 
     # Replace the compiler for .cpp entries with clang++-15 so clangd uses
     # clang-native implicit include paths instead of guessing GCC's.

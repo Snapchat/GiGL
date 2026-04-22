@@ -65,5 +65,5 @@ jobs:
       if: always()
       # Clean up files created during Publish Package step.
       run: |
-        rm -rf ~/.pypirc
-        rm -rf ~/.pip/pip.conf
+        rm -f ~/.pypirc
+        rm -f ~/.pip/pip.conf

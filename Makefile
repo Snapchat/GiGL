@@ -181,7 +181,7 @@ generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
 
 check_lint_cpp: generate_compile_commands
-	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA)
+	$(if $(CPP_SOURCES_NO_CUDA),uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA))
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and

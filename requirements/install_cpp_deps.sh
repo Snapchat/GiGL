@@ -49,6 +49,9 @@ else
     apt-get install -y clang-format-15 clang-tidy-15 clangd-15 clang++-15 libstdc++-12-dev cmake
 
     # Verify cmake >= 3.18 (our CMakeLists.txt requires it; Ubuntu 20.04 apt provides 3.16).
+    # sort -V (version sort) is a GNU extension only available on Linux — this block is
+    # intentionally inside the Linux branch; the macOS branch installs cmake via Homebrew
+    # which always provides a sufficiently recent version.
     # sort -V -C exits 0 if the two lines are already in ascending version order
     # (i.e. 3.18 <= cmake_version), non-zero otherwise.
     cmake_version=$(cmake --version | awk 'NR==1{print $3}')
