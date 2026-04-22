@@ -48,7 +48,6 @@ Checks: >
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/gigl/csrc/.*'
 FormatStyle:     none
-User:            jenkins
 # CheckOptions: per-check tuning parameters. Each entry configures a specific
 # option for an individual check, using the form:
 #   key:   <check-name>.<OptionName>
@@ -158,6 +157,10 @@ CheckOptions:
     value:           llvm
   - key:             readability-braces-around-statements.ShortStatementLines
     value:           '0'
+  # BranchThreshold, NestingThreshold, and ParameterThreshold are set to UINT32_MAX
+  # to effectively disable these sub-checks. GNN/ML kernels legitimately have deep
+  # nesting (loops over nodes, edges, and features) and many parameters (model configs,
+  # hyperparameters), so enforcing these limits would generate noise on valid code.
   - key:             readability-function-size.BranchThreshold
     value:           '4294967295'
   - key:             readability-function-size.LineThreshold

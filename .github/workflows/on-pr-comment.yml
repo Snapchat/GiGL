@@ -76,12 +76,9 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
         descriptive_workflow_name: "C++ Unit Test"
-        setup_gcloud: "true"
-        use_cloud_run: "true"
-        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
-        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        use_cloud_run: "false"
         command: |
+          bash requirements/install_cpp_deps.sh
           make unit_test_cpp
 
   unit-test-scala:

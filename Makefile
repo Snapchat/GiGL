@@ -24,7 +24,7 @@ DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${D
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl/csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
-# Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
+# Exclude .cu files from tidy targets; clang-format handles them fine.
 CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
@@ -99,10 +99,14 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-unit_test_cpp:
-	cmake -S tests/unit/cpp -B .cache/cpp_tests
-	cmake --build .cache/cpp_tests --parallel
-	ctest --test-dir .cache/cpp_tests --output-on-failure
+CMAKE_BUILD_TYPE ?= Release
+.cache/cpp_tests/.configured: CMakeLists.txt tests/unit/cpp/CMakeLists.txt
+	uv run cmake -S . -B .cache/cpp_tests -DGIGL_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+	touch .cache/cpp_tests/.configured
+
+unit_test_cpp: .cache/cpp_tests/.configured
+	uv run cmake --build .cache/cpp_tests --parallel
+	uv run ctest --test-dir .cache/cpp_tests --output-on-failure
 
 unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
@@ -162,13 +166,21 @@ format: format_py format_cpp format_scala format_md
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-build_cpp_extensions:
+# Stamp-file guard: uv pip install -e . triggers a full CMake configure-and-build
+# cycle (loading torch headers) even when nothing changed. By making the stamp file
+# depend on C++ sources, CMakeLists.txt, and pyproject.toml, make skips the reinstall
+# on subsequent runs unless something actually changed. The stamp file lives inside
+# .cache/cmake_build so it is automatically invalidated if the build dir is cleaned.
+.cache/cmake_build/.gigl_built: $(shell find gigl/csrc \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
 	uv pip install -e .
+	touch .cache/cmake_build/.gigl_built
+
+build_cpp_extensions: .cache/cmake_build/.gigl_built
 
 generate_compile_commands:
 	uv run python -m scripts.generate_compile_commands
 
-check_lint_cpp:
+check_lint_cpp: generate_compile_commands
 	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
@@ -179,6 +191,11 @@ fix_lint_cpp: generate_compile_commands
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
+
+# Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
+# after switching between branches with substantially different CMakeLists.txt structure.
+clean_cpp:
+	rm -rf .cache/cpp_tests .cache/cmake_build
 
 # compiles current working state of scala projects to local jars
 compile_jars:

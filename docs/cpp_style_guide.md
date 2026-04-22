@@ -14,6 +14,34 @@ make format_cpp  # Format all C++ files in-place
 make check_lint_cpp  # Run clang-tidy static analysis
 ```
 
+> **Note — CUDA files (`.cu`) are excluded from clang-tidy.**
+> clang-tidy 15 does not support CUDA syntax and will error on `.cu` files. The Makefile
+> defines `CPP_SOURCES_NO_CUDA` (which filters out `.cu` files) and passes only that set
+> to clang-tidy. If you add a new `.cu` file, it will not appear in lint output — this is
+> expected. Lint coverage for CUDA files requires upgrading to a clang-tidy version with
+> CUDA support.
+
+______________________________________________________________________
+
+## Build Configuration
+
+The default build type is `Release` (`-O3`). To build with debug symbols (`-O0 -g`) — e.g. for stepping through
+C++ code in a debugger — pass `Debug` explicitly:
+
+**Editable install (local development):**
+
+```bash
+uv pip install -e . -C cmake.build-type=Debug
+```
+
+**C++ unit tests:**
+
+```bash
+make unit_test_cpp CMAKE_BUILD_TYPE=Debug
+```
+
+To restore optimised builds, replace `Debug` with `Release`, or omit the flag (Release is the default).
+
 ______________________________________________________________________
 
 ## Formatting (`.clang-format`)

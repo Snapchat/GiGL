@@ -13,14 +13,14 @@ permissions:
 jobs:
   build:
     name: Build and release pip whl (${{ matrix.torch-variant }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
-          - torch-variant: cpu
-            torch-index: https://download.pytorch.org/whl/cpu
-          - torch-variant: cu128
-            torch-index: https://download.pytorch.org/whl/cu128
+          - runner: ubuntu-latest
+            torch-variant: cpu
+          - runner: gigl-gpu-instances
+            torch-variant: cu128
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
@@ -47,13 +47,6 @@ jobs:
       run: |
         # Pre-install keyring and Artifact Registry plugin from the public PyPI
         uv tool install keyring --with keyrings.google-artifactregistry-auth==1.1.2
-
-    # install_dev_deps auto-detects CUDA and installs the CPU torch variant on
-    # ubuntu-latest runners. Override here with the correct variant for this build
-    # so CMake picks up the right torch headers (CPU-only vs CUDA-enabled).
-    - name: Install torch variant for build
-      run: |
-        uv pip install "torch==2.8" --index-url ${{ matrix.torch-index }} --inexact
 
     # The build tag (e.g. 1cpu, 1cu128) differentiates the wheel filenames so
     # both can coexist in the same registry index.
