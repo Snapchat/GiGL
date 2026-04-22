@@ -70,6 +70,16 @@ jobs:
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
+  ci-unit-test-cpp:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install C++ dependencies
+      run: bash requirements/install_cpp_deps.sh
+    - name: Run C++ Unit Tests
+      run: make unit_test_cpp
+
   ci-integration-test:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest

@@ -36,9 +36,10 @@ FixNamespaceComments: true
 ForEachMacros:   [ foreach, Q_FOREACH, BOOST_FOREACH ]
 # Lower Priority numbers sort first (Priority 1 appears before Priority 2, etc.).
 # This is the Google/PyTorch convention — the opposite of the LLVM default.
-# Result: project-local headers (1) → LLVM/clang headers (2) → system/third-party (3).
+# Result: project-local headers (1) → torch/pybind11 (2) → system/third-party (3).
+# Add graphlearn_torch to the Priority 2 regex when GLT headers appear in the codebase.
 IncludeCategories:
-  - Regex:           '^"(llvm|llvm-c|clang|clang-c)/'
+  - Regex:           '^<(torch|pybind11)/'
     Priority:        2
   - Regex:           '^(<|"(gtest|isl|json)/)'
     Priority:        3

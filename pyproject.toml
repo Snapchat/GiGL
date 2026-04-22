@@ -184,10 +184,24 @@ explicit = true
 format = "flat"
 
 # =============================== Google Artifact Registry Index ========================
+# Two separate indexes — one per torch variant — so pip always fetches the correct wheel.
+# If both variants lived in the same index, pip would pick between them arbitrarily since
+# both wheels share the same platform tag (linux_x86_64). Separate indexes remove the
+# ambiguity and are essential once any extension contains CUDA kernels.
+#
+# The CPU registry reuses the original `gigl` repo for backwards compatibility.
+# The CUDA registry is a new `gigl-cu128` repo that must be created in GCP project
+# `external-snap-ci-github-gigl` before the release workflow will succeed.
 [[tool.uv.index]]
-name = "gcp-release-registry"
+name = "gcp-release-registry-cpu"
 url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/"
 publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl"
+explicit = true
+
+[[tool.uv.index]]
+name = "gcp-release-registry-cu128"
+url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/"
+publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128"
 explicit = true
 
 # ========== Mapping individual packages to their appropriate index =============
