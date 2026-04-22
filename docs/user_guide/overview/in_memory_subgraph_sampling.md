@@ -29,24 +29,9 @@ The main abstractions used by the in-memory path are:
 
 - {py:class}`gigl.distributed.dist_dataset.DistDataset` for colocated sampling, where each machine stores its graph
   partition locally.
-- {py:class}`gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset` for graph store mode, where compute
-  nodes sample from a dedicated storage cluster.
 - {py:class}`gigl.distributed.distributed_neighborloader.DistNeighborLoader` for standard neighborhood sampling.
 - {py:class}`gigl.distributed.dist_ablp_neighborloader.DistABLPLoader` for anchor-based link prediction batches with
   positives and negatives.
-
-## Deployment Modes
-
-GiGL supports two high-level deployment modes for in-memory sampling:
-
-| Mode                              | High-level shape                                                                                        | Dataset view        | Typical tradeoff                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------- |
-| `colocated`                       | Each machine stores a graph partition and also runs training or inference processes.                    | `DistDataset`       | Simpler topology and fewer moving parts.                          |
-| `graph store` (under development) | Storage and compute run in separate pools. Storage nodes host the graph, compute nodes sample remotely. | `RemoteDistDataset` | Better separation of memory-heavy storage from GPU-heavy compute. |
-
-Graph store mode is still under development, but it is the main architecture to highlight when discussing the future
-cost and scaling story. It is designed to let GiGL use high-memory, CPU-only storage nodes for graph serving while
-keeping GPU resources concentrated in the compute pool.
 
 ## Example Implementations
 
@@ -58,12 +43,6 @@ The link prediction examples are the clearest reference implementations for the 
 - Colocated inference:
   [`homogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/homogeneous_inference.py),
   [`heterogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/heterogeneous_inference.py)
-- Graph store training:
-  [`graph_store/homogeneous_training.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/homogeneous_training.py),
-  [`graph_store/heterogeneous_training.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/heterogeneous_training.py)
-- Graph store inference:
-  [`graph_store/homogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/homogeneous_inference.py),
-  [`graph_store/heterogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/heterogeneous_inference.py)
 
 You can also start from the [Examples index](../examples/index.md), which includes the end-to-end link prediction
 walkthroughs.
