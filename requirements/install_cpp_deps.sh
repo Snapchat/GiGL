@@ -39,14 +39,14 @@ if is_running_on_mac; then
 else
     # On Linux, apt-get installs versioned binaries (e.g. clang-format-15) directly
     # into /usr/bin. No PATH changes are needed since /usr/bin is already on PATH.
-    # Callers use the versioned names (clang-format-15, clang-tidy-15) directly so
-    # the version is explicit and greppable across the codebase.
+    # Callers use the versioned names (clang-format-15, clang-tidy-15, clangd-15)
+    # directly so the version is explicit and greppable across the codebase.
     # clang++-15 requires libstdc++-12-dev: on Ubuntu 22.04, clang++-15 looks for GCC 12
     # headers. Without this package clang++-15 cannot find standard headers like <cstddef>.
     # clang++-15 itself is needed because generate_compile_commands.py rewrites
-    # compile_commands.json to use it so clang-tidy natively understands the commands.
+    # compile_commands.json to use it so clangd natively understands the commands.
     apt-get update -y
-    apt-get install -y clang-format-15 clang-tidy-15 clang++-15 libstdc++-12-dev cmake
+    apt-get install -y clang-format-15 clang-tidy-15 clangd-15 clang++-15 libstdc++-12-dev cmake
 
     # Verify cmake >= 3.18 (our CMakeLists.txt requires it; Ubuntu 20.04 apt provides 3.16).
     # sort -V -C exits 0 if the two lines are already in ascending version order
