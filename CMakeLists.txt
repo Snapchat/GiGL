@@ -86,10 +86,6 @@ if(NOT _torch_lib_result EQUAL 0)
 endif()
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED)
 
-# Preserve torch lib dir in the installed .so RPATH so the extension loads
-# libtorch.so without requiring `import torch` to pre-populate the symbol table.
-set(CMAKE_INSTALL_RPATH "${TORCH_LIB_DIR}")
-set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
 set(GIGL_COMPILE_FLAGS
     $<$<CONFIG:Release>:-O3>

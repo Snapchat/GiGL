@@ -1,7 +1,9 @@
 """Run C++ lint on source files using clangd.
 
-Generates compile_commands.json, then runs clangd --check on each file in
-parallel and prints a clean summary.
+Runs clangd --check on each file in parallel and prints a clean summary.
+Expects compile_commands.json to already exist at .cache/compile_commands.json;
+call ``make generate_compile_commands`` first if it is absent or stale
+(``make check_lint_cpp`` does this automatically via a Makefile prerequisite).
 
 Usage::
 

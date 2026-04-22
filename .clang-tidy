@@ -1,4 +1,8 @@
 ---
+# -bugprone-implicit-widening-of-multiplication-result is disabled because it
+# crashes clang-tidy 15 on a construct in ATen/core/dynamic_type.h (upstream
+# LLVM bug). Re-enable when upgrading past clang-tidy 15.
+# All other disabled checks are documented in docs/cpp_style_guide.md.
 Checks: >
   boost-use-to-string,
   bugprone-*,
