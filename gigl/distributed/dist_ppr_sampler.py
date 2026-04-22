@@ -465,9 +465,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ntype_to_flat_weights[ntype] = flat_weights.to(device)
             ntype_to_valid_counts[ntype] = valid_counts.to(device)
 
-        nodes_drained_per_iteration: list[
-            int
-        ] = ppr_state.get_nodes_drained_per_iteration()
+        nodes_drained_per_iteration: list[int] = (
+            ppr_state.get_nodes_drained_per_iteration()
+        )
         timing = (
             total_fetch_ms,
             total_push_ms,
