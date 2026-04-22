@@ -1,10 +1,6 @@
 ARG BASE_IMAGE
 FROM $BASE_IMAGE
 
-# Copy the source
-WORKDIR /gigl
-
-
 # Note: main package files must live in root of the repo for the python package to be built correctly for Dataflow workers.
 # See https://beam.apache.org/documentation/sdks/python-pipxeline-dependencies/#create-reproducible-environments.
 WORKDIR /gigl
@@ -21,5 +17,5 @@ COPY snapchat snapchat
 COPY tests tests
 COPY examples examples
 
-RUN uv pip install scikit-build-core pybind11
+RUN uv pip install "scikit-build-core>=0.10" "pybind11>=2.12"
 RUN uv pip install -e .

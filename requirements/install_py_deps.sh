@@ -45,12 +45,10 @@ has_cuda_driver() {
 
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
-    return $?
 }
 
 is_running_on_m1_mac() {
     [ "$(uname)" == "Darwin" ] && [ $(uname -m) == 'arm64' ]
-    return $?
 }
 
 ### Installation Functions ###

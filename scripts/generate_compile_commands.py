@@ -18,12 +18,13 @@ Usage::
 """
 
 import json
+import shlex
 import subprocess
 from pathlib import Path
 
 _REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 _CMAKE_BUILD_DIR: Path = _REPO_ROOT / ".cache" / "cmake_build_lint"
-_COMPILE_COMMANDS: Path = _REPO_ROOT / ".cache" / "compile_commands.json"
+COMPILE_COMMANDS: Path = _REPO_ROOT / ".cache" / "compile_commands.json"
 
 
 def write_compile_commands() -> None:
@@ -49,16 +50,16 @@ def write_compile_commands() -> None:
     # Leave .cu entries unchanged so nvcc handles them correctly.
     for entry in entries:
         if not entry.get("file", "").endswith(".cu"):
-            tokens = entry["command"].split()
+            tokens = shlex.split(entry["command"])
             tokens[0] = "clang++-15"
-            entry["command"] = " ".join(tokens)
+            entry["command"] = shlex.join(tokens)
 
-    _COMPILE_COMMANDS.write_text(json.dumps(entries, indent=2))
+    COMPILE_COMMANDS.write_text(json.dumps(entries, indent=2))
 
 
 def main() -> None:
     write_compile_commands()
-    print(f"Wrote {_COMPILE_COMMANDS}")
+    print(f"Wrote {COMPILE_COMMANDS}")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 # Enable CUDA only when the toolkit is present; allows the same CMakeLists.txt
 # to build on CPU-only machines without requiring nvcc.
 include(CheckLanguage)
@@ -24,7 +28,11 @@ execute_process(
         "import pybind11; print(pybind11.get_cmake_dir())"
     OUTPUT_VARIABLE pybind11_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _pybind11_result
 )
+if(NOT _pybind11_result EQUAL 0)
+    message(FATAL_ERROR "Failed to locate pybind11. Run: make install_dev_deps")
+endif()
 find_package(pybind11 CONFIG REQUIRED)
 
 # find_package(Torch) internally calls enable_language(CUDA) when torch was built with CUDA
@@ -40,8 +48,15 @@ execute_process(
         "import torch; print(torch.utils.cmake_prefix_path)"
     OUTPUT_VARIABLE TORCH_CMAKE_PREFIX
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _torch_result
 )
+if(NOT _torch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to locate torch. Run: make install_dev_deps")
+endif()
 
+# CMAKE_CUDA_ARCHITECTURES is intentionally not set here. find_package(Torch) injects
+# a comprehensive -gencode arch list (via TORCH_LIBRARIES) covering all supported GPU
+# generations, so setting it explicitly would duplicate or conflict with torch's flags.
 find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
 # torch_python provides the pybind11 type casters for at::Tensor. It is not
@@ -52,7 +67,11 @@ execute_process(
         "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
     OUTPUT_VARIABLE TORCH_LIB_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _torch_lib_result
 )
+if(NOT _torch_lib_result EQUAL 0)
+    message(FATAL_ERROR "Failed to locate torch lib dir. Run: make install_dev_deps")
+endif()
 find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED)
 
 # Preserve torch lib dir in the installed .so RPATH so the extension loads
@@ -60,9 +79,17 @@ find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED
 set(CMAKE_INSTALL_RPATH "${TORCH_LIB_DIR}")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
-set(GIGL_COMPILE_FLAGS -O3 -Wall -Wextra -Wno-unused-parameter)
+set(GIGL_COMPILE_FLAGS
+    $<$<CONFIG:Release>:-O3>
+    $<$<CONFIG:Debug>:-O0 -g>
+    -Wall -Wextra -Wno-unused-parameter
+)
 # nvcc does not accept bare -Wall/-Wextra; wrap them with -Xcompiler for CUDA sources.
-set(GIGL_COMPILE_FLAGS_CUDA -O3 -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter)
+set(GIGL_COMPILE_FLAGS_CUDA
+    $<$<CONFIG:Release>:-O3>
+    $<$<CONFIG:Debug>:-O0 -g>
+    -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter
+)
 
 # ---------------------------------------------------------------------------
 # Extension modules — auto-discovered.
@@ -82,6 +109,8 @@ else()
         "${CMAKE_SOURCE_DIR}/gigl/csrc/**/python_*.cpp"
     )
 endif()
+
+option(GIGL_BUILD_TESTS "Build C++ unit tests (used by make unit_test_cpp)" OFF)
 
 foreach(_py_src IN LISTS _PYTHON_SRCS)
     get_filename_component(_dir  "${_py_src}" DIRECTORY)
@@ -109,3 +138,8 @@ foreach(_py_src IN LISTS _PYTHON_SRCS)
     target_compile_definitions("${_name}" PRIVATE "TORCH_EXTENSION_NAME=${_name}")
     install(TARGETS "${_name}" DESTINATION "${_rel_dir}")
 endforeach()
+
+if(GIGL_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests/unit/cpp)
+endif()

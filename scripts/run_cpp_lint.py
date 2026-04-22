@@ -8,13 +8,14 @@ Usage::
     uv run python scripts/run_cpp_lint.py <file1.cpp> [file2.cpp] ...
 """
 
+import os
 import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.generate_compile_commands import _COMPILE_COMMANDS, write_compile_commands
+from scripts.generate_compile_commands import COMPILE_COMMANDS
 
 # Matches real clang-tidy diagnostics emitted by clangd:
 #   E[HH:MM:SS.mmm] [check-name] Line N: message
@@ -26,7 +27,7 @@ def _check_file(source: Path) -> tuple[Path, list[str]]:
         [
             "clangd-15",
             f"--check={source}",
-            f"--compile-commands-dir={_COMPILE_COMMANDS.parent}",
+            f"--compile-commands-dir={COMPILE_COMMANDS.parent}",
         ],
         capture_output=True,
         text=True,
@@ -36,6 +37,10 @@ def _check_file(source: Path) -> tuple[Path, list[str]]:
         m = _DIAGNOSTIC_RE.match(line)
         if m:
             diagnostics.append(m.group(1))
+    if result.returncode != 0 and not diagnostics:
+        diagnostics = [
+            f"clangd exited with code {result.returncode} (tool error or crash)"
+        ]
     return source, diagnostics
 
 
@@ -44,10 +49,8 @@ def main() -> None:
     if not sources:
         sys.exit(0)
 
-    write_compile_commands()
-
     failures: dict[Path, list[str]] = {}
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, 8)) as executor:
         futures = {executor.submit(_check_file, s): s for s in sources}
         for future in as_completed(futures):
             source, diagnostics = future.result()
