@@ -110,7 +110,7 @@ CheckOptions:
   - key:             modernize-loop-convert.MinConfidence
     value:           reasonable
   - key:             modernize-loop-convert.NamingStyle
-    value:           CamelCase
+    value:           camelBack
   - key:             modernize-loop-convert.UseCxx20ReverseRanges
     value:           '0'
   - key:             modernize-make-unique.IgnoreMacros

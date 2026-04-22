@@ -9,5 +9,4 @@
 // the build environment itself.
 TEST(PlaceholderTest, BasicArithmetic) {
     EXPECT_EQ(1 + 1, 2);
-    EXPECT_NE(1 + 1, 3);
 }
