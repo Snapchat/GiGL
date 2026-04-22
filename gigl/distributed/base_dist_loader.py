@@ -665,7 +665,7 @@ class BaseDistLoader(DistLoader):
             )
             for server_rank in self._server_rank_list
         ]
-        return [future.wait() for future in futures]
+        return torch.futures.wait_all(futures)
 
     def _register_graph_store_sampling_inputs(
         self, backend_id_list: list[int]
@@ -710,7 +710,7 @@ class BaseDistLoader(DistLoader):
                 self._input_data_list,
             )
         ]
-        return [future.wait() for future in futures]
+        return torch.futures.wait_all(futures)
 
     def _sampler_input_has_batches(self, sampler_input: NodeSamplerInput) -> bool:
         """Return whether this sampler input can produce at least one batch.
