@@ -5,11 +5,12 @@ find_package(Torch)) rather than manually constructing the database.
 
 The build uses the system C++ compiler (g++) so that cmake, nvcc, and Torch's
 cmake work without issues. After cmake writes compile_commands.json, the
-compiler in each entry is replaced with ``clang++-15`` so that clangd natively
-understands the commands without needing a ``--query-driver`` workaround.
+compiler in each entry is replaced with ``clang++-15`` so that clangd (IDE
+language server) and clang-tidy-15 (CI lint) natively understand the commands
+without needing a ``--query-driver`` workaround.
 
-Primary use: called by ``run_cpp_lint.py`` before running clangd checks, and
-by ``make generate_compile_commands`` when you need to refresh the database
+Primary use: called by ``run_cpp_lint.py`` before running clang-tidy checks,
+and by ``make generate_compile_commands`` when you need to refresh the database
 manually (e.g. after adding new source files or changing compiler flags).
 
 Usage::
@@ -48,11 +49,16 @@ def write_compile_commands() -> None:
     # Replace the compiler for .cpp entries with clang++-15 so clangd uses
     # clang-native implicit include paths instead of guessing GCC's.
     # Leave .cu entries unchanged so nvcc handles them correctly.
+    # The spec allows either "command" (string, Makefile generator) or
+    # "arguments" (array, Ninja generator); handle both.
     for entry in entries:
         if not entry.get("file", "").endswith(".cu"):
-            tokens = shlex.split(entry["command"])
-            tokens[0] = "clang++-15"
-            entry["command"] = shlex.join(tokens)
+            if "command" in entry:
+                tokens = shlex.split(entry["command"])
+                tokens[0] = "clang++-15"
+                entry["command"] = shlex.join(tokens)
+            elif "arguments" in entry:
+                entry["arguments"][0] = "clang++-15"
 
     COMPILE_COMMANDS.write_text(json.dumps(entries, indent=2))
 

@@ -1,6 +1,6 @@
-"""Run C++ lint on source files using clangd.
+"""Run C++ lint on source files using clang-tidy.
 
-Generates compile_commands.json, then runs clangd --check on each file in
+Generates compile_commands.json, then runs clang-tidy-15 on each file in
 parallel and prints a clean summary.
 
 Usage::
@@ -9,7 +9,6 @@ Usage::
 """
 
 import os
-import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,31 +16,18 @@ from pathlib import Path
 
 from scripts.generate_compile_commands import COMPILE_COMMANDS
 
-# Matches real clang-tidy diagnostics emitted by clangd:
-#   E[HH:MM:SS.mmm] [check-name] Line N: message
-_DIAGNOSTIC_RE = re.compile(r"^E\[[\d:.]+\] (\[.+\] .+)$")
 
-
-def _check_file(source: Path) -> tuple[Path, list[str]]:
+def _check_file(source: Path) -> tuple[Path, str, int]:
     result = subprocess.run(
         [
-            "clangd-15",
-            f"--check={source}",
-            f"--compile-commands-dir={COMPILE_COMMANDS.parent}",
+            "clang-tidy-15",
+            f"-p={COMPILE_COMMANDS}",
+            str(source),
         ],
         capture_output=True,
         text=True,
     )
-    diagnostics: list[str] = []
-    for line in result.stderr.splitlines():
-        m = _DIAGNOSTIC_RE.match(line)
-        if m:
-            diagnostics.append(m.group(1))
-    if result.returncode != 0 and not diagnostics:
-        diagnostics = [
-            f"clangd exited with code {result.returncode} (tool error or crash)"
-        ]
-    return source, diagnostics
+    return source, (result.stdout + result.stderr).strip(), result.returncode
 
 
 def main() -> None:
@@ -49,21 +35,21 @@ def main() -> None:
     if not sources:
         sys.exit(0)
 
-    failures: dict[Path, list[str]] = {}
+    failures: dict[Path, str] = {}
     with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, 8)) as executor:
         futures = {executor.submit(_check_file, s): s for s in sources}
         for future in as_completed(futures):
-            source, diagnostics = future.result()
-            if diagnostics:
-                failures[source] = diagnostics
+            source, output, returncode = future.result()
+            if returncode != 0:
+                failures[source] = output
 
     if not failures:
         print("\033[32mC++ lint passed.\033[0m")
     else:
         for source in sorted(failures):
             print(f"  FAIL  {source}")
-            for d in failures[source]:
-                print(f"        {d}")
+            if failures[source]:
+                print(failures[source])
         print(
             "\nRun \033[1mmake fix_lint_cpp\033[0m to auto-fix violations where possible."
         )
