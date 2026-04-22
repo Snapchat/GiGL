@@ -10,8 +10,10 @@ These are the current environments supported by GiGL
 
 ## Available Versions
 
-You can see the available wheels for GiGL
-[here](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)
+You can see the available wheels for GiGL:
+
+- [CPU wheels](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)
+- [CUDA wheels](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu128?project=external-snap-ci-github-gigl)
 
 ## Install Prerequisites - setting up your dev machine
 
@@ -107,7 +109,7 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ```bash
 pip install "gigl[pyg27-torch28-cu128, transform]==0.1.0" \
---extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
+--extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cu128 \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
 ```

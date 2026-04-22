@@ -24,7 +24,7 @@ from scripts.generate_compile_commands import COMPILE_COMMANDS
 _DIAGNOSTIC_RE = re.compile(r"^E\[[\d:.]+\] (\[.+\] .+)$")
 
 
-def _check_file(source: Path) -> tuple[Path, list[str]]:
+def _check_file(source: Path) -> list[str]:
     result = subprocess.run(
         [
             "clangd-15",
@@ -50,7 +50,7 @@ def _check_file(source: Path) -> tuple[Path, list[str]]:
         diagnostics = [
             f"clangd exited with code {result.returncode} (tool error or crash)"
         ]
-    return source, diagnostics
+    return diagnostics
 
 
 def main() -> None:
@@ -62,7 +62,8 @@ def main() -> None:
     with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, 8)) as executor:
         futures = {executor.submit(_check_file, s): s for s in sources}
         for future in as_completed(futures):
-            source, diagnostics = future.result()
+            source = futures[future]
+            diagnostics = future.result()
             if diagnostics:
                 failures[source] = diagnostics
 

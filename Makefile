@@ -122,9 +122,15 @@ check_format_md:
 	@echo "Checking markdown files..."
 	uv run mdformat --check ${MD_FILES}
 
+# TODO: Remove the $(if ...) guards in check_format_cpp, format_cpp, check_lint_cpp, and
+# fix_lint_cpp once C++ source files are permanently present in the repo. The guards exist
+# to silently no-op on branches that have no python_*.cpp files yet; once there is always
+# at least one C++ source, the guards just hide accidental empty-source mistakes.
 check_format_cpp:
 	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
 
+# Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
+# clang-tidy static analysis — use `make check_lint_cpp` for that.
 check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
@@ -185,7 +191,8 @@ check_lint_cpp: generate_compile_commands
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
-# review the diff before committing.
+# review the diff before committing. Note: --fix cannot auto-repair every check;
+# some violations require manual edits.
 fix_lint_cpp: generate_compile_commands
 	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA))
 

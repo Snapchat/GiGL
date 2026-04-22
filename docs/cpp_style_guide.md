@@ -10,8 +10,9 @@ All clang-tidy warnings are treated as errors.
 ## Running the Tools
 
 ```bash
-make format_cpp  # Format all C++ files in-place
-make check_lint_cpp  # Run clang-tidy static analysis
+make format_cpp        # Format all C++ files in-place (clang-format)
+make check_format_cpp  # Check formatting without modifying (clang-format only, not lint)
+make check_lint_cpp    # Run clang-tidy static analysis
 ```
 
 > **Note — CUDA files (`.cu`) are excluded from clang-tidy.**
@@ -98,11 +99,13 @@ header.
 
 Includes are sorted and split into three priority groups:
 
-| Priority | Pattern                              | Group                                 |
-| -------- | ------------------------------------ | ------------------------------------- |
-| 1        | `.*`                                 | Local project headers (first)         |
-| 2        | `^"(llvm\|llvm-c\|clang\|clang-c)/"` | LLVM/Clang internal headers           |
-| 3        | `^(<\|"(gtest\|isl\|json)/)`         | System and third-party headers (last) |
+| Priority | Pattern                      | Group                                        |
+| -------- | ---------------------------- | -------------------------------------------- |
+| 1        | `.*`                         | Local project headers (first)                |
+| 2        | `^<(torch\|pybind11)/`       | Torch and pybind11 headers                   |
+| 3        | `^(<\|"(gtest\|isl\|json)/)` | System and other third-party headers (last)  |
+
+> When GLT (`graphlearn_torch`) headers are added, include `graphlearn_torch` in the Priority 2 pattern.
 
 ### Raw string formatting
 
@@ -159,14 +162,16 @@ this codebase:
 
 Enforced via `readability-identifier-naming`:
 
-| Identifier kind                                           | Convention                  | Example           |
-| --------------------------------------------------------- | --------------------------- | ----------------- |
-| Classes, enums, unions                                    | `CamelCase`                 | `DistDataset`     |
-| Type template parameters                                  | `CamelCase`                 | `NodeType`        |
-| Functions, methods                                        | `camelBack`                 | `sampleNeighbors` |
-| Variables, parameters, members                            | `camelBack`                 | `numNodes`        |
-| Private/protected members                                 | `camelBack` with `_` prefix | `_nodeFeatures`   |
-| Constants (`constexpr`, `const` globals, class constants) | `CamelCase` with `k` prefix | `kMaxBatchSize`   |
+| Identifier kind                                           | Convention                   | Example           |
+| --------------------------------------------------------- | ---------------------------- | ----------------- |
+| Classes, enums, unions                                    | `PascalCase`                 | `DistDataset`     |
+| Type template parameters                                  | `PascalCase`                 | `NodeType`        |
+| Functions, methods                                        | `camelCase`                  | `sampleNeighbors` |
+| Variables, parameters, members                            | `camelCase`                  | `numNodes`        |
+| Private/protected members                                 | `camelCase` with `_` prefix  | `_nodeFeatures`   |
+| Constants (`constexpr`, `const` globals, class constants) | `PascalCase` with `k` prefix | `kMaxBatchSize`   |
+
+> **Note — clang-tidy option names:** `PascalCase` maps to clang-tidy's `CamelCase` enum value; `camelCase` maps to `camelBack`.
 
 ### Key option tuning
 
