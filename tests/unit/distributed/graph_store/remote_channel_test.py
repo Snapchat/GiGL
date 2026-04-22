@@ -20,6 +20,39 @@ def _failed_future(exc: Exception) -> torch.futures.Future:
 
 
 class RemoteReceivingChannelTest(TestCase):
+    def test_recv_prefetch_allows_buffered_message_before_terminal_fetch(self) -> None:
+        channel = RemoteReceivingChannel(
+            server_rank=[0],
+            channel_id=[10],
+            prefetch_size=2,
+            active_mask=[True],
+        )
+        channel.reset()
+
+        requested_server_ranks: list[int] = []
+        responses = iter(
+            [
+                ({"seed": torch.tensor([1], dtype=torch.long)}, False),
+                (None, True),
+            ]
+        )
+
+        def _mock_async_request_server(server_rank, func, channel_id):
+            requested_server_ranks.append(server_rank)
+            return _resolved_future(next(responses))
+
+        with patch(
+            "gigl.distributed.graph_store.remote_channel.async_request_server",
+            side_effect=_mock_async_request_server,
+        ):
+            msg = channel.recv()
+            self.assertTrue(torch.equal(msg["seed"], torch.tensor([1])))
+            with self.assertRaises(StopIteration):
+                channel.recv()
+
+        self.assertGreaterEqual(len(requested_server_ranks), 2)
+        self.assertEqual(requested_server_ranks[:2], [0, 0])
+
     def test_recv_skips_inactive_servers(self) -> None:
         channel = RemoteReceivingChannel(
             server_rank=[0, 1],

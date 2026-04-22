@@ -324,6 +324,8 @@ def _run_compute_train_tests(
         local_expected=local_expected_negative_seeds,
     )
 
+    ablp_loader.shutdown()
+    random_negative_loader.shutdown()
     shutdown_compute_proccess()
 
 

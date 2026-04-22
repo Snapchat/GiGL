@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping
+from unittest.mock import MagicMock, patch
 
 import torch
 import torch.multiprocessing as mp
@@ -11,6 +12,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -59,6 +61,12 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
+def _resolved_future(result: object) -> torch.futures.Future:
+    future: torch.futures.Future = torch.futures.Future()
+    future.set_result(result)
+    return future
+
+
 def _run_distributed_neighbor_loader(
     _,
     dataset: DistDataset,
@@ -575,6 +583,65 @@ class DistributedNeighborLoaderTest(TestCase):
         mp.spawn(
             fn=_run_distributed_neighbor_loader,
             args=(dataset, 18),
+        )
+
+    @patch("gigl.distributed.base_dist_loader.async_request_server")
+    def test_graph_store_iter_starts_only_active_channels(
+        self, mock_async_request_server: MagicMock
+    ) -> None:
+        mock_async_request_server.return_value = _resolved_future(None)
+        loader = DistNeighborLoader.__new__(DistNeighborLoader)
+        loader._num_recv = 0
+        loader._shutdowned = False
+        loader._is_collocated_worker = False
+        loader._is_mp_worker = False
+        loader._server_rank_list = [0, 1]
+        loader._producer_id_list = [10, 11]
+        loader._remote_input_has_batches = [True, False]
+        loader._channel = MagicMock(reset=MagicMock())
+        loader._epoch = 3
+
+        result = loader.__iter__()
+
+        self.assertIs(result, loader)
+        self.assertEqual(loader._epoch, 4)
+        loader._channel.reset.assert_called_once()
+        mock_async_request_server.assert_called_once_with(
+            0,
+            DistServer.start_new_epoch_sampling,
+            10,
+            3,
+        )
+
+    @patch("gigl.distributed.base_dist_loader.rpc_is_initialized", return_value=True)
+    @patch("gigl.distributed.base_dist_loader.async_request_server")
+    def test_graph_store_shutdown_destroys_all_registered_channels(
+        self,
+        mock_async_request_server: MagicMock,
+        _mock_rpc_is_initialized: MagicMock,
+    ) -> None:
+        mock_async_request_server.side_effect = [
+            _resolved_future(None),
+            _resolved_future(None),
+        ]
+        loader = DistNeighborLoader.__new__(DistNeighborLoader)
+        loader._shutdowned = False
+        loader._is_collocated_worker = False
+        loader._is_mp_worker = False
+        loader._server_rank_list = [0, 1]
+        loader._producer_id_list = [10, 11]
+
+        loader.shutdown()
+
+        self.assertTrue(loader._shutdowned)
+        self.assertEqual(mock_async_request_server.call_count, 2)
+        self.assertEqual(
+            mock_async_request_server.call_args_list[0].args,
+            (0, DistServer.destroy_sampling_producer, 10),
+        )
+        self.assertEqual(
+            mock_async_request_server.call_args_list[1].args,
+            (1, DistServer.destroy_sampling_producer, 11),
         )
 
     @parameterized.expand(

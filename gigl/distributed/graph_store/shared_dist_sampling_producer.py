@@ -77,7 +77,7 @@ from typing import Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
-from graphlearn_torch.channel import ChannelBase
+from graphlearn_torch.channel import ChannelBase, QueueTimeoutError
 from graphlearn_torch.distributed import (
     DistDataset,
     RemoteDistSamplingWorkerOptions,
@@ -108,6 +108,7 @@ logger = Logger()
 
 
 EPOCH_DONE_EVENT = "EPOCH_DONE"
+UNREGISTER_DONE_EVENT = "UNREGISTER_DONE"
 SCHEDULER_TICK_SECS = 0.05
 SCHEDULER_STATE_LOG_INTERVAL_SECS = 10.0
 SCHEDULER_STATE_MAX_CHANNELS = 6
@@ -390,6 +391,7 @@ def _shared_sampling_worker_loop(
     runnable_channel_ids: deque[int] = deque()
     runnable_channel_id_set: set[int] = set()
     removing_channel_ids: set[int] = set()
+    cleanup_ready_channel_ids: set[int] = set()
     state_lock = threading.RLock()
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
@@ -409,7 +411,54 @@ def _shared_sampling_worker_loop(
         runnable_channel_ids.append(channel_id)
         runnable_channel_id_set.add(channel_id)
 
-    def _clear_registered_input_locked(channel_id: int) -> None:
+    def _drain_channel_locked(channel_id: int) -> int:
+        """Lossily drain buffered sampled messages for a removing channel.
+
+        This is teardown-only behavior. Discarding buffered output frees
+        shared-memory channel capacity so blocked sampler sends can complete
+        and the remaining callbacks can run to completion.
+
+        Returns:
+            The number of buffered messages discarded.
+        """
+        channel = output_channel_by_channel_id.get(channel_id)
+        if channel is None:
+            return 0
+
+        drained_messages = 0
+        while True:
+            try:
+                _ = channel.recv(timeout_ms=0)
+                drained_messages += 1
+            except QueueTimeoutError:
+                return drained_messages
+
+    def _detach_unregister_resources_locked(
+        channel_id: int,
+    ) -> Optional[SamplerRuntime]:
+        """Remove worker-local channel bookkeeping and return its sampler."""
+        sampler = sampler_by_channel_id.pop(channel_id, None)
+        output_channel_by_channel_id.pop(channel_id, None)
+        input_by_channel_id.pop(channel_id, None)
+        config_by_channel_id.pop(channel_id, None)
+        route_key_by_channel_id.pop(channel_id, None)
+        started_epoch_by_channel_id.pop(channel_id, None)
+        active_epoch_by_channel_id.pop(channel_id, None)
+        runnable_channel_id_set.discard(channel_id)
+        removing_channel_ids.discard(channel_id)
+        cleanup_ready_channel_ids.discard(channel_id)
+        return sampler
+
+    def _finish_unregister(channel_id: int) -> None:
+        """Finalize unregister outside callback context and acknowledge removal."""
+        with state_lock:
+            sampler = _detach_unregister_resources_locked(channel_id)
+        if sampler is not None:
+            sampler.wait_all()
+            sampler.shutdown_loop()
+        event_queue.put((UNREGISTER_DONE_EVENT, channel_id, rank))
+
+    def _clear_registered_input_locked(channel_id: int) -> bool:
         """Remove a channel's registration and clean up all associated state.
 
         If the channel still has in-flight batches (submitted but not yet
@@ -421,25 +470,26 @@ def _shared_sampling_worker_loop(
         Note: Deferred cleanup assumes that channel_ids are not reused while
         cleanup is pending.  DistServer allocates channel_ids from a
         monotonically increasing counter, so this holds in practice.
+
+        Returns:
+            ``True`` if cleanup is ready to be finalized outside ``state_lock``.
+            ``False`` if cleanup remains deferred pending in-flight work.
         """
         # TODO(kmonte): Add a check to ensure the lock is held.
         state = active_epoch_by_channel_id.get(channel_id)
         if state is not None and state.completed_batches < state.submitted_batches:
             removing_channel_ids.add(channel_id)
             state.cancelled = True
-            return
-        sampler = sampler_by_channel_id.pop(channel_id, None)
-        if sampler is not None:
-            sampler.wait_all()
-            sampler.shutdown_loop()
-        output_channel_by_channel_id.pop(channel_id, None)
-        input_by_channel_id.pop(channel_id, None)
-        config_by_channel_id.pop(channel_id, None)
-        route_key_by_channel_id.pop(channel_id, None)
-        started_epoch_by_channel_id.pop(channel_id, None)
-        active_epoch_by_channel_id.pop(channel_id, None)
-        runnable_channel_id_set.discard(channel_id)
-        removing_channel_ids.discard(channel_id)
+            drained_messages = _drain_channel_locked(channel_id)
+            if drained_messages > 0:
+                logger.info(
+                    "shared_sampling_worker drained buffered output during unregister "
+                    f"worker_rank={rank} channel_id={channel_id} "
+                    f"drained_messages={drained_messages}"
+                )
+            return False
+        cleanup_ready_channel_ids.add(channel_id)
+        return True
 
     def _format_scheduler_state_locked() -> str:
         """Format a human-readable snapshot of the scheduler for logging.
@@ -466,6 +516,7 @@ def _shared_sampling_worker_loop(
         return (
             f"registered={len(output_channel_by_channel_id)} active={len(active_epoch_by_channel_id)} "
             f"runnable={len(runnable_channel_id_set)} removing={len(removing_channel_ids)} "
+            f"cleanup_ready={len(cleanup_ready_channel_ids)} "
             f"channels=[{', '.join(previews)}]{extra}"
         )
 
@@ -494,8 +545,7 @@ def _shared_sampling_worker_loop(
         Updates the channel's completed-batch counter.
         When all batches for the epoch are done, emits ``EPOCH_DONE_EVENT``
         to ``event_queue``.
-        If the channel is pending removal, finishes cleanup via
-        ``_clear_registered_input_locked``.
+        If the channel is pending removal, marks it ready for final cleanup.
         """
         with state_lock:
             state = active_epoch_by_channel_id.get(channel_id)
@@ -503,6 +553,14 @@ def _shared_sampling_worker_loop(
             if state is None or state.epoch != epoch:
                 return
             state.completed_batches += 1
+            if channel_id in removing_channel_ids:
+                drained_messages = _drain_channel_locked(channel_id)
+                if drained_messages > 0:
+                    logger.info(
+                        "shared_sampling_worker drained buffered output after batch completion "
+                        f"worker_rank={rank} channel_id={channel_id} "
+                        f"epoch={epoch} drained_messages={drained_messages}"
+                    )
             if state.completed_batches == state.total_batches:
                 # All batches done — remove active state and notify the parent.
                 active_epoch_by_channel_id.pop(channel_id, None)
@@ -512,8 +570,9 @@ def _shared_sampling_worker_loop(
                 and state.completed_batches == state.submitted_batches
             ):
                 # Channel was unregistered while batches were in flight.
-                # Now that all submitted batches have completed, finish cleanup.
-                _clear_registered_input_locked(channel_id)
+                # Now that all submitted batches have completed, let the main
+                # worker loop perform the blocking final cleanup.
+                cleanup_ready_channel_ids.add(channel_id)
 
     def _submit_one_batch(channel_id: int) -> bool:
         """Submit the next batch for a channel to its sampler.
@@ -594,6 +653,17 @@ def _shared_sampling_worker_loop(
             made_progress = _submit_one_batch(channel_id) or made_progress
         return made_progress
 
+    def _finish_ready_unregistrations() -> bool:
+        """Finalize any unregisters that are ready outside callback context."""
+        finished_cleanup = False
+        while True:
+            with state_lock:
+                if not cleanup_ready_channel_ids:
+                    return finished_cleanup
+                channel_id = next(iter(cleanup_ready_channel_ids))
+            _finish_unregister(channel_id)
+            finished_cleanup = True
+
     def _handle_command(command: SharedMpCommand, payload: CommandPayload) -> bool:
         """Dispatch one command from the task queue.
 
@@ -666,8 +736,11 @@ def _shared_sampling_worker_loop(
 
         if command == SharedMpCommand.UNREGISTER_INPUT:
             assert channel_id is not None
+            finalize_unregister = False
             with state_lock:
-                _clear_registered_input_locked(channel_id)
+                finalize_unregister = _clear_registered_input_locked(channel_id)
+            if finalize_unregister:
+                _finish_unregister(channel_id)
             _maybe_log_scheduler_state("unregister_input", force=True)
             return True
 
@@ -725,6 +798,7 @@ def _shared_sampling_worker_loop(
 
             # Phase 2: Submit batches round-robin from runnable channels.
             made_progress = _pump_runnable_channel_ids()
+            made_progress = _finish_ready_unregistrations() or made_progress
             _maybe_log_scheduler_state("steady_state")
             if not keep_running:
                 break
@@ -791,6 +865,7 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
+        self._removed_workers: defaultdict[int, set[int]] = defaultdict(set)
         self._degree_tensors = degree_tensors
 
     def init_backend(self) -> None:
@@ -948,23 +1023,38 @@ class SharedDistSamplingBackend:
                     ),
                 )
 
-    def _drain_events(self) -> None:
+    def _record_event(self, event: tuple[object, ...]) -> None:
+        """Record one worker event in backend-local state."""
+        if event[0] == EPOCH_DONE_EVENT:
+            _, channel_id, epoch, worker_rank = cast(tuple[str, int, int, int], event)
+            self._completed_workers[(channel_id, epoch)].add(worker_rank)
+        elif event[0] == UNREGISTER_DONE_EVENT:
+            _, channel_id, worker_rank = cast(tuple[str, int, int], event)
+            self._removed_workers[channel_id].add(worker_rank)
+
+    def _drain_events(self, wait_timeout_s: Optional[float] = None) -> None:
         """Drain worker completion events into the backend-local state.
 
         Reads all pending ``EPOCH_DONE_EVENT`` tuples from the shared
         ``event_queue`` and records which workers have finished each
         ``(channel_id, epoch)`` in ``_completed_workers``.
+        Also records worker-local unregister completion in
+        ``_removed_workers``.
         """
         if self._event_queue is None:
             return
+        if wait_timeout_s is not None:
+            try:
+                event = self._event_queue.get(timeout=wait_timeout_s)
+            except queue.Empty:
+                return
+            self._record_event(event)
         while True:
             try:
                 event = self._event_queue.get_nowait()
             except queue.Empty:
                 return
-            if event[0] == EPOCH_DONE_EVENT:
-                _, channel_id, epoch, worker_rank = event
-                self._completed_workers[(channel_id, epoch)].add(worker_rank)
+            self._record_event(event)
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start a new sampling epoch for one registered channel.
@@ -1049,7 +1139,9 @@ class SharedDistSamplingBackend:
         """Unregister a channel from all backend workers.
 
         Removes backend-side bookkeeping and broadcasts
-        ``UNREGISTER_INPUT`` to every worker.
+        ``UNREGISTER_INPUT`` to every worker. Blocks until every worker
+        acknowledges that unregister cleanup finished, including deferred
+        drain paths.
 
         No-op if ``channel_id`` is not currently registered.
 
@@ -1068,12 +1160,18 @@ class SharedDistSamplingBackend:
             stale_keys = [k for k in self._completed_workers if k[0] == channel_id]
             for k in stale_keys:
                 del self._completed_workers[k]
+            self._removed_workers.pop(channel_id, None)
             for worker_rank in range(self.num_workers):
                 self._enqueue_worker_command(
                     worker_rank,
                     SharedMpCommand.UNREGISTER_INPUT,
                     channel_id,
                 )
+            while len(self._removed_workers.get(channel_id, set())) < self.num_workers:
+                self._drain_events(wait_timeout_s=SCHEDULER_TICK_SECS)
+                if len(self._removed_workers.get(channel_id, set())) < self.num_workers:
+                    self._check_workers_alive()
+            self._removed_workers.pop(channel_id, None)
 
     def _check_workers_alive(self) -> None:
         """Raise if any worker process has died.

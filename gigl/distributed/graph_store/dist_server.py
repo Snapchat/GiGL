@@ -70,6 +70,8 @@ class ChannelState:
         channel: The shared-memory channel for passing sampled messages.
         epoch: The last epoch started on this channel.
         lock: A reentrant lock guarding channel-level operations.
+        destroyed: Whether teardown has published terminal state for this
+            channel.
     """
 
     backend_id: int
@@ -77,6 +79,7 @@ class ChannelState:
     channel: ShmChannel
     epoch: int = -1
     lock: threading.RLock = field(default_factory=threading.RLock)
+    destroyed: bool = False
 
 
 @dataclass
@@ -140,20 +143,21 @@ class DistServer:
 
     def shutdown(self) -> None:
         with self._lock:
-            backends = list(self._backend_state_by_backend_id.values())
+            if (
+                self._channel_state_by_channel_id
+                or self._backend_state_by_backend_id
+                or self._backend_id_by_backend_key
+            ):
+                raise RuntimeError(
+                    "DistServer.shutdown() requires all channels and backends to be "
+                    "torn down first. "
+                    f"live_channels={sorted(self._channel_state_by_channel_id)} "
+                    f"live_backends={sorted(self._backend_state_by_backend_id)}"
+                )
             self._backend_id_by_backend_key.clear()
             self._backend_state_by_backend_id.clear()
             self._channel_state_by_channel_id.clear()
             self._fetch_stats_by_channel_id.clear()
-        for backend_state in backends:
-            try:
-                backend_state.runtime.shutdown()
-            except Exception:
-                logger.warning(
-                    f"Failed to shut down backend backend_id={backend_state.backend_id} "
-                    f"backend_key={backend_state.backend_key}",
-                    exc_info=True,
-                )
 
     def wait_for_exit(self) -> None:
         r"""Block until the exit flag been set to ``True``."""
@@ -625,15 +629,6 @@ class DistServer:
         If this is the last channel on the backend, the backend is shut
         down and removed.
 
-        Caller contract: callers must have drained the channel (i.e.,
-        observed :meth:`fetch_one_sampled_message` return ``(None, True)``)
-        before calling destroy. This is required because
-        :meth:`fetch_one_sampled_message` holds ``channel_state.lock`` for
-        the duration of its recv loop; a destroy issued mid-epoch will
-        block waiting for the fetch to exit, and if the producer is stuck,
-        destroy will block indefinitely. All in-tree callers satisfy this
-        contract via ``BaseDistLoader``'s teardown sequence.
-
         Args:
             channel_id: The ID of the channel to destroy.
         """
@@ -644,39 +639,34 @@ class DistServer:
             backend_state = self._backend_state_by_backend_id.get(
                 channel_state.backend_id
             )
-
-        # Hold channel_state.lock to serialize destroy against in-flight
-        # start_new_epoch_sampling and any remaining
-        # fetch_one_sampled_message. Pre-PR #578, the old
-        # destroy_sampling_producer and start_new_epoch_sampling shared
-        # the same _producer_lock, so destroy/start_epoch were serialized;
-        # this restores that invariant via the two-phase API's
-        # per-channel lock.
-        with channel_state.lock:
-            with self._lock:
-                self._channel_state_by_channel_id.pop(channel_id, None)
-                # Pop fetch stats inside self._lock for consistency with
-                # how neighboring dicts are mutated. Does not close the
-                # race with _log_fetch_stats_if_due (which runs under
-                # channel_state.lock but not self._lock); a concurrent
-                # in-flight fetch may still recreate the entry — the
-                # orphan is benign and cleared on next shutdown or
-                # channel reuse.
-                self._fetch_stats_by_channel_id.pop(channel_id, None)
-
             if backend_state is None:
+                self._channel_state_by_channel_id.pop(channel_id, None)
+                self._fetch_stats_by_channel_id.pop(channel_id, None)
+                channel_state.destroyed = True
                 return
 
-            with backend_state.lock:
-                backend_state.runtime.unregister_input(channel_id)
-
         should_shutdown_backend = False
-        with self._lock:
-            backend_state.active_channels.discard(channel_id)
-            if not backend_state.active_channels:
-                self._backend_state_by_backend_id.pop(backend_state.backend_id, None)
-                self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
-                should_shutdown_backend = True
+        with backend_state.lock:
+            with self._lock:
+                current_channel_state = self._channel_state_by_channel_id.get(
+                    channel_id
+                )
+                if current_channel_state is None:
+                    return
+                if current_channel_state.backend_id != backend_state.backend_id:
+                    return
+                current_channel_state.destroyed = True
+                self._channel_state_by_channel_id.pop(channel_id, None)
+                self._fetch_stats_by_channel_id.pop(channel_id, None)
+            backend_state.runtime.unregister_input(channel_id)
+            with self._lock:
+                backend_state.active_channels.discard(channel_id)
+                if not backend_state.active_channels:
+                    self._backend_state_by_backend_id.pop(
+                        backend_state.backend_id, None
+                    )
+                    self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
+                    should_shutdown_backend = True
         if should_shutdown_backend:
             backend_state.runtime.shutdown()
 
@@ -744,38 +734,54 @@ class DistServer:
             channel_id: The ID of the channel to start the epoch on.
             epoch: The epoch number to start.
 
-        Raises:
-            RuntimeError: If the channel or its backend is not found.
         """
         with self._lock:
             channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
-                raise RuntimeError(
-                    f"start_new_epoch_sampling: channel_id={channel_id} not found"
-                )
+                return
             backend_state = self._backend_state_by_backend_id.get(
                 channel_state.backend_id
             )
         if backend_state is None:
-            raise RuntimeError(
-                f"start_new_epoch_sampling: backend for channel_id={channel_id} "
-                f"backend_id={channel_state.backend_id} not found"
-            )
+            return
 
-        # Serialize check/update/dispatch under channel_state.lock so
-        # concurrent callers with different epoch values cannot interleave
-        # the check-then-set on channel_state.epoch, and so a concurrent
-        # fetch cannot observe channel_state.epoch bumped before
-        # runtime.start_new_epoch_sampling has been dispatched.
-        with channel_state.lock:
-            if channel_state.epoch >= epoch:
-                return
-            channel_state.epoch = epoch
+        with backend_state.lock:
+            with self._lock:
+                current_channel_state = self._channel_state_by_channel_id.get(
+                    channel_id
+                )
+                current_backend_state = self._backend_state_by_backend_id.get(
+                    channel_state.backend_id
+                )
+                if current_channel_state is None:
+                    return
+                if current_backend_state is not backend_state:
+                    return
+                if current_channel_state.backend_id != backend_state.backend_id:
+                    return
+                if current_channel_state.destroyed:
+                    return
+                if current_channel_state.epoch >= epoch:
+                    return
+                worker_key = current_channel_state.worker_key
             logger.info(
                 f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
                 f"epoch={epoch}"
             )
             backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+            with self._lock:
+                post_dispatch_channel_state = self._channel_state_by_channel_id.get(
+                    channel_id
+                )
+                if post_dispatch_channel_state is None:
+                    return
+                if post_dispatch_channel_state.destroyed:
+                    return
+                post_dispatch_channel_state.epoch = epoch
+            logger.debug(
+                "start_new_epoch_sampling dispatched "
+                f"channel_id={channel_id} worker_key={worker_key} epoch={epoch}"
+            )
 
     def _log_fetch_stats_if_due(
         self, channel_id: int, worker_key: str, elapsed: float
@@ -843,6 +849,24 @@ class DistServer:
                     )
                     return msg, False
                 except QueueTimeoutError:
+                    if channel_state.destroyed:
+                        self._log_fetch_stats_if_due(
+                            channel_id,
+                            channel_state.worker_key,
+                            time.monotonic() - request_start_time,
+                        )
+                        return None, True
+                    with self._lock:
+                        current_backend_state = self._backend_state_by_backend_id.get(
+                            channel_state.backend_id
+                        )
+                    if current_backend_state is not backend_state:
+                        self._log_fetch_stats_if_due(
+                            channel_id,
+                            channel_state.worker_key,
+                            time.monotonic() - request_start_time,
+                        )
+                        return None, True
                     # Timeout is expected whenever the producer has
                     # nothing ready; poll is_channel_epoch_done and loop.
                     if (

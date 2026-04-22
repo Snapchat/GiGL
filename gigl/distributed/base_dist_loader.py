@@ -309,6 +309,9 @@ class BaseDistLoader(DistLoader):
                 else [worker_options.server_rank]
             )
             self._input_data_list = sampler_input
+            self._remote_input_has_batches = [
+                len(inp) > 0 for inp in self._input_data_list
+            ]
             self._input_type = self._input_data_list[0].input_type
 
             self.num_data_partitions = dataset.cluster_info.num_storage_nodes
@@ -848,7 +851,7 @@ class BaseDistLoader(DistLoader):
             server_rank=self._server_rank_list,
             channel_id=self._producer_id_list,
             prefetch_size=self.worker_options.prefetch_size,
-            active_mask=[len(inp) > 0 for inp in self._input_data_list],
+            active_mask=self._remote_input_has_batches,
             pin_memory=self.to_device is not None and self.to_device.type == "cuda",
         )
 
@@ -916,9 +919,13 @@ class BaseDistLoader(DistLoader):
             self._mp_producer.produce_all()
         else:
             rpc_futures: list[torch.futures.Future[None]] = []
-            for server_rank, producer_id in zip(
-                self._server_rank_list, self._producer_id_list
+            for server_rank, producer_id, has_batches in zip(
+                self._server_rank_list,
+                self._producer_id_list,
+                self._remote_input_has_batches,
             ):
+                if not has_batches:
+                    continue
                 fut = async_request_server(
                     server_rank,
                     DistServer.start_new_epoch_sampling,
