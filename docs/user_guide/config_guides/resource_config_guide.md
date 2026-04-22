@@ -106,30 +106,6 @@ preprocessor_config:
     disk_size_gb: 100
 ```
 
-**[Subgraph Sampler](../overview/components/subgraph_sampler.md) Config**
-
-The `subgraph_sampler_config` specifies settings for the Spark subgraph sampler component, includes machine type, local
-SSDs, and number of replicas. See example:
-
-```yaml
-subgraph_sampler_config:
-  machine_type: "n1-standard-4"
-  num_local_ssds: 1
-  num_replicas: 2
-```
-
-**[Split Generator](../overview/components/split_generator.md) Config**
-
-The `split_generator_config` specifies settings for the Spark split generator component, includes machine type, local
-SSDs, and number of replicas
-
-```yaml
-split_generator_config:
-  machine_type: "n1-standard-4"
-  num_local_ssds: 1
-  num_replicas: 2
-```
-
 **[Trainer](../overview/components/trainer.md) Config**
 
 The `trainer_config` specifies settings for the trainer config, currently supporting Vertex AI training or Local
@@ -139,7 +115,7 @@ Training.
   type, GPU limit, and number of replicas. See example:
 
   ```yaml
-  trainer_config:
+  trainer_resource_config:
     vertex_ai_trainer_config:
       machine_type: "n1-standard-8"
       gpu_type: "nvidia-tesla-t4"
@@ -153,7 +129,7 @@ Training.
   [Use reservations with Vertex AI training](https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations).
 
   ```yaml
-  trainer_config:
+  trainer_resource_config:
     vertex_ai_trainer_config:
       machine_type: "a2-highgpu-1g"
       gpu_type: "NVIDIA_TESLA_A100"
@@ -179,4 +155,28 @@ inferencer_config:
   max_num_workers: 256
   machine_type: "c2-standard-16"
   disk_size_gb: 100
+```
+
+**[Subgraph Sampler](../overview/deprecated_tabularized/subgraph_sampler.md) Config (legacy tabularized pipeline)**
+
+The `subgraph_sampler_config` specifies settings for the Spark subgraph sampler component, includes machine type, local
+SSDs, and number of replicas. See example:
+
+```yaml
+subgraph_sampler_config:
+  machine_type: "n1-standard-4"
+  num_local_ssds: 1
+  num_replicas: 2
+```
+
+**[Split Generator](../overview/deprecated_tabularized/split_generator.md) Config (legacy tabularized pipeline)**
+
+The `split_generator_config` specifies settings for the Spark split generator component, includes machine type, local
+SSDs, and number of replicas
+
+```yaml
+split_generator_config:
+  machine_type: "n1-standard-4"
+  num_local_ssds: 1
+  num_replicas: 2
 ```
