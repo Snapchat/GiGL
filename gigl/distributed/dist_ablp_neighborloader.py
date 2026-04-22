@@ -88,7 +88,6 @@ class DistABLPLoader(BaseDistLoader):
         prefetch_size: Optional[int] = None,
         channel_size: str = "4GB",
         process_start_gap_seconds: float = 60.0,
-        max_concurrent_producer_inits: Optional[int] = None,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -194,16 +193,9 @@ class DistABLPLoader(BaseDistLoader):
             channel_size (int or str): The shared-memory buffer size (bytes) allocated
                 for the channel. Can be modified for performance tuning; a good starting point is: ``num_workers * 64MB``
                 (default: "4GB").
-            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader.
-                In colocated mode, each process sleeps ``local_rank * process_start_gap_seconds``
-                before initializing. In graph store mode, leader ranks are grouped into batches
-                of ``max_concurrent_producer_inits`` and each batch sleeps
-                ``batch_index * process_start_gap_seconds`` before dispatching RPCs.
-            max_concurrent_producer_inits (int): Maximum number of leader ranks that may
-                dispatch create-producer RPCs concurrently in graph store mode. Leaders are
-                grouped into batches of this size; each batch is staggered by
-                ``process_start_gap_seconds``. Only applies to graph store mode.
-                Defaults to ``None`` (no staggering).
+            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader
+                in colocated mode. Each process sleeps ``local_rank * process_start_gap_seconds``
+                before initializing. Only applies to colocated mode.
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
@@ -258,10 +250,6 @@ class DistABLPLoader(BaseDistLoader):
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
                 )
-            if max_concurrent_producer_inits is not None:
-                raise ValueError(
-                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
-                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         del supervision_edge_type
@@ -315,6 +303,7 @@ class DistABLPLoader(BaseDistLoader):
                 MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions
             ] = setup_info[1]
             dataset_schema: DatasetSchema = setup_info[2]
+            backend_key: Optional[str] = None
         else:  # Graph Store mode
             assert isinstance(dataset, RemoteDistDataset), (
                 "When using Graph Store mode, dataset must be a RemoteDistDataset."
@@ -333,6 +322,7 @@ class DistABLPLoader(BaseDistLoader):
                 sampler_input,
                 worker_options,
                 dataset_schema,
+                backend_key,
             ) = self._setup_for_graph_store(
                 input_nodes=input_nodes,
                 dataset=dataset,
@@ -385,8 +375,8 @@ class DistABLPLoader(BaseDistLoader):
             runtime=runtime,
             producer=producer,
             sampler_options=sampler_options,
+            backend_key=backend_key,
             process_start_gap_seconds=process_start_gap_seconds,
-            max_concurrent_producer_inits=max_concurrent_producer_inits,
             non_blocking_transfers=non_blocking_transfers,
         )
 
@@ -596,7 +586,10 @@ class DistABLPLoader(BaseDistLoader):
         channel_size: str,
         prefetch_size: int,
     ) -> tuple[
-        list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema
+        list[ABLPNodeSamplerInput],
+        RemoteDistSamplingWorkerOptions,
+        DatasetSchema,
+        str,
     ]:
         """
         Setup method for Graph Store mode.
@@ -612,14 +605,15 @@ class DistABLPLoader(BaseDistLoader):
             prefetch_size: Max prefetched sampled messages per server on client side.
 
         Returns:
-            Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema).
+            Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions,
+            DatasetSchema, backend_key).
         """
         node_feature_info = dataset.fetch_node_feature_info()
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
-        self._backend_key = f"dist_ablp_loader_{self._instance_count}"
-        worker_key = f"{self._backend_key}_compute_rank_{compute_rank}"
+        backend_key = f"dist_ablp_loader_{self._instance_count}"
+        worker_key = f"{backend_key}_compute_rank_{compute_rank}"
         logger.info(f"rank: {compute_rank}, worker_key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
@@ -745,6 +739,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_feature_info=edge_feature_info,
                 edge_dir=dataset.fetch_edge_dir(),
             ),
+            backend_key,
         )
 
     def _set_labels(
