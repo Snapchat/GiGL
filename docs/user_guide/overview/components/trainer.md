@@ -22,10 +22,6 @@ The Trainer undertakes the following actions:
   - In-memory subgraph sampling path when `featureFlags.should_run_glt_backend` is `True`.
 - Launches the selected training runtime and persists output metadata such as model parameters and offline metrics.
 
-### Legacy path
-
-In the legacy path, the Trainer consumes the outputs of Split Generator and delegates to the v1 trainer stack.
-
 ### In-Memory Subgraph Sampling Path
 
 In the in-memory path, the Trainer launches the distributed runtime used for live neighborhood sampling. At a high
@@ -40,8 +36,9 @@ For link prediction, the reference training loops under `examples/link_predictio
 - `DistABLPLoader` for anchor-based link prediction batches,
 - `DistNeighborLoader` for random negative batches.
 
-Graph store mode uses the same conceptual flow, but separates storage and compute into different pools and exposes the
-graph through `RemoteDistDataset`.
+### Legacy path
+
+In the legacy path, the Trainer consumes the outputs of Split Generator and delegates to the v1 trainer stack.
 
 ## How do I run it?
 
@@ -94,8 +91,6 @@ Reference in-memory training implementations:
 
 - [`examples/link_prediction/homogeneous_training.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/homogeneous_training.py)
 - [`examples/link_prediction/heterogeneous_training.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/heterogeneous_training.py)
-- [`examples/link_prediction/graph_store/homogeneous_training.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/homogeneous_training.py)
-- [`examples/link_prediction/graph_store/heterogeneous_training.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/heterogeneous_training.py)
 
 ## Custom Usage
 

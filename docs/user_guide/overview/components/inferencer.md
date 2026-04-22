@@ -20,11 +20,6 @@ The Inferencer undertakes the following actions:
   - Legacy tabularized path when `featureFlags.should_run_glt_backend` is not enabled.
   - In-memory subgraph sampling path when `featureFlags.should_run_glt_backend` is `True`.
 
-### Legacy path
-
-In the legacy path, the Inferencer runs the v1 inference stack over precomputed samples and writes embeddings and/or
-predictions to BigQuery.
-
 ### In-Memory Subgraph Sampling Path
 
 In the in-memory path, the Inferencer launches the distributed runtime used for live neighborhood sampling. At a high
@@ -37,6 +32,22 @@ level, that runtime:
 - writes embeddings and/or predictions keyed by enumerated node IDs.
 
 For in-memory sampling runs, automatic unenumeration is handled by the Post Processor after inference completes.
+
+### Inference-Only Pipelines
+
+Inference-only pipelines use the same preprocessed assets as training pipelines, but skip the Trainer stage entirely.
+
+In practice, that means setting `sharedConfig.shouldSkipTraining: true` and
+`sharedConfig.shouldSkipModelEvaluation: true`, while keeping `sharedConfig.shouldSkipInference: false` so the
+Inferencer still runs.
+
+Inference-only pipelines also need `sharedConfig.trainedModelMetadata` to point at an existing trained model for the
+Inferencer to load.
+
+### Legacy path
+
+In the legacy path, the Inferencer runs the v1 inference stack over precomputed samples and writes embeddings and/or
+predictions to BigQuery.
 
 ## How do I run it?
 
@@ -89,8 +100,6 @@ Reference in-memory inference implementations:
 
 - [`examples/link_prediction/homogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/homogeneous_inference.py)
 - [`examples/link_prediction/heterogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/heterogeneous_inference.py)
-- [`examples/link_prediction/graph_store/homogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/homogeneous_inference.py)
-- [`examples/link_prediction/graph_store/heterogeneous_inference.py`](https://github.com/Snapchat/GiGL/blob/main/examples/link_prediction/graph_store/heterogeneous_inference.py)
 
 ## Other
 
