@@ -1,15 +1,15 @@
-"""Generate .cache/compile_commands.json for clang-tidy.
+"""Generate .cache/compile_commands.json for clangd.
 
 Delegates to CMake (which already knows all include paths and compiler flags via
 find_package(Torch)) rather than manually constructing the database.
 
 The build uses the system C++ compiler (g++) so that cmake, nvcc, and Torch's
 cmake work without issues. After cmake writes compile_commands.json, the
-compiler in each entry is replaced with ``clang++-15`` so that clang-tidy
-natively understands the commands without needing a ``--query-driver`` workaround.
+compiler in each entry is replaced with ``clang++-15`` so that clangd natively
+understands the commands without needing a ``--query-driver`` workaround.
 
-Primary use: called by ``run_cpp_lint.py`` before running clang-tidy checks,
-and by ``make generate_compile_commands`` when you need to refresh the database
+Primary use: called by ``run_cpp_lint.py`` before running clangd checks, and
+by ``make generate_compile_commands`` when you need to refresh the database
 manually (e.g. after adding new source files or changing compiler flags).
 
 Usage::
@@ -45,7 +45,7 @@ def write_compile_commands() -> None:
     raw_path = _CMAKE_BUILD_DIR / "compile_commands.json"
     entries: list[dict] = json.loads(raw_path.read_text())
 
-    # Replace the compiler for .cpp entries with clang++-15 so clang-tidy uses
+    # Replace the compiler for .cpp entries with clang++-15 so clangd uses
     # clang-native implicit include paths instead of guessing GCC's.
     # Leave .cu entries unchanged so nvcc handles them correctly.
     # The spec allows either "command" (string, Makefile generator) or
