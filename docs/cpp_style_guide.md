@@ -15,18 +15,17 @@ make check_format_cpp  # Check formatting without modifying (clang-format only, 
 make check_lint_cpp    # Run clang-tidy static analysis
 ```
 
-> **Note — CUDA files (`.cu`) are excluded from clang-tidy.**
-> clang-tidy 15 does not support CUDA syntax and will error on `.cu` files. The Makefile
-> defines `CPP_SOURCES_NO_CUDA` (which filters out `.cu` files) and passes only that set
-> to clang-tidy. If you add a new `.cu` file, it will not appear in lint output — this is
-> expected. Lint coverage for CUDA files requires upgrading to a clang-tidy version with
-> CUDA support.
+> **Note — CUDA files (`.cu`) are excluded from clang-tidy.** clang-tidy 15 does not support CUDA syntax and will error
+> on `.cu` files. The Makefile defines `CPP_SOURCES_NO_CUDA` (which filters out `.cu` files) and passes only that set to
+> clang-tidy. If you add a new `.cu` file, it will not appear in lint output — this is expected. Lint coverage for CUDA
+> files requires upgrading to a clang-tidy version with CUDA support.
 
 ______________________________________________________________________
 
 ## Build Configuration
 
-All builds use `-O3 -g`: full optimization with debug symbols always enabled. Debug symbols add no runtime overhead and ensure stack traces are always readable.
+All builds use `-O3 -g`: full optimization with debug symbols always enabled. Debug symbols add no runtime overhead and
+ensure stack traces are always readable.
 
 ______________________________________________________________________
 
@@ -84,11 +83,11 @@ header.
 
 Includes are sorted and split into three priority groups:
 
-| Priority | Pattern                      | Group                                        |
-| -------- | ---------------------------- | -------------------------------------------- |
-| 1        | `.*`                         | Local project headers (first)                |
-| 2        | `^<(torch\|pybind11)/`       | Torch and pybind11 headers                   |
-| 3        | `^(<\|"gtest/)`              | System and other third-party headers (last)  |
+| Priority | Pattern                | Group                                       |
+| -------- | ---------------------- | ------------------------------------------- |
+| 1        | `.*`                   | Local project headers (first)               |
+| 2        | `^<(torch\|pybind11)/` | Torch and pybind11 headers                  |
+| 3        | `^(<\|"gtest/)`        | System and other third-party headers (last) |
 
 > When GLT (`graphlearn_torch`) headers are added, include `graphlearn_torch` in the Priority 2 pattern.
 
@@ -156,7 +155,8 @@ Enforced via `readability-identifier-naming`:
 | Private/protected members                                 | `camelCase` with `_` prefix  | `_nodeFeatures`   |
 | Constants (`constexpr`, `const` globals, class constants) | `PascalCase` with `k` prefix | `kMaxBatchSize`   |
 
-> **Note — clang-tidy option names:** `PascalCase` maps to clang-tidy's `CamelCase` enum value; `camelCase` maps to `camelBack`.
+> **Note — clang-tidy option names:** `PascalCase` maps to clang-tidy's `CamelCase` enum value; `camelCase` maps to
+> `camelBack`.
 
 ### Key option tuning
 
