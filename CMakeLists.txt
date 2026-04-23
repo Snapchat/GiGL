@@ -5,10 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-endif()
-
 # CMP0104: CMake 3.18+ warns when enable_language(CUDA) is called without
 # CMAKE_CUDA_ARCHITECTURES being set. Set it to OFF to tell CMake not to inject
 # any -gencode flags — Torch provides a comprehensive arch list via TORCH_LIBRARIES.
@@ -88,15 +84,11 @@ find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED
 
 
 set(GIGL_COMPILE_FLAGS
-    $<$<CONFIG:Release>:-O3>
-    $<$<CONFIG:Debug>:-O0;-g>
-    -Wall -Wextra -Wno-unused-parameter
+    -O3 -g -Wall -Wextra -Wno-unused-parameter
 )
 # nvcc does not accept bare -Wall/-Wextra; wrap them with -Xcompiler for CUDA sources.
 set(GIGL_COMPILE_FLAGS_CUDA
-    $<$<CONFIG:Release>:-O3>
-    $<$<CONFIG:Debug>:-O0;-g>
-    -Xcompiler=-Wall,-Wextra,-Wno-unused-parameter
+    -O3 -Xcompiler=-g,-Wall,-Wextra,-Wno-unused-parameter
 )
 
 # ---------------------------------------------------------------------------

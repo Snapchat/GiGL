@@ -10,7 +10,6 @@ Usage::
     uv run python scripts/run_cpp_lint.py <file1.cpp> [file2.cpp] ...
 """
 
-import os
 import re
 import subprocess
 import sys
@@ -59,7 +58,7 @@ def main() -> None:
         sys.exit(0)
 
     failures: dict[Path, list[str]] = {}
-    with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, 8)) as executor:
+    with ThreadPoolExecutor() as executor:
         futures = {executor.submit(_check_file, s): s for s in sources}
         for future in as_completed(futures):
             source = futures[future]

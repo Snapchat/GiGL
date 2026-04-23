@@ -99,9 +99,8 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-CMAKE_BUILD_TYPE ?= Release
 .cache/cpp_tests/.configured: CMakeLists.txt tests/unit/cpp/CMakeLists.txt
-	uv run cmake -S . -B .cache/cpp_tests -DGIGL_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+	uv run cmake -S . -B .cache/cpp_tests -DGIGL_BUILD_TESTS=ON
 	touch .cache/cpp_tests/.configured
 
 unit_test_cpp: .cache/cpp_tests/.configured

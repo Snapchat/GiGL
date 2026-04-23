@@ -39,12 +39,12 @@ ForEachMacros:   [ foreach, Q_FOREACH, BOOST_FOREACH ]
 # Result: project-local headers (1) → torch/pybind11 (2) → system/third-party (3).
 # Add graphlearn_torch to the Priority 2 regex when GLT headers appear in the codebase.
 IncludeCategories:
-  - Regex:           '^<(torch|pybind11)/'
-    Priority:        2
-  - Regex:           '^(<|"(gtest|isl|json)/)'
-    Priority:        3
   - Regex:           '.*'
     Priority:        1
+  - Regex:           '^<(torch|pybind11)/'
+    Priority:        2
+  - Regex:           '^(<|"gtest/)'
+    Priority:        3
 IncludeIsMainRegex: '^$'
 IndentCaseLabels: true
 IndentWidth:     4
