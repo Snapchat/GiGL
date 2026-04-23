@@ -20,5 +20,4 @@ COPY snapchat snapchat
 COPY tests tests
 COPY examples examples
 
-RUN uv pip install "scikit-build-core>=0.10" "pybind11>=2.12"
 RUN uv pip install -e .
