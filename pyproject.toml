@@ -106,14 +106,17 @@ required-environments = [
 no-build-isolation-package = ["gigl"]
 
 [dependency-groups]
+cpp-build = [
+  "scikit-build-core>=0.10",
+  "pybind11>=2.12",
+]
 dev = [
+  {include-group = "cpp-build"},
   {include-group = "docs"},
   {include-group = "lint"},
   {include-group = "test"},
   {include-group = "typing-stubs"},
   "pre-commit==3.3.2",
-  "scikit-build-core>=0.10",
-  "pybind11>=2.12",
 ]
 docs = [
   "astroid==3.3.11", # Newer versions of astroid are not compatible with sphinx==7.4.7

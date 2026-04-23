@@ -146,7 +146,7 @@ install_gigl_lib_deps() {
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
         uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-project
     else
-        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match} --no-install-project
+        uv sync ${extra_deps_clause[@]} --group cpp-build --locked ${flag_use_inexact_match} --no-install-project
     fi
 
     # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
