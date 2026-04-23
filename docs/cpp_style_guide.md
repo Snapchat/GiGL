@@ -26,22 +26,7 @@ ______________________________________________________________________
 
 ## Build Configuration
 
-The default build type is `Release` (`-O3`). To build with debug symbols (`-O0 -g`) — e.g. for stepping through
-C++ code in a debugger — pass `Debug` explicitly:
-
-**Editable install (local development):**
-
-```bash
-uv pip install -e . -C cmake.build-type=Debug
-```
-
-**C++ unit tests:**
-
-```bash
-make unit_test_cpp CMAKE_BUILD_TYPE=Debug
-```
-
-To restore optimised builds, replace `Debug` with `Release`, or omit the flag (Release is the default).
+All builds use `-O3 -g`: full optimization with debug symbols always enabled. Debug symbols add no runtime overhead and ensure stack traces are always readable.
 
 ______________________________________________________________________
 
@@ -103,7 +88,7 @@ Includes are sorted and split into three priority groups:
 | -------- | ---------------------------- | -------------------------------------------- |
 | 1        | `.*`                         | Local project headers (first)                |
 | 2        | `^<(torch\|pybind11)/`       | Torch and pybind11 headers                   |
-| 3        | `^(<\|"(gtest\|isl\|json)/)` | System and other third-party headers (last)  |
+| 3        | `^(<\|"gtest/)`              | System and other third-party headers (last)  |
 
 > When GLT (`graphlearn_torch`) headers are added, include `graphlearn_torch` in the Priority 2 pattern.
 
