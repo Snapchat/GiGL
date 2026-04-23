@@ -7,8 +7,6 @@
 # Called by `make install_dev_deps` alongside install_py_deps.sh and
 # install_scala_deps.sh.
 #
-# NOTE: On Linux, this script calls apt-get, which requires root privileges.
-# Run as root or prefix with sudo.
 
 set -e
 set -x
@@ -45,8 +43,8 @@ else
     # headers. Without this package clang++-15 cannot find standard headers like <cstddef>.
     # clang++-15 itself is needed because generate_compile_commands.py rewrites
     # compile_commands.json to use it so clangd natively understands the commands.
-    apt-get update -y
-    apt-get install -y clang-format-15 clang-tidy-15 clangd-15 clang++-15 libstdc++-12-dev cmake
+    sudo apt-get update -y
+    sudo apt-get install -y clang-format-15 clang-tidy-15 clangd-15 clang++-15 libstdc++-12-dev cmake
 
     # Verify cmake >= 3.18 (our CMakeLists.txt requires it; Ubuntu 20.04 apt provides 3.16).
     # sort -V (version sort) is a GNU extension only available on Linux — this block is
