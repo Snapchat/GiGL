@@ -102,9 +102,9 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# gigl-core uses torch from the ambient environment (no isolated build env).
-# This matches how PyG's pyg_lib is built — torch is never on PyPI so build
-# isolation would prevent finding it.
+# gigl-core must build against torch, which is not on PyPI. An isolated build
+# environment would fail to find it, so we disable isolation and let the build
+# use the ambient environment where torch is already installed.
 no-build-isolation-package = ["gigl-core"]
 
 [dependency-groups]
@@ -264,8 +264,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["gigl*", "snapchat*"]
-exclude = ["gigl-core*", "tests*"]
-namespaces = true
 
 [tool.setuptools.package-data]
 # Include dep_vars.env from the root directory
