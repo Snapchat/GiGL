@@ -13,6 +13,9 @@ requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available fo
 dependencies = [
   "argo-workflows",
   "chardet",
+  # gigl-core hosts all C++ / CUDA / pybind11 extensions. Separate wheel per torch
+  # variant (cpu/cu128). Same pattern PyG uses for pyg_lib.
+  "gigl-core",
   "google-cloud-aiplatform",
   "google-cloud-dataproc",
   "google-cloud-logging",
@@ -99,6 +102,10 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# gigl-core uses torch from the ambient environment (no isolated build env).
+# This matches how PyG's pyg_lib is built — torch is never on PyPI so build
+# isolation would prevent finding it.
+no-build-isolation-package = ["gigl-core"]
 
 [dependency-groups]
 cpp-build = [
@@ -240,27 +247,29 @@ torch_spline_conv = [
   { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
   { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
 ]
-
+# gigl-core is auto-discovered as a local package — uv sync / uv pip install -e gigl-core/
+# builds it from source via scikit-build-core. At release install time, published gigl
+# and gigl-core wheels are resolved from the same GCP registry.
+gigl-core = { workspace = true }
 
 
 # ===================== Build/Project Configurations ===========================
-# gigl releases two wheels (pyg27-torch28-cpu and pyg27-torch28-cu128), one
-# built against CPU torch headers and one against CUDA torch headers. See
-# release.yml for the build matrix. CMakeLists.txt auto-discovers python_*.cu
-# files alongside python_*.cpp, so CUDA kernels can be added without changes
-# to the build configuration.
+# gigl is a pure-Python package. All C++/CUDA kernels live in the gigl-core
+# wheel (see gigl-core/pyproject.toml). Release builds two variants per package:
+# cpu and cu128. gigl's build stays fast because no CMake runs here.
 [build-system]
-requires = [
-    "scikit-build-core>=0.10",
-    "pybind11>=2.12",
-]
-build-backend = "scikit_build_core.build"
+requires      = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-[tool.scikit-build]
-cmake.version    = ">=3.18"
-build-dir        = ".cache/cmake_build"
-wheel.packages   = ["gigl", "snapchat"]
-editable.mode    = "redirect"
+[tool.setuptools.packages.find]
+include = ["gigl*", "snapchat*"]
+exclude = ["gigl-core*", "tests*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+# Include dep_vars.env from the root directory
+"gigl" = ["dep_vars.env", "**/*.yaml"]
+"gigl.scripts" = ["*.sh"]
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"

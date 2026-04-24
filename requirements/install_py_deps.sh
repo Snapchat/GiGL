@@ -136,11 +136,13 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
-    # --no-install-project: skip building and installing the gigl package itself here.
-    # The project is installed separately via `uv pip install -e .`
-    # (see Makefile install_dev_deps/install_deps targets and the *.src Dockerfiles).
-    # This avoids scikit-build-core requiring all source files (e.g. README.md, CMakeLists.txt)
-    # to be present in environments that only need the dependencies (e.g. base Docker images).
+    # --no-install-project: skip building and installing the workspace members (gigl,
+    # gigl-core) here. They are installed separately:
+    #   - gigl (pure Python): `uv pip install .` in *.src Dockerfiles
+    #   - gigl-core (C++ extension): `uv pip install gigl-core/` in *.src Dockerfiles
+    # Base Docker images only copy pyproject.toml + uv.lock, not gigl-core/. Without
+    # this flag, uv sync would try to build gigl-core's C++ extension and fail because
+    # the source tree is absent.
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
