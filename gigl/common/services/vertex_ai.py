@@ -46,7 +46,7 @@ PipelineJob created. Resource name: projects/my-project-id/locations/us-central1
 To use this PipelineJob in another session:
 pipeline_job = aiplatform.PipelineJob.get('projects/my-project-id/locations/us-central1/pipelineJobs/get-pipeline-20250226170755')
 View Pipeline Job:
-https://console.cloud.google.com/vertex-ai/locations/us-central1/pipelines/runs/get-pipeline-20250226170755?project=my-project-id
+https://console.cloud.google.com/agent-platform/locations/us-central1/pipelines/runs/get-pipeline-20250226170755?project=my-project-id
 Associating projects/my-project-id/locations/us-central1/pipelineJobs/get-pipeline-20250226170755 to Experiment: example-experiment
 
 
@@ -426,7 +426,7 @@ class VertexAIService:
     @staticmethod
     def get_pipeline_run_url(project: str, location: str, job_name: str) -> str:
         """Returns the URL for the pipeline run."""
-        return f"https://console.cloud.google.com/vertex-ai/locations/{location}/pipelines/runs/{job_name}?project={project}"
+        return f"https://console.cloud.google.com/agent-platform/locations/{location}/pipelines/runs/{job_name}?project={project}"
 
     @staticmethod
     def wait_for_run_completion(
