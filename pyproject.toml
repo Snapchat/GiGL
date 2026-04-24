@@ -14,8 +14,8 @@ dependencies = [
   "argo-workflows",
   "chardet",
   # gigl-core hosts all C++ / CUDA / pybind11 extensions. Separate wheel per torch
-  # variant (cpu/cu128). Same pattern PyG uses for pyg_lib.
-  "gigl-core",
+  # variant (cpu/cu128). Version must match gigl exactly.
+  "gigl-core==0.2.0",
   "google-cloud-aiplatform",
   "google-cloud-dataproc",
   "google-cloud-logging",

@@ -10,10 +10,20 @@ These are the current environments supported by GiGL
 
 ## Available Versions
 
-You can see the available wheels for GiGL:
+GiGL is distributed as two wheels that are installed together:
 
-- [CPU wheels](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)
-- [CUDA wheels](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu128?project=external-snap-ci-github-gigl)
+- **`gigl`** — pure Python package (same wheel for CPU and CUDA users)
+- **`gigl-core`** — compiled C++/CUDA extensions, ABI-bound to the torch variant
+
+You do not need to install `gigl-core` directly; it is a dependency of `gigl` and is
+resolved automatically from the same registry.
+
+Each registry is self-contained — you only need one GCP extra-index URL:
+
+| Variant | Registry |
+| ------- | -------- |
+| CPU | [gigl (CPU registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl) |
+| CUDA 12.8 | [gigl-cu128 (CUDA registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu128?project=external-snap-ci-github-gigl) |
 
 ## Install Prerequisites - setting up your dev machine
 
@@ -105,30 +115,26 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 2. Install GiGL
 
-#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on Cuda12.8
+#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CUDA 12.8
 
 ```bash
-pip install "gigl[pyg27-torch28-cu128, transform]==0.1.0" \
+pip install "gigl[pyg27-torch28-cu128, transform]==0.2.0" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cu128 \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
 ```
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
-script to setup GLT dependency:
-
-```bash
-gigl-post-install
-```
-
 #### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CPU
 
 ```bash
-pip install "gigl[pyg27-torch28-cpu, transform]==0.1.0" \
+pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cpu \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
 ```
+
+pip resolves and installs `gigl-core` automatically from the same GCP registry.
+No separate install step is needed.
 
 Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
 script to setup GLT dependency:

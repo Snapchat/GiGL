@@ -13,7 +13,7 @@ include(FetchContent)
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.14.0
+    GIT_TAG        58d77fa8070e8cec2dc1ed015d66b454c8d78850  # v1.14.0
     GIT_SHALLOW    TRUE
 )
 # Prevent GoogleTest from overriding the compiler's runtime on Windows

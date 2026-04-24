@@ -73,6 +73,7 @@ jobs:
   ci-unit-test-cpp:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     - name: Install C++ dependencies
