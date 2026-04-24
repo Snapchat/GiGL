@@ -142,7 +142,8 @@ class SoftmaxLoss(nn.Module):
         )  # shape=[num_pos_nodes]
 
         loss = F.cross_entropy(
-            input=all_scores / self.softmax_temperature,# https://github.com/Snapchat/GiGL/issues/408
+            input=all_scores
+            / self.softmax_temperature,  # https://github.com/Snapchat/GiGL/issues/408
             target=ys,
             reduction="sum",
         )
@@ -610,7 +611,7 @@ class AligmentLoss(nn.Module):
     ) -> torch.Tensor:
         return (
             (user_embeddings - item_embeddings).norm(p=2, dim=1).pow(self.alpha).mean()
-        )  # type: ignore
+        )
 
 
 class UniformityLoss(nn.Module):
@@ -635,7 +636,7 @@ class UniformityLoss(nn.Module):
             .exp()
             .mean()
             .log()
-        )  # type: ignore
+        )
         item_uniformity = (
             torch.pdist(item_embeddings, p=2)
             .pow(2)
@@ -643,7 +644,7 @@ class UniformityLoss(nn.Module):
             .exp()
             .mean()
             .log()
-        )  # type: ignore
+        )
         return (user_uniformity + item_uniformity) / 2
 
 

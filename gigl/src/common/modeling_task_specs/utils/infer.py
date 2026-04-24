@@ -137,8 +137,10 @@ def infer_task_inputs(
         decoder = model.module.decode
         batch_result_types = model.module.tasks.result_types
     else:
-        decoder = model.decode# https://github.com/Snapchat/GiGL/issues/408
-        batch_result_types = model.tasks.result_types# https://github.com/Snapchat/GiGL/issues/408
+        decoder = model.decode  # https://github.com/Snapchat/GiGL/issues/408
+        batch_result_types = (
+            model.tasks.result_types
+        )  # https://github.com/Snapchat/GiGL/issues/408
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.
@@ -336,7 +338,7 @@ def infer_task_inputs(
                 torch.tensor(repeated_anchor_count[condensed_supervision_edge_type]).to(
                     device=device
                 ),
-                dim=0,  # type: ignore
+                dim=0,
             )
         )
 
@@ -434,10 +436,10 @@ def infer_task_inputs(
             batch_combined_scores[condensed_supervision_edge_type] = (
                 BatchCombinedScores(
                     repeated_candidate_scores=repeated_candidate_scores,
-                    positive_ids=global_positive_ids,  # type: ignore
-                    hard_neg_ids=global_hard_neg_ids,  # type: ignore
-                    random_neg_ids=global_random_neg_ids,  # type: ignore
-                    repeated_query_ids=repeated_global_query_ids,  # type: ignore
+                    positive_ids=global_positive_ids,
+                    hard_neg_ids=global_hard_neg_ids,
+                    random_neg_ids=global_random_neg_ids,
+                    repeated_query_ids=repeated_global_query_ids,
                     num_unique_query_ids=main_batch_root_node_indices.shape[0],
                 )
             )

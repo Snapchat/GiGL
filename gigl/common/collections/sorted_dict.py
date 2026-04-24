@@ -40,9 +40,7 @@ class SortedDict(Mapping[KT, VT]):
             **kwargs: Keyword arguments passed to dict constructor
         """
         # ty cannot resolve dict() constructor overloads with generic TypeVars
-        self.__dict: dict[KT, VT] = dict(
-            *args, **kwargs
-        )  # ty: ignore[invalid-assignment]
+        self.__dict: dict[KT, VT] = dict(*args, **kwargs)  # ty: ignore[invalid-assignment]
         self.__needs_memoization: bool = True
         self.__sort_dict_if_needed()
 

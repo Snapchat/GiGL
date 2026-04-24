@@ -89,9 +89,7 @@ class Runner:
         else:
             Runner.config_check(start_at, pipeline_config)
 
-        component_map: OrderedDict[
-            GiGLComponents, Callable
-        ] = OrderedDict(  # ty: ignore[invalid-assignment]
+        component_map: OrderedDict[GiGLComponents, Callable] = OrderedDict(  # ty: ignore[invalid-assignment]
             {
                 GiGLComponents.ConfigPopulator.value: Runner.run_config_populator,
                 GiGLComponents.DataPreprocessor.value: Runner.run_data_preprocessor,

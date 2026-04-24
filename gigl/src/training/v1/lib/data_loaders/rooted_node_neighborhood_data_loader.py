@@ -281,9 +281,7 @@ class RootedNodeNeighborhoodBatch:
 
         iterable_training_dataset: CombinedIterableDatasets[
             RootedNodeNeighborhoodSample
-        ] = CombinedIterableDatasets(
-            iterable_dataset_map=iterable_dataset_map
-        )
+        ] = CombinedIterableDatasets(iterable_dataset_map=iterable_dataset_map)
 
         collate_fn = partial(
             RootedNodeNeighborhoodBatch.collate_pyg_rooted_node_neighborhood_minibatch,

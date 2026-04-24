@@ -709,7 +709,9 @@ class NodeAnchorBasedLinkPredictionTasks:
         for task in list(self._task_to_weights_map.keys()):
             fn = self._task_to_fn_map[task]
             weight = self._task_to_weights_map[task]
-            tasks_list.append((fn, weight))# https://github.com/Snapchat/GiGL/issues/408
+            tasks_list.append(
+                (fn, weight)
+            )  # https://github.com/Snapchat/GiGL/issues/408
         return tasks_list
 
     def add_task(

@@ -904,13 +904,13 @@ def wait_and_shutdown_server() -> None:
 def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
-        logging.warning(
-            f"'_call_func_on_server': receive a non-callable function target {func}"
+        raise TypeError(
+            f"'_call_func_on_server': received non-callable function target {func}"
         )
-        return None
 
     server = get_server()
-    if hasattr(server, func.__name__):
+    func_name = getattr(func, "__name__", None)
+    if func_name is not None and hasattr(server, func_name):
         # NOTE: method does not respect inheritance.
         # `func` is the full name of the function, e.g. gigl.distributed.graph_store.dist_server.DistServer.get_edge_dir
         # And so if something subclasses DistServer, the *base* class method will be called, not the subclass method.

@@ -65,9 +65,7 @@ def retry(
                     return timeout_individual_fn_call_decorator(f)(*args, **kwargs)
                 return f(*args, **kwargs)
 
-            acceptable_exceptions: Tuple[
-                Type[Exception], ...
-            ] = (  # ty: ignore[invalid-assignment]
+            acceptable_exceptions: Tuple[Type[Exception], ...] = (  # ty: ignore[invalid-assignment]
                 exception_to_check
                 if isinstance(exception_to_check, tuple)
                 else (exception_to_check,)

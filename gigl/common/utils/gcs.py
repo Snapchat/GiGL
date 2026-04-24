@@ -422,7 +422,9 @@ class GcsUtils:
         ):
             dst_blob_names: list[str] = []
             for src_blob in src_blobs:
-                assert src_blob.name is not None, "Blob from list_blobs must have a name"
+                assert src_blob.name is not None, (
+                    "Blob from list_blobs must have a name"
+                )
                 dst_blob_names.append(src_blob.name.replace(src_prefix, dst_prefix, 1))
             with self.__storage_client.batch():
                 logger.debug(

@@ -9,6 +9,7 @@ from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingT
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     EPOCH_DONE_EVENT,
     ActiveEpochState,
+    CommandPayload,
     SharedDistSamplingBackend,
     SharedMpCommand,
     StartEpochCmd,
@@ -139,9 +140,15 @@ class DistSamplingProducerTest(TestCase):
         )
         backend._initialized = True
         recorded: list[tuple[int, SharedMpCommand, object]] = []
-        backend._enqueue_worker_command = lambda worker_rank, command, payload: (  # type: ignore[method-assign]
+
+        def _record_command(
+            worker_rank: int,
+            command: SharedMpCommand,
+            payload: CommandPayload,
+        ) -> None:
             recorded.append((worker_rank, command, payload))
-        )
+
+        backend._enqueue_worker_command = _record_command  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
         channel = MagicMock()
         input_tensor = torch.arange(6, dtype=torch.long)

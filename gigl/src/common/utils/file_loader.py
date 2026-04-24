@@ -214,12 +214,14 @@ class FileLoader:
             if isinstance(first, bytes):
                 with open(uri.uri, "wb") as dest:
                     shutil.copyfileobj(
-                        filelike, dest  # ty: ignore[invalid-argument-type]
+                        filelike,
+                        dest,  # ty: ignore[invalid-argument-type]
                     )
             else:
                 with open(uri.uri, "w", encoding="utf-8") as dest:
                     shutil.copyfileobj(
-                        filelike, dest  # ty: ignore[invalid-argument-type]
+                        filelike,
+                        dest,  # ty: ignore[invalid-argument-type]
                     )
 
         else:

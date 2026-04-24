@@ -7,6 +7,7 @@ from typing import Optional
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
 from gigl.src.data_preprocessor.lib.types import InstanceDictPTransform
 
+
 @dataclass(frozen=True)
 class DataReference(ABC):
     """

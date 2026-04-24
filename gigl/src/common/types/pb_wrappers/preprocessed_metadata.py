@@ -283,8 +283,8 @@ class PreprocessedMetadataPbWrapper:
         if isinstance(transform_fn_assets_uri, LocalUri):
             list_files_fn = partial(
                 LocalFsUtils.list_at_path, entity=LocalFsUtils.FileSystemEntity.FILE
-            )  # type: ignore
-            read_file_fn = lambda path: open(path, "rb")  # type: ignore
+            )
+            read_file_fn = lambda path: open(path, "rb")
         elif isinstance(transform_fn_assets_uri, GcsUri):
             gcs_utils = GcsUtils()
             list_files_fn = gcs_utils.list_uris_with_gcs_path_pattern
