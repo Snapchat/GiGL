@@ -4,8 +4,8 @@ This document explains how the `edge_dir` parameter interacts with supervision e
 
 ## What `edge_dir` means
 
-In GLT / GiGL, a distributed graph stores message passing edges in one canonical direction and `edge_dir` tells the
-sampler which direction to walk them:
+In GiGL's in-memory subgraph sampling runtime, a distributed graph stores message passing edges in one canonical
+direction and `edge_dir` tells the sampler which direction to walk them:
 
 - `"out"` — standard forward traversal: neighbours of node `v` are the nodes that `v` points **to** (i.e.
   `v → neighbour`).

@@ -112,8 +112,8 @@ pip install "gigl[pyg27-torch28-cu128, transform]==0.1.0" \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
 ```
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
-script to setup GLT dependency:
+Currently, the dependency used for in-memory subgraph sampling is easiest to install from source, so we run the
+post-install script each time:
 
 ```bash
 gigl-post-install
@@ -128,8 +128,8 @@ pip install "gigl[pyg27-torch28-cpu, transform]==0.1.0" \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
 ```
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
-script to setup GLT dependency:
+Currently, the dependency used for in-memory subgraph sampling is easiest to install from source, so we run the
+post-install script each time:
 
 ```bash
 gigl-post-install
