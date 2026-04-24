@@ -596,7 +596,7 @@ class DistributedNeighborLoaderTest(TestCase):
         loader._is_collocated_worker = False
         loader._is_mp_worker = False
         loader._server_rank_list = [0, 1]
-        loader._producer_id_list = [10, 11]
+        loader._channel_id_list = [10, 11]
         loader._remote_input_has_batches = [True, False]
         loader._channel = MagicMock(reset=MagicMock())
         loader._epoch = 3
@@ -629,7 +629,7 @@ class DistributedNeighborLoaderTest(TestCase):
         loader._is_collocated_worker = False
         loader._is_mp_worker = False
         loader._server_rank_list = [0, 1]
-        loader._producer_id_list = [10, 11]
+        loader._channel_id_list = [10, 11]
 
         loader.shutdown()
 
@@ -637,11 +637,11 @@ class DistributedNeighborLoaderTest(TestCase):
         self.assertEqual(mock_async_request_server.call_count, 2)
         self.assertEqual(
             mock_async_request_server.call_args_list[0].args,
-            (0, DistServer.destroy_sampling_producer, 10),
+            (0, DistServer.destroy_sampling_input, 10),
         )
         self.assertEqual(
             mock_async_request_server.call_args_list[1].args,
-            (1, DistServer.destroy_sampling_producer, 11),
+            (1, DistServer.destroy_sampling_input, 11),
         )
 
     @parameterized.expand(
@@ -742,14 +742,6 @@ class DistributedNeighborLoaderTest(TestCase):
                 dataset=MockRemoteDistDataset(num_storage_nodes=2),
                 num_neighbors=[2, 2],
                 input_nodes={-1: torch.tensor([10]), 0: torch.tensor([20])},
-            ),
-            param(
-                "max_concurrent_producer_inits is not None (colocated mode)",
-                expected_error=ValueError,
-                dataset=DistDataset(rank=0, world_size=1, edge_dir="out"),
-                num_neighbors=[2, 2],
-                input_nodes=torch.tensor([10]),
-                max_concurrent_producer_inits=1,
             ),
         ]
     )

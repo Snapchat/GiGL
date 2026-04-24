@@ -1,3 +1,8 @@
+```{warning}
+This page describes the deprecated tabularized pipeline. New in-memory subgraph sampling pipelines should use the
+[current architecture overview](../architecture.md) instead.
+```
+
 # Subgraph Sampler
 
 The Subgraph Sampler receives node and edge data from Data Preprocessor and mainly generates k-hop localized subgraphs

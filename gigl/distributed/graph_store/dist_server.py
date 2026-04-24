@@ -18,19 +18,9 @@ from typing import Any, Callable, Literal, Optional, TypeVar, Union
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
 from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
-from graphlearn_torch.distributed import (
-    RemoteDistSamplingWorkerOptions,
-    barrier,
-    init_rpc,
-    shutdown_rpc,
-)
+from graphlearn_torch.distributed import barrier, init_rpc, shutdown_rpc
 from graphlearn_torch.partition import PartitionBook
-from graphlearn_torch.sampler import (
-    EdgeSamplerInput,
-    NodeSamplerInput,
-    RemoteSamplerInput,
-    SamplingConfig,
-)
+from graphlearn_torch.sampler import RemoteSamplerInput
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
@@ -44,8 +34,7 @@ from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     SharedDistSamplingBackend,
 )
-from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -579,11 +568,26 @@ class DistServer:
             The unique channel ID for this input.
         """
         request_start_time = time.monotonic()
+        sampler_input = opts.sampler_input
+
+        if isinstance(sampler_input, RemoteSamplerInput):
+            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
+
         with self._lock:
             backend_state = self._backend_state_by_backend_id[opts.backend_id]
             channel_id = self._next_channel_id
             self._next_channel_id += 1
-            channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
+            # If the sampler input is empty, we create a channel with 1 slot and 1MB size
+            # We do this to save on memory usage for empty inputs.
+            # NOTE: We must keep creating these channels as we need to "register input" for
+            # all nodes on the storage cluster, as they the `NeighborSampler` is responsible for
+            # serving incoming sampling requests as well as sending them out.
+            # TODO(kmonte): Look into either supporting truly empty channels or having a shared
+            # DistSampler.
+            if len(sampler_input) == 0:
+                channel = ShmChannel(1, "1MB")
+            else:
+                channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
             channel_state = ChannelState(
                 backend_id=opts.backend_id,
                 worker_key=opts.worker_key,
@@ -595,10 +599,6 @@ class DistServer:
             # reflects state at the moment of registration, not a later
             # value that could be mutated by concurrent register/destroy.
             active_channels_at_register = len(backend_state.active_channels)
-
-        sampler_input = opts.sampler_input
-        if isinstance(sampler_input, RemoteSamplerInput):
-            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
         try:
             with backend_state.lock:
@@ -669,60 +669,6 @@ class DistServer:
                     should_shutdown_backend = True
         if should_shutdown_backend:
             backend_state.runtime.shutdown()
-
-    def create_sampling_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        sampler_options: SamplerOptions,
-    ) -> int:
-        """Create a sampling producer by delegating to the two-phase API.
-
-        Bridge method that keeps existing loaders working. Internally calls
-        :meth:`init_sampling_backend` and :meth:`register_sampling_input`,
-        returning the ``channel_id`` as the ``producer_id``.
-
-        Args:
-            sampler_input: The input data for sampling.
-            sampling_config: Configuration of sampling meta info.
-            worker_options: Options for launching remote sampling workers.
-            sampler_options: Controls which sampler class is instantiated.
-
-        Returns:
-            A unique ID (channel_id) usable as a producer_id.
-        """
-        backend_id = self.init_sampling_backend(
-            InitSamplingBackendRequest(
-                backend_key=worker_options.worker_key,
-                worker_options=worker_options,
-                sampler_options=sampler_options,
-                sampling_config=sampling_config,
-            )
-        )
-        channel_id = self.register_sampling_input(
-            RegisterBackendRequest(
-                backend_id=backend_id,
-                worker_key=worker_options.worker_key,
-                sampler_input=sampler_input,
-                sampling_config=sampling_config,
-                buffer_capacity=worker_options.buffer_capacity,
-                buffer_size=worker_options.buffer_size,
-            )
-        )
-        return channel_id
-
-    def destroy_sampling_producer(self, producer_id: int) -> None:
-        """Destroy a sampling producer by delegating to :meth:`destroy_sampling_input`.
-
-        Bridge method that keeps existing loaders working.
-
-        Args:
-            producer_id: The producer ID (channel_id) to destroy.
-        """
-        self.destroy_sampling_input(producer_id)
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
