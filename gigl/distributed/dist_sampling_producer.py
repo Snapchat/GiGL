@@ -105,28 +105,6 @@ def _sampling_worker_loop(
             current_device=current_device,
         )
 
-        if isinstance(sampler_options, KHopNeighborSamplerOptions):
-            dist_sampler = DistNeighborSampler(
-                *shared_sampler_args,
-                seed=sampling_config.seed,
-            )
-        elif isinstance(sampler_options, PPRSamplerOptions):
-            assert degree_tensors is not None
-            dist_sampler = DistPPRNeighborSampler(
-                *shared_sampler_args,
-                seed=sampling_config.seed,
-                alpha=sampler_options.alpha,
-                eps=sampler_options.eps,
-                max_ppr_nodes=sampler_options.max_ppr_nodes,
-                num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
-                total_degree_dtype=sampler_options.total_degree_dtype,
-                degree_tensors=degree_tensors,
-                max_fetch_iterations=sampler_options.max_fetch_iterations,
-            )
-        else:
-            raise NotImplementedError(
-                f"Unsupported sampler options type: {type(sampler_options)}"
-            )
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
