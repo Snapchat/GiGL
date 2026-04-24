@@ -47,10 +47,10 @@ Checks: >
 # Warnings from headers outside the regex (PyTorch, pybind11, etc.) are suppressed
 # entirely and never reach WarningsAsErrors — so the large warning counts printed
 # by clang-tidy ("N warnings generated") are third-party noise that is silently
-# dropped. Only diagnostics in our own headers (.*/gigl/csrc/.*) are reported,
+# dropped. Only diagnostics in our own headers (.*/gigl-core/src/.*) are reported,
 # and those are treated as hard errors.
 WarningsAsErrors: '*'
-HeaderFilterRegex: '.*/gigl/csrc/.*'
+HeaderFilterRegex: '.*/gigl-core/src/.*'
 FormatStyle:     none
 # CheckOptions: per-check tuning parameters. Each entry configures a specific
 # option for an individual check, using the form:

@@ -49,8 +49,22 @@ fossa*.zip
 # https://github.com/google-github-actions/auth/issues/497
 gha-creds-*.json
 
-# Compiled C++ extension modules
-gigl/csrc/**/*.so
+# gigl-core build outputs. scikit-build-core writes the proper wheel build into
+# gigl-core/build/{wheel_tag}/; the editable-install cmake invocation additionally
+# drops cache files at gigl-core/ root (CMakeCache.txt, .cmake/, build.ninja, etc).
+gigl-core/build/
+gigl-core/CMakeCache.txt
+gigl-core/CMakeFiles/
+gigl-core/CMakeInit.txt
+gigl-core/cmake_install.cmake
+gigl-core/build.ninja
+gigl-core/.cmake/
+gigl-core/.ninja_log
+gigl-core/.ninja_deps
+gigl-core/.skbuild-info.json
+gigl-core/compile_commands.json
+gigl-core/_core*.so
+gigl-core/src/gigl_core/*.so
 
 # Local-only scripts with hardcoded internal identifiers
 scripts/_local/

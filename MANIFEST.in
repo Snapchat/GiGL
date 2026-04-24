@@ -1,3 +1,0 @@
-global-exclude tests/*
-recursive-include gigl/deps *.jar
-recursive-include gigl/csrc *.cpp *.cu *.h *.cuh

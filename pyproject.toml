@@ -13,6 +13,9 @@ requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available fo
 dependencies = [
   "argo-workflows",
   "chardet",
+  # gigl-core hosts all C++ / CUDA / pybind11 extensions. Separate wheel per torch
+  # variant (see [tool.uv.sources] below). Same pattern PyG uses for pyg_lib.
+  "gigl-core",
   "google-cloud-aiplatform",
   "google-cloud-dataproc",
   "google-cloud-logging",
@@ -80,7 +83,6 @@ pyg27-torch28-cu128 = [
   "torch_sparse; sys_platform != 'darwin'",
   "torch_spline_conv; sys_platform != 'darwin'",
   "torchrec ; sys_platform != 'darwin'",
-
 ]
 experimental = [
   "hydra-core==1.3.2",
@@ -99,14 +101,10 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+no-build-isolation-package = ["gigl-core"]
 
 [dependency-groups]
-cpp-build = [
-  "scikit-build-core>=0.10",
-  "pybind11>=2.12",
-]
 dev = [
-  {include-group = "cpp-build"},
   {include-group = "docs"},
   {include-group = "lint"},
   {include-group = "test"},
@@ -240,27 +238,33 @@ torch_spline_conv = [
   { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
   { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
 ]
+# gigl-core resolves to the local workspace member in dev — uv sync builds it
+# from source via scikit-build-core. At release install time, the published
+# gigl wheel has `Requires-Dist: gigl-core`; consumers resolve gigl-core from
+# whichever GCP index they already configured for installing gigl itself
+# (both variants are published to gigl-cu128 and gigl CPU registries).
+gigl-core = { workspace = true }
 
+[tool.uv.workspace]
+members = [
+    "gigl-core",
+]
 
 
 # ===================== Build/Project Configurations ===========================
-# gigl releases two wheels (pyg27-torch28-cpu and pyg27-torch28-cu128), one
-# built against CPU torch headers and one against CUDA torch headers. See
-# release.yml for the build matrix. CMakeLists.txt auto-discovers python_*.cu
-# files alongside python_*.cpp, so CUDA kernels can be added without changes
-# to the build configuration.
+# gigl is a pure-Python package. All C++/CUDA kernels live in the gigl-core
+# wheel (see gigl-core/pyproject.toml). Release builds two variants per package:
+# cpu and cu128. gigl's build stays fast because no CMake runs here.
 [build-system]
-requires = [
-    "scikit-build-core>=0.10",
-    "pybind11>=2.12",
-]
-build-backend = "scikit_build_core.build"
+requires      = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-[tool.scikit-build]
-cmake.version    = ">=3.18"
-build-dir        = ".cache/cmake_build"
-wheel.packages   = ["gigl", "snapchat"]
-editable.mode    = "redirect"
+[tool.setuptools.packages.find]
+# Include all sub-packages under gigl/ and snapchat/. gigl-core is a separate
+# workspace member with its own pyproject.toml and is excluded here.
+include = ["gigl*", "snapchat*"]
+exclude = ["gigl-core*", "tests*"]
+namespaces = true
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"

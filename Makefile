@@ -22,10 +22,13 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
-CPP_SOURCES:=$(shell find gigl/csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
+CPP_SOURCES:=$(shell find gigl-core/src gigl-core/tests \( -name "*.cpp" -o -name "*.cu" -o -name "*.h" -o -name "*.cuh" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
-# Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
-CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
+# Exclude .cu/.cuh files from tidy targets; clang-format and clangd handle them fine.
+CPP_SOURCES_NO_CUDA:=$(filter-out %.cu %.cuh,$(CPP_SOURCES))
+# scikit-build-core writes compile_commands.json into gigl-core/build/{wheel_tag}/
+# during `uv sync`. Resolved lazily at recipe time so the wildcard sees the latest build.
+CPP_COMPILE_COMMANDS_DIR=$(firstword $(wildcard gigl-core/build/*/))
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -52,8 +55,8 @@ check_if_valid_env:
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./requirements/install_py_deps.sh --dev
-	bash ./requirements/install_scala_deps.sh
-	bash ./requirements/install_cpp_deps.sh
+	# bash ./requirements/install_scala_deps.sh
+	# bash ./requirements/install_cpp_deps.sh
 	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
@@ -80,7 +83,7 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under tests/unit.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-unit_test_py: clean_build_files_py build_cpp_extensions type_check
+unit_test_py: clean_build_files_py type_check
 	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -91,6 +94,15 @@ unit_test_scala: clean_build_files_scala
 	( cd scala; sbt test )
 	( cd scala_spark35 ; sbt test )
 
+# Builds and runs gigl-core's C++ unit tests (GoogleTest + CTest). scikit-build-core
+# is not involved here — we invoke cmake directly against gigl-core/ so we can
+# flip -DGIGL_CORE_BUILD_TESTS=ON to wire in the tests subdirectory.
+unit_test_cpp:
+	cd gigl-core && uv run cmake -S . -B build/tests -DGIGL_CORE_BUILD_TESTS=ON \
+		-DCMAKE_PREFIX_PATH=$$(uv run python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+	cd gigl-core && uv run cmake --build build/tests --parallel
+	cd gigl-core && uv run ctest --test-dir build/tests --output-on-failure
+
 # Runs unit tests for Python and Scala
 # Asserts Python and Scala files are formatted correctly.
 # Asserts YAML configs can be parsed.
@@ -99,14 +111,6 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-.cache/cpp_tests/.configured: CMakeLists.txt tests/unit/cpp/CMakeLists.txt .cache/cmake_build/CMakeInit.txt
-	uv run cmake -C .cache/cmake_build/CMakeInit.txt \
-		-S . -B .cache/cpp_tests -DGIGL_BUILD_TESTS=ON
-	touch .cache/cpp_tests/.configured
-
-unit_test_cpp: .cache/cpp_tests/.configured
-	uv run cmake --build .cache/cpp_tests --parallel
-	uv run ctest --test-dir .cache/cpp_tests --output-on-failure
 
 unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
@@ -122,12 +126,8 @@ check_format_md:
 	@echo "Checking markdown files..."
 	uv run mdformat --check ${MD_FILES}
 
-# TODO: Remove the $(if ...) guards in check_format_cpp, format_cpp, check_lint_cpp, and
-# fix_lint_cpp once C++ source files are permanently present in the repo. The guards exist
-# to silently no-op on branches that have no python_*.cpp files yet; once there is always
-# at least one C++ source, the guards just hide accidental empty-source mistakes.
 check_format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
+	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
 
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
@@ -137,7 +137,7 @@ check_format: check_format_py check_format_cpp check_format_scala check_format_m
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
 # By default, runs all tests under tests/integration.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-integration_test: build_cpp_extensions
+integration_test:
 	uv run python -m tests.integration.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -165,44 +165,40 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 -i --style=file $(CPP_SOURCES))
+	clang-format-15 -i --style=file $(CPP_SOURCES)
 
 format: format_py format_cpp format_scala format_md
 
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-# Stamp-file guard: uv pip install -e . triggers a full CMake configure-and-build
-# cycle (loading torch headers) even when nothing changed. By making the stamp file
-# depend on C++ sources, CMakeLists.txt, and pyproject.toml, make skips the reinstall
-# on subsequent runs unless something actually changed. The stamp file lives inside
-# .cache/cmake_build so it is automatically invalidated if the build dir is cleaned.
-.cache/cmake_build/.gigl_built: $(shell find gigl/csrc \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
-	uv pip install -e .
-	touch .cache/cmake_build/.gigl_built
+marco:
+	echo "polo"
+	touch marco
 
-build_cpp_extensions: .cache/cmake_build/.gigl_built
-
-generate_compile_commands:
-	uv run python -m scripts.generate_compile_commands
-
-check_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES_NO_CUDA),uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA))
+# scikit-build-core writes compile_commands.json into gigl-core/build/{wheel_tag}/
+# during `uv sync` / `uv pip install -e ./gigl-core`. clang-tidy reads it directly.
+# If the path is empty (gigl-core has never been built), `uv sync` populates it.
+check_lint_cpp:
+	@test -n "$(CPP_COMPILE_COMMANDS_DIR)" || (echo "No gigl-core build dir found. Run 'uv sync' first."; exit 1)
+	clang-tidy-15 -p $(CPP_COMPILE_COMMANDS_DIR) $(CPP_SOURCES_NO_CUDA)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing. Note: --fix cannot auto-repair every check;
 # some violations require manual edits.
-fix_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA))
+fix_lint_cpp:
+	@test -n "$(CPP_COMPILE_COMMANDS_DIR)" || (echo "No gigl-core build dir found. Run 'uv sync' first."; exit 1)
+	clang-tidy-15 --fix -p $(CPP_COMPILE_COMMANDS_DIR) $(CPP_SOURCES_NO_CUDA)
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
 
-# Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
+# Wipe gigl-core's build cache. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.
 clean_cpp:
-	rm -rf .cache/cpp_tests .cache/cmake_build .cache/cmake_build_lint
+	rm -rf gigl-core/build
+	rm -f gigl-core/src/gigl_core/*.so
 
 # compiles current working state of scala projects to local jars
 compile_jars:
@@ -315,7 +311,7 @@ run_all_e2e_tests:
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
-compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docker_images
+compile_gigl_kubeflow_pipeline: compile_jars push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
 		--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \
@@ -341,7 +337,7 @@ _skip_build_deps:
 # 	job_name=... \ , and other params
 # 	compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" \
 # 	run_dev_gnn_kubeflow_pipeline
-run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, build_cpp_extensions compile_jars push_new_docker_images)
+run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars push_new_docker_images)
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		$(if $(compiled_pipeline_path),,--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}) \
@@ -367,8 +363,7 @@ clean_build_files_scala:
 	( cd scala_spark35; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 
 clean_build_files_cpp:
-	rm -rf .cache/cpp_tests
-	rm -f .cache/compile_commands.json
+	rm -rf gigl-core/build
 
 clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
 

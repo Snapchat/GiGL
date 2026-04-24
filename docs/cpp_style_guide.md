@@ -22,6 +22,18 @@ make check_lint_cpp    # Run clang-tidy static analysis
 
 ______________________________________________________________________
 
+## Building
+
+All C++ lives in the `gigl-core/` workspace package. `uv sync` (invoked via `make install_dev_deps`) builds gigl-core
+via scikit-build-core and installs the resulting `.so` into `gigl-core/src/gigl_core/`. To force a rebuild after editing
+a C++ source, run `uv pip install -e ./gigl-core --force-reinstall`.
+
+- Release (`.github/workflows/release.yml`) builds and publishes `gigl-core` before `gigl`. Each torch variant (cpu,
+  cu128) goes to a matching GCP artifact registry.
+- `make unit_test_cpp` configures `gigl-core/` with `-DGIGL_CORE_BUILD_TESTS=ON`, builds, and runs CTest.
+
+______________________________________________________________________
+
 ## Build Configuration
 
 All builds use `-O3 -g`: full optimization with debug symbols always enabled. Debug symbols add no runtime overhead and
@@ -163,7 +175,7 @@ Enforced via `readability-identifier-naming`:
 | Option                                                     | Value             | Effect                                                                                                                                                                                |
 | ---------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WarningsAsErrors`                                         | `*`               | Every check failure is a hard error in CI                                                                                                                                             |
-| `HeaderFilterRegex`                                        | `.*/gigl/csrc/.*` | Scopes checks to our own headers. Using `.*` causes clang-tidy to report warnings from every PyTorch/pybind11 header it parses, flooding output with thousands of third-party issues. |
+| `HeaderFilterRegex`                                        | `.*/gigl-core/src/.*` | Scopes checks to our own headers. Using `.*` causes clang-tidy to report warnings from every PyTorch/pybind11 header it parses, flooding output with thousands of third-party issues. |
 | `FormatStyle`                                              | `none`            | clang-tidy does not auto-reformat; use clang-format separately                                                                                                                        |
 | `bugprone-string-constructor.LargeLengthThreshold`         | `8388608` (8 MB)  | Strings larger than 8 MB from a length argument are flagged                                                                                                                           |
 | `modernize-loop-convert.NamingStyle`                       | `camelBack`       | Auto-generated loop variable names use camelBack, matching `readability-identifier-naming.VariableCase`                                                                               |
@@ -174,7 +186,7 @@ ______________________________________________________________________
 
 ## pybind11 Extension Modules
 
-Extension modules live under `gigl/csrc/`.
+Extension modules live under `gigl-core/src/`.
 
 ### Naming convention
 
@@ -184,11 +196,7 @@ Extension modules live under `gigl/csrc/`.
 | `<name>.cpp` / `<name>.cu` | Implementation — function and class definitions                  |
 | `<name>.h`                 | Declarations (function signatures, class definitions, constants) |
 
-Example: to add a `my_op` extension under `gigl/csrc/sampling/`:
-
-```
-gigl/csrc/sampling/python_my_op.cpp   ← pybind11 bindings
-gigl/csrc/sampling/my_op.cpp          ← implementation
-```
-
-The compiled `.so` is installed to the same directory and importable as `gigl.csrc.sampling.my_op`.
+Example: to add a new function, create `gigl-core/src/my_op.h`, `gigl-core/src/my_op.cpp`, and
+`gigl-core/src/python_my_op.cpp`, then list the sources in `pybind11_add_module(...)` inside `gigl-core/CMakeLists.txt`.
+The compiled extension is bundled into the `_core` module and importable as `gigl_core._core.my_op` (re-exported from
+`gigl_core/__init__.py`).

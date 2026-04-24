@@ -1,0 +1,3 @@
+import torch
+
+def add_one(tensor: torch.Tensor) -> torch.Tensor: ...

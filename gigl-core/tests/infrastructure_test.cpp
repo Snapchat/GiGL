@@ -5,8 +5,6 @@
 
 #include <gtest/gtest.h>
 
-// A trivial sanity-check test — if this fails, something is very wrong with
-// the build environment itself.
 TEST(PlaceholderTest, BasicArithmetic) {
     EXPECT_EQ(1 + 1, 2);
 }

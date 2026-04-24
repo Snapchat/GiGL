@@ -17,6 +17,12 @@ conflicts = [[
     { package = "gigl", extra = "pyg27-torch28-cu128" },
 ]]
 
+[manifest]
+members = [
+    "gigl",
+    "gigl-core",
+]
+
 [[package]]
 name = "absl-py"
 version = "1.4.0"
@@ -607,8 +613,8 @@ dependencies = [
     { name = "numpy", marker = "sys_platform != 'darwin'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/fbgemm_gpu-1.3.0%2Bcpu-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:4154e803ba762906a604a72aa41685fdd49459fce55cea79d42ac7c45c8770ca" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/fbgemm_gpu-1.3.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:0267ec844b43028f4b9b8e14acd16276e82bb97f91b6b1078f732eb9225b20c6" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/fbgemm_gpu-1.3.0%2Bcpu-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:4154e803ba762906a604a72aa41685fdd49459fce55cea79d42ac7c45c8770ca", upload-time = "2025-08-22T18:49:45Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/fbgemm_gpu-1.3.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:0267ec844b43028f4b9b8e14acd16276e82bb97f91b6b1078f732eb9225b20c6", upload-time = "2025-08-22T18:49:45Z" },
 ]
 
 [[package]]
@@ -619,7 +625,7 @@ dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/fbgemm_gpu-1.3.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:365a2c7f89e89f6d8acf3af5101cbb1651cd1cc64057fd2902feae490814cee3" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/fbgemm_gpu-1.3.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:365a2c7f89e89f6d8acf3af5101cbb1651cd1cc64057fd2902feae490814cee3", upload-time = "2025-08-22T18:50:02Z" },
 ]
 
 [[package]]
@@ -707,6 +713,7 @@ source = { editable = "." }
 dependencies = [
     { name = "argo-workflows" },
     { name = "chardet" },
+    { name = "gigl-core" },
     { name = "google-cloud-aiplatform" },
     { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
@@ -768,10 +775,6 @@ transform = [
 ]
 
 [package.dev-dependencies]
-cpp-build = [
-    { name = "pybind11" },
-    { name = "scikit-build-core" },
-]
 dev = [
     { name = "astroid" },
     { name = "mdformat" },
@@ -787,10 +790,8 @@ dev = [
     { name = "pandas-stubs" },
     { name = "parameterized" },
     { name = "pre-commit" },
-    { name = "pybind11" },
     { name = "pydata-sphinx-theme" },
     { name = "ruff" },
-    { name = "scikit-build-core" },
     { name = "sphinx" },
     { name = "sphinx-autoapi" },
     { name = "sphinx-autodoc-typehints" },
@@ -847,6 +848,7 @@ requires-dist = [
     { name = "chardet" },
     { name = "fbgemm-gpu", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "fbgemm-gpu", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
+    { name = "gigl-core", editable = "gigl-core" },
     { name = "google-cloud-aiplatform" },
     { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
@@ -895,10 +897,6 @@ requires-dist = [
 provides-extras = ["transform", "pyg27-torch28-cpu", "pyg27-torch28-cu128", "experimental"]
 
 [package.metadata.requires-dev]
-cpp-build = [
-    { name = "pybind11", specifier = ">=2.12" },
-    { name = "scikit-build-core", specifier = ">=0.10" },
-]
 dev = [
     { name = "astroid", specifier = "==3.3.11" },
     { name = "mdformat", specifier = "==0.7.22" },
@@ -914,10 +912,8 @@ dev = [
     { name = "pandas-stubs", specifier = "==2.2.2.240807" },
     { name = "parameterized", specifier = "==0.9.0" },
     { name = "pre-commit", specifier = "==3.3.2" },
-    { name = "pybind11", specifier = ">=2.12" },
     { name = "pydata-sphinx-theme", specifier = "==0.16.1" },
     { name = "ruff", specifier = "==0.15.10" },
-    { name = "scikit-build-core", specifier = ">=0.10" },
     { name = "sphinx", specifier = "==7.4.7" },
     { name = "sphinx-autoapi", specifier = "==3.6.0" },
     { name = "sphinx-autodoc-typehints", specifier = "==2.3.0" },
@@ -964,6 +960,11 @@ typing-stubs = [
     { name = "types-requests", specifier = "==2.31.0.6" },
     { name = "types-tqdm", specifier = "==4.67.0.20250513" },
 ]
+
+[[package]]
+name = "gigl-core"
+version = "0.2.0"
+source = { editable = "gigl-core" }
 
 [[package]]
 name = "google-api-core"
@@ -2837,15 +2838,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pathspec"
-version = "0.12.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ca/bc/f35b8446f4531a7cb215605d100cd88b7ac6f44ab3fc94870c120ab3adbf/pathspec-0.12.1.tar.gz", hash = "sha256:a482d51503a1ab33b1c67a6c3813a26953dbdc71c31dacaef9a838c4e29f5712", size = 51043, upload-time = "2023-12-10T22:30:45Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/20/ff623b09d963f88bfde16306a54e12ee5ea43e9b597108672ff3a408aad6/pathspec-0.12.1-py3-none-any.whl", hash = "sha256:a0d503e138a4c123b27490a4f7beda6a01c6f288df0e4a8b79c7eb0dc7b4cc08", size = 31191, upload-time = "2023-12-10T22:30:43.14Z" },
-]
-
-[[package]]
 name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3067,15 +3059,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e9/e6/78ebbb10a8c8e4b61a59249394a4a594c1a7af95593dc933a349c8d00964/pyasn1_modules-0.4.2.tar.gz", hash = "sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6", size = 307892, upload-time = "2025-03-28T02:41:22.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl", hash = "sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a", size = 181259, upload-time = "2025-03-28T02:41:19.028Z" },
-]
-
-[[package]]
-name = "pybind11"
-version = "3.0.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cc/f0/35145a3c3baffeef55d4b8324caa33abaa8fa56ab345ecd4b2211d09163e/pybind11-3.0.4.tar.gz", hash = "sha256:3286b59c8a774b9ee650169302dd5a4eedc30a8617905a0560dd8ee44775130c", size = 589533, upload-time = "2026-04-19T03:08:15.925Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/06/c3a23c9a0263b136c519f033a58d4641e73065fefc7754e9667ec206d992/pybind11-3.0.4-py3-none-any.whl", hash = "sha256:961720ee652da51d531b7b2451a6bd2bc042b0106e6d9baa48ecb7d58034ce63", size = 314166, upload-time = "2026-04-19T03:08:14.091Z" },
 ]
 
 [[package]]
@@ -3539,19 +3522,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/46/602938f030adfa043e67112b73821024dc79f3ab4df5474c25fa4c1d2d14/ruff-0.15.10-py3-none-win32.whl", hash = "sha256:d4272e87e801e9a27a2e8df7b21011c909d9ddd82f4f3281d269b6ba19789ca5", size = 10588964, upload-time = "2026-04-09T14:06:07.14Z" },
     { url = "https://files.pythonhosted.org/packages/25/b6/261225b875d7a13b33a6d02508c39c28450b2041bb01d0f7f1a83d569512/ruff-0.15.10-py3-none-win_amd64.whl", hash = "sha256:28cb32d53203242d403d819fd6983152489b12e4a3ae44993543d6fe62ab42ed", size = 11745044, upload-time = "2026-04-09T14:05:39.473Z" },
     { url = "https://files.pythonhosted.org/packages/58/ed/dea90a65b7d9e69888890fb14c90d7f51bf0c1e82ad800aeb0160e4bacfd/ruff-0.15.10-py3-none-win_arm64.whl", hash = "sha256:601d1610a9e1f1c2165a4f561eeaa2e2ea1e97f3287c5aa258d3dab8b57c6188", size = 11035607, upload-time = "2026-04-09T14:05:47.593Z" },
-]
-
-[[package]]
-name = "scikit-build-core"
-version = "0.12.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-    { name = "pathspec" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/28/cd/9ebb50029b6d8a3ee9e38cdce514ebd70190ec1edf28ab0a1f66d0b84670/scikit_build_core-0.12.2.tar.gz", hash = "sha256:562e0bbc9de1a354c87825ccf732080268d6582a0200f648e8c4a2dcb1e3736d", size = 303553, upload-time = "2026-03-05T18:25:57.666Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/49/b2f0fbe3165d55c02e7f9eec6a10685d518af0ef6e919ff2f589c2d15c85/scikit_build_core-0.12.2-py3-none-any.whl", hash = "sha256:6ea4730da400f9a998ec3287bd3ebc1d751fe45ad0a93451bead8618adbc02b1", size = 192625, upload-time = "2026-03-05T18:25:56.207Z" },
 ]
 
 [[package]]
@@ -4162,7 +4132,7 @@ dependencies = [
     { name = "typing-extensions", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:3d05017d19bc99741288e458888283a44b0ee881d53f05f72f8b1cfea8998122" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:3d05017d19bc99741288e458888283a44b0ee881d53f05f72f8b1cfea8998122", upload-time = "2025-10-01T23:35:48Z" },
 ]
 
 [[package]]
@@ -4182,11 +4152,11 @@ dependencies = [
     { name = "typing-extensions", marker = "(platform_machine != 'arm64' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (sys_platform != 'darwin' and extra == 'extra-4-gigl-pyg27-torch28-cpu') or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-linux_s390x.whl", hash = "sha256:2bfc013dd6efdc8f8223a0241d3529af9f315dffefb53ffa3bf14d3f10127da6" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:680129efdeeec3db5da3f88ee5d28c1b1e103b774aef40f9d638e2cce8f8d8d8" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:cb06175284673a581dd91fb1965662ae4ecaba6e5c357aa0ea7bb8b84b6b7eeb" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-win_amd64.whl", hash = "sha256:7631ef49fbd38d382909525b83696dc12a55d68492ade4ace3883c62b9fc140f" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-win_arm64.whl", hash = "sha256:41e6fc5ec0914fcdce44ccf338b1d19a441b55cafdd741fd0bf1af3f9e4cfd14" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-linux_s390x.whl", hash = "sha256:2bfc013dd6efdc8f8223a0241d3529af9f315dffefb53ffa3bf14d3f10127da6", upload-time = "2025-10-01T23:33:07Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:680129efdeeec3db5da3f88ee5d28c1b1e103b774aef40f9d638e2cce8f8d8d8", upload-time = "2025-10-01T23:33:11Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:cb06175284673a581dd91fb1965662ae4ecaba6e5c357aa0ea7bb8b84b6b7eeb", upload-time = "2025-10-01T23:33:14Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-win_amd64.whl", hash = "sha256:7631ef49fbd38d382909525b83696dc12a55d68492ade4ace3883c62b9fc140f", upload-time = "2025-10-01T23:33:20Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp311-cp311-win_arm64.whl", hash = "sha256:41e6fc5ec0914fcdce44ccf338b1d19a441b55cafdd741fd0bf1af3f9e4cfd14", upload-time = "2025-10-01T23:33:36Z" },
 ]
 
 [[package]]
@@ -4217,8 +4187,8 @@ dependencies = [
     { name = "typing-extensions", marker = "extra == 'extra-4-gigl-pyg27-torch28-cu128'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:34c55443aafd31046a7963b63d30bc3b628ee4a704f826796c865fdfd05bb596" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed", upload-time = "2025-10-01T23:49:06Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:34c55443aafd31046a7963b63d30bc3b628ee4a704f826796c865fdfd05bb596", upload-time = "2025-10-01T23:49:30Z" },
 ]
 
 [[package]]
@@ -4373,7 +4343,7 @@ dependencies = [
     { name = "tqdm", marker = "sys_platform != 'darwin'" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/cpu/torchrec-1.3.0%2Bcpu-py3-none-any.whl", hash = "sha256:be2b572625792feac1656afcac19e35448df5447d215575a4b8cb22d9220d2cf" },
+    { url = "https://download.pytorch.org/whl/cpu/torchrec-1.3.0%2Bcpu-py3-none-any.whl", hash = "sha256:be2b572625792feac1656afcac19e35448df5447d215575a4b8cb22d9220d2cf", upload-time = "2025-09-17T07:14:32Z" },
 ]
 
 [[package]]
@@ -4389,7 +4359,7 @@ dependencies = [
     { name = "tqdm" },
 ]
 wheels = [
-    { url = "https://download.pytorch.org/whl/cu128/torchrec-1.3.0%2Bcu128-py3-none-any.whl", hash = "sha256:6de7e4a70a6e95815a8f06b1dec4d982cea4d32fa7d86a10a8bb4c52b8a749b9" },
+    { url = "https://download.pytorch.org/whl/cu128/torchrec-1.3.0%2Bcu128-py3-none-any.whl", hash = "sha256:6de7e4a70a6e95815a8f06b1dec4d982cea4d32fa7d86a10a8bb4c52b8a749b9", upload-time = "2025-09-17T07:14:37Z" },
 ]
 
 [[package]]
