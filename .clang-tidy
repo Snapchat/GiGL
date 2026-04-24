@@ -50,7 +50,7 @@ Checks: >
 # dropped. Only diagnostics in our own headers (.*/gigl/csrc/.*) are reported,
 # and those are treated as hard errors.
 WarningsAsErrors: '*'
-HeaderFilterRegex: '.*/gigl/csrc/.*'
+HeaderFilterRegex: '.*/gigl-core/csrc/.*'
 FormatStyle:     none
 # CheckOptions: per-check tuning parameters. Each entry configures a specific
 # option for an individual check, using the form:

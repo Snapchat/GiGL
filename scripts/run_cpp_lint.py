@@ -62,7 +62,10 @@ def main() -> None:
         futures = {executor.submit(_check_file, s): s for s in sources}
         for future in as_completed(futures):
             source = futures[future]
-            diagnostics = future.result()
+            try:
+                diagnostics = future.result()
+            except Exception as exc:
+                diagnostics = [f"linter error: {exc}"]
             if diagnostics:
                 failures[source] = diagnostics
 
