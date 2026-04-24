@@ -1,10 +1,5 @@
 name: Release GiGL
 
-# TODO: Before the first release using this workflow, complete the following one-time GCP setup:
-#   1. Create the `gigl-cu128` Artifact Registry Python repository in GCP project
-#      `external-snap-ci-github-gigl` (the CPU registry `gigl` already exists).
-#   2. Grant the release service account write access to the new `gigl-cu128` repository.
-
 on:
   # Triggers the workflow manually for now until we have full support for releasing:
   # - building and releasing docker images
