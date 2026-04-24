@@ -981,5 +981,77 @@ class TestCustomResourceConfigDryRun(TestCase):
             )
 
 
+class TestReservationAffinityValidation(TestCase):
+    """Validate VertexAiResourceConfig.reservation_affinity handling."""
+
+    def test_unset_reservation_passes(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        check_if_trainer_resource_config_valid(config)
+
+    def test_specific_reservation_with_valid_name_passes(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        affinity = (
+            config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity
+        )
+        affinity.type = "SPECIFIC_RESERVATION"
+        affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        check_if_trainer_resource_config_valid(config)
+
+    def test_specific_reservation_without_names_fails(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity.type = "SPECIFIC_RESERVATION"
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_empty_type_with_names_fails(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_type_unspecified_is_rejected(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity.type = "TYPE_UNSPECIFIED"
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_any_reservation_with_names_fails(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        affinity = (
+            config.trainer_resource_config.vertex_ai_trainer_config.reservation_affinity
+        )
+        affinity.type = "ANY_RESERVATION"
+        affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+    def test_graph_store_per_pool_reservations_pass(self):
+        config = _create_valid_vertex_ai_graph_store_trainer_config()
+        graph_store_cfg = (
+            config.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        )
+        graph_store_cfg.compute_pool.reservation_affinity.type = "SPECIFIC_RESERVATION"
+        graph_store_cfg.compute_pool.reservation_affinity.reservation_resource_names.append(
+            "projects/my-project/zones/us-central1-a/reservations/my-reservation"
+        )
+        graph_store_cfg.graph_store_pool.reservation_affinity.type = "NO_RESERVATION"
+        check_if_trainer_resource_config_valid(config)
+
+    def test_graph_store_pool_with_invalid_type_fails(self):
+        config = _create_valid_vertex_ai_graph_store_trainer_config()
+        graph_store_cfg = (
+            config.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        )
+        graph_store_cfg.graph_store_pool.reservation_affinity.type = "TYPE_UNSPECIFIED"
+        with self.assertRaises(AssertionError):
+            check_if_trainer_resource_config_valid(config)
+
+
 if __name__ == "__main__":
     absltest.main()

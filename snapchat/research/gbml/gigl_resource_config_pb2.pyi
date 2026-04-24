@@ -212,6 +212,39 @@ class LocalTrainerConfig(google.protobuf.message.Message):
 
 global___LocalTrainerConfig = LocalTrainerConfig
 
+class VertexAiReservationAffinity(google.protobuf.message.Message):
+    """Reservation affinity for a Vertex AI job.
+    Maps to google.cloud.aiplatform_v1.types.ReservationAffinity.
+    See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TYPE_FIELD_NUMBER: builtins.int
+    RESERVATION_RESOURCE_NAMES_FIELD_NUMBER: builtins.int
+    type: builtins.str
+    """One of "NO_RESERVATION", "ANY_RESERVATION", "SPECIFIC_RESERVATION".
+    Unset/empty means no reservation_affinity is set on the MachineSpec and
+    Vertex AI applies its own default behavior.
+    Note: "TYPE_UNSPECIFIED" is rejected by the validator; use the empty
+    string for "no preference".
+    """
+    @property
+    def reservation_resource_names(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+        """Full resource names of reservations to consume.
+        Required when type == "SPECIFIC_RESERVATION"; must be empty otherwise.
+        Format: projects/{project}/zones/{zone}/reservations/{reservation_name}
+        """
+    def __init__(
+        self,
+        *,
+        type: builtins.str = ...,
+        reservation_resource_names: collections.abc.Iterable[builtins.str] | None = ...,
+    ) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["reservation_resource_names", b"reservation_resource_names", "type", b"type"]) -> None: ...
+
+global___VertexAiReservationAffinity = VertexAiReservationAffinity
+
 class VertexAiResourceConfig(google.protobuf.message.Message):
     """Configuration for Vertex AI resources"""
 
@@ -225,6 +258,7 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     GCP_REGION_OVERRIDE_FIELD_NUMBER: builtins.int
     SCHEDULING_STRATEGY_FIELD_NUMBER: builtins.int
     BOOT_DISK_SIZE_GB_FIELD_NUMBER: builtins.int
+    RESERVATION_AFFINITY_FIELD_NUMBER: builtins.int
     machine_type: builtins.str
     """Machine type for job"""
     gpu_type: builtins.str
@@ -255,6 +289,11 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     """Boot disk size in GB for the job.
     If unset or zero, will use the default of 100 GB.
     """
+    @property
+    def reservation_affinity(self) -> global___VertexAiReservationAffinity:
+        """Compute Engine reservation affinity for the job.
+        See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+        """
     def __init__(
         self,
         *,
@@ -266,8 +305,10 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         gcp_region_override: builtins.str = ...,
         scheduling_strategy: builtins.str = ...,
         boot_disk_size_gb: builtins.int = ...,
+        reservation_affinity: global___VertexAiReservationAffinity | None = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["boot_disk_size_gb", b"boot_disk_size_gb", "gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
+    def HasField(self, field_name: typing_extensions.Literal["reservation_affinity", b"reservation_affinity"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["boot_disk_size_gb", b"boot_disk_size_gb", "gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "reservation_affinity", b"reservation_affinity", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
 
 global___VertexAiResourceConfig = VertexAiResourceConfig
 
