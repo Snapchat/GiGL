@@ -247,10 +247,11 @@ torch_spline_conv = [
   { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
   { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
 ]
-# gigl-core is auto-discovered as a local package — uv sync / uv pip install -e gigl-core/
-# builds it from source via scikit-build-core. At release install time, published gigl
-# and gigl-core wheels are resolved from the same GCP registry.
-gigl-core = { workspace = true }
+# gigl-core is a local path dependency. In dev, uv resolves it from the adjacent
+# gigl-core/ directory and builds the C++ extension via scikit-build-core.
+# At release install time, published gigl and gigl-core wheels are resolved
+# from the same GCP registry.
+gigl-core = { path = "gigl-core" }
 
 
 # ===================== Build/Project Configurations ===========================
