@@ -1,0 +1,37 @@
+[project]
+name            = "gigl-core"
+description     = "GiGL C++/CUDA kernels (pybind11 extensions)"
+readme          = "README.md"
+version         = "0.2.0"
+requires-python = "==3.11.*"
+# Torch is resolved from the ambient environment. gigl-core wheels are ABI-bound
+# to the torch variant they were built against (cpu or cu128). The parent `gigl`
+# extras (pyg27-torch28-cpu / pyg27-torch28-cu128) already pin torch==2.8, and
+# pip picks the matching gigl-core wheel from whichever GCP registry the user
+# configured for installing gigl itself.
+dependencies = []
+
+[build-system]
+requires      = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+cmake.version = ">=3.18"
+build-dir     = ".cache/cmake_build"
+# Default editable mode is `redirect`: scikit-build-core writes the compiled .so
+# into .cache/cmake_build/ and installs an import-hook shim into site-packages
+# that resolves gigl_core.ppr_forward_push to that path. `editable.rebuild`
+# stays off so imports never block on CMake — explicit `uv pip install -e gigl-core/`
+# drives rebuilds.
+editable.rebuild = false
+
+[tool.uv]
+# Invalidate the uv build cache when any of these inputs change.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "CMakeLists.txt" },
+    { file = "csrc/**/*.h" },
+    { file = "csrc/**/*.cpp" },
+    { file = "csrc/**/*.cu" },
+    { file = "csrc/**/*.cuh" },
+]

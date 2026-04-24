@@ -5,11 +5,6 @@ FROM $BASE_IMAGE
 # See https://beam.apache.org/documentation/sdks/python-pipxeline-dependencies/#create-reproducible-environments.
 WORKDIR /gigl
 
-# scikit-build-core needs CMakeLists.txt (build definition), MANIFEST.in (sdist source list),
-# and README.md (required by pyproject.toml's readme field) before `uv pip install -e .`
-# triggers the CMake build. Without these, the install will error at configure time.
-COPY CMakeLists.txt CMakeLists.txt
-COPY MANIFEST.in MANIFEST.in
 COPY README.md README.md
 COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
@@ -20,4 +15,10 @@ COPY snapchat snapchat
 COPY tests tests
 COPY examples examples
 
-RUN uv pip install -e .
+# Install gigl (pure Python — fast, no CMake).
+RUN uv pip install .
+
+# Build and install gigl-core C++ extensions. gigl-core/ must be present
+# for scikit-build-core to run CMake and link against torch.
+COPY gigl-core gigl-core
+RUN uv pip install gigl-core/
