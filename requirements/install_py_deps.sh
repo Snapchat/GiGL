@@ -138,13 +138,12 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
-    # --no-install-project: skip building and installing the workspace members (gigl,
-    # gigl-core) here. They are installed separately:
-    #   - gigl (pure Python): `uv pip install .` in *.src Dockerfiles
-    #   - gigl-core (C++ extension): `uv pip install gigl-core/` in *.src Dockerfiles
-    # Base Docker images only copy pyproject.toml + uv.lock, not gigl-core/. Without
-    # this flag, uv sync would try to build gigl-core's C++ extension and fail because
-    # the source tree is absent.
+    # --no-install-project: skip building and installing the root gigl package here.
+    # gigl (pure Python) is installed separately via `uv pip install .` in *.src Dockerfiles.
+    # gigl-core (C++ extensions) is a path dependency — it IS installed here from the stub
+    # files (pyproject.toml + CMakeLists.txt) copied into the base image. With no C++ sources
+    # present, cmake configures but compiles nothing, producing an empty wheel.
+    # The *.src Dockerfiles copy the full gigl-core source and reinstall the real wheel.
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
