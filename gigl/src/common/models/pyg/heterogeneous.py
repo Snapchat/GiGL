@@ -127,7 +127,7 @@ class HGT(nn.Module):
             )
 
         if self.should_l2_normalize_embedding_layer_output:
-            node_typed_embeddings = l2_normalize_embeddings(  # type: ignore
+            node_typed_embeddings = l2_normalize_embeddings(
                 node_typed_embeddings=node_typed_embeddings
             )
 
@@ -282,7 +282,7 @@ class SimpleHGN(nn.Module):
                 )
 
         if self.should_l2_normalize_embedding_layer_output:
-            node_typed_embeddings = l2_normalize_embeddings(  # type: ignore
+            node_typed_embeddings = l2_normalize_embeddings(
                 node_typed_embeddings=node_typed_embeddings
             )
         return node_typed_embeddings

@@ -1,11 +1,11 @@
 from collections.abc import Iterator, Mapping
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, Self, TypeVar
 
 
 class _Comparable(Protocol):
     """Protocol for types that support comparison operations."""
 
-    def __lt__(self, other: Any) -> bool:
+    def __lt__(self, other: Self, /) -> bool:
         """Less than comparison."""
         ...
 
@@ -39,7 +39,8 @@ class SortedDict(Mapping[KT, VT]):
             *args: Positional arguments passed to dict constructor
             **kwargs: Keyword arguments passed to dict constructor
         """
-        self.__dict: dict[KT, VT] = dict(*args, **kwargs)
+        # ty cannot resolve dict() constructor overloads with generic TypeVars
+        self.__dict: dict[KT, VT] = dict(*args, **kwargs)  # ty: ignore[invalid-assignment]
         self.__needs_memoization: bool = True
         self.__sort_dict_if_needed()
 
@@ -84,7 +85,7 @@ class SortedDict(Mapping[KT, VT]):
         for self_key, self_val in self.items():
             if self_key not in other:
                 return False
-            if self_val != other[self_key]:
+            if self_val != other[self_key]:  # ty: ignore[invalid-argument-type]
                 return False
         return True
 

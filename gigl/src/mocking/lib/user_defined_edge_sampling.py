@@ -19,14 +19,14 @@ def sample_hydrate_user_def_edge(
     )
     edge_index = (
         mocked_dataset_info.user_defined_edge_index[
-            mocked_dataset_info.sample_edge_type  # type: ignore
+            mocked_dataset_info.sample_edge_type
         ][edge_usage_type]
         if mocked_dataset_info.user_defined_edge_index
         else None
     )
     edge_feats = (
         mocked_dataset_info.user_defined_edge_feats[
-            mocked_dataset_info.sample_edge_type  # type: ignore
+            mocked_dataset_info.sample_edge_type
         ][edge_usage_type]
         if mocked_dataset_info.user_defined_edge_feats
         else None

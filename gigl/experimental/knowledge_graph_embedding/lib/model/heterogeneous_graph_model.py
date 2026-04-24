@@ -95,11 +95,11 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
     @property
     def active_sampling_config(self) -> SamplingConfig:
         if self.phase == ModelPhase.TRAIN:
-            return self.training_sampling_config  # type: ignore
+            return self.training_sampling_config
         elif self.phase == ModelPhase.VAL:
-            return self.validation_sampling_config  # type: ignore
+            return self.validation_sampling_config
         elif self.phase == ModelPhase.TEST:
-            return self.testing_sampling_config  # type: ignore
+            return self.testing_sampling_config
         elif (
             self.phase == ModelPhase.INFERENCE_SRC
             or self.phase == ModelPhase.INFERENCE_DST

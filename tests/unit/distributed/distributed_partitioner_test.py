@@ -1,7 +1,7 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
 from collections import abc, defaultdict
-from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union
+from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -145,21 +145,25 @@ class DistRandomPartitionerTestCase(TestCase):
             if isinstance(output_edge_partition_book, abc.Mapping):
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
                     entity_iterable.append(
-                        (
+                        (  # ty: ignore[invalid-argument-type]
                             edge_type,
                             output_edge_partition_book[edge_type]
                             if edge_type in output_edge_partition_book
                             else None,
-                            output_edge_index[edge_type],
+                            output_edge_index[  # ty: ignore[invalid-argument-type]
+                                edge_type
+                            ],
                         )
                     )
             elif output_edge_partition_book is None:
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES:
                     entity_iterable.append(
-                        (
+                        (  # ty: ignore[invalid-argument-type]
                             edge_type,
                             None,
-                            output_edge_index[edge_type],
+                            output_edge_index[  # ty: ignore[invalid-argument-type]
+                                edge_type
+                            ],
                         )
                     )
             else:
@@ -310,7 +314,9 @@ class DistRandomPartitionerTestCase(TestCase):
             assert isinstance(output_graph, abc.Mapping), (
                 f"Homogeneous output detected from node {entity_name} for heterogeneous input"
             )
-            entity_iterable = list(output_graph.items())
+            entity_iterable = list(
+                cast("dict[EdgeType, GraphPartitionData]", output_graph).items()
+            )
         else:
             assert isinstance(output_graph, GraphPartitionData), (
                 f"Heterogeneous output detected from node {entity_name} for homogeneous input"
@@ -335,7 +341,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 assert isinstance(output_node_data, abc.Mapping), (
                     f"Found homogeneous node {entity_name} for heterogeneous input"
                 )
-                node_data = output_node_data[target_node_type]
+                node_data = cast(
+                    "dict[NodeType, FeaturePartitionData]", output_node_data
+                )[target_node_type]
             else:
                 assert isinstance(output_node_data, FeaturePartitionData), (
                     f"Found heterogeneous node {entity_name} for homogeneous input"
@@ -358,7 +366,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 assert node_data.ids is not None
                 node_data_ids = node_data.ids
                 self.assert_tensor_equality(
-                    tensor_a=node_ids, tensor_b=node_data.ids, dim=0
+                    tensor_a=node_ids,
+                    tensor_b=node_data.ids,
+                    dim=0,
                 )
 
             # Validate dimensions and values based on whether this is labels or features
@@ -438,11 +448,15 @@ class DistRandomPartitionerTestCase(TestCase):
             assert isinstance(output_graph, abc.Mapping), (
                 "Homogeneous output detected from graph for heterogeneous input"
             )
+            output_edge_feat_dict = cast(
+                "dict[EdgeType, FeaturePartitionData]", output_edge_feat
+            )
+            output_graph_dict = cast("dict[EdgeType, GraphPartitionData]", output_graph)
             entity_iterable = [
                 (
                     edge_type,
-                    output_edge_feat.get(edge_type, None),
-                    output_graph[edge_type],
+                    output_edge_feat_dict.get(edge_type, None),
+                    output_graph_dict[edge_type],
                 )
                 for edge_type in MOCKED_HETEROGENEOUS_EDGE_TYPES
             ]

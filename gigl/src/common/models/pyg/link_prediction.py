@@ -69,7 +69,7 @@ class LinkPredictionGNN(nn.Module):
 
     @property
     def tasks(self) -> NodeAnchorBasedLinkPredictionTasks:
-        return self.__tasks  # type: ignore
+        return self.__tasks
 
     @property
     def graph_backend(self) -> GraphBackend:

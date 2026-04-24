@@ -140,7 +140,7 @@ class GraphMetadataPbWrapper:
             )
         return self.condensed_edge_types[0]
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def condensed_node_type_to_node_type_map(self) -> dict[CondensedNodeType, NodeType]:
         return {
@@ -148,12 +148,12 @@ class GraphMetadataPbWrapper:
             for condensed_node_type, node_type in self.graph_metadata_pb.condensed_node_type_map.items()
         }
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def node_type_to_condensed_node_type_map(self) -> dict[NodeType, CondensedNodeType]:
         return {v: k for k, v in self.condensed_node_type_to_node_type_map.items()}
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def condensed_edge_type_to_edge_type_map(self) -> dict[CondensedEdgeType, EdgeType]:
         return {
@@ -165,32 +165,32 @@ class GraphMetadataPbWrapper:
             for condensed_edge_type, edge_type in self.graph_metadata_pb.condensed_edge_type_map.items()
         }
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def edge_type_to_condensed_edge_type_map(self) -> dict[EdgeType, CondensedEdgeType]:
         return {v: k for k, v in self.condensed_edge_type_to_edge_type_map.items()}
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def edge_types(self) -> list[EdgeType]:
         return list(self.condensed_edge_type_to_edge_type_map.values())
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def node_types(self) -> list[NodeType]:
         return list(self.condensed_node_type_to_node_type_map.values())
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def condensed_edge_types(self) -> list[CondensedEdgeType]:
         return list(self.condensed_edge_type_to_edge_type_map.keys())
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def condensed_node_types(self) -> list[CondensedNodeType]:
         return list(self.condensed_node_type_to_node_type_map.keys())
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def is_heterogeneous(self) -> bool:
         return len(self.edge_types) > 1 or len(self.node_types) > 1

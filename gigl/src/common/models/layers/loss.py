@@ -65,7 +65,7 @@ class MarginLoss(nn.Module):
             input1=pos_scores_repeated,
             input2=all_neg_scores_repeated,
             target=ys,
-            margin=self.margin,  # type: ignore
+            margin=self.margin,
             reduction="sum",
         )
         sample_size = pos_scores_repeated.numel()
@@ -142,7 +142,8 @@ class SoftmaxLoss(nn.Module):
         )  # shape=[num_pos_nodes]
 
         loss = F.cross_entropy(
-            input=all_scores / self.softmax_temperature,  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+            input=all_scores
+            / self.softmax_temperature,  # https://github.com/Snapchat/GiGL/issues/408
             target=ys,
             reduction="sum",
         )
@@ -349,7 +350,7 @@ class RetrievalLoss(nn.Module):
                 batch_combined_scores.random_neg_ids.to(device=device),
             )
         )
-        if repeated_query_embeddings.numel():  # type: ignore
+        if repeated_query_embeddings.numel():
             loss = self.calculate_batch_retrieval_loss(
                 scores=batch_combined_scores.repeated_candidate_scores,
                 candidate_sampling_probability=candidate_sampling_probability,
@@ -357,7 +358,7 @@ class RetrievalLoss(nn.Module):
                 candidate_ids=candidate_ids,
                 device=device,
             )
-            batch_size = repeated_query_embeddings.shape[0]  # type: ignore
+            batch_size = repeated_query_embeddings.shape[0]
         else:
             loss = torch.tensor(0.0).to(device=device)
             batch_size = 1
@@ -587,7 +588,7 @@ class TBGRLLoss(nn.Module):
         sim2 = F.cosine_similarity(q2, y1.detach()).mean()
         neg_sim1 = F.cosine_similarity(q1, neg_y.detach()).mean()  # type: ignore
         neg_sim2 = F.cosine_similarity(q2, neg_y.detach()).mean()  # type: ignore
-        loss = self.neg_lambda * (neg_sim1 + neg_sim2) - (1 - self.neg_lambda) * (  # type: ignore
+        loss = self.neg_lambda * (neg_sim1 + neg_sim2) - (1 - self.neg_lambda) * (
             sim1 + sim2
         )
         return loss, 1
@@ -610,7 +611,7 @@ class AligmentLoss(nn.Module):
     ) -> torch.Tensor:
         return (
             (user_embeddings - item_embeddings).norm(p=2, dim=1).pow(self.alpha).mean()
-        )  # type: ignore
+        )
 
 
 class UniformityLoss(nn.Module):
@@ -635,7 +636,7 @@ class UniformityLoss(nn.Module):
             .exp()
             .mean()
             .log()
-        )  # type: ignore
+        )
         item_uniformity = (
             torch.pdist(item_embeddings, p=2)
             .pow(2)
@@ -643,7 +644,7 @@ class UniformityLoss(nn.Module):
             .exp()
             .mean()
             .log()
-        )  # type: ignore
+        )
         return (user_uniformity + item_uniformity) / 2
 
 

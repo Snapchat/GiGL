@@ -31,7 +31,7 @@ class NumpyCoder(CoderProtocol[np.ndarray]):
     def __encode_nd_array_helper(array: np.ndarray) -> EncodedNdArray:
         # Using array.data is a slight optimization given that we can use it
         serialized_array: bytes = (
-            array.data if array.flags["C_CONTIGUOUS"] else array.tobytes()
+            bytes(array.data) if array.flags["C_CONTIGUOUS"] else array.tobytes()
         )
 
         if array.dtype == object:

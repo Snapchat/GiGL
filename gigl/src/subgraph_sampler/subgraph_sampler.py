@@ -129,7 +129,7 @@ class SubgraphSampler:
                 graph_db_config.graph_db_ingestion_cls_path
             )
 
-            graph_db_ingestion_args = graph_db_config.graph_db_ingestion_args  # type: ignore
+            graph_db_ingestion_args = graph_db_config.graph_db_ingestion_args
             graph_db_args = graph_db_config.graph_db_args
             all_graph_db_args = {**graph_db_ingestion_args, **graph_db_args}
 

@@ -1,5 +1,5 @@
 from collections import abc
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 from parameterized import param, parameterized
 
@@ -261,22 +261,21 @@ class TranslatorTestCase(TestCase):
                 expected_entity_types=graph_metadata_pb_wrapper.edge_types,
             )
             serialized_positive_label_info_iterable: list[SerializedTFRecordInfo]
-            if isinstance(
-                serialized_graph_metadata.positive_label_entity_info, abc.Mapping
-            ):
+            positive_label_entity_info = (
+                serialized_graph_metadata.positive_label_entity_info
+            )
+            if isinstance(positive_label_entity_info, dict):
                 serialized_positive_label_info_iterable = list(
-                    serialized_graph_metadata.positive_label_entity_info.values()
+                    cast(
+                        dict[EdgeType, SerializedTFRecordInfo],
+                        positive_label_entity_info,
+                    ).values()
                 )
-            elif isinstance(
-                serialized_graph_metadata.positive_label_entity_info,
-                SerializedTFRecordInfo,
-            ):
-                serialized_positive_label_info_iterable = [
-                    serialized_graph_metadata.positive_label_entity_info
-                ]
+            elif isinstance(positive_label_entity_info, SerializedTFRecordInfo):
+                serialized_positive_label_info_iterable = [positive_label_entity_info]
             else:
                 raise ValueError(
-                    f"Expected positive labels to be a dictionary or of type `SerializedTFRecordInfo`, got {type(serialized_graph_metadata.positive_label_entity_info)}"
+                    f"Expected positive labels to be a dictionary or of type `SerializedTFRecordInfo`, got {type(positive_label_entity_info)}"
                 )
 
             self.assertEqual(
@@ -351,22 +350,21 @@ class TranslatorTestCase(TestCase):
                 expected_entity_types=graph_metadata_pb_wrapper.edge_types,
             )
             serialized_negative_label_info_iterable: list[SerializedTFRecordInfo]
-            if isinstance(
-                serialized_graph_metadata.negative_label_entity_info, abc.Mapping
-            ):
+            negative_label_entity_info = (
+                serialized_graph_metadata.negative_label_entity_info
+            )
+            if isinstance(negative_label_entity_info, dict):
                 serialized_negative_label_info_iterable = list(
-                    serialized_graph_metadata.negative_label_entity_info.values()
+                    cast(
+                        dict[EdgeType, SerializedTFRecordInfo],
+                        negative_label_entity_info,
+                    ).values()
                 )
-            elif isinstance(
-                serialized_graph_metadata.negative_label_entity_info,
-                SerializedTFRecordInfo,
-            ):
-                serialized_negative_label_info_iterable = [
-                    serialized_graph_metadata.negative_label_entity_info
-                ]
+            elif isinstance(negative_label_entity_info, SerializedTFRecordInfo):
+                serialized_negative_label_info_iterable = [negative_label_entity_info]
             else:
                 raise ValueError(
-                    f"Expected negative labels to be a dictionary or of type `SerializedTFRecordInfo`, got {type(serialized_graph_metadata.negative_label_entity_info)}"
+                    f"Expected negative labels to be a dictionary or of type `SerializedTFRecordInfo`, got {type(negative_label_entity_info)}"
                 )
 
             self.assertEqual(

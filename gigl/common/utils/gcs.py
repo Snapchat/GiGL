@@ -3,7 +3,7 @@ import re
 import tempfile
 import typing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper  # type: ignore
+from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper
 from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
 
 import google.cloud.exceptions as google_exceptions
@@ -132,8 +132,14 @@ class GcsUtils:
             parallel (bool): Flag indicating whether to upload files in parallel. Defaults to True.
         """
         if parallel:
+            project = self.__storage_client.project
+            if project is None:
+                raise ValueError(
+                    "GCS storage client has no associated project. "
+                    "Set GOOGLE_CLOUD_PROJECT or pass project= to GcsUtils()."
+                )
             _upload_files_to_gcs_parallel(
-                project=self.__storage_client.project,
+                project=project,
                 local_file_path_to_gcs_path_map=local_file_path_to_gcs_path_map,
             )
         else:
@@ -206,11 +212,23 @@ class GcsUtils:
             )
         blobs = self.__list_file_blobs_at_gcs_path(gcs_path=gcs_path)
         if suffix:
-            blobs = [blob for blob in blobs if blob.name.endswith(suffix)]
+            blobs = [
+                blob
+                for blob in blobs
+                if blob.name is not None and blob.name.endswith(suffix)
+            ]
         if pattern:
             matcher = re.compile(pattern)
-            blobs = [blob for blob in blobs if matcher.match(blob.name)]
-        gcs_uris = [GcsUri.join("gs://", blob.bucket.name, blob.name) for blob in blobs]
+            blobs = [
+                blob
+                for blob in blobs
+                if blob.name is not None and matcher.match(blob.name)
+            ]
+        gcs_uris = [
+            GcsUri.join("gs://", blob.bucket.name, blob.name)
+            for blob in blobs
+            if blob.name is not None
+        ]
         return gcs_uris
 
     def __list_file_blobs_at_gcs_path(self, gcs_path: GcsUri) -> list[storage.Blob]:
@@ -402,10 +420,12 @@ class GcsUtils:
             dst_prefix: str,
             src_blobs: list[storage.Blob],
         ):
-            dst_blob_names: list[str] = [
-                src_blob.name.replace(src_prefix, dst_prefix, 1)
-                for src_blob in src_blobs
-            ]
+            dst_blob_names: list[str] = []
+            for src_blob in src_blobs:
+                assert src_blob.name is not None, (
+                    "Blob from list_blobs must have a name"
+                )
+                dst_blob_names.append(src_blob.name.replace(src_prefix, dst_prefix, 1))
             with self.__storage_client.batch():
                 logger.debug(
                     f"Will copy {len(src_blobs)} files from {src_bucket}://{src_prefix} to {dst_bucket}://{dst_prefix}."

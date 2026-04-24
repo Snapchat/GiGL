@@ -160,7 +160,8 @@ class NodeClassificationModelingTaskSpec(
                 out = self.model(inputs)
                 # Figure out why below is a typing issue
                 loss = self._train_loss_fn(
-                    input=out[root_node_indices], target=root_node_labels
+                    input=out[root_node_indices],  # ty: ignore[unknown-argument]
+                    target=root_node_labels,  # ty: ignore[unknown-argument]
                 )  # type: ignore
                 loss.backward()
                 self._optimizer.step()
@@ -200,7 +201,9 @@ class NodeClassificationModelingTaskSpec(
             assert root_node_labels is not None
 
             results: InferBatchResults = self.infer_batch(batch=batch, device=device)
-            num_correct_in_batch = int((results.predictions == root_node_labels).sum())  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+            num_correct_in_batch = int(
+                (results.predictions == root_node_labels).sum()
+            )  # https://github.com/Snapchat/GiGL/issues/408
             num_correct += num_correct_in_batch
             num_evaluated += len(batch.root_node_labels)
 

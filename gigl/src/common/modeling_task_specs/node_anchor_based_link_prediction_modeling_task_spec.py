@@ -359,6 +359,10 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
 
         main_data_loader = data_loaders.train_main
         random_negative_data_loader = data_loaders.train_random_negative
+        if main_data_loader is None or random_negative_data_loader is None:
+            raise ValueError(
+                "train_main and train_random_negative dataloaders must be set for training"
+            )
         val_main_data_loader_iter = iter(data_loaders.val_main)  # type: ignore
         val_random_data_loader_iter = iter(data_loaders.val_random_negative)  # type: ignore
 
@@ -375,7 +379,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             self.model.train()
 
             for batch_index, (main_batch, random_negative_batch) in enumerate(
-                zip(main_data_loader, random_negative_data_loader),  # type: ignore[arg-type]
+                zip(main_data_loader, random_negative_data_loader),
                 start=1,
             ):
                 batch_st = time()
@@ -543,7 +547,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                         hr_result = hit_rate_at_k(
                             pos_scores=batch_scores.pos_scores,
                             neg_scores=batch_scores.random_neg_scores,
-                            ks=ks_for_evaluation,  # type: ignore
+                            ks=ks_for_evaluation,
                         )
                         mrr_result = mean_reciprocal_rank(
                             pos_scores=batch_scores.pos_scores,

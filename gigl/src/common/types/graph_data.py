@@ -72,12 +72,12 @@ class Edge:
         )
         return edge
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def src_node(self) -> Node:
         return Node(id=self.src_node_id, type=self.edge_type.src_node_type)
 
-    @property  # type: ignore
+    @property
     @lru_cache(maxsize=1)
     def dst_node(self) -> Node:
         return Node(id=self.dst_node_id, type=self.edge_type.dst_node_type)

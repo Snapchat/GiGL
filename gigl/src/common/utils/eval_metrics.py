@@ -1,5 +1,3 @@
-from typing import cast
-
 import torch
 
 
@@ -45,7 +43,7 @@ def hit_rate_at_k(
     )
     ks_adjusted = ks - 1  # subtract 1 since indices are 0-indexed
     hits_at_ks = torch.gather(input=hit_rates_padded, dim=0, index=ks_adjusted)
-    return cast(torch.FloatTensor, hits_at_ks)
+    return hits_at_ks
 
 
 def mean_reciprocal_rank(
@@ -70,4 +68,4 @@ def mean_reciprocal_rank(
     adjusted_ranks = unadjusted_ranks + 1  # +1 since ranks are 0-indexed here
     reciprocal_ranks = 1.0 / adjusted_ranks  # compute reciprocal
     mrr = torch.mean(reciprocal_ranks)
-    return cast(torch.FloatTensor, mrr)
+    return mrr

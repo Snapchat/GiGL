@@ -37,14 +37,13 @@ def _get_bigquery_ptransform(
             InstanceDictPTransform,
             beam.io.ReadFromBigQuery(
                 table=table_name,
-                method=beam.io.ReadFromBigQuery.Method.EXPORT,  # type: ignore
+                method=beam.io.ReadFromBigQuery.Method.EXPORT,
                 *args,
                 **kwargs,
             ),
         )
 
 
-# Below type ignores are due to star expansion issues with the type checker: https://github.com/python/mypy/issues/6799
 @dataclass(frozen=True)
 class BigqueryNodeDataReference(NodeDataReference):
     """
@@ -69,11 +68,11 @@ class BigqueryNodeDataReference(NodeDataReference):
 
     def yield_instance_dict_ptransform(self, *args, **kwargs) -> InstanceDictPTransform:
         return _get_bigquery_ptransform(
-            table_name=self.reference_uri,
-            sharded_read_config=self.sharded_read_config,
+            self.reference_uri,
+            self.sharded_read_config,
             *args,
             **kwargs,
-        )  # type: ignore
+        )
 
     def __repr__(self) -> str:
         return f"BigqueryNodeDataReference(node_type={self.node_type}, identifier={self.identifier}, reference_uri={self.reference_uri}, sharded_read_config={self.sharded_read_config})"
@@ -106,11 +105,11 @@ class BigqueryEdgeDataReference(EdgeDataReference):
 
     def yield_instance_dict_ptransform(self, *args, **kwargs) -> InstanceDictPTransform:
         return _get_bigquery_ptransform(
-            table_name=self.reference_uri,
-            sharded_read_config=self.sharded_read_config,
+            self.reference_uri,
+            self.sharded_read_config,
             *args,
             **kwargs,
-        )  # type: ignore
+        )
 
     def __repr__(self) -> str:
         return f"BigqueryEdgeDataReference(edge_type={self.edge_type}, src_identifier={self.src_identifier}, dst_identifier={self.dst_identifier}, reference_uri={self.reference_uri}, sharded_read_config={self.sharded_read_config})"
