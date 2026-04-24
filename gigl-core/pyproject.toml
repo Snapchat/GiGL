@@ -18,11 +18,10 @@ build-backend = "scikit_build_core.build"
 [tool.scikit-build]
 cmake.version = ">=3.18"
 build-dir     = ".cache/cmake_build"
-# Default editable mode is `redirect`: scikit-build-core writes the compiled .so
-# into .cache/cmake_build/ and installs an import-hook shim into site-packages
-# that resolves gigl_core.ppr_forward_push to that path. `editable.rebuild`
-# stays off so imports never block on CMake — explicit `uv pip install -e gigl-core/`
-# drives rebuilds.
+# Default editable mode is `redirect`: scikit-build-core writes compiled .so
+# files into .cache/cmake_build/ and installs an import-hook shim into
+# site-packages that resolves them. `editable.rebuild` stays off so imports
+# never block on CMake — explicit `uv pip install -e gigl-core/` drives rebuilds.
 editable.rebuild = false
 
 [tool.uv]

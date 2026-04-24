@@ -39,8 +39,8 @@ endif()
 
 foreach(test_source ${TEST_SOURCES})
     # Derive a unique binary name from the path relative to this directory, e.g.:
-    #   ppr_forward_push_test.cpp       → ppr_forward_push_test
-    #   sampling/ppr_forward_push_test.cpp → sampling_ppr_forward_push_test
+    #   foo_test.cpp         → foo_test
+    #   sampling/foo_test.cpp → sampling_foo_test
     file(RELATIVE_PATH _rel "${CMAKE_CURRENT_SOURCE_DIR}" "${test_source}")
     string(REPLACE "/" "_" test_name "${_rel}")
     string(REGEX REPLACE "\\.[^.]+$" "" test_name "${test_name}")
