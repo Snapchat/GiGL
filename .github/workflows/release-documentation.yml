@@ -41,11 +41,13 @@ jobs:
             gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
             workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
             gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-      # We also make gigl available w/ editable install `-e` so that autodoc can find it.
+      # Install gigl so Sphinx autoapi can import and introspect it. Non-editable
+      # install; autodoc reads from site-packages. gigl-core (the C++ extension
+      # workspace member) is resolved transitively and built via scikit-build-core.
       - name: Install necessary doc dependencies
         run: |
           uv sync --group docs --inexact
-          uv pip install -e .
+          uv pip install .
       - name: Sphinx build
         run: |
           make build_docs

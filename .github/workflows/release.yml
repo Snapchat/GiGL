@@ -16,8 +16,8 @@ permissions:
   id-token: write # Needed for the auth w/ GCP to upload to Google Artifact Registry.
 
 jobs:
-  build:
-    name: Build and release pip whl (${{ matrix.torch-variant }})
+  build-gigl-core:
+    name: Build and release gigl-core (${{ matrix.torch-variant }})
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -31,7 +31,6 @@ jobs:
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
-      # This CI environment contains relevant pip.conf and pyprci information to
       name: release
     steps:
     - name: Checkout
@@ -46,19 +45,54 @@ jobs:
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-    # We need build and twine to build the whl and upload it to Google Artifact Registry.
-    # keyrings.google-artifactregistry-auth is needed to authenticate with Google Artifact Registry.
-    # See: https://cloud.google.com/artifact-registry/docs/python/store-python
-    # And: https://cloud.google.com/artifact-registry/docs/python/authentication
     - name: Setup environment for publishing Python package
       run: |
-        # Pre-install keyring and Artifact Registry plugin from the public PyPI
         uv tool install keyring --with keyrings.google-artifactregistry-auth==1.1.2
 
-    - name: Build Whl Distribution
-      run: uv build --wheel
+    - name: Build gigl-core Whl Distribution
+      run: uv build --wheel --package gigl-core
 
-    - name: Publish Package 🚀
-      # We upload the build whls to Google Artifact Registry.
+    - name: Publish gigl-core Package 🚀
+      run: |
+        uv publish --index ${{ matrix.index-name }} --username oauth2accesstoken --keyring-provider subprocess
+
+  build:
+    name: Build and release gigl (${{ matrix.torch-variant }})
+    needs: build-gigl-core
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            torch-variant: cpu
+            index-name: gcp-release-registry-cpu
+          - runner: gigl-gpu-instances
+            torch-variant: cu128
+            index-name: gcp-release-registry-cu128
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+    environment:
+      name: release
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python deps and gcloud
+      uses: ./.github/actions/setup-python-tools
+      with:
+          install_dev_deps: "true"
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+    - name: Setup environment for publishing Python package
+      run: |
+        uv tool install keyring --with keyrings.google-artifactregistry-auth==1.1.2
+
+    - name: Build gigl Whl Distribution
+      run: uv build --wheel --package gigl
+
+    - name: Publish gigl Package 🚀
       run: |
         uv publish --index ${{ matrix.index-name }} --username oauth2accesstoken --keyring-provider subprocess

@@ -28,8 +28,9 @@ steps:
         docker buildx create --driver=docker-container --use
         docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
-        # Install GiGL
-        uv pip install -e .
+        # Install GiGL (non-editable). gigl-core (the C++ extension workspace member)
+        # is resolved transitively and built via scikit-build-core.
+        uv pip install .
         # The builder operates in its own user dir, usually /workspace,
         # so we need to copy the gigl tools dir to the current cloud_builder's user dir.
         # See: containers/Dockerfile.builder.
