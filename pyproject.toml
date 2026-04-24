@@ -99,11 +99,6 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# gigl's CMakeLists.txt requires torch headers at build time (find_package(Torch)).
-# Disabling build isolation for gigl lets the build use whatever torch variant is
-# already installed (CPU or CUDA), rather than downloading a fresh wheel into an
-# isolated env that ignores the project's index routing.
-no-build-isolation-package = ["gigl"]
 
 [dependency-groups]
 cpp-build = [
