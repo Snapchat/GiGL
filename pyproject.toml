@@ -99,15 +99,6 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# WANT: [tool.uv.extra-build-dependencies]
-# WANT: gigl = [{ requirement = "torch", match-runtime = true }]
-#
-# BLOCKED: scikit-build-core passes -DPython_EXECUTABLE from sys.executable,
-# which points at the runtime env's Python — not the isolated build env.
-# CMake then discovers torch via that executable, bypassing uv's isolation.
-# Until scikit-build-core or uv resolves this for cmake-based builds,
-# we disable isolation so the declared config matches actual behavior.
-no-build-isolation-package = ["gigl"]
 
 [dependency-groups]
 cpp-build = [

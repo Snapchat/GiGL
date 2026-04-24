@@ -39,48 +39,33 @@ endif()
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-# Locate pybind11's cmake config via the Python interpreter so this works
-# whether pybind11 is installed system-wide or via pip.
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c
-        "import pybind11; print(pybind11.get_cmake_dir())"
-    OUTPUT_VARIABLE pybind11_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE _pybind11_result
-)
-if(NOT _pybind11_result EQUAL 0)
-    message(FATAL_ERROR "Failed to locate pybind11. Run: make install_dev_deps")
+# Locate pybind11 and torch cmake configs by scanning CMAKE_PREFIX_PATH, which
+# both scikit-build-core and the Makefile set to the active environment's
+# site-packages directory.
+foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
+    if(NOT pybind11_DIR AND EXISTS "${_prefix}/pybind11/share/cmake/pybind11")
+        set(pybind11_DIR "${_prefix}/pybind11/share/cmake/pybind11")
+    endif()
+    if(NOT TORCH_CMAKE_PREFIX AND EXISTS "${_prefix}/torch/share/cmake")
+        set(TORCH_CMAKE_PREFIX "${_prefix}/torch/share/cmake")
+    endif()
+endforeach()
+
+if(NOT pybind11_DIR)
+    message(FATAL_ERROR "Cannot find pybind11 cmake config in CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}. Run: make install_dev_deps")
 endif()
+if(NOT TORCH_CMAKE_PREFIX)
+    message(FATAL_ERROR "Cannot find torch cmake config in CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}. Run: make install_dev_deps")
+endif()
+
 find_package(pybind11 CONFIG REQUIRED)
-
-# Locate PyTorch headers via its own cmake prefix path (works for both CPU and CUDA torch).
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c
-        "import torch; print(torch.utils.cmake_prefix_path)"
-    OUTPUT_VARIABLE TORCH_CMAKE_PREFIX
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE _torch_result
-)
-if(NOT _torch_result EQUAL 0)
-    message(FATAL_ERROR "Failed to locate torch. Run: make install_dev_deps")
-endif()
-
 find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
 # torch_python provides the pybind11 type casters for at::Tensor. It is not
 # included in TORCH_LIBRARIES but is required for extensions that pass tensors
 # across the Python/C++ boundary.
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c
-        "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"
-    OUTPUT_VARIABLE TORCH_LIB_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE _torch_lib_result
-)
-if(NOT _torch_lib_result EQUAL 0)
-    message(FATAL_ERROR "Failed to locate torch lib dir. Run: make install_dev_deps")
-endif()
-find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_LIB_DIR}" REQUIRED)
+# TORCH_INSTALL_PREFIX is set to <site-packages>/torch by TorchConfig.cmake.
+find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib" REQUIRED)
 
 
 set(GIGL_COMPILE_FLAGS
