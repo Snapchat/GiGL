@@ -15,14 +15,14 @@ GiGL is distributed as two wheels that are installed together:
 - **`gigl`** — pure Python package (same wheel for CPU and CUDA users)
 - **`gigl-core`** — compiled C++/CUDA extensions, ABI-bound to the torch variant
 
-You do not need to install `gigl-core` directly; it is a dependency of `gigl` and is
-resolved automatically from the same registry.
+You do not need to install `gigl-core` directly; it is a dependency of `gigl` and is resolved automatically from the
+same registry.
 
 Each registry is self-contained — you only need one GCP extra-index URL:
 
-| Variant | Registry |
-| ------- | -------- |
-| CPU | [gigl (CPU registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl) |
+| Variant   | Registry                                                                                                                                                                      |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CPU       | [gigl (CPU registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)              |
 | CUDA 12.8 | [gigl-cu128 (CUDA registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu128?project=external-snap-ci-github-gigl) |
 
 ## Install Prerequisites - setting up your dev machine
@@ -133,8 +133,7 @@ pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
 ```
 
-pip resolves and installs `gigl-core` automatically from the same GCP registry.
-No separate install step is needed.
+pip resolves and installs `gigl-core` automatically from the same GCP registry. No separate install step is needed.
 
 Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
 script to setup GLT dependency:
