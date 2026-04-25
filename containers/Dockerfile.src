@@ -15,10 +15,10 @@ COPY snapchat snapchat
 COPY tests tests
 COPY examples examples
 
-# Install gigl (pure Python — fast, no CMake).
-RUN uv pip install .
-
-# Build and install gigl-core C++ extensions. gigl-core/ must be present
-# for scikit-build-core to run CMake and link against torch.
+# Build and install gigl-core C++ extensions first. gigl-core/ must be present
+# before `uv pip install .` because gigl declares it as a path dependency.
 COPY gigl-core gigl-core
 RUN uv pip install gigl-core/
+
+# Install gigl (pure Python — fast, no CMake). gigl-core is already satisfied above.
+RUN uv pip install .
