@@ -62,6 +62,12 @@ COPY gigl/scripts gigl/scripts
 
 
 COPY .python-version tmp/.python-version
+# gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
+# resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
+# configures but compiles nothing — the src Dockerfile installs the real wheel later.
+COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
+COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
+COPY gigl-core/README.md gigl-core/README.md
 RUN  bash ./requirements/install_py_deps.sh --dev
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
