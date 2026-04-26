@@ -24,11 +24,9 @@ jobs:
         include:
           - runner: ubuntu-latest
             torch-variant: cpu
-            index-name: gcp-release-registry-cpu
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
           - runner: gigl-gpu-instances
             torch-variant: cu128
-            index-name: gcp-release-registry-cu128
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
