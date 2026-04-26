@@ -5,11 +5,6 @@ on:
   # - building and releasing docker images
   # - building and releasing KFP pipeline
   workflow_dispatch:
-    inputs:
-      release_gigl_core:
-        description: "Release gigl-core wheel (only needed when C++ code changed)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -70,9 +65,7 @@ jobs:
     # torch variant. Build and publish one wheel per variant.
     # --no-build-isolation: torch is not on PyPI; the build must use the ambient
     # environment where torch is already installed by make install_dev_deps.
-    # Only runs when release_gigl_core=true (i.e. when C++ code changed).
     - name: Build gigl-core wheel
-      if: ${{ inputs.release_gigl_core }}
       working-directory: gigl-core
       run: |
         # Remove stale cmake cache from previous runs on self-hosted runners.
@@ -80,7 +73,6 @@ jobs:
         uv build --wheel --no-build-isolation
 
     - name: Publish gigl-core wheel
-      if: ${{ inputs.release_gigl_core }}
       working-directory: gigl-core
       run: |
         uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
