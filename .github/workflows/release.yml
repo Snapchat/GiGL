@@ -25,9 +25,11 @@ jobs:
           - runner: ubuntu-latest
             torch-variant: cpu
             index-name: gcp-release-registry-cpu
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
           - runner: gigl-gpu-instances
             torch-variant: cu128
             index-name: gcp-release-registry-cu128
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
@@ -64,7 +66,7 @@ jobs:
     - name: Build and publish gigl wheel
       run: |
         uv build --wheel
-        uv publish --index ${{ matrix.index-name }} --username oauth2accesstoken --keyring-provider subprocess
+        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
 
     # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to the
     # torch variant. Build and publish one wheel per variant.
@@ -80,4 +82,4 @@ jobs:
       if: ${{ inputs.release_gigl_core }}
       working-directory: gigl-core
       run: |
-        uv publish --index ${{ matrix.index-name }} --username oauth2accesstoken --keyring-provider subprocess
+        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
