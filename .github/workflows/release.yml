@@ -74,7 +74,10 @@ jobs:
     - name: Build gigl-core wheel
       if: ${{ inputs.release_gigl_core }}
       working-directory: gigl-core
-      run: uv build --wheel --no-build-isolation
+      run: |
+        # Remove stale cmake cache from previous runs on self-hosted runners.
+        rm -rf .cache/cmake_build
+        uv build --wheel --no-build-isolation
 
     - name: Publish gigl-core wheel
       if: ${{ inputs.release_gigl_core }}
