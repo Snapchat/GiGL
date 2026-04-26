@@ -37,6 +37,9 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    - name: Install cmake
+      run: sudo apt-get install -y cmake
+
     - name: Setup Python deps and gcloud
       uses: ./.github/actions/setup-python-tools
       with:
