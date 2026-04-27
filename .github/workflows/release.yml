@@ -32,9 +32,6 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install cmake
-      run: sudo apt-get install -y cmake
-
     - name: Setup Python deps and gcloud
       uses: ./.github/actions/setup-python-tools
       with:
@@ -53,19 +50,11 @@ jobs:
         # Pre-install keyring and Artifact Registry plugin from the public PyPI
         uv tool install keyring --with keyrings.google-artifactregistry-auth==1.1.2
 
-    # gigl is pure Python — build is fast and produces the same wheel on both
-    # runners. Publish to each variant's registry so the registry is
-    # self-contained: a user only needs one GCP extra-index URL per variant.
-    - name: Build and publish gigl wheel
-      run: |
-        uv build --wheel
-        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
-
     # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to the
     # torch variant. Build and publish one wheel per variant.
     # Build isolation is disabled via no-build-isolation-package in pyproject.toml
     # so cmake can find torch from the ambient environment (not on PyPI).
-    # scikit-build-core is declared in extra-build-dependencies and installed by uv.
+    # scikit-build-core is declared in the build-backend dependency group and installed by uv.
     - name: Build gigl-core wheel
       run: |
         # Remove stale cmake cache from previous runs on self-hosted runners.
@@ -75,4 +64,14 @@ jobs:
     - name: Publish gigl-core wheel
       working-directory: gigl-core
       run: |
+        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
+
+    # gigl is pure Python — build is fast and produces the same wheel on both
+    # runners. Publish to each variant's registry so the registry is
+    # self-contained: a user only needs one GCP extra-index URL per variant.
+    # gigl-core is published first so its dependency is already in the registry
+    # when gigl becomes available.
+    - name: Build and publish gigl wheel
+      run: |
+        uv build --wheel
         uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess

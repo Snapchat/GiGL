@@ -6,7 +6,7 @@ These are the current environments supported by GiGL
 
 | Python | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
 | ------ | --------------- | --------- | ---------- | ------- | --- |
-| 3.9    | Partial Support | Supported | 12.1       | 2.5     | 2.5 |
+| 3.11   | Supported       | Supported | 12.8       | 2.8     | 2.7 |
 
 ## Available Versions
 
