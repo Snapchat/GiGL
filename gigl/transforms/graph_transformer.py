@@ -904,7 +904,7 @@ def _lookup_pairwise_relation_masks(
     num_nodes: int,
     device: torch.device,
 ) -> Optional[Tensor]:
-    """Build a dense per-token-pair multi-hot relation mask.
+    """Build a dense per-token-pair boolean multi-hot relation mask.
 
     For each ordered token pair ``(query_pos, key_pos)``, this returns a
     multi-hot vector indicating which directed sampled graph edges connect the
@@ -924,12 +924,31 @@ def _lookup_pairwise_relation_masks(
     if not relation_adjacency_matrices:
         return None
 
-    return _lookup_pairwise_relative_features(
-        node_index_sequences=node_index_sequences,
-        valid_mask=valid_mask,
-        csr_matrices=relation_adjacency_matrices,
+    batch_size, max_seq_len = node_index_sequences.shape
+    num_relations = len(relation_adjacency_matrices)
+    relation_mask = torch.zeros(
+        (batch_size, max_seq_len, max_seq_len, num_relations),
+        dtype=torch.bool,
         device=device,
     )
+    pair_valid_mask = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
+    if not pair_valid_mask.any():
+        return relation_mask
+
+    row_indices = node_index_sequences.unsqueeze(2).expand(-1, -1, max_seq_len)
+    col_indices = node_index_sequences.unsqueeze(1).expand(-1, max_seq_len, -1)
+    valid_row_indices = row_indices[pair_valid_mask]
+    valid_col_indices = col_indices[pair_valid_mask]
+
+    for relation_idx, adjacency_matrix in enumerate(relation_adjacency_matrices):
+        relation_values = _lookup_csr_values(
+            csr_matrix=adjacency_matrix,
+            row_indices=valid_row_indices,
+            col_indices=valid_col_indices,
+        )
+        relation_mask[..., relation_idx][pair_valid_mask] = relation_values.ne(0.0)
+
+    return relation_mask
 
 
 def _build_relation_adjacency_matrices(

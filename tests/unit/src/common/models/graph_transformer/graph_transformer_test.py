@@ -827,9 +827,9 @@ class TestGraphTransformerRelationAttention(TestCase):
 
         x = torch.randn(2, 4, 8)
         valid_mask = torch.ones((2, 4), dtype=torch.bool)
-        relation_mask = torch.zeros((2, 4, 4, 2), dtype=torch.float)
-        relation_mask[0, 1, 0, 0] = 1.0
-        relation_mask[1, 2, 1, 1] = 1.0
+        relation_mask = torch.zeros((2, 4, 4, 2), dtype=torch.bool)
+        relation_mask[0, 1, 0, 0] = True
+        relation_mask[1, 2, 1, 1] = True
 
         with torch.no_grad():
             assert relation_layer._relation_attention_matrices is not None
@@ -859,9 +859,9 @@ class TestGraphTransformerRelationAttention(TestCase):
         query = torch.tensor([[[[1.0, 0.0], [1.0, 0.0]]]])
         key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0]]]])
         value = torch.tensor([[[[3.0, 0.0], [0.0, 5.0]]]])
-        empty_relation_mask = torch.zeros((1, 2, 2, 1), dtype=torch.float)
+        empty_relation_mask = torch.zeros((1, 2, 2, 1), dtype=torch.bool)
         active_relation_mask = empty_relation_mask.clone()
-        active_relation_mask[0, 1, 0, 0] = 1.0
+        active_relation_mask[0, 1, 0, 0] = True
 
         with torch.no_grad():
             assert layer._relation_attention_matrices is not None

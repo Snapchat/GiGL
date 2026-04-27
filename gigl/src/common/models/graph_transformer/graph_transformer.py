@@ -336,7 +336,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             attn_bias: Optional attention bias of shape
                 ``(batch, num_heads, seq, seq)`` or broadcastable.
                 Added as an additive mask to attention scores.
-            pairwise_relation_mask: Optional multi-hot relation mask of shape
+            pairwise_relation_mask: Optional boolean multi-hot relation mask of shape
                 ``(batch, seq, seq, num_relations)`` that marks which sampled
                 directed edge types connect each token pair as ``key -> query``.
             valid_mask: Optional boolean tensor of shape ``(batch, seq)`` used
@@ -413,6 +413,33 @@ class GraphTransformerEncoderLayer(nn.Module):
         attn_bias: Optional[Tensor],
         pairwise_relation_mask: Optional[Tensor],
     ) -> Tensor:
+        relation_attention_bias = self._build_relation_attention_bias(
+            query=query,
+            key=key,
+            pairwise_relation_mask=pairwise_relation_mask,
+        )
+        if relation_attention_bias is not None:
+            attn_bias = (
+                relation_attention_bias
+                if attn_bias is None
+                else attn_bias + relation_attention_bias
+            )
+
+        return F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_bias,
+            dropout_p=self._attention_dropout_rate if self.training else 0.0,
+            is_causal=False,
+        )
+
+    def _build_relation_attention_bias(
+        self,
+        query: Tensor,
+        key: Tensor,
+        pairwise_relation_mask: Optional[Tensor],
+    ) -> Optional[Tensor]:
         if pairwise_relation_mask is None:
             raise ValueError(
                 "pairwise_relation_mask is required when "
@@ -425,36 +452,54 @@ class GraphTransformerEncoderLayer(nn.Module):
             )
         if self._relation_attention_matrices is None:
             raise ValueError("Relation attention matrices are not initialized.")
-
-        base_attention_scores = torch.matmul(query, key.transpose(-2, -1))
-        relation_scores_by_type = torch.einsum(
-            "bhkd,rhde,bhqe->bhqkr",
-            key,
-            self._relation_attention_matrices.to(dtype=query.dtype),
-            query,
-        )
-        relation_attention_scores = torch.einsum(
-            "bhqkr,bqkr->bhqk",
-            relation_scores_by_type,
-            pairwise_relation_mask.to(dtype=query.dtype),
-        )
-
-        attention_scores = (
-            base_attention_scores + relation_attention_scores
-        ) / math.sqrt(self._head_dim)
-        if attn_bias is not None:
-            attention_scores = attention_scores + attn_bias
-
-        attention_weights = F.softmax(attention_scores, dim=-1)
-        attention_weights = torch.nan_to_num(attention_weights, nan=0.0)
-        if self.training and self._attention_dropout_rate > 0.0:
-            attention_weights = F.dropout(
-                attention_weights,
-                p=self._attention_dropout_rate,
-                training=True,
+        if pairwise_relation_mask.size(1) != query.size(2) or pairwise_relation_mask.size(
+            2
+        ) != key.size(2):
+            raise ValueError(
+                "pairwise_relation_mask must align with the query/key sequence "
+                "dimensions."
             )
 
-        return torch.matmul(attention_weights, value)
+        relation_mask = pairwise_relation_mask.to(
+            device=query.device,
+            dtype=torch.bool,
+        )
+        active_relation_positions = relation_mask.nonzero(as_tuple=False)
+        if active_relation_positions.numel() == 0:
+            return None
+
+        relation_attention_bias = query.new_zeros(
+            (query.size(0), query.size(2), key.size(2), self._num_heads)
+        )
+        query_by_position = query.transpose(1, 2)
+        key_by_position = key.transpose(1, 2)
+        relation_matrices = self._relation_attention_matrices.to(dtype=query.dtype)
+        active_relation_ids = torch.unique(active_relation_positions[:, 3], sorted=True)
+
+        for relation_idx_tensor in active_relation_ids:
+            relation_idx = int(relation_idx_tensor.item())
+            relation_positions = active_relation_positions[
+                active_relation_positions[:, 3] == relation_idx
+            ]
+            batch_indices, query_indices, key_indices = relation_positions[
+                :, :3
+            ].unbind(dim=1)
+            # Only materialize bilinear scores for token pairs backed by this relation.
+            selected_query = query_by_position[batch_indices, query_indices]
+            transformed_query = torch.einsum(
+                "nhe,hde->nhd",
+                selected_query,
+                relation_matrices[relation_idx],
+            )
+            selected_key = key_by_position[batch_indices, key_indices]
+            relation_scores = (selected_key * transformed_query).sum(dim=-1)
+            relation_attention_bias.index_put_(
+                (batch_indices, query_indices, key_indices),
+                relation_scores / math.sqrt(self._head_dim),
+                accumulate=True,
+            )
+
+        return relation_attention_bias.permute(0, 3, 1, 2)
 
 
 class GraphTransformerEncoder(nn.Module):
@@ -1174,7 +1219,7 @@ class GraphTransformerEncoder(nn.Module):
             valid_mask: Boolean mask of shape ``(batch_size, max_seq_len)``.
             attn_bias: Optional additive attention bias broadcastable to
                 ``(batch_size, num_heads, seq, seq)``.
-            pairwise_relation_mask: Optional relation mask shaped
+            pairwise_relation_mask: Optional boolean relation mask shaped
                 ``(batch_size, seq, seq, num_relations)``.
 
         Returns:

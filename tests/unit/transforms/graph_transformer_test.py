@@ -547,9 +547,16 @@ class TestHeteroToGraphTransformerInput(TestCase):
             torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
         )
         self.assertEqual(relation_mask.shape, (1, 4, 4, 2))
-        self.assertTrue(torch.equal(relation_mask[0, 1, 0], torch.tensor([1.0, 1.0])))
-        self.assertTrue(torch.equal(relation_mask[0, 2, 1], torch.tensor([0.0, 1.0])))
-        self.assertTrue(torch.equal(relation_mask[0, 0, 1], torch.zeros(2)))
+        self.assertEqual(relation_mask.dtype, torch.bool)
+        self.assertTrue(
+            torch.equal(relation_mask[0, 1, 0], torch.tensor([True, True]))
+        )
+        self.assertTrue(
+            torch.equal(relation_mask[0, 2, 1], torch.tensor([False, True]))
+        )
+        self.assertTrue(
+            torch.equal(relation_mask[0, 0, 1], torch.zeros(2, dtype=torch.bool))
+        )
         self.assertTrue(torch.all(relation_mask[0, 3] == 0))
 
 
