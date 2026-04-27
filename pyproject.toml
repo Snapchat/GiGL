@@ -102,18 +102,9 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# gigl-core must build against torch, which is not on PyPI. An isolated build
-# environment would fail to find it, so we disable isolation and let the build
-# use the ambient environment where torch is already installed.
-no-build-isolation-package = ["gigl-core"]
 
 [dependency-groups]
-cpp-build = [
-  "scikit-build-core>=0.10",
-  "pybind11>=2.12",
-]
 dev = [
-  {include-group = "cpp-build"},
   {include-group = "docs"},
   {include-group = "lint"},
   {include-group = "test"},
