@@ -51,9 +51,9 @@ check_if_valid_env:
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
+	bash ./requirements/install_cpp_deps.sh
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
-	bash ./requirements/install_cpp_deps.sh
 	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
@@ -182,18 +182,15 @@ gigl-core/.cache/cmake_build/CMakeInit.txt: $(shell find gigl-core/csrc \( -name
 
 build_cpp_extensions: gigl-core/.cache/cmake_build/CMakeInit.txt
 
-generate_compile_commands: gigl-core/.cache/cmake_build/CMakeInit.txt
-	uv run python -m scripts.generate_compile_commands
-
-check_lint_cpp: generate_compile_commands
+check_lint_cpp: build_cpp_extensions
 	$(if $(CPP_SOURCES_NO_CUDA),uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA))
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
 # review the diff before committing. Note: --fix cannot auto-repair every check;
 # some violations require manual edits.
-fix_lint_cpp: generate_compile_commands
-	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix -p .cache/compile_commands.json $(CPP_SOURCES_NO_CUDA))
+fix_lint_cpp: build_cpp_extensions
+	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix -p gigl-core/.cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA))
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
@@ -201,7 +198,7 @@ lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.
 clean_cpp:
-	rm -rf .cache/cpp_tests .cache/cmake_build_lint gigl-core/.cache/cmake_build
+	rm -rf .cache/cpp_tests gigl-core/.cache/cmake_build
 
 # compiles current working state of scala projects to local jars
 compile_jars:
@@ -367,7 +364,6 @@ clean_build_files_scala:
 
 clean_build_files_cpp:
 	rm -rf .cache/cpp_tests
-	rm -f .cache/compile_commands.json
 
 clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
 

@@ -1,8 +1,9 @@
 """Run C++ lint on source files using clangd.
 
 Runs clangd --check on each file in parallel and prints a clean summary.
-Expects compile_commands.json to already exist at .cache/compile_commands.json;
-call ``make generate_compile_commands`` first if it is absent or stale
+Expects compile_commands.json to already exist at
+gigl-core/.cache/cmake_build/compile_commands.json; call
+``make build_cpp_extensions`` first if it is absent or stale
 (``make check_lint_cpp`` does this automatically via a Makefile prerequisite).
 
 Usage::
@@ -16,7 +17,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.generate_compile_commands import COMPILE_COMMANDS
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+COMPILE_COMMANDS = (
+    _REPO_ROOT / "gigl-core" / ".cache" / "cmake_build" / "compile_commands.json"
+)
 
 # Matches real clang-tidy diagnostics emitted by clangd:
 #   E[HH:MM:SS.mmm] [check-name] Line N: message
@@ -29,6 +33,7 @@ def _check_file(source: Path) -> list[str]:
             "clangd-15",
             f"--check={source}",
             f"--compile-commands-dir={COMPILE_COMMANDS.parent}",
+            "--query-driver=/usr/bin/clang++-15,/usr/bin/g++",
         ],
         capture_output=True,
         text=True,
