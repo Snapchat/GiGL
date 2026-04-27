@@ -174,7 +174,7 @@ ______________________________________________________________________
 
 ## pybind11 Extension Modules
 
-Extension modules live under `gigl/csrc/`.
+Extension modules live under `gigl-core/csrc/`.
 
 ### Naming convention
 
@@ -184,11 +184,11 @@ Extension modules live under `gigl/csrc/`.
 | `<name>.cpp` / `<name>.cu` | Implementation — function and class definitions                  |
 | `<name>.h`                 | Declarations (function signatures, class definitions, constants) |
 
-Example: to add a `my_op` extension under `gigl/csrc/sampling/`:
+Example: to add a `my_op` extension under `gigl-core/csrc/sampling/`:
 
 ```
-gigl/csrc/sampling/python_my_op.cpp   ← pybind11 bindings
-gigl/csrc/sampling/my_op.cpp          ← implementation
+gigl-core/csrc/sampling/python_my_op.cpp   ← pybind11 bindings
+gigl-core/csrc/sampling/my_op.cpp          ← implementation
 ```
 
-The compiled `.so` is installed to the same directory and importable as `gigl.csrc.sampling.my_op`.
+The compiled `.so` is installed into the `gigl_core` package and importable as `gigl_core.<name>`.

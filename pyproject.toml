@@ -111,9 +111,9 @@ no-build-isolation-package = ["gigl-core"]
 # scikit-build-core is gigl-core's PEP 517 build backend. With no-build-isolation-package
 # set, uv does not install [build-system].requires automatically, so it must be present
 # in the ambient environment before any gigl-core build (uv sync, uv build, Dockerfiles).
-build-backend = ["scikit-build-core>=0.10"]
+gigl-core-build-backend = ["scikit-build-core>=0.10"]
 dev = [
-  {include-group = "build-backend"},
+  {include-group = "gigl-core-build-backend"},
   {include-group = "docs"},
   {include-group = "lint"},
   {include-group = "test"},
