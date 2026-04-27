@@ -468,16 +468,21 @@ class DistNodeSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
 
         for node_type, nodes_to_split in node_ids_dict.items():
-            _check_node_ids(nodes_to_split)
+            _check_node_ids(nodes_to_split)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
-            hash_values = self._hash_function(nodes_to_split)  # 1 x M
+            hash_values = self._hash_function(
+                nodes_to_split
+            )  # 1 x M  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
             # Create train, val, test splits using distributed coordination
             train, val, test = _create_distributed_splits_from_hash(
-                nodes_to_split, hash_values, self._num_val, self._num_test
+                nodes_to_split,
+                hash_values,
+                self._num_val,
+                self._num_test,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             )
 
-            splits[node_type] = (train, val, test)
+            splits[node_type] = (train, val, test)  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
 
             # Clean up memory
             del hash_values

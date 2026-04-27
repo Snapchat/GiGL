@@ -193,7 +193,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
                     edge_feature = (
                         edge_attr[edge_number] if edge_attr is not None else None
                     )
-                    global_edge_to_features_map[edge] = edge_feature
+                    global_edge_to_features_map[edge] = edge_feature  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
 
         return FrozenDict(global_edge_to_features_map)
 

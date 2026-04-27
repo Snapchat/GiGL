@@ -407,7 +407,7 @@ def _run_ppr_hetero_loader_correctness_check(
 
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(USER, node_ids[USER]),
+        input_nodes=(USER, node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_neighbors=[],  # Unused by PPR sampler; required by interface
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
@@ -488,7 +488,7 @@ def _run_ppr_ablp_loader_correctness_check(
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[],  # Unused by PPR sampler; required by interface
-        input_nodes=(USER, train_node_ids[USER]),
+        input_nodes=(USER, train_node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
@@ -640,7 +640,7 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[],
-        input_nodes=(USER, train_node_ids[USER]),
+        input_nodes=(USER, train_node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,

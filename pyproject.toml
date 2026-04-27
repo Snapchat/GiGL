@@ -291,7 +291,7 @@ replace-imports-with-any = [
   "tensorflow_metadata.**",
   # TODO: (svij Torch has type information but we are doing some incorrect casting and using old api types thus type check fails
   # Although, the code still runs fine.
-  "torch.**",
+ # "torch.**",
   "torch_geometric.**",
   "torchrec.**",
 ]

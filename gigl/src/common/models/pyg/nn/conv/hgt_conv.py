@@ -150,8 +150,8 @@ class HGTConv(MessagePassing):
             ks.append(k_dict[src])
             vs.append(v_dict[src])
 
-        ks = torch.cat(ks, dim=0).transpose(0, 1).reshape(-1, D)
-        vs = torch.cat(vs, dim=0).transpose(0, 1).reshape(-1, D)
+        ks = torch.cat(ks, dim=0).transpose(0, 1).reshape(-1, D)  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+        vs = torch.cat(vs, dim=0).transpose(0, 1).reshape(-1, D)  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
         type_vec = torch.cat(type_list, dim=1).flatten()
 
         k = self.k_rel(ks, type_vec).view(H, -1, D).transpose(0, 1)

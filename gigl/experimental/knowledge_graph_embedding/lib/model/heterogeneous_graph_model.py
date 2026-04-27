@@ -95,11 +95,11 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
     @property
     def active_sampling_config(self) -> SamplingConfig:
         if self.phase == ModelPhase.TRAIN:
-            return self.training_sampling_config
+            return self.training_sampling_config  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
         elif self.phase == ModelPhase.VAL:
-            return self.validation_sampling_config
+            return self.validation_sampling_config  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
         elif self.phase == ModelPhase.TEST:
-            return self.testing_sampling_config
+            return self.testing_sampling_config  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
         elif (
             self.phase == ModelPhase.INFERENCE_SRC
             or self.phase == ModelPhase.INFERENCE_DST

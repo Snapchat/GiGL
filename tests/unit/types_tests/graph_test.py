@@ -303,7 +303,8 @@ class GraphTypesTyest(TestCase):
         self.assertEqual(graph_tensors.edge_index.keys(), expected_edge_index.keys())
         for edge_type, expected_tensor in expected_edge_index.items():
             torch.testing.assert_close(
-                graph_tensors.edge_index[edge_type], expected_tensor
+                graph_tensors.edge_index[edge_type],
+                expected_tensor,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             )
 
     def test_select_label_edge_types(self):

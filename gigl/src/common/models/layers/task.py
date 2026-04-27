@@ -228,9 +228,9 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         hid_dim = self.encoder.hid_dim
         out_dim = self.encoder.out_dim
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),
+            torch.nn.Linear(out_dim, hid_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),
+            torch.nn.Linear(hid_dim, out_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         )
         self.loss = GRACELoss(temperature=temperature)
         self.feat_drop_1 = feat_drop_1
@@ -296,8 +296,8 @@ class FeatureReconstruction(NodeAnchorBasedLinkPredictionBaseTask):
         out_dim = self.encoder.out_dim
         self.loss = FeatureReconstructionLoss(alpha=alpha)
         self.reconstruction_decoder = GraphConv(out_dim, in_dim)
-        self.reconstruction_mask = torch.nn.Parameter(torch.zeros(1, in_dim))
-        self.reconstruction_enc_dec = torch.nn.Linear(out_dim, out_dim, bias=False)
+        self.reconstruction_mask = torch.nn.Parameter(torch.zeros(1, in_dim))  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+        self.reconstruction_enc_dec = torch.nn.Linear(out_dim, out_dim, bias=False)  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         self.edge_drop = edge_drop
 
     def forward(
@@ -368,9 +368,9 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         out_dim = self.encoder.out_dim
         self.loss = WhiteningDecorrelationLoss(lambd=lambd)
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),
+            torch.nn.Linear(out_dim, hid_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),
+            torch.nn.Linear(hid_dim, out_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         )
         self.feat_drop_1 = feat_drop_1
         self.edge_drop_1 = edge_drop_1
@@ -502,9 +502,9 @@ class BGRL(NodeAnchorBasedLinkPredictionBaseTask):
             param.requires_grad = False
         self.loss = BGRLLoss()
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),
+            torch.nn.Linear(out_dim, hid_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),
+            torch.nn.Linear(hid_dim, out_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         )
         self.feat_drop_1 = feat_drop_1
         self.edge_drop_1 = edge_drop_1
@@ -585,9 +585,9 @@ class TBGRL(NodeAnchorBasedLinkPredictionBaseTask):
             param.requires_grad = False
         self.loss = TBGRLLoss(neg_lambda=neg_lambda)
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(out_dim, hid_dim),
+            torch.nn.Linear(out_dim, hid_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
             torch.nn.ReLU(),
-            torch.nn.Linear(hid_dim, out_dim),
+            torch.nn.Linear(hid_dim, out_dim),  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         )
 
         self.feat_drop_1 = feat_drop_1
@@ -710,7 +710,7 @@ class NodeAnchorBasedLinkPredictionTasks:
             fn = self._task_to_fn_map[task]
             weight = self._task_to_weights_map[task]
             tasks_list.append(
-                (fn, weight)
+                (fn, weight)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
             )  # https://github.com/Snapchat/GiGL/issues/408
         return tasks_list
 

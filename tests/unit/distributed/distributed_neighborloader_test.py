@@ -145,7 +145,7 @@ def _run_distributed_heterogeneous_neighbor_loader(
     assert isinstance(dataset.node_ids, Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),
+        input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
     )
@@ -240,7 +240,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 
     user_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_USER, dataset.node_ids[_USER]),
+        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
@@ -248,7 +248,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 
     story_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_STORY, dataset.node_ids[_STORY]),
+        input_nodes=(_STORY, dataset.node_ids[_STORY]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,

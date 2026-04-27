@@ -547,7 +547,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
                         hr_result = hit_rate_at_k(
                             pos_scores=batch_scores.pos_scores,
                             neg_scores=batch_scores.random_neg_scores,
-                            ks=ks_for_evaluation,
+                            ks=ks_for_evaluation,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
                         )
                         mrr_result = mean_reciprocal_rank(
                             pos_scores=batch_scores.pos_scores,

@@ -324,7 +324,7 @@ class DistABLPLoader(BaseDistLoader):
                 dataset_schema,
                 backend_key,
             ) = self._setup_for_graph_store(
-                input_nodes=input_nodes,
+                input_nodes=input_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 dataset=dataset,
                 num_workers=num_workers,
                 worker_concurrency=worker_concurrency,

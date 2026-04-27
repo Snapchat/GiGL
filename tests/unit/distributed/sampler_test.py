@@ -184,7 +184,7 @@ class TestBaseGiGLSamplerPreparation(TestCase):
         assert isinstance(nodes_to_sample, Mapping)
         self.assertEqual(set(nodes_to_sample.keys()), {_USER})
         self.assert_tensor_equality(
-            nodes_to_sample[_USER],
+            nodes_to_sample[_USER],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             torch.tensor([10, 11, 12, 13, 14]),
         )
         self.assert_tensor_equality(
@@ -223,11 +223,11 @@ class TestBaseGiGLSamplerPreparation(TestCase):
         assert isinstance(nodes_to_sample, Mapping)
         self.assertEqual(set(nodes_to_sample.keys()), {_USER, _ITEM})
         self.assert_tensor_equality(
-            nodes_to_sample[_USER],
+            nodes_to_sample[_USER],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             torch.tensor([4, 5]),
         )
         self.assert_tensor_equality(
-            nodes_to_sample[_ITEM],
+            nodes_to_sample[_ITEM],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             torch.tensor([20, 21, 22]),
         )
 
@@ -259,5 +259,5 @@ class TestBaseGiGLSamplerPreparation(TestCase):
         self.assertIsInstance(result, SampleLoopInputs)
         assert isinstance(result.nodes_to_sample, Mapping)
         self.assertEqual(set(result.nodes_to_sample.keys()), {_USER})
-        self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))
+        self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         self.assertEqual(result.metadata, {})
