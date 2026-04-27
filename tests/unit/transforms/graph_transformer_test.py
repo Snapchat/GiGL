@@ -7,6 +7,7 @@ import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
@@ -118,6 +119,23 @@ def create_ppr_sequence_hetero_data() -> HeteroData:
     hop_distance[user1_idx, item1_idx] = 5.0
 
     data.hop_distance = hop_distance.to_sparse_csr()
+
+    return data
+
+
+def create_relation_mask_hetero_data() -> HeteroData:
+    """Create a single-node-type graph with overlapping directed relations."""
+    data = HeteroData()
+
+    data["user"].x = torch.tensor(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    )
+    data["user", "follows", "user"].edge_index = torch.tensor([[0, 1], [1, 2]])
+    data["user", "likes", "user"].edge_index = torch.tensor([[0], [1]])
 
     return data
 
@@ -252,6 +270,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertIsInstance(attention_bias_data, dict)
         self.assertIn("anchor_bias", attention_bias_data)
         self.assertIn("pairwise_bias", attention_bias_data)
+        self.assertIn("pairwise_relation_mask", attention_bias_data)
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
@@ -490,6 +509,48 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertTrue(
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
+
+    def test_relation_mask_outputs_follow_requested_order_and_direction(self):
+        data = create_relation_mask_hetero_data()
+        user_node_type = NodeType("user")
+        follows_edge_type = EdgeType(
+            user_node_type, Relation("follows"), user_node_type
+        )
+        likes_edge_type = EdgeType(user_node_type, Relation("likes"), user_node_type)
+
+        sequences, valid_mask, attention_bias_data = (
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=4,
+                anchor_node_type="user",
+                hop_distance=2,
+                relation_edge_types=[likes_edge_type, follows_edge_type],
+            )
+        )
+
+        relation_mask = attention_bias_data["pairwise_relation_mask"]
+        assert relation_mask is not None
+
+        expected_sequences = torch.tensor(
+            [
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                ]
+            ]
+        )
+        self.assertTrue(torch.allclose(sequences, expected_sequences))
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+        self.assertEqual(relation_mask.shape, (1, 4, 4, 2))
+        self.assertTrue(torch.equal(relation_mask[0, 1, 0], torch.tensor([1.0, 1.0])))
+        self.assertTrue(torch.equal(relation_mask[0, 2, 1], torch.tensor([0.0, 1.0])))
+        self.assertTrue(torch.equal(relation_mask[0, 0, 1], torch.zeros(2)))
+        self.assertTrue(torch.all(relation_mask[0, 3] == 0))
 
 
 class TestPyTorchTransformerIntegration(TestCase):

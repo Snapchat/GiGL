@@ -274,6 +274,22 @@ def _create_user_graph_with_ppr_edges() -> HeteroData:
     return data
 
 
+def _create_user_graph_with_relation_edges() -> HeteroData:
+    data = HeteroData()
+
+    data["user"].x = torch.tensor(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    )
+    data["user", "follows", "user"].edge_index = torch.tensor([[0, 1], [1, 2]])
+    data["user", "likes", "user"].edge_index = torch.tensor([[0], [1]])
+
+    return data
+
+
 class TestGraphTransformerEncoderPEModes(TestCase):
     def setUp(self) -> None:
         self._node_type = NodeType("user")
@@ -411,6 +427,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                             ]
                         ]
                     ),
+                    "pairwise_relation_mask": None,
                     "token_input": None,
                 },
             )
@@ -447,6 +464,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                         [[[1.0, 0.5], [2.0, 0.25], [3.0, 0.125]]]
                     ),
                     "pairwise_bias": None,
+                    "pairwise_relation_mask": None,
                     "token_input": None,
                 },
             )
@@ -771,6 +789,160 @@ class TestGraphTransformerEncoderLayerActivations(TestCase):
         x = torch.randn(2, 10, 32)
         out = layer(x)
         self.assertEqual(out.shape, (2, 10, 32))
+
+
+class TestGraphTransformerRelationAttention(TestCase):
+    def setUp(self) -> None:
+        self._node_type = NodeType("user")
+        self._follows_edge_type = EdgeType(
+            self._node_type, Relation("follows"), self._node_type
+        )
+        self._likes_edge_type = EdgeType(
+            self._node_type, Relation("likes"), self._node_type
+        )
+        self._device = torch.device("cpu")
+
+    def test_relation_aware_layer_matches_baseline_when_matrices_are_zero(
+        self,
+    ) -> None:
+        base_layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+        )
+        relation_layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_additive",
+            num_relations=2,
+        )
+        relation_layer.load_state_dict(base_layer.state_dict(), strict=False)
+        base_layer.eval()
+        relation_layer.eval()
+
+        x = torch.randn(2, 4, 8)
+        valid_mask = torch.ones((2, 4), dtype=torch.bool)
+        relation_mask = torch.zeros((2, 4, 4, 2), dtype=torch.float)
+        relation_mask[0, 1, 0, 0] = 1.0
+        relation_mask[1, 2, 1, 1] = 1.0
+
+        with torch.no_grad():
+            assert relation_layer._relation_attention_matrices is not None
+            relation_layer._relation_attention_matrices.zero_()
+            base_output = base_layer(x, valid_mask=valid_mask)
+            relation_output = relation_layer(
+                x,
+                pairwise_relation_mask=relation_mask,
+                valid_mask=valid_mask,
+            )
+
+        self.assertTrue(torch.allclose(base_output, relation_output, atol=1e-6))
+
+    def test_relation_aware_attention_only_changes_marked_query_positions(
+        self,
+    ) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=2,
+            num_heads=1,
+            feedforward_dim=4,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_additive",
+            num_relations=1,
+        )
+
+        query = torch.tensor([[[[1.0, 0.0], [1.0, 0.0]]]])
+        key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0]]]])
+        value = torch.tensor([[[[3.0, 0.0], [0.0, 5.0]]]])
+        empty_relation_mask = torch.zeros((1, 2, 2, 1), dtype=torch.float)
+        active_relation_mask = empty_relation_mask.clone()
+        active_relation_mask[0, 1, 0, 0] = 1.0
+
+        with torch.no_grad():
+            assert layer._relation_attention_matrices is not None
+            layer._relation_attention_matrices.zero_()
+            layer._relation_attention_matrices[0, 0] = torch.eye(2)
+            base_output = layer._run_relation_aware_attention(
+                query=query,
+                key=key,
+                value=value,
+                attn_bias=None,
+                pairwise_relation_mask=empty_relation_mask,
+            )
+            relation_output = layer._run_relation_aware_attention(
+                query=query,
+                key=key,
+                value=value,
+                attn_bias=None,
+                pairwise_relation_mask=active_relation_mask,
+            )
+
+        self.assertTrue(
+            torch.allclose(base_output[:, :, 0], relation_output[:, :, 0], atol=1e-6)
+        )
+        self.assertFalse(
+            torch.allclose(base_output[:, :, 1], relation_output[:, :, 1], atol=1e-6)
+        )
+
+    def test_encoder_forward_supports_relation_aware_attention(self) -> None:
+        data = _create_user_graph_with_relation_edges()
+        encoder = GraphTransformerEncoder(
+            node_type_to_feat_dim_map={self._node_type: 4},
+            edge_type_to_feat_dim_map={
+                self._likes_edge_type: 0,
+                self._follows_edge_type: 0,
+            },
+            hid_dim=8,
+            out_dim=6,
+            num_layers=1,
+            num_heads=2,
+            max_seq_len=4,
+            hop_distance=2,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_additive",
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(
+            encoder._relation_attention_edge_types,
+            sorted([self._likes_edge_type, self._follows_edge_type]),
+        )
+        self.assertEqual(embeddings.shape, (3, 6))
+        self.assertFalse(torch.isnan(embeddings).any())
+
+    def test_encoder_rejects_relation_attention_in_ppr_mode(self) -> None:
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "relation_attention_mode='edge_type_additive' requires "
+            "sequence_construction_method='khop'",
+        ):
+            GraphTransformerEncoder(
+                node_type_to_feat_dim_map={self._node_type: 4},
+                edge_type_to_feat_dim_map={ppr_edge_type: 0},
+                hid_dim=8,
+                out_dim=6,
+                num_layers=1,
+                num_heads=2,
+                max_seq_len=4,
+                hop_distance=1,
+                relation_attention_mode="edge_type_additive",
+                sequence_construction_method="ppr",
+            )
 
 
 class TestGraphTransformerEncoderFeedforwardRatio(TestCase):

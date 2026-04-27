@@ -65,12 +65,15 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
+from gigl.src.common.types.graph_data import EdgeType
+
 TokenInputData = dict[str, Tensor]
 
 
 class SequenceAuxiliaryData(TypedDict):
     anchor_bias: Optional[Tensor]
     pairwise_bias: Optional[Tensor]
+    pairwise_relation_mask: Optional[Tensor]
     token_input: Optional[TokenInputData]
 
 
@@ -90,6 +93,7 @@ def heterodata_to_graph_transformer_input(
     anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
     anchor_based_input_attr_names: Optional[list[str]] = None,
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+    relation_edge_types: Optional[list[EdgeType]] = None,
 ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -131,6 +135,10 @@ def heterodata_to_graph_transformer_input(
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
+        relation_edge_types: Optional ordered edge types used to materialize a
+            dense per-token-pair relation mask. Each output channel corresponds
+            to one edge type in this list. Directed edges are placed at
+            ``[query_pos, key_pos] = [dst_token, src_token]``.
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -143,6 +151,8 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
+                ``"pairwise_relation_mask"`` shaped
+                ``(batch, seq, seq, num_relations)`` or None
                 ``"token_input"`` as a dict mapping attribute name to a
                 ``(batch, seq, 1)`` tensor, or None
 
@@ -312,6 +322,15 @@ def heterodata_to_graph_transformer_input(
         csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
         device=device,
     )
+    pairwise_relation_mask = _lookup_pairwise_relation_masks(
+        data=data,
+        node_index_sequences=node_index_sequences,
+        valid_mask=valid_mask,
+        relation_edge_types=relation_edge_types,
+        node_type_offsets=node_type_offsets,
+        num_nodes=num_nodes,
+        device=device,
+    )
 
     anchor_bias_features = _compose_anchor_feature_tensor(
         anchor_relative_feature_sequences=anchor_relative_feature_sequences,
@@ -332,6 +351,7 @@ def heterodata_to_graph_transformer_input(
         {
             "anchor_bias": anchor_bias_features,
             "pairwise_bias": pairwise_feature_sequences,
+            "pairwise_relation_mask": pairwise_relation_mask,
             "token_input": token_input_features,
         },
     )
@@ -873,6 +893,104 @@ def _lookup_pairwise_relative_features(
         features[..., attr_idx][pair_valid_mask] = pe_values
 
     return features
+
+
+def _lookup_pairwise_relation_masks(
+    data: HeteroData,
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    relation_edge_types: Optional[list[EdgeType]],
+    node_type_offsets: dict[NodeType, int],
+    num_nodes: int,
+    device: torch.device,
+) -> Optional[Tensor]:
+    """Build a dense per-token-pair multi-hot relation mask.
+
+    For each ordered token pair ``(query_pos, key_pos)``, this returns a
+    multi-hot vector indicating which directed sampled graph edges connect the
+    underlying nodes as ``key -> query``. The relation channel order is defined
+    by ``relation_edge_types``.
+    """
+    if not relation_edge_types:
+        return None
+
+    relation_adjacency_matrices = _build_relation_adjacency_matrices(
+        data=data,
+        relation_edge_types=relation_edge_types,
+        node_type_offsets=node_type_offsets,
+        num_nodes=num_nodes,
+        device=device,
+    )
+    if not relation_adjacency_matrices:
+        return None
+
+    return _lookup_pairwise_relative_features(
+        node_index_sequences=node_index_sequences,
+        valid_mask=valid_mask,
+        csr_matrices=relation_adjacency_matrices,
+        device=device,
+    )
+
+
+def _build_relation_adjacency_matrices(
+    data: HeteroData,
+    relation_edge_types: list[EdgeType],
+    node_type_offsets: dict[NodeType, int],
+    num_nodes: int,
+    device: torch.device,
+) -> list[Tensor]:
+    """Create one binary CSR adjacency matrix per requested edge type."""
+    adjacency_matrices: list[Tensor] = []
+    empty_row_ptr = torch.zeros(num_nodes + 1, dtype=torch.int64, device=device)
+    empty_col_idx = torch.zeros(0, dtype=torch.int64, device=device)
+    empty_values = torch.zeros(0, dtype=torch.float, device=device)
+
+    for edge_type in relation_edge_types:
+        if edge_type not in data.edge_types:
+            adjacency_matrices.append(
+                torch.sparse_csr_tensor(
+                    empty_row_ptr,
+                    empty_col_idx,
+                    empty_values,
+                    size=(num_nodes, num_nodes),
+                )
+            )
+            continue
+
+        edge_index = data[edge_type].edge_index.to(device)
+        src_indices = edge_index[0].long() + int(node_type_offsets[edge_type[0]])
+        dst_indices = edge_index[1].long() + int(node_type_offsets[edge_type[2]])
+        if src_indices.numel() == 0:
+            adjacency_matrices.append(
+                torch.sparse_csr_tensor(
+                    empty_row_ptr,
+                    empty_col_idx,
+                    empty_values,
+                    size=(num_nodes, num_nodes),
+                )
+            )
+            continue
+
+        coalesced_adjacency = torch.sparse_coo_tensor(
+            torch.stack([dst_indices, src_indices]),
+            torch.ones(src_indices.numel(), dtype=torch.float, device=device),
+            size=(num_nodes, num_nodes),
+        ).coalesce()
+        adjacency_matrices.append(
+            torch.sparse_coo_tensor(
+                coalesced_adjacency.indices(),
+                torch.ones(
+                    coalesced_adjacency.indices().size(1),
+                    dtype=torch.float,
+                    device=device,
+                ),
+                size=(num_nodes, num_nodes),
+            )
+            .coalesce()
+            .to_sparse_csr()
+        )
+
+    return adjacency_matrices
 
 
 def _get_k_hop_neighbors_sparse(
