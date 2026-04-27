@@ -56,14 +56,26 @@ if(_PYTHON_SRCS)
         endif()
     endforeach()
 
-    if(NOT pybind11_DIR)
-        message(FATAL_ERROR "Cannot find pybind11 cmake config in CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}. Run: make install_dev_deps")
+    # pybind11 is provided by the scikit-build-core isolated build env when building a
+    # wheel. For direct cmake invocations (make unit_test_cpp), fall back to FetchContent
+    # so pybind11 does not need to be pre-installed in the dev venv.
+    if(pybind11_DIR)
+        find_package(pybind11 CONFIG REQUIRED)
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            pybind11
+            GIT_REPOSITORY https://github.com/pybind/pybind11.git
+            GIT_TAG        v2.13.6
+            GIT_SHALLOW    TRUE
+        )
+        FetchContent_MakeAvailable(pybind11)
     endif()
+
     if(NOT TORCH_CMAKE_PREFIX)
         message(FATAL_ERROR "Cannot find torch cmake config in CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}. Run: make install_dev_deps")
     endif()
 
-    find_package(pybind11 CONFIG REQUIRED)
     find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
     # torch_python provides the pybind11 type casters for at::Tensor. It is not

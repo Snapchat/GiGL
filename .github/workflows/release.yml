@@ -5,11 +5,6 @@ on:
   # - building and releasing docker images
   # - building and releasing KFP pipeline
   workflow_dispatch:
-    inputs:
-      release_gigl_core:
-        description: "Release gigl-core wheel (only needed when C++ code changed)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -24,10 +19,10 @@ jobs:
         include:
           - runner: ubuntu-latest
             torch-variant: cpu
-            index-name: gcp-release-registry-cpu
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
           - runner: gigl-gpu-instances
             torch-variant: cu128
-            index-name: gcp-release-registry-cu128
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
@@ -36,6 +31,9 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+
+    - name: Install cmake
+      run: sudo apt-get install -y cmake
 
     - name: Setup Python deps and gcloud
       uses: ./.github/actions/setup-python-tools
@@ -61,20 +59,20 @@ jobs:
     - name: Build and publish gigl wheel
       run: |
         uv build --wheel
-        uv publish --index ${{ matrix.index-name }} --username oauth2accesstoken --keyring-provider subprocess
+        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
 
     # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to the
     # torch variant. Build and publish one wheel per variant.
     # --no-build-isolation: torch is not on PyPI; the build must use the ambient
     # environment where torch is already installed by make install_dev_deps.
-    # Only runs when release_gigl_core=true (i.e. when C++ code changed).
     - name: Build gigl-core wheel
-      if: ${{ inputs.release_gigl_core }}
-      working-directory: gigl-core
-      run: uv build --wheel --no-build-isolation
-
-    - name: Publish gigl-core wheel
-      if: ${{ inputs.release_gigl_core }}
       working-directory: gigl-core
       run: |
-        uv publish --index ${{ matrix.index-name }} --username oauth2accesstoken --keyring-provider subprocess
+        # Remove stale cmake cache from previous runs on self-hosted runners.
+        rm -rf .cache/cmake_build
+        uv build --wheel --no-build-isolation
+
+    - name: Publish gigl-core wheel
+      working-directory: gigl-core
+      run: |
+        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess

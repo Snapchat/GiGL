@@ -138,18 +138,12 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
-    # --no-install-project: skip building and installing the root gigl package here.
-    # gigl (pure Python) is installed separately via `uv pip install .` in *.src Dockerfiles.
-    # gigl-core (C++ extensions) is a path dependency — it IS installed here from the stub
-    # files (pyproject.toml + CMakeLists.txt) copied into the base image. With no C++ sources
-    # present, cmake configures but compiles nothing, producing an empty wheel.
-    # The *.src Dockerfiles copy the full gigl-core source and reinstall the real wheel.
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
-        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-project
+        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
     else
-        uv sync ${extra_deps_clause[@]} --group cpp-build --locked ${flag_use_inexact_match} --no-install-project
+        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
     fi
 
     # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
@@ -157,10 +151,7 @@ install_gigl_lib_deps() {
     if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
     then
         SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-        # --no-project: prevents uv from trying to install the gigl project before running
-        # the script. We intentionally skipped installing it above (--no-install-project),
-        # and post_install.py only runs install_glt.sh — it does not need gigl installed.
-        uv run --no-project python $SCRIPT_DIR/../gigl/scripts/post_install.py
+        uv run python $SCRIPT_DIR/../gigl/scripts/post_install.py
     fi
 }
 

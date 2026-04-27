@@ -83,11 +83,11 @@ header.
 
 Includes are sorted and split into three priority groups (lower number = appears first in the file):
 
-| Priority | Pattern                | Group                                        |
-| -------- | ---------------------- | -------------------------------------------- |
-| 1        | `^<(torch\|pybind11)/` | Torch and pybind11 headers (first)           |
-| 2        | `^(<\|"gtest/)`        | System and other third-party headers         |
-| 3        | `.*`                   | Local project headers (last)                 |
+| Priority | Pattern                | Group                                |
+| -------- | ---------------------- | ------------------------------------ |
+| 1        | `^<(torch\|pybind11)/` | Torch and pybind11 headers (first)   |
+| 2        | `^(<\|"gtest/)`        | System and other third-party headers |
+| 3        | `.*`                   | Local project headers (last)         |
 
 > When GLT (`graphlearn_torch`) headers are added, include `graphlearn_torch` in the Priority 1 pattern.
 
@@ -160,15 +160,15 @@ Enforced via `readability-identifier-naming`:
 
 ### Key option tuning
 
-| Option                                                     | Value             | Effect                                                                                                                                                                                |
-| ---------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WarningsAsErrors`                                         | `*`               | Every check failure is a hard error in CI                                                                                                                                             |
+| Option                                                     | Value                  | Effect                                                                                                                                                                                |
+| ---------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WarningsAsErrors`                                         | `*`                    | Every check failure is a hard error in CI                                                                                                                                             |
 | `HeaderFilterRegex`                                        | `.*/gigl-core/csrc/.*` | Scopes checks to our own headers. Using `.*` causes clang-tidy to report warnings from every PyTorch/pybind11 header it parses, flooding output with thousands of third-party issues. |
-| `FormatStyle`                                              | `none`            | clang-tidy does not auto-reformat; use clang-format separately                                                                                                                        |
-| `bugprone-string-constructor.LargeLengthThreshold`         | `8388608` (8 MB)  | Strings larger than 8 MB from a length argument are flagged                                                                                                                           |
-| `modernize-loop-convert.NamingStyle`                       | `camelBack`       | Auto-generated loop variable names use camelBack, matching `readability-identifier-naming.VariableCase`                                                                               |
-| `readability-function-size.LineThreshold`                  | `1000`            | Functions over 1000 lines are flagged                                                                                                                                                 |
-| `readability-braces-around-statements.ShortStatementLines` | `0`               | Braces required for all control-flow bodies, even single-line                                                                                                                         |
+| `FormatStyle`                                              | `none`                 | clang-tidy does not auto-reformat; use clang-format separately                                                                                                                        |
+| `bugprone-string-constructor.LargeLengthThreshold`         | `8388608` (8 MB)       | Strings larger than 8 MB from a length argument are flagged                                                                                                                           |
+| `modernize-loop-convert.NamingStyle`                       | `camelBack`            | Auto-generated loop variable names use camelBack, matching `readability-identifier-naming.VariableCase`                                                                               |
+| `readability-function-size.LineThreshold`                  | `1000`                 | Functions over 1000 lines are flagged                                                                                                                                                 |
+| `readability-braces-around-statements.ShortStatementLines` | `0`                    | Braces required for all control-flow bodies, even single-line                                                                                                                         |
 
 ______________________________________________________________________
 

@@ -100,6 +100,17 @@ def update_pyproject(version: str) -> None:
     with open(path, "r") as f:
         content = f.read()
     content = re.sub(r'(version\s*)=\s*"[\d\.]+"', f'\\1= "{version}"', content)
+    # Keep the gigl-core pin in sync with the new version.
+    content = re.sub(r'"gigl-core==[\d\.a-zA-Z]+"', f'"gigl-core=={version}"', content)
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def update_gigl_core_pyproject(version: str) -> None:
+    path = f"{GIGL_ROOT_DIR}/gigl-core/pyproject.toml"
+    with open(path, "r") as f:
+        content = f.read()
+    content = re.sub(r'(version\s*)=\s*"[\d\.]+"', f'\\1= "{version}"', content)
     with open(path, "w") as f:
         f.write(content)
 
@@ -161,6 +172,7 @@ def bump_version(
     )
     update_version(version=new_version)
     update_pyproject(version=new_version)
+    update_gigl_core_pyproject(version=new_version)
 
     print(
         f"Bumped to GiGL Version: {new_version}! To release, raise a PR with these changes and after it is merged, tag main with the version and run make release_gigl."

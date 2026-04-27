@@ -50,7 +50,7 @@ fossa*.zip
 gha-creds-*.json
 
 # Compiled C++ extension modules
-gigl/csrc/**/*.so
+gigl-core/**/*.so
 
 # Local-only scripts with hardcoded internal identifiers
 scripts/_local/
