@@ -102,6 +102,16 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# gigl-core must build against torch, which is not on PyPI and cannot be installed
+# into an isolated build environment. Disabling isolation lets cmake find torch from
+# the ambient venv (installed by make install_dev_deps / base Docker images).
+no-build-isolation-package = ["gigl-core"]
+
+[tool.uv.extra-build-dependencies]
+# scikit-build-core is gigl-core's PEP 517 build backend. With build isolation
+# disabled it is not auto-installed from [build-system].requires, so uv installs
+# it into the project venv before invoking the build backend.
+gigl-core = ["scikit-build-core>=0.10"]
 
 [dependency-groups]
 dev = [

@@ -63,17 +63,14 @@ jobs:
 
     # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to the
     # torch variant. Build and publish one wheel per variant.
-    # --no-build-isolation: torch is not on PyPI so an isolated build env cannot
-    # install it; cmake must find torch from the ambient environment installed by
-    # make install_dev_deps. scikit-build-core is pre-installed explicitly because
-    # --no-build-isolation skips the automatic installation of [build-system].requires.
+    # Build isolation is disabled via no-build-isolation-package in pyproject.toml
+    # so cmake can find torch from the ambient environment (not on PyPI).
+    # scikit-build-core is declared in extra-build-dependencies and installed by uv.
     - name: Build gigl-core wheel
-      working-directory: gigl-core
       run: |
         # Remove stale cmake cache from previous runs on self-hosted runners.
-        rm -rf .cache/cmake_build
-        uv pip install "scikit-build-core>=0.10"
-        uv build --wheel --no-build-isolation
+        rm -rf gigl-core/.cache/cmake_build
+        uv build --wheel gigl-core/
 
     - name: Publish gigl-core wheel
       working-directory: gigl-core
