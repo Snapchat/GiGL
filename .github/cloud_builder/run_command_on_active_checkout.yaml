@@ -3,7 +3,7 @@ substitutions:
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:308fd672e80333c9196a72efb86e6f07b2b16192.103.1
+  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:294e4d22e9670cf57194d153407e2915590ccba0.104.1
     entrypoint: /bin/bash
     args:
       - -c
