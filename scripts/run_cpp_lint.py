@@ -18,7 +18,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-COMPILE_COMMANDS = _REPO_ROOT / "gigl-core" / ".cache" / "cmake_build" / "compile_commands.json"
+COMPILE_COMMANDS = (
+    _REPO_ROOT / "gigl-core" / ".cache" / "cmake_build" / "compile_commands.json"
+)
 
 # Matches real clang-tidy diagnostics emitted by clangd:
 #   E[HH:MM:SS.mmm] [check-name] Line N: message

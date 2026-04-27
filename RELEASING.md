@@ -16,8 +16,8 @@ A full release involves two GitHub Actions workflows run in sequence.
 
 ### Step 1 — Create Release (`create_release.yml`)
 
-This workflow bumps the version, creates the release branch and tag, releases the KFP pipeline, and opens the
-merge-back PR. Trigger it manually:
+This workflow bumps the version, creates the release branch and tag, releases the KFP pipeline, and opens the merge-back
+PR. Trigger it manually:
 
 1. Go to the **Actions** tab in the GitHub repository.
 2. Select **Create Release** from the left sidebar.
@@ -32,8 +32,8 @@ The workflow will:
 
 ### Step 2 — Release GiGL (`release.yml`)
 
-This workflow builds and publishes the `gigl` and `gigl-core` wheels. Trigger it from the release branch created in
-Step 1:
+This workflow builds and publishes the `gigl` and `gigl-core` wheels. Trigger it from the release branch created in Step
+1:
 
 1. Go to the **Actions** tab.
 2. Select **Release GiGL** from the left sidebar.
@@ -55,10 +55,10 @@ Nightly builds are triggered automatically by `nightly_release_&_test.yml`, whic
 
 Each release run publishes to two self-contained registries:
 
-| Registry                     | Packages                                              |
-| ---------------------------- | ----------------------------------------------------- |
-| `gcp-release-registry-cpu`   | `gigl` (pure Python) + `gigl-core` (CPU wheel)        |
-| `gcp-release-registry-cu128` | `gigl` (pure Python) + `gigl-core` (CUDA 12.8 wheel)  |
+| Registry                     | Packages                                             |
+| ---------------------------- | ---------------------------------------------------- |
+| `gcp-release-registry-cpu`   | `gigl` (pure Python) + `gigl-core` (CPU wheel)       |
+| `gcp-release-registry-cu128` | `gigl` (pure Python) + `gigl-core` (CUDA 12.8 wheel) |
 
 Users install from exactly one registry based on their variant — see
 [installation docs](docs/user_guide/getting_started/installation.md).
