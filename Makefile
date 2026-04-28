@@ -144,7 +144,7 @@ format_md:
 format: format_py format_scala format_md
 
 type_check:
-	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
+	uv run ty check ${PYTHON_DIRS}
 
 lint_test: check_format assert_yaml_configs_parse
 	@echo "Lint checks pass!"

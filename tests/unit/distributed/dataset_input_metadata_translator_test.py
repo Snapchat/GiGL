@@ -293,7 +293,7 @@ class TranslatorTestCase(TestCase):
                 ].HasField("positive_edge_info"):
                     assert (
                         seralized_positive_label_info is not None
-                    )  # We use assert instead of self.assertIsNotNone since this allows type narrowing with mypy
+                    )  # We use assert instead of self.assertIsNotNone since this allows type narrowing with the type checker
 
                     edge_info = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                         condensed_edge_type
@@ -383,7 +383,7 @@ class TranslatorTestCase(TestCase):
                 ].HasField("negative_edge_info"):
                     assert (
                         serialized_negative_label_info is not None
-                    )  # We use assert instead of self.assertIsNotNone since this allows type narrowing with mypy
+                    )  # We use assert instead of self.assertIsNotNone since this allows type narrowing with the type checker
 
                     edge_info = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                         condensed_edge_type

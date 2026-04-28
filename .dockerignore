@@ -4,6 +4,7 @@
 **/*.pyo
 **/*.pyd
 **/*.pkl
+.ty
 .mypy_cache
 _autosummary
 

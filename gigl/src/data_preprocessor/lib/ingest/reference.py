@@ -7,7 +7,7 @@ from typing import Optional
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
 from gigl.src.data_preprocessor.lib.types import InstanceDictPTransform
 
-# Type hints for abstract dataclasses are currently not supported. https://github.com/python/mypy/issues/5374
+# Type hints for abstract dataclasses may have limited support in type checkers. https://github.com/python/mypy/issues/5374
 
 
 @dataclass(frozen=True)  # type: ignore

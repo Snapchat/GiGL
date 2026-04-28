@@ -2,7 +2,7 @@
 
 Do not suppress errors with workarounds like `# type: ignore`:
 
-1. `make type_check`
+1. `make type_check` — runs **ty** static type checker (config in `pyproject.toml` under `[tool.ty]`)
 2. `make unit_test_py PY_TEST_FILES="relevant_test.py"`
 3. `make integration_test PY_TEST_FILES="relevant_test.py"` (if cross-component behavior changed)
 4. `make check_format` (or `make format` to auto-fix)
