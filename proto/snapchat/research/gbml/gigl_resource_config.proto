@@ -130,6 +130,10 @@ message VertexAiResourceConfig {
   // Compute Engine reservation affinity for the job.
   // See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
   VertexAiReservationAffinity reservation_affinity = 9;
+
+  // Existing Vertex AI TensorBoard resource to attach to the job.
+  // Format: projects/{project}/locations/{region}/tensorboards/{tensorboard_id}
+  string tensorboard_resource_name = 10;
  }
 
  // Configuration for KFP job resources
