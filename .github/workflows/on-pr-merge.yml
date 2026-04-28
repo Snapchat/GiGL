@@ -78,6 +78,8 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install C++ dependencies
       run: bash gigl-core/requirements/install_cpp_deps.sh
+    - name: Install Python dependencies
+      run: bash requirements/install_py_deps.sh --skip-glt-post-install
     - name: Run C++ Unit Tests
       run: make unit_test_cpp
 
