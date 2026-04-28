@@ -398,10 +398,10 @@ class LightGCN(nn.Module):
             torch.Tensor: Weighted sum of all layer embeddings, shape [N, D].
         """
         if len(all_layer_embeddings) != len(
-            self._layer_weights
+            self._layer_weights  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         ):  # https://github.com/Snapchat/GiGL/issues/408
             raise ValueError(
-                f"Got {len(all_layer_embeddings)} layer tensors but {len(self._layer_weights)} weights."  # https://github.com/Snapchat/GiGL/issues/408
+                f"Got {len(all_layer_embeddings)} layer tensors but {len(self._layer_weights)} weights."  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
             )
 
         # Stack all layer embeddings and compute weighted sum
@@ -409,7 +409,7 @@ class LightGCN(nn.Module):
         stacked = torch.stack(all_layer_embeddings, dim=0)  # shape [K+1, N, D]
         w = self._layer_weights.to(stacked.device)  # shape [K+1], ensure on same device
         out = (
-            stacked * w.view(-1, 1, 1)
+            stacked * w.view(-1, 1, 1)  # ty: ignore[call-non-callable] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         ).sum(  # https://github.com/Snapchat/GiGL/issues/408
             dim=0
         )  # shape [N, D], w_0*X_0 + w_1*X_1 + ...

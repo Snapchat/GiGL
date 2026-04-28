@@ -133,7 +133,7 @@ def _setup_dataloaders(
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(query_node_type, main_input_nodes[query_node_type]),
+        input_nodes=(query_node_type, main_input_nodes[query_node_type]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -156,7 +156,7 @@ def _setup_dataloaders(
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),
+        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=device,

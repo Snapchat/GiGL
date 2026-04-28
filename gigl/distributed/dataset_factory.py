@@ -125,7 +125,7 @@ def _load_and_build_partitioned_dataset(
             for supervision_edge_type in splitter._supervision_edge_types:
                 positive_label_edges[supervision_edge_type] = (
                     select_ssl_positive_label_edges(
-                        edge_index=loaded_graph_tensors.edge_index[
+                        edge_index=loaded_graph_tensors.edge_index[  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                             supervision_edge_type
                         ],
                         positive_label_percentage=_ssl_positive_label_percentage,

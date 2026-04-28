@@ -81,7 +81,7 @@ class TestDegreeComputation(TestCase):
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assert_tensor_equality(result[edge_type], expected)
+            self.assert_tensor_equality(result[edge_type], expected)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
     def test_heterogeneous_graph_with_missing_topology(self):
         """Test that edge types with missing topology get empty tensors.
@@ -268,7 +268,7 @@ class TestDatasetDegreeProperty(TestCase):
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assert_tensor_equality(result[edge_type], expected)
+            self.assert_tensor_equality(result[edge_type], expected)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
 
 class TestHelperFunctions(TestCase):

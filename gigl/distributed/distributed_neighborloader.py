@@ -478,7 +478,7 @@ class DistNeighborLoader(BaseDistLoader):
             )
 
         curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,
+            input_nodes=node_ids,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )

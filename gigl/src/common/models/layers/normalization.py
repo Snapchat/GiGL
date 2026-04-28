@@ -12,8 +12,10 @@ def l2_normalize_embeddings(
     if isinstance(node_typed_embeddings, dict):
         for node_type in node_typed_embeddings:
             node_typed_embeddings[node_type] = F.normalize(
-                node_typed_embeddings[node_type], p=2, dim=-1
-            )
+                node_typed_embeddings[node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                p=2,
+                dim=-1,
+            )  # ty: ignore[invalid-assignment] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
     elif isinstance(node_typed_embeddings, torch.Tensor):
         node_typed_embeddings = F.normalize(node_typed_embeddings, p=2, dim=-1)
     else:

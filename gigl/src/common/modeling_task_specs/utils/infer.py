@@ -137,10 +137,10 @@ def infer_task_inputs(
         decoder = model.module.decode
         batch_result_types = model.module.tasks.result_types
     else:
-        decoder = model.decode  # https://github.com/Snapchat/GiGL/issues/408
+        decoder = model.decode  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         batch_result_types = (
-            model.tasks.result_types
-        )  # https://github.com/Snapchat/GiGL/issues/408
+            model.tasks.result_types  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+        )  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.
@@ -220,7 +220,7 @@ def infer_task_inputs(
         random_neg_root_embeddings[condensed_node_type] = (
             random_neg_embeddings[condensed_node_type][random_neg_root_node_indices]
             if random_neg_root_node_indices.numel()
-            else torch.FloatTensor([]).to(device=device)
+            else torch.FloatTensor([]).to(device=device)  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
         )
         if ModelResultType.batch_scores in batch_result_types or should_eval:
             random_neg_scores[condensed_node_type] = (
@@ -228,7 +228,7 @@ def infer_task_inputs(
                     query_embeddings, random_neg_root_embeddings[condensed_node_type]
                 )
                 if random_neg_root_embeddings[condensed_node_type].numel()
-                else torch.FloatTensor([]).to(device=device)
+                else torch.FloatTensor([]).to(device=device)  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
             )
 
     # Loop through all root nodes and populate ids, embeddings, and scores per condensed edge type
@@ -247,14 +247,16 @@ def infer_task_inputs(
             ) = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_condensed_node_types[
                 condensed_supervision_edge_type
             ]
-            pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[
+            pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 condensed_supervision_edge_type
-            ].root_node_to_target_node_id[root_node.item()]  # shape=[num_pos_nodes]
+            ].root_node_to_target_node_id[
+                root_node.item()
+            ]  # shape=[num_pos_nodes]
 
             hard_neg_nodes: torch.LongTensor = (
                 main_batch.hard_neg_supervision_edge_data[
                     condensed_supervision_edge_type
-                ].root_node_to_target_node_id[root_node.item()]
+                ].root_node_to_target_node_id[root_node.item()]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             )  # shape=[num_hard_neg_nodes]
 
             repeated_anchor_count[condensed_supervision_edge_type].append(
@@ -263,7 +265,7 @@ def infer_task_inputs(
 
             if pos_nodes.numel():
                 _pos_embeddings[condensed_supervision_edge_type].append(
-                    main_embeddings[condensed_supervision_target_node_type][pos_nodes]  # type: ignore[arg-type]
+                    main_embeddings[condensed_supervision_target_node_type][pos_nodes]  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
                 )
                 _positive_ids[condensed_supervision_edge_type].append(pos_nodes)
 
@@ -271,7 +273,7 @@ def infer_task_inputs(
                 _hard_neg_embeddings[condensed_supervision_edge_type].append(
                     main_embeddings[condensed_supervision_target_node_type][
                         hard_neg_nodes
-                    ]  # type: ignore[arg-type]
+                    ]  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
                 )
                 _hard_neg_ids[condensed_supervision_edge_type].append(hard_neg_nodes)
 
@@ -301,9 +303,9 @@ def infer_task_inputs(
                     condensed_supervision_target_node_type
                 ][[root_node_idx], :].to(device=device)
                 _batch_scores[condensed_supervision_edge_type] = BatchScores(
-                    pos_scores=pos_scores,
-                    hard_neg_scores=hard_neg_scores,
-                    random_neg_scores=random_neg_scores_root,
+                    pos_scores=pos_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    hard_neg_scores=hard_neg_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    random_neg_scores=random_neg_scores_root,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
                 )
 
         if ModelResultType.batch_scores in batch_result_types or should_eval:
@@ -325,12 +327,12 @@ def infer_task_inputs(
         pos_embeddings[condensed_supervision_edge_type] = (
             torch.cat(tuple(_pos_embeddings[condensed_supervision_edge_type]))
             if len(_pos_embeddings[condensed_supervision_edge_type])
-            else torch.tensor([])
+            else torch.tensor([])  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
         )
         hard_neg_embeddings[condensed_supervision_edge_type] = (
             torch.cat(tuple(_hard_neg_embeddings[condensed_supervision_edge_type]))
             if len(_hard_neg_embeddings[condensed_supervision_edge_type])
-            else torch.tensor([])
+            else torch.tensor([])  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
         )
 
         repeated_anchor_embeddings[condensed_supervision_edge_type] = (
@@ -339,7 +341,7 @@ def infer_task_inputs(
                     device=device
                 ),
                 dim=0,
-            )
+            )  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
         )
 
         # If needed, calculate task inputs for retrieval loss per condensed edge type
@@ -435,18 +437,18 @@ def infer_task_inputs(
 
             batch_combined_scores[condensed_supervision_edge_type] = (
                 BatchCombinedScores(
-                    repeated_candidate_scores=repeated_candidate_scores,
-                    positive_ids=global_positive_ids,
-                    hard_neg_ids=global_hard_neg_ids,
-                    random_neg_ids=global_random_neg_ids,
-                    repeated_query_ids=repeated_global_query_ids,
+                    repeated_candidate_scores=repeated_candidate_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    positive_ids=global_positive_ids,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    hard_neg_ids=global_hard_neg_ids,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    random_neg_ids=global_random_neg_ids,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    repeated_query_ids=repeated_global_query_ids,  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
                     num_unique_query_ids=main_batch_root_node_indices.shape[0],
                 )
             )
 
     # Populate all computed embeddings for task input
     batch_embeddings = BatchEmbeddings(
-        query_embeddings=query_embeddings,
+        query_embeddings=query_embeddings,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
         repeated_query_embeddings=repeated_anchor_embeddings,
         pos_embeddings=pos_embeddings,
         hard_neg_embeddings=hard_neg_embeddings,

@@ -397,7 +397,7 @@ class DistServer:
                     f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] "
                     f"(e.g. a heterogeneous dataset), got {type(nodes)}"
                 )
-            nodes = nodes[node_type]
+            nodes = nodes[node_type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         elif not isinstance(nodes, torch.Tensor):
             raise ValueError(
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."

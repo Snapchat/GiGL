@@ -69,7 +69,7 @@ class LinkPredictionGNN(nn.Module):
 
     @property
     def tasks(self) -> NodeAnchorBasedLinkPredictionTasks:
-        return self.__tasks
+        return self.__tasks  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
 
     @property
     def graph_backend(self) -> GraphBackend:

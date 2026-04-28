@@ -488,7 +488,10 @@ class DistDataset(glt.distributed.DistDataset):
                 self._num_val = val_nodes.numel()  # ty: ignore[unresolved-attribute]
                 self._num_test = test_nodes.numel()  # ty: ignore[unresolved-attribute]
                 self._node_ids = _append_non_split_node_ids(
-                    train_nodes, val_nodes, test_nodes, node_ids_on_machine
+                    train_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    val_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    test_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    node_ids_on_machine,
                 )
             else:
                 logger.info(
@@ -622,8 +625,8 @@ class DistDataset(glt.distributed.DistDataset):
                 # if it is not an edge type, since it must be one of the two.
                 assert not isinstance(node_type, EdgeType)
                 self._node_feature_info[node_type] = FeatureInfo(
-                    dim=node_features_per_node_type.size(1),
-                    dtype=node_features_per_node_type.dtype,
+                    dim=node_features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dtype=node_features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 )
             logger.info(
                 f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
@@ -705,8 +708,8 @@ class DistDataset(glt.distributed.DistDataset):
             for edge_type, edge_features_per_edge_type in edge_features.items():
                 assert isinstance(edge_type, EdgeType)
                 self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),
-                    dtype=edge_features_per_edge_type.dtype,
+                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"

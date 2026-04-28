@@ -203,7 +203,7 @@ def _get_random_negative_samples_for_pos_edges(
 
     pos_node_ids = edge_index[0].repeat(num_negative_samples_per_pos_edge)
     neg_node_ids = torch.randint(low=0, high=num_nodes, size=[pos_node_ids.numel()])
-    return torch.vstack((pos_node_ids, neg_node_ids))
+    return torch.vstack((pos_node_ids, neg_node_ids))  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
 
 def _build_rooted_node_neighborhood_samples_from_subgraphs(

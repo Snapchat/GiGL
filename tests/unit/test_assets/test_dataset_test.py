@@ -84,8 +84,8 @@ class TestCreateHeterogeneousDataset(TestCase):
         # Verify node counts (5 users, 5 stories in default graph)
         node_ids = dataset.node_ids
         assert isinstance(node_ids, dict)
-        self.assertEqual(node_ids[USER].shape[0], 5)
-        self.assertEqual(node_ids[STORY].shape[0], 5)
+        self.assertEqual(node_ids[USER].shape[0], 5)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(node_ids[STORY].shape[0], 5)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
         # Verify feature info is None when no features provided
         self.assertIsNone(dataset.node_feature_info)
@@ -119,8 +119,8 @@ class TestCreateHeterogeneousDataset(TestCase):
         # Verify node counts from custom edge indices
         node_ids = dataset.node_ids
         assert isinstance(node_ids, dict)
-        self.assertEqual(node_ids[USER].shape[0], 3)
-        self.assertEqual(node_ids[STORY].shape[0], 3)
+        self.assertEqual(node_ids[USER].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(node_ids[STORY].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
         # Verify feature dimension from custom features
         expected_feature_info = {
@@ -185,9 +185,9 @@ class TestCreateHeterogeneousDatasetWithLabels(TestCase):
         assert isinstance(test_node_ids, dict)
 
         # Verify split sizes
-        self.assertEqual(train_node_ids[USER].shape[0], 3)
-        self.assertEqual(val_node_ids[USER].shape[0], 1)
-        self.assertEqual(test_node_ids[USER].shape[0], 1)
+        self.assertEqual(train_node_ids[USER].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(val_node_ids[USER].shape[0], 1)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(test_node_ids[USER].shape[0], 1)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
     def test_missing_positive_labels_raises_error(self) -> None:
         """Test that missing positive labels for split nodes raises an error."""
