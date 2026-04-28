@@ -275,8 +275,8 @@ def _run_toy_heterogeneous_ablp(
 
     # Ensure that the node ids we should be fanout from are all found in the batch
     assert_tensor_equality(
-        dataset.train_node_ids[anchor_node_type],
-        datum[anchor_node_type].batch,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        dataset.train_node_ids[anchor_node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        datum[anchor_node_type].batch,
     )
     assert (
         dataset.train_node_ids[anchor_node_type].size(0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.

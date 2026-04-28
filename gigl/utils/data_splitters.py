@@ -471,15 +471,15 @@ class DistNodeSplitter:
             _check_node_ids(nodes_to_split)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
             hash_values = self._hash_function(
-                nodes_to_split
-            )  # 1 x M  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                nodes_to_split  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            )  # 1 x M
 
             # Create train, val, test splits using distributed coordination
             train, val, test = _create_distributed_splits_from_hash(
-                nodes_to_split,
+                nodes_to_split,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 hash_values,
                 self._num_val,
-                self._num_test,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                self._num_test,
             )
 
             splits[node_type] = (train, val, test)  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.

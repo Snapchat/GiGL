@@ -488,10 +488,10 @@ class DistDataset(glt.distributed.DistDataset):
                 self._num_val = val_nodes.numel()  # ty: ignore[unresolved-attribute]
                 self._num_test = test_nodes.numel()  # ty: ignore[unresolved-attribute]
                 self._node_ids = _append_non_split_node_ids(
-                    train_nodes,
-                    val_nodes,
-                    test_nodes,
-                    node_ids_on_machine,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    train_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    val_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    test_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    node_ids_on_machine,
                 )
             else:
                 logger.info(

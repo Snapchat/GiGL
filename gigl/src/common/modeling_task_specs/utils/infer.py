@@ -247,11 +247,11 @@ def infer_task_inputs(
             ) = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_condensed_node_types[
                 condensed_supervision_edge_type
             ]
-            pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[
+            pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 condensed_supervision_edge_type
             ].root_node_to_target_node_id[
                 root_node.item()
-            ]  # shape=[num_pos_nodes]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            ]  # shape=[num_pos_nodes]
 
             hard_neg_nodes: torch.LongTensor = (
                 main_batch.hard_neg_supervision_edge_data[

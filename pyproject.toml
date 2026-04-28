@@ -289,9 +289,10 @@ replace-imports-with-any = [
   "kfp.**",
   "tensorflow.**",
   "tensorflow_metadata.**",
-  # TODO: (svij Torch has type information but we are doing some incorrect casting and using old api types thus type check fails
-  # Although, the code still runs fine.
- # "torch.**",
+  # Keep torch type checking enabled by not listing torch here. Temporary ty
+  # suppressions are tracked via TODO-tagged inline ignores documented in
+  # docs/ty_ignore_buckets.md.
+  # "torch.**",
   "torch_geometric.**",
   "torchrec.**",
 ]
