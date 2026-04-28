@@ -1,0 +1,16 @@
+node_tables:
+  - bq_table: "test_project.test_dataset.user_nodes"
+    node_type: "user"
+    id_column: "user_id"
+    feature_columns: ["age", "country"]
+    label_column: "label"
+
+edge_tables:
+  - bq_table: "test_project.test_dataset.user_edges"
+    edge_type: "follows"
+    src_id_column: "src_user_id"
+    dst_id_column: "dst_user_id"
+    feature_columns: ["weight"]
+
+output_gcs_path: "gs://test-bucket/analysis_output/"
+fan_out: [15, 10, 5]
