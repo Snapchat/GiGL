@@ -2,7 +2,7 @@ import argparse
 from typing import Optional
 
 import torch
-from google.cloud.aiplatform_v1.types import accelerator_type, env_var
+from google.cloud.aiplatform_v1.types import accelerator_type
 
 from gigl.common import Uri, UriFactory
 from gigl.common.constants import (
@@ -10,11 +10,12 @@ from gigl.common.constants import (
     DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
 )
 from gigl.common.logger import Logger
-from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
+from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.metrics_service_provider import initialize_metrics
+from gigl.src.common.vertex_ai_launcher import launch_single_pool_job
 from gigl.src.training.v1.lib.training_process import GnnTrainingProcess
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
     LocalResourceConfig,
@@ -43,42 +44,34 @@ class Trainer:
         is_cpu_training = self._determine_if_cpu_training(trainer_config)
 
         if isinstance(trainer_config, VertexAiResourceConfig):
-            cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
-            cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
-            container_uri = cpu_docker_uri if is_cpu_training else cuda_docker_uri
-            environment_variables: list[env_var.EnvVar] = [
-                env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
-            ]
-            job_args = [
-                f"--job_name={applied_task_identifier}",
-                f"--task_config_uri={task_config_uri}",
-                f"--resource_config_uri={resource_config_uri}",
-            ] + ([] if is_cpu_training else ["--use_cuda"])
-
-            job_config = VertexAiJobConfig(
-                job_name=applied_task_identifier,
-                container_uri=container_uri,
-                command=["python", "-m", "gigl.src.training.v1.lib.training_process"],
-                args=job_args,
-                environment_variables=environment_variables,
-                machine_type=trainer_config.machine_type,
-                accelerator_type=trainer_config.gpu_type.upper().replace("-", "_"),
-                accelerator_count=trainer_config.gpu_limit,
-                replica_count=trainer_config.num_replicas,
-                labels=resource_config.get_resource_labels(
-                    component=GiGLComponents.Trainer
-                ),
-                timeout_s=trainer_config.timeout if trainer_config.timeout else None,
+            gbml_config_pb_wrapper = (
+                GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                    gbml_config_uri=task_config_uri
+                )
             )
-
-            vertex_ai_service = VertexAIService(
-                project=resource_config.project,
-                location=resource_config.region,
-                service_account=resource_config.service_account_email,
-                staging_bucket=resource_config.temp_assets_regional_bucket_path.uri,
+            raw_tensorboard_logs_uri = (
+                gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
             )
-
-            vertex_ai_service.launch_job(job_config=job_config)
+            tensorboard_logs_uri = (
+                UriFactory.create_uri(raw_tensorboard_logs_uri)
+                if gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard
+                and raw_tensorboard_logs_uri
+                else None
+            )
+            launch_single_pool_job(
+                vertex_ai_resource_config=trainer_config,
+                job_name=str(applied_task_identifier),
+                task_config_uri=task_config_uri,
+                resource_config_uri=resource_config_uri,
+                process_command="python -m gigl.src.training.v1.lib.training_process",
+                process_runtime_args={},
+                resource_config_wrapper=resource_config,
+                cpu_docker_uri=cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+                cuda_docker_uri=cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+                component=GiGLComponents.Trainer,
+                vertex_ai_region=resource_config.vertex_ai_trainer_region,
+                tensorboard_logs_uri=tensorboard_logs_uri,
+            )
 
         elif isinstance(trainer_config, LocalResourceConfig):
             training_process = GnnTrainingProcess()

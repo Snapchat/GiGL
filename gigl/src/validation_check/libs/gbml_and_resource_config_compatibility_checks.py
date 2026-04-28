@@ -102,6 +102,46 @@ def check_trainer_graph_store_compatibility(
         )
 
 
+def check_vertex_ai_trainer_tensorboard_compatibility(
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+    resource_config_wrapper: GiglResourceConfigWrapper,
+) -> None:
+    """Check that Vertex AI trainer TensorBoard config is complete.
+
+    Args:
+        gbml_config_pb_wrapper: The GbmlConfig wrapper.
+        resource_config_wrapper: The GiglResourceConfig wrapper.
+
+    Raises:
+        AssertionError: If TensorBoard logging is enabled for a Vertex AI
+            trainer but no TensorBoard resource name is configured.
+    """
+    logger.info(
+        "Config validation check: Vertex AI trainer TensorBoard compatibility between template and resource configs."
+    )
+
+    if not gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard:
+        return
+
+    trainer_resource_config = resource_config_wrapper.trainer_config
+    if isinstance(trainer_resource_config, gigl_resource_config_pb2.VertexAiResourceConfig):
+        tensorboard_resource_name = trainer_resource_config.tensorboard_resource_name
+    elif isinstance(
+        trainer_resource_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
+    ):
+        tensorboard_resource_name = (
+            trainer_resource_config.compute_pool.tensorboard_resource_name
+        )
+    else:
+        return
+
+    assert tensorboard_resource_name, (
+        "GbmlConfig.trainer_config.should_log_to_tensorboard is true, so a "
+        "Vertex AI TensorBoard resource name must be set in the trainer "
+        "resource config."
+    )
+
+
 def check_inferencer_graph_store_compatibility(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
     resource_config_wrapper: GiglResourceConfigWrapper,

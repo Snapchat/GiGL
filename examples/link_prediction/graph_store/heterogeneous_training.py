@@ -113,6 +113,11 @@ from gigl.src.common.types.model_eval_metrics import (
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
+from gigl.src.common.utils.tensorboard import (
+    close_tensorboard_writer,
+    create_tensorboard_writer,
+    write_tensorboard_scalar,
+)
 from gigl.utils.iterator import InfiniteIterator
 from gigl.utils.sampling import parse_fanout
 
@@ -372,6 +377,7 @@ class TrainingProcessArgs:
             sharing between local processes.
         supervision_edge_type (EdgeType): The supervision edge type for training.
         model_uri (Uri): URI to save/load the trained model state dict.
+        tensorboard_log_uri (Optional[Uri]): Destination URI for TensorBoard logs.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_type_to_feature_dim (dict[NodeType, int]): Mapping of node types to their feature dimensions.
@@ -388,6 +394,7 @@ class TrainingProcessArgs:
         num_val_batches (int): Number of validation batches across all processes.
         val_every_n_batch (int): Frequency to run validation during training.
         log_every_n_batch (int): Frequency to log batch information during training.
+        should_log_to_tensorboard (bool): If True, emit TensorBoard summaries.
         should_skip_training (bool): If True, skip training and only run testing.
     """
 
@@ -401,6 +408,7 @@ class TrainingProcessArgs:
     # Model
     model_uri: Uri
     eval_metrics_uri: Optional[Uri]
+    tensorboard_log_uri: Optional[Uri]
     hid_dim: int
     out_dim: int
     node_type_to_feature_dim: dict[NodeType, int]
@@ -421,6 +429,7 @@ class TrainingProcessArgs:
     num_val_batches: int
     val_every_n_batch: int
     log_every_n_batch: int
+    should_log_to_tensorboard: bool
     should_skip_training: bool
 
 
@@ -459,12 +468,18 @@ def _training_process(
     if torch.cuda.is_available():
         torch.cuda.set_device(device)
     print(f"---Rank {rank} training process set device {device}")
+    tensorboard_writer = create_tensorboard_writer(
+        should_log_to_tensorboard=args.should_log_to_tensorboard,
+        configured_tensorboard_log_uri=args.tensorboard_log_uri,
+        should_write_events=rank == 0,
+    )
 
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
     )
+    batch_idx = 0
 
     if not args.should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
@@ -525,7 +540,6 @@ def _training_process(
 
         # Entering the training loop
         training_start_time = time.time()
-        batch_idx = 0
         avg_train_loss = 0.0
         last_n_batch_avg_loss: list[float] = []
         last_n_batch_time: list[float] = []
@@ -567,17 +581,31 @@ def _training_process(
             if (
                 batch_idx % args.log_every_n_batch == 0 or batch_idx < 10
             ):  # Log the first 10 batches to ensure the model is initialized correctly
+                mean_batch_time = statistics.mean(last_n_batch_time)
+                mean_train_loss = statistics.mean(last_n_batch_avg_loss)
                 print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 print(
-                    f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                    f"rank={rank}, batch={batch_idx}, mean(batch_time)={mean_batch_time:.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                )
+                write_tensorboard_scalar(
+                    writer=tensorboard_writer,
+                    tag="Time/batch_mean_sec",
+                    value=mean_batch_time,
+                    step=batch_idx,
                 )
                 last_n_batch_time.clear()
                 print(
-                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={mean_train_loss:.6f}"
+                )
+                write_tensorboard_scalar(
+                    writer=tensorboard_writer,
+                    tag="Loss/train",
+                    value=mean_train_loss,
+                    step=batch_idx,
                 )
                 last_n_batch_avg_loss.clear()
                 flush()
@@ -585,7 +613,7 @@ def _training_process(
             if batch_idx % args.val_every_n_batch == 0:
                 print(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
-                _run_validation_loops(
+                global_avg_val_loss = _run_validation_loops(
                     model=model,
                     main_loader=val_main_loader_iter,
                     random_negative_loader=val_random_negative_loader_iter,
@@ -595,6 +623,12 @@ def _training_process(
                     device=device,
                     log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
+                )
+                write_tensorboard_scalar(
+                    writer=tensorboard_writer,
+                    tag="Loss/val",
+                    value=global_avg_val_loss,
+                    step=batch_idx,
                 )
                 model.train()
         else:
@@ -674,6 +708,12 @@ def _training_process(
         device=device,
         log_every_n_batch=args.log_every_n_batch,
     )
+    write_tensorboard_scalar(
+        writer=tensorboard_writer,
+        tag="Loss/test",
+        value=global_avg_test_loss,
+        step=batch_idx,
+    )
 
     # Memory cleanup and waiting for all processes to finish
     if torch.cuda.is_available():
@@ -701,6 +741,7 @@ def _training_process(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
     )
     flush()
+    close_tensorboard_writer(tensorboard_writer)
 
     # Graph store mode cleanup: shutdown the compute process connection to the storage cluster.
     shutdown_compute_proccess()
@@ -926,7 +967,18 @@ def _run_example_training(
     eval_metrics_uri: Optional[Uri] = (
         UriFactory.create_uri(raw_eval_metrics_uri) if raw_eval_metrics_uri else None
     )
+    raw_tensorboard_log_uri = (
+        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.tensorboard_logs_uri
+    )
+    tensorboard_log_uri: Optional[Uri] = (
+        UriFactory.create_uri(raw_tensorboard_log_uri)
+        if raw_tensorboard_log_uri
+        else None
+    )
 
+    should_log_to_tensorboard = (
+        gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard
+    )
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
     supervision_edge_types = (
@@ -949,6 +1001,7 @@ def _run_example_training(
         supervision_edge_type=supervision_edge_type,
         model_uri=model_uri,
         eval_metrics_uri=eval_metrics_uri,
+        tensorboard_log_uri=tensorboard_log_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
         node_type_to_feature_dim=node_type_to_feature_dim,
@@ -965,6 +1018,7 @@ def _run_example_training(
         num_val_batches=num_val_batches,
         val_every_n_batch=val_every_n_batch,
         log_every_n_batch=log_every_n_batch,
+        should_log_to_tensorboard=should_log_to_tensorboard,
         should_skip_training=should_skip_training,
     )
 

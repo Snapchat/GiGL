@@ -23,6 +23,17 @@ are example inference and training loops for the DBLP dataset. The DBLP dataset 
 You can follow along with [dblp.ipynb](./dblp.ipynb) to run an e2e GiGL pipeline on the DBLP dataset. It will guide you
 through running each component: `config_populator` -> `data_preprocessor` -> `trainer` -> `inferencer`
 
+## Vertex AI TensorBoard
+
+The example trainer configs enable TensorBoard logging with
+`trainerConfig.shouldLogToTensorboard: true`.
+
+To surface those events in Vertex AI TensorBoard, set
+`tensorboard_resource_name` on the trainer Vertex resource config, use a
+regional bucket, and keep the bucket, CustomJob, and TensorBoard instance in
+the same region. The attached service account should have
+`roles/storage.admin` and `roles/aiplatform.user`.
+
 ```{toctree}
 :maxdepth: 2
 :hidden:

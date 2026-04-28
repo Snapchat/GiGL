@@ -16,6 +16,7 @@ datasetConfig:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
 trainerConfig:
+  shouldLogToTensorboard: true
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50" # Frequency in which we log batch information

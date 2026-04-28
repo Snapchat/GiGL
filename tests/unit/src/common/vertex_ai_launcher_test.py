@@ -59,6 +59,7 @@ def _create_gigl_resource_config_with_graph_store(
         gcp_region_override="us-west1",
         timeout=10800,
         scheduling_strategy="STANDARD",
+        tensorboard_resource_name="projects/test-project/locations/us-west1/tensorboards/test-tensorboard",
     )
     storage_pool = gigl_resource_config_pb2.VertexAiResourceConfig(
         machine_type="n1-highmem-32",
@@ -92,6 +93,7 @@ def _create_gigl_resource_config_with_single_pool_inference(
         machine_type="n1-standard-8",
         num_replicas=1,
         timeout=7200,
+        tensorboard_resource_name="projects/test-project/locations/us-central1/tensorboards/should-not-attach",
     )
 
     # Create InferencerResourceConfig with single pool vertex AI config
@@ -152,6 +154,7 @@ class TestVertexAILauncher(TestCase):
             cpu_docker_uri=cpu_docker_uri,
             cuda_docker_uri=cuda_docker_uri,
             component=component,
+            tensorboard_logs_uri=Uri("gs://test-perm-bucket/job-name/trainer/logs/"),
         )
 
         # Assert - verify VertexAIService was instantiated correctly
@@ -192,13 +195,28 @@ class TestVertexAILauncher(TestCase):
         self.assertIn(
             f"--epochs={process_runtime_args['epochs']}", compute_job_config.args
         )
+        self.assertIn("--use_cuda", compute_job_config.args)
+        self.assertEqual(
+            compute_job_config.base_output_dir,
+            "gs://test-perm-bucket/job-name/trainer",
+        )
+        self.assertEqual(
+            compute_job_config.tensorboard_resource_name,
+            compute_pool.tensorboard_resource_name,
+        )
 
         # Verify storage pool config
         self.assertEqual(storage_job_config.machine_type, storage_pool.machine_type)
+        self.assertEqual(storage_job_config.container_uri, cpu_docker_uri)
         self.assertIn(
             "gigl.distributed.graph_store.storage_main",
             " ".join(storage_job_config.command),
         )
+        self.assertIsNotNone(storage_job_config.args)
+        assert storage_job_config.args is not None  # Type narrowing for mypy
+        self.assertNotIn("--use_cuda", storage_job_config.args)
+        self.assertIsNone(storage_job_config.base_output_dir)
+        self.assertIsNone(storage_job_config.tensorboard_resource_name)
 
         # Verify environment variables
         compute_env_vars = {
@@ -304,6 +322,9 @@ class TestVertexAILauncher(TestCase):
         self.assertIn(
             f"--output_path={process_runtime_args['output_path']}", job_config.args
         )
+        self.assertNotIn("--use_cuda", job_config.args)
+        self.assertIsNone(job_config.base_output_dir)
+        self.assertIsNone(job_config.tensorboard_resource_name)
 
         # Verify resource labels
         expected_labels = {

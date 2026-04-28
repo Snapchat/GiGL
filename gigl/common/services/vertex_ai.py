@@ -135,6 +135,11 @@ class VertexAiJobConfig:
         reservation_affinity: Optional ``ReservationAffinity`` that maps to
             ``MachineSpec.reservation_affinity``. ``None`` uses the Vertex
             AI default (no reservation).
+        base_output_dir: Optional CustomJob base output directory. When set,
+            Vertex AI derives ``AIP_MODEL_DIR``, ``AIP_CHECKPOINT_DIR``, and
+            ``AIP_TENSORBOARD_LOG_DIR`` from this directory.
+        tensorboard_resource_name: Optional existing Vertex AI TensorBoard
+            resource to attach to the job.
     """
 
     job_name: str
@@ -153,6 +158,8 @@ class VertexAiJobConfig:
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
     reservation_affinity: Optional[ReservationAffinity] = None
+    base_output_dir: Optional[str] = None
+    tensorboard_resource_name: Optional[str] = None
 
 
 class VertexAIService:
@@ -347,12 +354,14 @@ class VertexAIService:
             location=self._location,
             labels=job_config.labels,
             staging_bucket=self._staging_bucket,
+            base_output_dir=job_config.base_output_dir,
         )
         job.submit(
             service_account=self._service_account,
             timeout=job_config.timeout_s,
             enable_web_access=job_config.enable_web_access,
             scheduling_strategy=job_config.scheduling_strategy,
+            tensorboard=job_config.tensorboard_resource_name,
         )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")

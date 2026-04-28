@@ -101,6 +101,7 @@ class ConfigPopulatorUnitTest(TestCase):
         )
         self.assertNotEqual(trained_model_metadata_pb.trained_model_uri, "")
         self.assertNotEqual(trained_model_metadata_pb.scripted_model_uri, "")
+        self.assertTrue(trained_model_metadata_pb.tensorboard_logs_uri.endswith("/logs/"))
 
         # Assert inference metadata assets were set
         inference_metadata_pb: inference_metadata_pb2.InferenceMetadata = (
@@ -189,6 +190,7 @@ class ConfigPopulatorUnitTest(TestCase):
         )
         self.assertNotEqual(trained_model_metadata_pb.trained_model_uri, "")
         self.assertNotEqual(trained_model_metadata_pb.scripted_model_uri, "")
+        self.assertTrue(trained_model_metadata_pb.tensorboard_logs_uri.endswith("/logs/"))
 
         # Assert inference metadata assets were set
         inference_metadata_pb: inference_metadata_pb2.InferenceMetadata = (

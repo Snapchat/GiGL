@@ -8,7 +8,6 @@ import traceback
 from distutils.util import strtobool
 from typing import Any, Optional
 
-import tensorflow as tf
 import torch
 import torch.distributed
 import torch.nn.parallel
@@ -47,6 +46,7 @@ from gigl.src.common.utils.metrics_service_provider import (
     initialize_metrics,
 )
 from gigl.src.common.utils.model import load_state_dict_from_uri
+from gigl.src.common.utils.tensorboard import create_tensorboard_writer
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.training.v1.lib.base_trainer import BaseTrainer
 
@@ -216,14 +216,21 @@ class GnnTrainingProcess:
     ):
         trainer_instance.setup_for_training()
         logger.info(f"Starting training at {current_formatted_datetime()}")
-        tensorboard_log_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
+        tensorboard_log_uri = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
+        )
         profiler = get_torch_profiler_instance(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper
         )
 
-        file_writer = None
-        if gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard:
-            file_writer = tf.summary.create_file_writer(tensorboard_log_uri)
+        configured_tensorboard_log_uri = (
+            UriFactory.create_uri(tensorboard_log_uri) if tensorboard_log_uri else None
+        )
+        file_writer = create_tensorboard_writer(
+            should_log_to_tensorboard=gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard,
+            configured_tensorboard_log_uri=configured_tensorboard_log_uri,
+            should_write_events=get_rank() == 0,
+        )
 
         with file_writer.as_default() if file_writer else contextlib.nullcontext():
             with (
