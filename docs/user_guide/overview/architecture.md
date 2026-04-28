@@ -1,59 +1,84 @@
 # GiGL Architecture
 
-## Components
+GiGL now has two execution models:
 
-GiGL contains six components, each designed to facilitate the platforms end-to-end graph machine learning (ML) tasks.
-The components and there documentation (linked) are as follows:
+- The current, recommended path uses in-memory subgraph sampling, where the graph is loaded into memory and sampled live
+  during training and inference. If you are looking for the older tabularized pipeline, see
+  [Deprecated tabularized docs](deprecated_tabularized/index.md).
+- The older tabularized path materializes sampled subgraphs ahead of time through Subgraph Sampler and Split Generator.
+  NOTE: The tabularized version of GiGL will be removed in a future release.
+
+This page focuses on the current in-memory subgraph sampling architecture and points to the legacy docs separately.
+
+## Primary Pipeline Flow
+
+The primary GiGL flow is:
+
+```text
+Config Populator -> Data Preprocessor -> Trainer? -> Inferencer -> Post Processor
+```
+
+`Trainer` is optional. Inference-only pipelines skip training and run inference against a graph using a pre-trained
+model.
+
+For the shared runtime behavior behind the current path, see
+[In-Memory Subgraph Sampling](in_memory_subgraph_sampling.md).
+
+## Components
 
 <img src="../../assets/images/config_populator_icon.png" height="50px"  width="50px">
 
-[**Config Populator**](components/config_populator.md): Processing template config files and updating with fields that
-are needed for downstream components.
+[**Config Populator**](components/config_populator.md): Freezes the template task config into a runnable `GbmlConfig`.
 
 <img src="../../assets/images/data_preprocessor_icon.png" height="50px" width="50px">
 
-[**Data Preprocessor**](components/data_preprocessor.md): Reading and processing node, edge, and feature/data
-engineering.
-
-<img src="../../assets/images/subgraph_sampler_icon.png" height="50px" width="50px">
-
-[**Subgraph Sampler**](components/subgraph_sampler.md): Generate k-hop localized subgraphs for each node in the graph.
-
-<img src="../../assets/images/split_generator_icon.png" height="50px" width="50px">
-
-[**Split Generator**](components/split_generator.md): Split the data into training, validation, and test sets.
+[**Data Preprocessor**](components/data_preprocessor.md): Builds graph metadata, transforms features, and enumerates
+node IDs into compact integer IDs.
 
 <img src="../../assets/images/trainer_icon.png" height="50px" width="50px">
 
-[**Trainer**](components/trainer.md): Run distributed training either locally or on the cloud.
+[**Trainer**](components/trainer.md): Launches either legacy training or in-memory subgraph sampling training.
 
 <img src="../../assets/images/inferencer_icon.png" height="50px" width="50px">
 
-[**Inferencer**](components/inferencer.md): Runs inference to generate output embeddings and/or predictions.
+[**Inferencer**](components/inferencer.md): Launches either legacy inference or in-memory subgraph sampling inference.
 
-#### For convenience we link the source code pointers:
+[**Post Processor**](components/post_processor.md): Restores original node IDs for outputs produced by in-memory
+subgraph sampling and runs optional user-defined post-processing logic.
+
+### Component Diagram
+
+Below is a high-level system overview. Note that both training and inference are backed by the same in-memory graph
+sampling engine.
+
+![System overview](../../assets/images/in-memory-sgs-sys-overview.png)
+
+### Source Entry Points
 
 | Component         | Source Code                                                               |
 | ----------------- | ------------------------------------------------------------------------- |
 | Config Populator  | {py:class}`gigl.src.config_populator.config_populator.ConfigPopulator`    |
 | Data Preprocessor | {py:class}`gigl.src.data_preprocessor.data_preprocessor.DataPreprocessor` |
-| Subgraph Sampler  | {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.SubgraphSampler`    |
-| Split Generator   | {py:class}`gigl.src.split_generator.split_generator.SplitGenerator`       |
 | Trainer           | {py:class}`gigl.src.training.trainer.Trainer`                             |
 | Inferencer        | {py:class}`gigl.src.inference.inferencer.Inferencer`                      |
+| Post Processor    | {py:class}`gigl.src.post_process.post_processor.PostProcessor`            |
 
-## Diagrams
+## Related Guides
 
-The figure below illustrates at a high level how all the components work together.
-(<span style="color:purple">Purple</span> items are work-in-progress.)
+- For the shared in-memory runtime, deployment modes, example entry points, and cost discussion, see
+  [In-Memory Subgraph Sampling](in_memory_subgraph_sampling.md).
+- For stage-specific behavior and configuration, use the component guides linked above.
 
-<img src="../../assets/images/gigl_system_fig.png" alt="GiGL System Figure" width="50%" />
+## Deprecated Tabularized Architecture
 
-The figure below is a example GiGL workflow with tabularized subgraph sampling for the task of link prediction, in which
-the model is trained with triplet-style contrastive loss on a set of anchor nodes along with their positives and
-(in-batch) negatives.
+If you are maintaining an older deployment that still relies on precomputed sampled subgraphs, see
+[Deprecated tabularized docs](deprecated_tabularized/index.md).
 
-![gigl_nablp](../../assets/images/gigl_nablp.png)
+That flow is:
+
+```text
+Config Populator -> Data Preprocessor -> Subgraph Sampler -> Split Generator -> Trainer -> Inferencer
+```
 
 ```{toctree}
 :maxdepth: 2
@@ -61,8 +86,9 @@ the model is trained with triplet-style contrastive loss on a set of anchor node
 
 components/config_populator
 components/data_preprocessor
-components/subgraph_sampler
-components/split_generator
 components/trainer
 components/inferencer
+components/post_processor
+in_memory_subgraph_sampling
+deprecated_tabularized/index
 ```

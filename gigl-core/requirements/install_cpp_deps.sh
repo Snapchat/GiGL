@@ -2,7 +2,7 @@
 # Install C++ development tools: clang-format, clang-tidy, cmake.
 #
 # Usage:
-#   bash requirements/install_cpp_deps.sh
+#   bash gigl-core/requirements/install_cpp_deps.sh
 #
 # Called by `make install_dev_deps` alongside install_py_deps.sh and
 # install_scala_deps.sh.

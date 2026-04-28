@@ -51,7 +51,7 @@ check_if_valid_env:
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
-	bash ./requirements/install_cpp_deps.sh
+	bash ./gigl-core/requirements/install_cpp_deps.sh
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	uv pip install -e .
@@ -99,14 +99,8 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-.cache/cpp_tests/.configured: gigl-core/CMakeLists.txt gigl-core/tests/CMakeLists.txt gigl-core/.cache/cmake_build/CMakeInit.txt
-	uv run cmake -C gigl-core/.cache/cmake_build/CMakeInit.txt \
-		-S gigl-core -B .cache/cpp_tests -DGIGL_CORE_BUILD_TESTS=ON
-	touch .cache/cpp_tests/.configured
-
-unit_test_cpp: .cache/cpp_tests/.configured
-	uv run cmake --build .cache/cpp_tests --parallel
-	uv run ctest --test-dir .cache/cpp_tests --output-on-failure
+unit_test_cpp:
+	$(MAKE) -C gigl-core unit_test_cpp
 
 unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
@@ -122,12 +116,8 @@ check_format_md:
 	@echo "Checking markdown files..."
 	uv run mdformat --check ${MD_FILES}
 
-# TODO: Remove the $(if ...) guards in check_format_cpp, format_cpp, check_lint_cpp, and
-# fix_lint_cpp once C++ source files are permanently present in the repo. The guards exist
-# to silently no-op on branches that have no python_*.cpp files yet; once there is always
-# at least one C++ source, the guards just hide accidental empty-source mistakes.
 check_format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
+	$(MAKE) -C gigl-core check_format_cpp
 
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
@@ -165,22 +155,15 @@ format_md:
 	uv run mdformat ${MD_FILES}
 
 format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 -i --style=file $(CPP_SOURCES))
+	$(MAKE) -C gigl-core format_cpp
 
 format: format_py format_cpp format_scala format_md
 
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-# Stamp-file guard: uv pip install -e gigl-core/ triggers a full CMake configure-and-build
-# cycle (loading torch headers) even when nothing changed. By making the stamp file
-# depend on C++ sources and gigl-core/pyproject.toml, make skips the reinstall
-# on subsequent runs unless something actually changed. The stamp file lives inside
-# gigl-core/.cache/cmake_build so it is automatically invalidated if the build dir is cleaned.
-gigl-core/.cache/cmake_build/CMakeInit.txt: $(shell find gigl-core/csrc \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) gigl-core/CMakeLists.txt gigl-core/pyproject.toml
-	uv pip install -e gigl-core/
-
-build_cpp_extensions: gigl-core/.cache/cmake_build/CMakeInit.txt
+build_cpp_extensions:
+	$(MAKE) -C gigl-core build_cpp_extensions
 
 check_lint_cpp: build_cpp_extensions
 	$(if $(CPP_SOURCES_NO_CUDA),uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA))
@@ -198,7 +181,7 @@ lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.
 clean_cpp:
-	rm -rf .cache/cpp_tests gigl-core/.cache/cmake_build
+	$(MAKE) -C gigl-core clean_cpp
 
 # compiles current working state of scala projects to local jars
 compile_jars:
@@ -363,7 +346,7 @@ clean_build_files_scala:
 	( cd scala_spark35; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 
 clean_build_files_cpp:
-	rm -rf .cache/cpp_tests
+	$(MAKE) -C gigl-core clean_build_files_cpp
 
 clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
 

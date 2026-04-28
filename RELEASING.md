@@ -8,7 +8,7 @@ GiGL is distributed as two wheels that are always installed together:
 - **`gigl-core`** — compiled C++/CUDA extensions, ABI-bound to the torch variant
 
 Both wheels are always versioned and released together. `bump_version.py` updates both versions and keeps the
-`gigl-core` pin in `gigl/pyproject.toml` in sync automatically.
+`gigl-core` pin in `pyproject.toml` in sync automatically.
 
 ## Release process
 
