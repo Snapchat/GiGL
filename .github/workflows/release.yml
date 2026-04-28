@@ -13,7 +13,6 @@ permissions:
 jobs:
   build:
     name: Build and release pip whl (${{ matrix.torch-variant }})
-    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
@@ -23,6 +22,7 @@ jobs:
           - runner: gigl-gpu-instances
             torch-variant: cu128
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
+    runs-on: ${{ matrix.runner }}
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
@@ -59,7 +59,7 @@ jobs:
       run: |
         # Remove stale cmake cache from previous runs on self-hosted runners.
         rm -rf gigl-core/.cache/cmake_build
-        uv build --wheel gigl-core/
+        uv build --wheel gigl-core/ --locked
 
     - name: Publish gigl-core wheel
       working-directory: gigl-core
@@ -73,5 +73,5 @@ jobs:
     # when gigl becomes available.
     - name: Build and publish gigl wheel
       run: |
-        uv build --wheel
+        uv build --wheel --locked
         uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
