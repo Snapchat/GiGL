@@ -85,8 +85,10 @@ class SamplingBackendState:
         init_error: If ``runtime.init_backend()`` raised, the exception; otherwise ``None``.
         shutting_down: Set to ``True`` while ``destroy_sampling_input`` is tearing
             down this backend. A second-caller of ``init_sampling_backend`` that
-            observes this flag (under ``backend_state.lock``) raises a retryable
-            error so it falls through to creating a fresh backend on retry.
+            observes this flag (under ``backend_state.lock``) raises ``RuntimeError``
+            so it does not reuse a half-shutdown runtime; the registry is cleared
+            once teardown completes so a subsequent fresh call creates a new
+            backend.
     """
 
     backend_id: int
@@ -505,7 +507,8 @@ class DistServer:
 
         Raises:
             RuntimeError: If a prior concurrent initialization for the same
-                ``backend_key`` failed.
+                ``backend_key`` failed, or if the backend is currently being
+                torn down by ``destroy_sampling_input``.
         """
         request_start_time = time.monotonic()
         is_first = False
@@ -575,7 +578,8 @@ class DistServer:
                 if backend_state.shutting_down:
                     raise RuntimeError(
                         f"init_sampling_backend: backend_key={opts.backend_key} "
-                        f"is being torn down; retry."
+                        f"is being torn down; a new backend cannot be "
+                        f"initialized until teardown completes."
                     )
                 if backend_state.init_error is not None:
                     raise RuntimeError(
