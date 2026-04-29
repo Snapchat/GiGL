@@ -1247,5 +1247,60 @@ class TestDistServerSampling(TestCase):
         runtime_2.shutdown.assert_not_called()
 
 
+class TestWaitAndShutdownServer(TestCase):
+    def setUp(self) -> None:
+        """Reset the global dataset before each test."""
+        dist_server._dist_server = None
+
+    def tearDown(self) -> None:
+        """Clean up after each test."""
+        dist_server._dist_server = None
+
+    def test_wait_and_shutdown_server_runs_barrier_when_state_remains(self) -> None:
+        """Regression: barrier+shutdown_rpc must run even when DistServer.shutdown raises.
+
+        If a compute client crashes and leaves channels registered, DistServer.shutdown()
+        raises RuntimeError. Previously that exception propagated out of
+        wait_and_shutdown_server, skipping barrier() and shutdown_rpc() entirely —
+        causing healthy storage peers to hang on the barrier forever.
+
+        This test verifies that wait_and_shutdown_server catches the exception and still
+        calls barrier() and shutdown_rpc().
+        """
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        server = dist_server.DistServer(dataset)
+        # Inject leftover channel state to make DistServer.shutdown() raise.
+        server._channel_state_by_channel_id[0] = MagicMock()
+        # Set exit flag so wait_for_exit() returns immediately.
+        server._exit = True
+
+        mock_barrier = MagicMock()
+        mock_shutdown_rpc = MagicMock()
+
+        with (
+            patch(
+                "gigl.distributed.graph_store.dist_server._dist_server",
+                new=server,
+            ),
+            patch(
+                "gigl.distributed.graph_store.dist_server.glt_dist_server.get_context",
+                return_value=MagicMock(is_server=lambda: True),
+            ),
+            patch(
+                "gigl.distributed.graph_store.dist_server.barrier",
+                mock_barrier,
+            ),
+            patch(
+                "gigl.distributed.graph_store.dist_server.shutdown_rpc",
+                mock_shutdown_rpc,
+            ),
+        ):
+            # Must NOT raise even though DistServer.shutdown() raises internally.
+            dist_server.wait_and_shutdown_server()
+
+        mock_barrier.assert_called_once()
+        mock_shutdown_rpc.assert_called_once()
+
+
 if __name__ == "__main__":
     absltest.main()

@@ -131,6 +131,22 @@ class DistServer:
         self._log_every_n = log_every_n
 
     def shutdown(self) -> None:
+        """Drop all server-side bookkeeping for sampling channels and backends.
+
+        Strict-fail contract: this method requires that every channel and
+        backend has already been torn down via ``destroy_sampling_input``.
+        It raises ``RuntimeError`` if any state remains, on the assumption
+        that leftover state means the caller skipped a teardown step.
+
+        Cluster teardown (``wait_and_shutdown_server``) catches this
+        exception and logs it before continuing to ``barrier()`` /
+        ``shutdown_rpc()``, so a buggy/crashed client does not wedge
+        healthy storage peers on the barrier.
+
+        Raises:
+            RuntimeError: If any sampling channel or backend is still
+                registered when ``shutdown`` is called.
+        """
         with self._lock:
             if (
                 self._channel_state_by_channel_id
@@ -898,12 +914,17 @@ def init_server(
 
 
 def wait_and_shutdown_server() -> None:
-    r"""Block until all client have been shutdowned, and further shutdown the
+    r"""Block until all clients have shut down, then shut down the
     server on the current process and destroy all RPC connections.
+
+    Best-effort: if ``DistServer.shutdown`` raises (e.g. because a
+    client crashed leaving state behind) we log the failure and still
+    run ``barrier()`` + ``shutdown_rpc()`` so healthy storage peers do
+    not hang on the barrier.
     """
     current_context = glt_dist_server.get_context()
     if current_context is None:
-        logging.warning(
+        logger.warning(
             "'wait_and_shutdown_server': try to shutdown server when "
             "the current process has not been initialized as a server."
         )
@@ -917,9 +938,14 @@ def wait_and_shutdown_server() -> None:
     global _dist_server
     if _dist_server is not None:
         _dist_server.wait_for_exit()
-        _dist_server.shutdown()
+        try:
+            _dist_server.shutdown()
+        except Exception as e:
+            logger.exception(
+                f"DistServer.shutdown() failed during cluster teardown; "
+                f"continuing with barrier/shutdown_rpc anyway: {e}"
+            )
         _dist_server = None
-        # Also clear GLT's _dist_server
         glt_dist_server._dist_server = None
     barrier()
     shutdown_rpc()
