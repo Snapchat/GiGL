@@ -83,6 +83,10 @@ class SamplingBackendState:
         lock: A reentrant lock guarding backend-level operations.
         init_complete: Whether ``runtime.init_backend()`` has completed successfully.
         init_error: If ``runtime.init_backend()`` raised, the exception; otherwise ``None``.
+        shutting_down: Set to ``True`` while ``destroy_sampling_input`` is tearing
+            down this backend. A second-caller of ``init_sampling_backend`` that
+            observes this flag (under ``backend_state.lock``) raises a retryable
+            error so it falls through to creating a fresh backend on retry.
     """
 
     backend_id: int
@@ -92,6 +96,7 @@ class SamplingBackendState:
     lock: threading.RLock = field(default_factory=threading.RLock)
     init_complete: bool = False
     init_error: Optional[BaseException] = None
+    shutting_down: bool = False
 
 
 @dataclass
@@ -567,6 +572,11 @@ class DistServer:
             # first caller finishes init (or fails). Ordering is enforced
             # by the acquire-before-self._lock-release invariant above.
             with backend_state.lock:
+                if backend_state.shutting_down:
+                    raise RuntimeError(
+                        f"init_sampling_backend: backend_key={opts.backend_key} "
+                        f"is being torn down; retry."
+                    )
                 if backend_state.init_error is not None:
                     raise RuntimeError(
                         f"init_sampling_backend: prior initialization failed "
@@ -682,13 +692,24 @@ class DistServer:
             with self._lock:
                 backend_state.active_channels.discard(channel_id)
                 if not backend_state.active_channels:
+                    should_shutdown_backend = True
+            # Shut the runtime down BEFORE popping the registry entries,
+            # while still holding backend_state.lock. A concurrent
+            # init_sampling_backend for the same backend_key will find
+            # this still-registered backend, fall through to the
+            # second-caller path, block on backend_state.lock, and see
+            # shutting_down=True so it raises rather than reusing a
+            # half-shutdown runtime.
+            if should_shutdown_backend:
+                backend_state.shutting_down = True
+                backend_state.runtime.shutdown()
+                with self._lock:
                     self._backend_state_by_backend_id.pop(
                         backend_state.backend_id, None
                     )
-                    self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
-                    should_shutdown_backend = True
-        if should_shutdown_backend:
-            backend_state.runtime.shutdown()
+                    self._backend_id_by_backend_key.pop(
+                        backend_state.backend_key, None
+                    )
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
