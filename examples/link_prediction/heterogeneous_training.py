@@ -63,7 +63,7 @@ from gigl.src.common.types.model_eval_metrics import (
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
-from gigl.src.common.utils.tensorboard import TensorBoardWriter
+from gigl.utils.tensorboard_writer import TensorBoardWriter
 from gigl.utils.iterator import InfiniteIterator
 from gigl.utils.sampling import parse_fanout
 
