@@ -22,6 +22,10 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
+CPP_SOURCES:=$(shell find gigl-core/csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
+# clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
+# Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
+CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
 PY_TEST_FILES?="*_test.py"
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
@@ -47,6 +51,7 @@ check_if_valid_env:
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
+	bash ./gigl-core/requirements/install_cpp_deps.sh
 	bash ./requirements/install_py_deps.sh --dev
 	bash ./requirements/install_scala_deps.sh
 	uv pip install -e .
@@ -75,7 +80,7 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under tests/unit.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-unit_test_py: clean_build_files_py type_check
+unit_test_py: clean_build_files_py build_cpp_extensions type_check
 	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -94,7 +99,10 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-unit_test: precondition_tests unit_test_py unit_test_scala
+unit_test_cpp:
+	$(MAKE) -C gigl-core unit_test_cpp
+
+unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp
 
 check_format_py:
 	uv run ruff check --config pyproject.toml ${PYTHON_DIRS}
@@ -108,13 +116,18 @@ check_format_md:
 	@echo "Checking markdown files..."
 	uv run mdformat --check ${MD_FILES}
 
-check_format: check_format_py check_format_scala check_format_md
+check_format_cpp:
+	$(MAKE) -C gigl-core check_format_cpp
+
+# Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
+# clang-tidy static analysis — use `make check_lint_cpp` for that.
+check_format: check_format_py check_format_cpp check_format_scala check_format_md
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
 # By default, runs all tests under tests/integration.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-integration_test:
+integration_test: build_cpp_extensions
 	uv run python -m tests.integration.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -141,13 +154,39 @@ format_md:
 	@echo "Formatting markdown files..."
 	uv run mdformat ${MD_FILES}
 
-format: format_py format_scala format_md
+format_cpp:
+	$(MAKE) -C gigl-core format_cpp
+
+format: format_py format_cpp format_scala format_md
 
 type_check:
 	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
 
-lint_test: check_format assert_yaml_configs_parse
+build_cpp_extensions:
+	$(MAKE) -C gigl-core build_cpp_extensions
+
+check_lint_cpp: build_cpp_extensions
+	$(if $(CPP_SOURCES_NO_CUDA),uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA))
+
+# Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
+# changes expressions, adds/removes keywords), not just style. Run manually and
+# review the diff before committing. Note: --fix cannot auto-repair every check;
+# some violations require manual edits.
+# --extra-arg=-Wno-ignored-optimization-argument suppresses GCC-specific LTO flags
+# (-fno-fat-lto-objects, -flto=auto) that cmake writes into compile_commands.json.
+# clang-tidy forwards compiler warnings via clang-diagnostic-*, and .clang-tidy sets
+# WarningsAsErrors: '*', so the warning must be silenced at the compiler level before
+# clang-tidy ever sees it.
+fix_lint_cpp: build_cpp_extensions
+	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix --extra-arg=-Wno-ignored-optimization-argument -p gigl-core/.cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA))
+
+lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
+
+# Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
+# after switching between branches with substantially different CMakeLists.txt structure.
+clean_cpp:
+	$(MAKE) -C gigl-core clean_cpp
 
 # compiles current working state of scala projects to local jars
 compile_jars:
@@ -260,7 +299,7 @@ run_all_e2e_tests:
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
-compile_gigl_kubeflow_pipeline: compile_jars push_new_docker_images
+compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
 		--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \
@@ -286,7 +325,7 @@ _skip_build_deps:
 # 	job_name=... \ , and other params
 # 	compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" \
 # 	run_dev_gnn_kubeflow_pipeline
-run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, compile_jars push_new_docker_images)
+run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps, build_cpp_extensions compile_jars push_new_docker_images)
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		$(if $(compiled_pipeline_path),,--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG}) \
 		$(if $(compiled_pipeline_path),,--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG}) \
@@ -311,7 +350,10 @@ clean_build_files_scala:
 	( cd scala; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 	( cd scala_spark35; sbt clean; find . -type d -name "target" -prune -exec rm -rf {} \; )
 
-clean_build_files: clean_build_files_py clean_build_files_scala
+clean_build_files_cpp:
+	$(MAKE) -C gigl-core clean_build_files_cpp
+
+clean_build_files: clean_build_files_py clean_build_files_scala clean_build_files_cpp
 
 # Call to generate new proto definitions if any of the .proto files have been changed.
 # We intentionally rebuild *all* protos with one commmand as they should all be in sync.
