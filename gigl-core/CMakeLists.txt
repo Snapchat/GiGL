@@ -109,10 +109,8 @@ if(_PYTHON_SRCS)
         # TORCH_EXTENSION_NAME is used in PYBIND11_MODULE() to name the module.
         # PyTorch's own build system sets this; we must define it explicitly here.
         target_compile_definitions("${_name}" PRIVATE "TORCH_EXTENSION_NAME=${_name}")
-        # Mirror the csrc/ subdirectory into gigl_core/ so the install destination is derived
-        # automatically from the source location (e.g. csrc/sampling/ → gigl_core/sampling/).
-        file(RELATIVE_PATH _rel_dir "${CMAKE_SOURCE_DIR}/csrc" "${_dir}")
-        install(TARGETS "${_name}" DESTINATION "gigl_core/${_rel_dir}")
+        # Install into gigl_core/ so the .so is importable as gigl_core.<name>.
+        install(TARGETS "${_name}" DESTINATION gigl_core)
     endforeach()
 endif()
 
