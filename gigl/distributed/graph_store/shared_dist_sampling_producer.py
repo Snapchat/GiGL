@@ -427,7 +427,10 @@ def _shared_sampling_worker_loop(
         drained_messages = 0
         while True:
             try:
-                _ = channel.recv(timeout_ms=0)
+                # ShmChannel treats timeout_ms=0 as "block indefinitely";
+                # we want a non-blocking poll, so use a 1ms timeout and
+                # treat QueueTimeoutError as "channel is now empty".
+                _ = channel.recv(timeout_ms=1)
                 drained_messages += 1
             except QueueTimeoutError:
                 return drained_messages
