@@ -8,7 +8,6 @@ and ABLP (anchor-based link prediction) via BaseGiGLSampler subclasses
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
 """
 
-import logging
 import threading
 import time
 from collections import abc
@@ -598,6 +597,13 @@ class DistServer:
 
         Returns:
             The unique channel ID for this input.
+
+        Raises:
+            KeyError: If ``opts.backend_id`` does not refer to a registered
+                backend (caller bug; backend must be registered first).
+            Exception: Re-raises any failure from
+                ``runtime.register_input`` after rolling back the partial
+                channel state.
         """
         request_start_time = time.monotonic()
         sampler_input = opts.sampler_input
@@ -711,9 +717,7 @@ class DistServer:
                     self._backend_state_by_backend_id.pop(
                         backend_state.backend_id, None
                     )
-                    self._backend_id_by_backend_key.pop(
-                        backend_state.backend_key, None
-                    )
+                    self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
@@ -996,7 +1000,7 @@ def wait_and_shutdown_server() -> None:
 def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
-        logging.warning(
+        logger.warning(
             f"'_call_func_on_server': receive a non-callable function target {func}"
         )
         return None

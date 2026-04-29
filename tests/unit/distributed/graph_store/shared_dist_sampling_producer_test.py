@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import torch
 import torch.multiprocessing as mp
+from graphlearn_torch.channel import QueueTimeoutError
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
-import gigl.distributed.graph_store.shared_dist_sampling_producer as producer_module
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     EPOCH_DONE_EVENT,
     ActiveEpochState,
@@ -42,7 +42,7 @@ def _make_sampling_config(*, shuffle: bool = False) -> SamplingConfig:
 
 
 class _FakeProcess:
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         self.daemon = False
 
     def start(self) -> None:
@@ -59,13 +59,13 @@ class _FakeProcess:
 
 
 class _FakeMpContext:
-    def Barrier(self, parties: int):
+    def Barrier(self, parties: int) -> MagicMock:
         return MagicMock(wait=MagicMock())
 
-    def Queue(self, maxsize: int = 0):
+    def Queue(self, maxsize: int = 0) -> MagicMock:
         return MagicMock()
 
-    def Process(self, *args, **kwargs):
+    def Process(self, *args: object, **kwargs: object) -> _FakeProcess:
         return _FakeProcess(*args, **kwargs)
 
 
@@ -87,7 +87,7 @@ class _FakeOutputChannel:
                     "_FakeOutputChannel.recv called with blocking timeout on "
                     "empty channel — production code is about to deadlock."
                 )
-            raise producer_module.QueueTimeoutError("Timeout: Queue is empty.")
+            raise QueueTimeoutError("Timeout: Queue is empty.")
         self.drained_event.set()
         return self._messages.pop(0)
 

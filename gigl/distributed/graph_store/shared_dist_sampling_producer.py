@@ -661,6 +661,11 @@ def _shared_sampling_worker_loop(
             with state_lock:
                 if not cleanup_ready_channel_ids:
                     return finished_cleanup
+                # Peek without removing: _finish_unregister mutates
+                # cleanup_ready_channel_ids itself once cleanup completes.
+                # Safe because this loop runs only on the single producer
+                # thread; if that invariant breaks, two callers could grab
+                # the same channel_id here.
                 channel_id = next(iter(cleanup_ready_channel_ids))
             _finish_unregister(channel_id)
             finished_cleanup = True
