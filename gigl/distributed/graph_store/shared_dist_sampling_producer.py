@@ -108,7 +108,6 @@ logger = Logger()
 
 
 EPOCH_DONE_EVENT = "EPOCH_DONE"
-UNREGISTER_DONE_EVENT = "UNREGISTER_DONE"
 SCHEDULER_TICK_SECS = 0.05
 SCHEDULER_STATE_LOG_INTERVAL_SECS = 10.0
 SCHEDULER_STATE_MAX_CHANNELS = 6
@@ -450,13 +449,12 @@ def _shared_sampling_worker_loop(
         return sampler
 
     def _finish_unregister(channel_id: int) -> None:
-        """Finalize unregister outside callback context and acknowledge removal."""
+        """Finalize unregister outside callback context."""
         with state_lock:
             sampler = _detach_unregister_resources_locked(channel_id)
         if sampler is not None:
             sampler.wait_all()
             sampler.shutdown_loop()
-        event_queue.put((UNREGISTER_DONE_EVENT, channel_id, rank))
 
     def _clear_registered_input_locked(channel_id: int) -> bool:
         """Remove a channel's registration and clean up all associated state.
@@ -865,7 +863,6 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
-        self._removed_workers: defaultdict[int, set[int]] = defaultdict(set)
         self._degree_tensors = degree_tensors
 
     def init_backend(self) -> None:
@@ -902,9 +899,7 @@ class SharedDistSamplingBackend:
             barrier = mp_context.Barrier(self.num_workers + 1)
             self._event_queue = mp_context.Queue()
             for rank in range(self.num_workers):
-                task_queue = mp_context.Queue(
-                    self.num_workers * self.worker_options.worker_concurrency
-                )
+                task_queue = mp_context.Queue()
                 self._task_queues.append(task_queue)
                 worker = mp_context.Process(
                     target=_shared_sampling_worker_loop,
@@ -1028,27 +1023,16 @@ class SharedDistSamplingBackend:
         if event[0] == EPOCH_DONE_EVENT:
             _, channel_id, epoch, worker_rank = cast(tuple[str, int, int, int], event)
             self._completed_workers[(channel_id, epoch)].add(worker_rank)
-        elif event[0] == UNREGISTER_DONE_EVENT:
-            _, channel_id, worker_rank = cast(tuple[str, int, int], event)
-            self._removed_workers[channel_id].add(worker_rank)
 
-    def _drain_events(self, wait_timeout_s: Optional[float] = None) -> None:
+    def _drain_events(self) -> None:
         """Drain worker completion events into the backend-local state.
 
         Reads all pending ``EPOCH_DONE_EVENT`` tuples from the shared
         ``event_queue`` and records which workers have finished each
         ``(channel_id, epoch)`` in ``_completed_workers``.
-        Also records worker-local unregister completion in
-        ``_removed_workers``.
         """
         if self._event_queue is None:
             return
-        if wait_timeout_s is not None:
-            try:
-                event = self._event_queue.get(timeout=wait_timeout_s)
-            except queue.Empty:
-                return
-            self._record_event(event)
         while True:
             try:
                 event = self._event_queue.get_nowait()
@@ -1139,9 +1123,10 @@ class SharedDistSamplingBackend:
         """Unregister a channel from all backend workers.
 
         Removes backend-side bookkeeping and broadcasts
-        ``UNREGISTER_INPUT`` to every worker. Blocks until every worker
-        acknowledges that unregister cleanup finished, including deferred
-        drain paths.
+        ``UNREGISTER_INPUT`` to every worker. Returns once the commands have
+        been enqueued; per-worker cleanup (including the deferred drain path
+        for channels with in-flight batches) finalizes asynchronously inside
+        the worker loop.
 
         No-op if ``channel_id`` is not currently registered.
 
@@ -1160,18 +1145,12 @@ class SharedDistSamplingBackend:
             stale_keys = [k for k in self._completed_workers if k[0] == channel_id]
             for k in stale_keys:
                 del self._completed_workers[k]
-            self._removed_workers.pop(channel_id, None)
             for worker_rank in range(self.num_workers):
                 self._enqueue_worker_command(
                     worker_rank,
                     SharedMpCommand.UNREGISTER_INPUT,
                     channel_id,
                 )
-            while len(self._removed_workers.get(channel_id, set())) < self.num_workers:
-                self._drain_events(wait_timeout_s=SCHEDULER_TICK_SECS)
-                if len(self._removed_workers.get(channel_id, set())) < self.num_workers:
-                    self._check_workers_alive()
-            self._removed_workers.pop(channel_id, None)
 
     def _check_workers_alive(self) -> None:
         """Raise if any worker process has died.

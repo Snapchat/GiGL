@@ -11,7 +11,6 @@ from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingT
 import gigl.distributed.graph_store.shared_dist_sampling_producer as producer_module
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     EPOCH_DONE_EVENT,
-    UNREGISTER_DONE_EVENT,
     ActiveEpochState,
     RegisterInputCmd,
     SharedDistSamplingBackend,
@@ -259,7 +258,7 @@ class DistSamplingProducerTest(TestCase):
         self.assertEqual(description["input_sizes"], [4, 2])
         self.assertEqual(description["completed_workers"], 1)
 
-    def test_unregister_input_waits_for_all_worker_acknowledgements(self) -> None:
+    def test_unregister_input_is_fire_and_forget(self) -> None:
         worker_options = MagicMock()
         worker_options.num_workers = 2
         worker_options.worker_concurrency = 1
@@ -278,42 +277,28 @@ class DistSamplingProducerTest(TestCase):
         backend._channel_shuffle_generators[1] = None
         backend._channel_epoch[1] = 0
 
-        first_ack_sent = threading.Event()
-        release_second_ack = threading.Event()
+        commands: list[tuple[int, SharedMpCommand, object]] = []
 
         def enqueue_worker_command(
             worker_rank: int,
             command: SharedMpCommand,
             payload: object,
         ) -> None:
-            self.assertEqual(command, SharedMpCommand.UNREGISTER_INPUT)
-            self.assertEqual(payload, 1)
-            if worker_rank == 0:
-                cast(queue.Queue, backend._event_queue).put(
-                    (UNREGISTER_DONE_EVENT, payload, worker_rank)
-                )
-                first_ack_sent.set()
-            else:
-
-                def send_second_ack() -> None:
-                    release_second_ack.wait(timeout=5.0)
-                    cast(queue.Queue, backend._event_queue).put(
-                        (UNREGISTER_DONE_EVENT, payload, worker_rank)
-                    )
-
-                threading.Thread(target=send_second_ack).start()
+            commands.append((worker_rank, command, payload))
 
         backend._enqueue_worker_command = enqueue_worker_command  # type: ignore[method-assign]
 
-        unregister_thread = threading.Thread(target=backend.unregister_input, args=(1,))
-        unregister_thread.start()
-        self.assertTrue(first_ack_sent.wait(timeout=5.0))
-        unregister_thread.join(timeout=0.1)
-        self.assertTrue(unregister_thread.is_alive())
+        # Returns without any worker acknowledgement: there is no sync wait.
+        backend.unregister_input(1)
 
-        release_second_ack.set()
-        unregister_thread.join(timeout=5.0)
-        self.assertFalse(unregister_thread.is_alive())
+        self.assertEqual(
+            commands,
+            [
+                (0, SharedMpCommand.UNREGISTER_INPUT, 1),
+                (1, SharedMpCommand.UNREGISTER_INPUT, 1),
+            ],
+        )
+        self.assertNotIn(1, backend._channel_sampling_config)
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
@@ -417,11 +402,9 @@ class DistSamplingProducerTest(TestCase):
         self.assertEqual(callback_errors, [])
         self.assertTrue(fake_sampler.wait_all_called.wait(timeout=5.0))
 
-        first_event = event_queue.get(timeout=5.0)
-        second_event = event_queue.get(timeout=5.0)
-        self.assertEqual(first_event[0], EPOCH_DONE_EVENT)
-        self.assertEqual(second_event[0], UNREGISTER_DONE_EVENT)
-        self.assertEqual(second_event[1], channel_id)
+        epoch_done_event = event_queue.get(timeout=5.0)
+        self.assertEqual(epoch_done_event[0], EPOCH_DONE_EVENT)
+        self.assertTrue(event_queue.empty())
 
         task_queue.put((SharedMpCommand.STOP, None))
         worker_thread.join(timeout=5.0)
