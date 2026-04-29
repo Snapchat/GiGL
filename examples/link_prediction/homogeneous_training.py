@@ -290,7 +290,6 @@ class TrainingProcessArgs:
         num_val_batches (int): Number of validation batches across all processes.
         val_every_n_batch (int): Frequency to run validation during training.
         log_every_n_batch (int): Frequency to log batch information during training.
-        should_log_to_tensorboard (bool): If True, emit TensorBoard summaries.
         should_skip_training (bool): If True, skip training and only run testing.
     """
 
@@ -328,7 +327,6 @@ class TrainingProcessArgs:
     num_val_batches: int
     val_every_n_batch: int
     log_every_n_batch: int
-    should_log_to_tensorboard: bool
     should_skip_training: bool
 
 
@@ -367,7 +365,7 @@ def _training_process(
     is_chief_process = args.machine_rank == 0 and local_rank == 0
     tensorboard_writer = TensorBoardWriter.from_uri(
         args.tensorboard_log_uri,
-        enabled=args.should_log_to_tensorboard and is_chief_process,
+        enabled=is_chief_process,
     )
 
     loss_fn = RetrievalLoss(
@@ -848,9 +846,6 @@ def _run_example_training(
         else None
     )
 
-    should_log_to_tensorboard = (
-        gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard
-    )
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
     logger.info("--- Launching training processes ...\n")
@@ -882,7 +877,6 @@ def _run_example_training(
         num_val_batches=num_val_batches,
         val_every_n_batch=val_every_n_batch,
         log_every_n_batch=log_every_n_batch,
-        should_log_to_tensorboard=should_log_to_tensorboard,
         should_skip_training=should_skip_training,
     )
 
