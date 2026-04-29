@@ -3,12 +3,18 @@ from kfp import dsl
 
 def check_glt_backend_eligibility_component(
     task_config_uri: str, base_image: str
-) -> bool:
+) -> dsl.PipelineTask:
+    """Construct the KFP task that decides whether to use the GLT backend.
+
+    Returns the underlying ``PipelineTask`` so callers can attach resource
+    requirements, environment variables, or other task-level configuration
+    before consuming ``.output`` for downstream conditionals.
+    """
     comp = dsl.component(
         func=_check_glt_backend_eligibility_component, base_image=base_image
     )
     comp.description = "Check whether to use GLT Backend"
-    return comp(task_config_uri=task_config_uri).output
+    return comp(task_config_uri=task_config_uri)
 
 
 def _check_glt_backend_eligibility_component(
