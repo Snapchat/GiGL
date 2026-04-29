@@ -274,7 +274,7 @@ int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t ntypeId) con
     if (t.numel() == 0) {
         return 0;
     }
-    TORCH_CHECK(nodeId < static_cast<int32_t>(t.size(0)),
+    TORCH_CHECK(nodeId >= 0 && nodeId < static_cast<int32_t>(t.size(0)),
                 "Node ID ",
                 nodeId,
                 " out of range for degree tensor of ntype_id ",

@@ -1,5 +1,4 @@
 import asyncio
-import time
 from collections import defaultdict
 from typing import Optional, Union
 
@@ -26,13 +25,6 @@ _logger = Logger()
 # yield a bare EdgeType repr for ast.literal_eval).
 PPR_EDGE_INDEX_METADATA_KEY = "ppr_edge_index."
 PPR_WEIGHT_METADATA_KEY = "ppr_weight."
-PPR_FETCH_TIME_MS_METADATA_KEY = "ppr_fetch_time_ms"
-PPR_PUSH_TIME_MS_METADATA_KEY = "ppr_push_time_ms"
-PPR_ITERATIONS_METADATA_KEY = "ppr_iterations"
-PPR_NODES_PER_ITERATION_METADATA_KEY = "ppr_nodes_per_iteration"
-PPR_FETCH_TIME_PER_ITER_MS_METADATA_KEY = "ppr_fetch_time_per_iter_ms"
-PPR_PUSH_TIME_PER_ITER_MS_METADATA_KEY = "ppr_push_time_per_iter_ms"
-PPR_NODES_NEEDING_FETCH_PER_ITER_METADATA_KEY = "ppr_nodes_needing_fetch_per_iter"
 
 # Sentinel type names for homogeneous graphs.  The PPR algorithm uses
 # dict[NodeType, ...] internally for both homo and hetero graphs; these
@@ -102,7 +94,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_neighbors_per_hop: int = 100_000,
         total_degree_dtype: torch.dtype = torch.int32,
         degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        max_fetch_iterations: int = 0,
+        max_fetch_iterations: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -331,7 +323,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        tuple[float, float, int, list[int], list[float], list[float], list[int]],
     ]:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
@@ -373,9 +364,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
               seed, shape ``[batch_size]``.  Used to slice the flat tensors into
               per-seed groups: seed ``i``'s neighbors are at
               ``flat_neighbor_ids[sum(valid_counts[:i]) : sum(valid_counts[:i+1])]``.
-            - timing: ``(fetch_ms, push_ms, iterations)`` — wall-clock time
-              spent in neighbor fetch (ms), residual push (ms), and total loop
-              iteration count for this call.
 
         Example::
 
@@ -398,13 +386,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             self._degree_tensors_for_cpp,
         )
 
-        total_fetch_ms = 0.0
-        total_push_ms = 0.0
-        total_iterations = 0
         fetch_iteration_count = 0
-        fetch_ms_per_iter: list[float] = []
-        push_ms_per_iter: list[float] = []
-        nodes_needing_fetch_per_iter: list[int] = []
 
         while True:
             # drain_queue returns None when the queue is truly empty (convergence),
@@ -412,44 +394,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # means all drained nodes either had cached neighbors or no outgoing
             # edges — we still call push_residuals to flush their residuals into
             # ppr_scores_.
-            drain_result: Optional[dict[int, torch.Tensor]] = ppr_state.drain_queue()
-            if drain_result is None:
+            nodes_by_etype_id = ppr_state.drain_queue()
+            if nodes_by_etype_id is None:
                 break
 
-            nodes_by_etype_id: dict[int, torch.Tensor] = drain_result
             fetch_budget_remaining = (
-                self._max_fetch_iterations == 0
+                self._max_fetch_iterations is None
                 or fetch_iteration_count < self._max_fetch_iterations
             )
             if nodes_by_etype_id and fetch_budget_remaining:
-                # Total (node, edge_type) pairs needing RPCs this iteration.
-                # A node with uncached neighbors for k edge types contributes k here.
-                nodes_needing_fetch = sum(t.numel() for t in nodes_by_etype_id.values())
-                fetch_start = time.perf_counter()
                 fetched_by_etype_id = await self._batch_fetch_neighbors(
                     nodes_by_etype_id, device
                 )
-                iter_fetch_ms = (time.perf_counter() - fetch_start) * 1000
-                total_fetch_ms += iter_fetch_ms
                 fetch_iteration_count += 1
             else:
-                # Either all nodes are cached, or the fetch budget is exhausted.
-                # push_residuals will propagate using the existing neighbor cache.
-                nodes_needing_fetch = 0
+                # Fetch budget exhausted; push_residuals will use the existing neighbor cache.
                 fetched_by_etype_id = {}
-                iter_fetch_ms = 0.0
 
-            nodes_needing_fetch_per_iter.append(nodes_needing_fetch)
-            fetch_ms_per_iter.append(iter_fetch_ms)
-
-            push_start = time.perf_counter()
+            # Run in executor so the C++ push doesn't block the asyncio event loop.
             await asyncio.get_running_loop().run_in_executor(
                 None, ppr_state.push_residuals, fetched_by_etype_id
             )
-            iter_push_ms = (time.perf_counter() - push_start) * 1000
-            total_push_ms += iter_push_ms
-            push_ms_per_iter.append(iter_push_ms)
-            total_iterations += 1
 
         # Translate ntype_id integer keys back to NodeType strings for the rest
         # of the pipeline, and move tensors to the correct device.
@@ -465,18 +430,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ntype_to_flat_weights[ntype] = flat_weights.to(device)
             ntype_to_valid_counts[ntype] = valid_counts.to(device)
 
-        nodes_drained_per_iteration: list[int] = (
-            ppr_state.get_nodes_drained_per_iteration()
-        )
-        timing = (
-            total_fetch_ms,
-            total_push_ms,
-            total_iterations,
-            nodes_drained_per_iteration,
-            fetch_ms_per_iter,
-            push_ms_per_iter,
-            nodes_needing_fetch_per_iter,
-        )
         if self._is_homogeneous:
             assert (
                 len(ntype_to_flat_ids) == 1
@@ -486,14 +439,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ntype_to_flat_ids[_PPR_HOMOGENEOUS_NODE_TYPE],
                 ntype_to_flat_weights[_PPR_HOMOGENEOUS_NODE_TYPE],
                 ntype_to_valid_counts[_PPR_HOMOGENEOUS_NODE_TYPE],
-                timing,
             )
         else:
             return (
                 ntype_to_flat_ids,
                 ntype_to_flat_weights,
                 ntype_to_valid_counts,
-                timing,
             )
 
     async def _sample_from_nodes(
@@ -604,51 +555,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
             nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
             ppr_edge_type_to_flat_weights: dict[EdgeType, torch.Tensor] = {}
-            total_fetch_ms = 0.0
-            total_push_ms = 0.0
-            total_iterations = 0
-            total_nodes_per_iteration: list[int] = []
-            total_fetch_ms_per_iter: list[float] = []
-            total_push_ms_per_iter: list[float] = []
-            total_nodes_needing_fetch_per_iter: list[int] = []
 
             for seed_type, (
                 ntype_to_flat_ids,
                 ntype_to_flat_weights,
                 ntype_to_valid_counts,
-                (
-                    fetch_ms,
-                    push_ms,
-                    iterations,
-                    nodes_per_iter,
-                    fetch_ms_per_iter,
-                    push_ms_per_iter,
-                    nodes_needing_fetch_per_iter,
-                ),
             ) in zip(seed_types, ppr_results):
-                total_fetch_ms += fetch_ms
-                total_push_ms += push_ms
-                total_iterations += iterations
-                for i, count in enumerate(nodes_per_iter):
-                    if i < len(total_nodes_per_iteration):
-                        total_nodes_per_iteration[i] += count
-                    else:
-                        total_nodes_per_iteration.append(count)
-                for i, val in enumerate(fetch_ms_per_iter):
-                    if i < len(total_fetch_ms_per_iter):
-                        total_fetch_ms_per_iter[i] += val
-                    else:
-                        total_fetch_ms_per_iter.append(val)
-                for i, val in enumerate(push_ms_per_iter):
-                    if i < len(total_push_ms_per_iter):
-                        total_push_ms_per_iter[i] += val
-                    else:
-                        total_push_ms_per_iter.append(val)
-                for i, val in enumerate(nodes_needing_fetch_per_iter):
-                    if i < len(total_nodes_needing_fetch_per_iter):
-                        total_nodes_needing_fetch_per_iter[i] += val
-                    else:
-                        total_nodes_needing_fetch_per_iter.append(val)
                 assert isinstance(ntype_to_flat_ids, dict)
                 assert isinstance(ntype_to_flat_weights, dict)
                 assert isinstance(ntype_to_valid_counts, dict)
@@ -713,24 +625,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = edge_index
                 metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = flat_weights
 
-            metadata[PPR_FETCH_TIME_MS_METADATA_KEY] = torch.tensor(total_fetch_ms)
-            metadata[PPR_PUSH_TIME_MS_METADATA_KEY] = torch.tensor(total_push_ms)
-            metadata[PPR_ITERATIONS_METADATA_KEY] = torch.tensor(
-                total_iterations, dtype=torch.long
-            )
-            metadata[PPR_NODES_PER_ITERATION_METADATA_KEY] = torch.tensor(
-                total_nodes_per_iteration, dtype=torch.long
-            )
-            metadata[PPR_FETCH_TIME_PER_ITER_MS_METADATA_KEY] = torch.tensor(
-                total_fetch_ms_per_iter, dtype=torch.float
-            )
-            metadata[PPR_PUSH_TIME_PER_ITER_MS_METADATA_KEY] = torch.tensor(
-                total_push_ms_per_iter, dtype=torch.float
-            )
-            metadata[PPR_NODES_NEEDING_FETCH_PER_ITER_METADATA_KEY] = torch.tensor(
-                total_nodes_needing_fetch_per_iter, dtype=torch.long
-            )
-
             sample_output = HeteroSamplerOutput(
                 node=node_dict,
                 # row/col/edge are left empty rather than populated with PPR edges because
@@ -761,15 +655,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 homo_flat_ids,
                 homo_flat_weights,
                 homo_valid_counts,
-                (
-                    total_fetch_ms,
-                    total_push_ms,
-                    total_iterations,
-                    total_nodes_per_iteration,
-                    total_fetch_ms_per_iter,
-                    total_push_ms_per_iter,
-                    total_nodes_needing_fetch_per_iter,
-                ),
             ) = await self._compute_ppr_scores(nodes_to_sample, None)
             assert isinstance(homo_flat_ids, torch.Tensor)
             assert isinstance(homo_flat_weights, torch.Tensor)
@@ -791,23 +676,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
             metadata["edge_index"] = ppr_edge_index
             metadata["edge_attr"] = homo_flat_weights
-            metadata[PPR_FETCH_TIME_MS_METADATA_KEY] = torch.tensor(total_fetch_ms)
-            metadata[PPR_PUSH_TIME_MS_METADATA_KEY] = torch.tensor(total_push_ms)
-            metadata[PPR_ITERATIONS_METADATA_KEY] = torch.tensor(
-                total_iterations, dtype=torch.long
-            )
-            metadata[PPR_NODES_PER_ITERATION_METADATA_KEY] = torch.tensor(
-                total_nodes_per_iteration, dtype=torch.long
-            )
-            metadata[PPR_FETCH_TIME_PER_ITER_MS_METADATA_KEY] = torch.tensor(
-                total_fetch_ms_per_iter, dtype=torch.float
-            )
-            metadata[PPR_PUSH_TIME_PER_ITER_MS_METADATA_KEY] = torch.tensor(
-                total_push_ms_per_iter, dtype=torch.float
-            )
-            metadata[PPR_NODES_NEEDING_FETCH_PER_ITER_METADATA_KEY] = torch.tensor(
-                total_nodes_needing_fetch_per_iter, dtype=torch.long
-            )
 
             sample_output = SamplerOutput(
                 node=all_nodes,

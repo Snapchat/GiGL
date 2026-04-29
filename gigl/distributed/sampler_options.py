@@ -54,8 +54,10 @@ class PPRSamplerOptions:
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR
             scores.
         num_neighbors_per_hop: Maximum number of neighbors fetched per node per edge
-            type during PPR traversal. Set large to approximate fetching all
-            neighbors.
+            type during PPR traversal. 1000 is sufficient in practice — high-degree
+            hub nodes receive diminishing residual per neighbor, so capping the fetch
+            has little effect on PPR accuracy while keeping per-hop RPC cost bounded.
+            Set large to approximate fetching all neighbors.
         total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
             to ``torch.int32``, which supports total degrees up to ~2 billion.
             Use a larger dtype if nodes have exceptionally high aggregate degrees.
@@ -63,7 +65,7 @@ class PPRSamplerOptions:
             fetches. After this many fetch iterations, subsequent iterations push
             residuals using only already-cached neighbor lists (no new RPCs).
             The algorithm still runs to convergence — re-enqueued nodes propagate
-            through cached neighbors at negligible cost. Set to 0 (default) for
+            through cached neighbors at negligible cost. ``None`` (default) means
             no fetch limit.
     """
 
@@ -72,7 +74,7 @@ class PPRSamplerOptions:
     max_ppr_nodes: int = 50
     num_neighbors_per_hop: int = 1_000
     total_degree_dtype: torch.dtype = torch.int32
-    max_fetch_iterations: int = 0
+    max_fetch_iterations: Optional[int] = None
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]
