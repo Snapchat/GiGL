@@ -80,6 +80,7 @@ jobs:
         command: |
           bash gigl-core/requirements/install_cpp_deps.sh
           bash requirements/install_py_deps.sh --skip-glt-post-install
+          export PATH="$HOME/.local/bin:$PATH"
           make unit_test_cpp
 
   unit-test-scala:

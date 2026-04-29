@@ -72,7 +72,7 @@ install_uv_if_needed() {
 
         sh uv_installer.sh
         rm -f uv_installer.sh
-        source $HOME/.local/bin/env
+        export PATH="$HOME/.local/bin:$PATH"
     fi
 }
 
