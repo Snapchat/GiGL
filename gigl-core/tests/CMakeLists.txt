@@ -25,6 +25,29 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 # ---------------------------------------------------------------------------
+# Torch + kernel library (required by tests that use C++ kernels)
+# ---------------------------------------------------------------------------
+foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
+    if(NOT TORCH_CMAKE_PREFIX AND EXISTS "${_prefix}/torch/share/cmake")
+        set(TORCH_CMAKE_PREFIX "${_prefix}/torch/share/cmake")
+    endif()
+endforeach()
+find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
+
+# Auto-discover all kernel sources under csrc/. python_*.cpp are pybind11
+# extension entry points that belong to the wheel, not to the test library.
+if(CMAKE_CUDA_COMPILER)
+    file(GLOB_RECURSE _KERNEL_SRCS "${CMAKE_SOURCE_DIR}/csrc/*.cpp" "${CMAKE_SOURCE_DIR}/csrc/*.cu")
+else()
+    file(GLOB_RECURSE _KERNEL_SRCS "${CMAKE_SOURCE_DIR}/csrc/*.cpp")
+endif()
+list(FILTER _KERNEL_SRCS EXCLUDE REGEX ".*/python_[^/]*$")
+
+add_library(gigl_core_kernels STATIC ${_KERNEL_SRCS})
+target_include_directories(gigl_core_kernels PUBLIC "${CMAKE_SOURCE_DIR}/csrc")
+target_link_libraries(gigl_core_kernels PUBLIC "${TORCH_LIBRARIES}")
+
+# ---------------------------------------------------------------------------
 # Auto-discover test targets
 # ---------------------------------------------------------------------------
 # Any file named *_test.cpp in this directory (or subdirectories) is
@@ -45,7 +68,7 @@ foreach(test_source ${TEST_SOURCES})
     string(REPLACE "/" "_" test_name "${_rel}")
     string(REGEX REPLACE "\\.[^.]+$" "" test_name "${test_name}")
     add_executable(${test_name} ${test_source})
-    target_link_libraries(${test_name} GTest::gtest_main)
+    target_link_libraries(${test_name} GTest::gtest_main gigl_core_kernels)
     # add_test registers the binary with CTest. Each *_test binary is one
     # CTest entry; GoogleTest itself reports individual TEST() results inside it.
     add_test(NAME ${test_name} COMMAND ${test_name})

@@ -1,18 +1,9 @@
-# TODO (mkolodner-sc): The forward push loop in _compute_ppr_scores is the
-# main throughput bottleneck — both the queue drain (preparing batched node
-# lookups by edge type) and the residual push/requeue pass are pure Python
-# dict/set operations in tight nested loops.  Moving these to a C++ extension
-# (e.g. pybind11) would eliminate per-operation Python overhead and enable
-# cache-friendly memory access patterns.
-
-# TODO (mkolodner-sc): Investigate whether concurrency for _sample_one_hop and _compute_ppr_scores will
-# yield performance benefits.
-
-import heapq
+import asyncio
 from collections import defaultdict
 from typing import Optional, Union
 
 import torch
+from gigl_core import PPRForwardPushState
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -22,8 +13,11 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
+from gigl.common.logger import Logger
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.types.graph import is_label_edge_type
+
+_logger = Logger()
 
 # Trailing "." is an intentional separator.  These constants are used both to
 # write metadata keys (f"{KEY}{repr(edge_type)}" → e.g. "ppr_edge_index.('user', 'to', 'story')")
@@ -85,9 +79,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
-        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults to
-            ``torch.int32``, which supports total degrees up to ~2 billion. Use a
-            larger dtype if nodes have exceptionally high aggregate degrees.
+        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
+            to ``torch.int32``. Use a larger dtype if nodes have exceptionally high
+            aggregate degrees.
+        degree_tensors: Pre-computed degree tensors from the dataset.
     """
 
     def __init__(
@@ -99,6 +94,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_neighbors_per_hop: int = 100_000,
         total_degree_dtype: torch.dtype = torch.int32,
         degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        max_fetch_iterations: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -107,6 +103,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._max_ppr_nodes = max_ppr_nodes
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
+        self._max_fetch_iterations = max_fetch_iterations
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -151,6 +148,56 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = (
             self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
         )
+
+        # Build integer ID mappings for the C++ forward-push kernel.  String
+        # NodeType / EdgeType keys are only used at the Python boundary
+        # (translating to/from _sample_one_hop); all hot-loop state inside
+        # PPRForwardPushState is indexed by int32 IDs.
+        #
+        # We include both source types (have outgoing edges) and destination-only
+        # types (no outgoing edges, but may accumulate PPR score during the walk)
+        # so the kernel can index residual/ppr_score tables for any node it sees.
+        _all_node_types: list[NodeType] = sorted(
+            {nt for nt in self._node_type_to_edge_types}
+            | {
+                self._get_destination_type(et)
+                for etypes in self._node_type_to_edge_types.values()
+                for et in etypes
+            }
+        )
+        # dict.fromkeys preserves insertion order while deduplicating.
+        _all_edge_types: list[EdgeType] = list(
+            dict.fromkeys(
+                et for etypes in self._node_type_to_edge_types.values() for et in etypes
+            )
+        )
+
+        self._node_type_to_id: dict[NodeType, int] = {
+            nt: i for i, nt in enumerate(_all_node_types)
+        }
+        self._ntype_id_to_ntype: list[NodeType] = _all_node_types
+        self._etype_to_etype_id: dict[EdgeType, int] = {
+            et: i for i, et in enumerate(_all_edge_types)
+        }
+        self._etype_id_to_etype: list[EdgeType] = _all_edge_types
+
+        self._node_type_id_to_edge_type_ids: list[list[int]] = [
+            [
+                self._etype_to_etype_id[et]
+                for et in self._node_type_to_edge_types.get(nt, [])
+            ]
+            for nt in _all_node_types
+        ]
+        self._edge_type_id_to_dst_ntype_id: list[int] = [
+            self._node_type_to_id[self._get_destination_type(et)]
+            for et in _all_edge_types
+        ]
+        # Degree tensors indexed by ntype_id.  Destination-only types get an empty
+        # tensor; the C++ kernel returns 0 for those, matching _get_total_degree.
+        self._degree_tensors_for_cpp: list[torch.Tensor] = [
+            self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
+            for nt in _all_node_types
+        ]
 
     def _build_total_degree_tensors(
         self,
@@ -204,105 +251,69 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         return result
 
-    def _get_total_degree(self, node_id: int, node_type: NodeType) -> int:
-        """Look up the precomputed total degree of a node.
-
-        Args:
-            node_id: The ID of the node to look up.
-            node_type: The node type.
-
-        Returns:
-            The total degree (sum across all edge types) for the node.
-
-        Raises:
-            ValueError: If the node ID is out of range, indicating corrupted
-                graph data or a sampler bug.
-        """
-        # Destination-only node types (no outgoing edges) are absent from
-        # _node_type_to_total_degree because total degree is only computed for
-        # traversable source types.  Returning 0 here is correct: such nodes
-        # act as terminals — they accumulate PPR score but never push residual
-        # further.
-        if node_type not in self._node_type_to_total_degree:
-            return 0
-        degree_tensor = self._node_type_to_total_degree[node_type]
-        if node_id >= len(degree_tensor):
-            raise ValueError(
-                f"Node ID {node_id} exceeds total degree tensor length "
-                f"({len(degree_tensor)}) for node type {node_type}."
-            )
-        return int(degree_tensor[node_id].item())
-
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
     async def _batch_fetch_neighbors(
         self,
-        nodes_to_lookup: dict[EdgeType, set[int]],
+        nodes_by_etype_id: dict[int, torch.Tensor],
         device: torch.device,
-    ) -> dict[tuple[int, EdgeType], list[int]]:
-        """Batch fetch neighbors for nodes grouped by edge type.
+    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
         Issues one ``_sample_one_hop`` call per edge type (not per node), so all
         nodes of the same edge type are fetched in a single RPC round-trip. Each
         node's neighbor list is capped at ``self._num_neighbors_per_hop``.
 
         Args:
-            nodes_to_lookup: Dict mapping each edge type to the set of node IDs
-                whose neighbors should be fetched via that edge type.  Only nodes
-                absent from the caller's ``neighbor_cache`` should be included.
+            nodes_by_etype_id: Dict mapping integer edge type ID to a 1-D int64
+                tensor of node IDs to fetch neighbors for.  Comes directly from
+                ``drain_queue()``; node IDs are already deduplicated.
             device: Torch device for intermediate tensor creation.
 
         Returns:
-            Dict mapping ``(node_id, edge_type)`` to the list of neighbor node IDs
-            returned by ``_sample_one_hop``.  Only nodes that appeared in
-            ``nodes_to_lookup`` are present; edge types with an empty node set are
-            skipped entirely.
+            Dict mapping etype_id to ``(node_ids, flat_neighbors, counts)`` as
+            int64 tensors, ready to pass directly to ``push_residuals``.
+            ``flat_neighbors`` is the flat concatenation of all neighbor lists
+            for that edge type; ``counts[i]`` is the neighbor count for
+            ``node_ids[i]``.
 
         Example::
 
-            nodes_to_lookup = {
-                ("user", "buys", "item"): {0, 3},
-                ("item", "bought_by", "user"): {7},
+            nodes_by_etype_id = {
+                2: tensor([0, 3]),   # etype_id 2 → nodes 0 and 3
+                5: tensor([7]),      # etype_id 5 → node 7
             }
             # Might return (neighbor lists depend on graph structure):
             {
-                (0, ("user", "buys", "item")): [5, 9, 2],
-                (3, ("user", "buys", "item")): [1],
-                (7, ("item", "bought_by", "user")): [0, 3],
+                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1])),
+                5: (tensor([7]),    tensor([0, 3]),        tensor([2])),
             }
         """
-        result: dict[tuple[int, EdgeType], list[int]] = {}
-        for etype, node_ids in nodes_to_lookup.items():
-            if not node_ids:
-                continue
-            nodes_list = list(node_ids)
-            lookup_tensor = torch.tensor(nodes_list, dtype=torch.long, device=device)
-
-            # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
-            output: NeighborOutput = await self._sample_one_hop(
-                srcs=lookup_tensor,
-                num_nbr=self._num_neighbors_per_hop,
-                etype=etype if etype != _PPR_HOMOGENEOUS_EDGE_TYPE else None,
-            )
-            neighbors = output.nbr
-            neighbor_counts = output.nbr_num
-
-            # TODO (mkolodner-sc): Investigate performance of a vectorized version of the below code
-            neighbors_list = neighbors.tolist()
-            counts_list = neighbor_counts.tolist()
-            del neighbors, neighbor_counts
-
-            # neighbors_list is a flat concatenation of all neighbors for all looked-up nodes.
-            # We use offset to slice out each node's neighbors: node i's neighbors are at
-            # neighbors_list[offset : offset + count], then we advance offset by count.
-            offset = 0
-            for node_id, count in zip(nodes_list, counts_list):
-                result[(node_id, etype)] = neighbors_list[offset : offset + count]
-                offset += count
-
-        return result
+        # Fire all per-edge-type RPC calls concurrently.  Each _sample_one_hop
+        # issues a single RPC round-trip; doing them in parallel rather than
+        # sequentially cuts fetch latency from O(num_edge_types) to O(1).
+        eids = list(nodes_by_etype_id.keys())
+        outputs: list[NeighborOutput] = await asyncio.gather(
+            *[
+                self._sample_one_hop(
+                    srcs=nodes_by_etype_id[eid].to(device),
+                    num_nbr=self._num_neighbors_per_hop,
+                    # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
+                    etype=(
+                        self._etype_id_to_etype[eid]
+                        if self._etype_id_to_etype[eid] != _PPR_HOMOGENEOUS_EDGE_TYPE
+                        else None
+                    ),
+                )
+                for eid in eids
+            ]
+        )
+        return {
+            eid: (nodes_by_etype_id[eid], output.nbr, output.nbr_num)
+            for eid, output in zip(eids, outputs)
+        }
 
     async def _compute_ppr_scores(
         self,
@@ -364,226 +375,60 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if seed_node_type is None:
             seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
-        batch_size = seed_nodes.size(0)
 
-        # Per-seed PPR state, nested by node type for efficient type-grouped access.
+        ppr_state = PPRForwardPushState(
+            seed_nodes,
+            self._node_type_to_id[seed_node_type],
+            self._alpha,
+            self._requeue_threshold_factor,
+            self._node_type_id_to_edge_type_ids,
+            self._edge_type_id_to_dst_ntype_id,
+            self._degree_tensors_for_cpp,
+        )
 
-        # ppr_scores[i][node_type][node_id] = accumulated PPR score for node_id
-        # of type node_type, relative to seed i.  Updated each iteration by
-        # absorbing the node's residual.
-        ppr_scores: list[dict[NodeType, dict[int, float]]] = [
-            defaultdict(lambda: defaultdict(float)) for _ in range(batch_size)
-        ]
+        fetch_iteration_count = 0
 
-        # residuals[i][node_type][node_id] = unconverged probability mass at node_id
-        # of type node_type for seed i.  Each iteration, a node's residual is
-        # absorbed into its PPR score and then distributed to its neighbors.
-        residuals: list[dict[NodeType, dict[int, float]]] = [
-            defaultdict(lambda: defaultdict(float)) for _ in range(batch_size)
-        ]
+        while True:
+            # drain_queue returns None when the queue is truly empty (convergence),
+            # or a dict (possibly empty) when nodes were drained.  An empty dict
+            # means all drained nodes either had cached neighbors or no outgoing
+            # edges — we still call push_residuals to flush their residuals into
+            # ppr_scores_.
+            nodes_by_etype_id = ppr_state.drain_queue()
+            if nodes_by_etype_id is None:
+                break
 
-        # queue[i][node_type] = set of node IDs whose residual exceeds the
-        # convergence threshold (alpha * eps * total_degree).  The algorithm
-        # terminates when all queues are empty.  A set is used because multiple
-        # neighbors can push residual to the same node in one iteration —
-        # deduplication avoids redundant processing, and the O(1) membership
-        # check matters since it runs in the innermost loop.
-        queue: list[dict[NodeType, set[int]]] = [
-            defaultdict(set) for _ in range(batch_size)
-        ]
-
-        seed_list = seed_nodes.tolist()
-
-        for i, seed in enumerate(seed_list):
-            residuals[i][seed_node_type][seed] = self._alpha
-            queue[i][seed_node_type].add(seed)
-
-        # Cache keyed by (node_id, edge_type) since same node can have different neighbors per edge type
-        neighbor_cache: dict[tuple[int, EdgeType], list[int]] = {}
-
-        num_nodes_in_queue = batch_size
-        one_minus_alpha = 1 - self._alpha
-
-        while num_nodes_in_queue > 0:
-            # Drain all nodes from all queues and group by edge type for batched lookups
-            queued_nodes: list[dict[NodeType, set[int]]] = [
-                defaultdict(set) for _ in range(batch_size)
-            ]
-            nodes_to_lookup: dict[EdgeType, set[int]] = defaultdict(set)
-
-            for seed_idx in range(batch_size):
-                if queue[seed_idx]:
-                    queued_nodes[seed_idx] = queue[seed_idx]
-                    queue[seed_idx] = defaultdict(set)
-                    for node_type, node_ids in queued_nodes[seed_idx].items():
-                        num_nodes_in_queue -= len(node_ids)
-                        # We fetch neighbors for ALL edge types originating
-                        # from this node type, not just the edge type that
-                        # caused the node to be queued.  This is required for
-                        # correctness: forward push distributes residual to
-                        # all neighbors proportionally by total degree, so
-                        # every edge type must be considered.
-                        # Destination-only types have no entry in _node_type_to_edge_types;
-                        # .get() returns [] so we skip neighbor lookup for them.
-                        edge_types_for_node = self._node_type_to_edge_types.get(
-                            node_type, []
-                        )
-                        for node_id in node_ids:
-                            for etype in edge_types_for_node:
-                                cache_key = (node_id, etype)
-                                if cache_key not in neighbor_cache:
-                                    # TODO (mkolodner-sc): Investigate switching from set to list
-                                    # here.  _sample_one_hop handles duplicates correctly (second
-                                    # write to result[(node_id, etype)] is a no-op overwrite), so
-                                    # dedup is not required for correctness.  A list would avoid
-                                    # per-add hash cost and the set->list->tensor conversion in
-                                    # _batch_fetch_neighbors, though at the cost of redundant
-                                    # network calls for any duplicate nodes across seeds.
-                                    nodes_to_lookup[etype].add(node_id)
-
-            fetched_neighbors = await self._batch_fetch_neighbors(
-                nodes_to_lookup=nodes_to_lookup,
-                device=device,
+            fetch_budget_remaining = (
+                self._max_fetch_iterations is None
+                or fetch_iteration_count < self._max_fetch_iterations
             )
-            # fetched_neighbors is intentionally NOT merged into neighbor_cache
-            # upfront.  We only promote entries when a node is requeued — see
-            # the should_requeue block below.
+            if nodes_by_etype_id and fetch_budget_remaining:
+                fetched_by_etype_id = await self._batch_fetch_neighbors(
+                    nodes_by_etype_id, device
+                )
+                fetch_iteration_count += 1
+            else:
+                # Fetch budget exhausted; push_residuals will use the existing neighbor cache.
+                fetched_by_etype_id = {}
 
-            # Push residual to neighbors and re-queue in a single pass.  This
-            # is safe because each seed's state is independent, and residuals
-            # are always positive so the merged loop can never miss a re-queue.
-            for seed_idx in range(batch_size):
-                for source_type, source_nodes in queued_nodes[seed_idx].items():
-                    for source_node in source_nodes:
-                        source_residual = residuals[seed_idx][source_type].get(
-                            source_node, 0.0
-                        )
+            # Run in executor so the C++ push doesn't block the asyncio event loop.
+            await asyncio.get_running_loop().run_in_executor(
+                None, ppr_state.push_residuals, fetched_by_etype_id
+            )
 
-                        ppr_scores[seed_idx][source_type][source_node] += (
-                            source_residual
-                        )
-                        residuals[seed_idx][source_type][source_node] = 0.0
-
-                        # Same destination-only guard as in the queue drain loop above.
-                        edge_types_for_node = self._node_type_to_edge_types.get(
-                            source_type, []
-                        )
-
-                        total_degree = self._get_total_degree(source_node, source_type)
-
-                        if total_degree == 0:
-                            continue
-
-                        residual_per_neighbor = (
-                            one_minus_alpha * source_residual / total_degree
-                        )
-
-                        for etype in edge_types_for_node:
-                            cache_key = (source_node, etype)
-                            # fetched_neighbors and neighbor_cache are mutually
-                            # exclusive per iteration: the queue drain only adds
-                            # a node to nodes_to_lookup if it is absent from
-                            # neighbor_cache, so a key appears in at most one.
-                            neighbor_list = fetched_neighbors.get(
-                                cache_key, neighbor_cache.get(cache_key, [])
-                            )
-                            if not neighbor_list:
-                                continue
-
-                            neighbor_type = self._get_destination_type(etype)
-
-                            for neighbor_node in neighbor_list:
-                                residuals[seed_idx][neighbor_type][neighbor_node] += (
-                                    residual_per_neighbor
-                                )
-
-                                requeue_threshold = (
-                                    self._requeue_threshold_factor
-                                    * self._get_total_degree(
-                                        neighbor_node, neighbor_type
-                                    )
-                                )
-                                should_requeue = (
-                                    neighbor_node not in queue[seed_idx][neighbor_type]
-                                    and residuals[seed_idx][neighbor_type][
-                                        neighbor_node
-                                    ]
-                                    >= requeue_threshold
-                                )
-                                if should_requeue:
-                                    queue[seed_idx][neighbor_type].add(neighbor_node)
-                                    num_nodes_in_queue += 1
-                                    # Promote this node's neighbor lists to the
-                                    # persistent cache: it will be processed next
-                                    # iteration, so caching now avoids a re-fetch.
-                                    # Nodes that are never requeued (typically
-                                    # high-degree) are never promoted, keeping
-                                    # their large neighbor lists out of the cache.
-                                    for (
-                                        promote_etype
-                                    ) in self._node_type_to_edge_types.get(
-                                        neighbor_type, []
-                                    ):
-                                        promote_key = (neighbor_node, promote_etype)
-                                        if (
-                                            promote_key in fetched_neighbors
-                                            and promote_key not in neighbor_cache
-                                        ):
-                                            neighbor_cache[promote_key] = (
-                                                fetched_neighbors[promote_key]
-                                            )
-
-        # Extract top-k nodes by PPR score, grouped by node type.
-        # Results are three flat tensors per node type (no padding):
-        #   - flat_ids:      [id_seed0_0, id_seed0_1, ..., id_seed1_0, ...]
-        #   - flat_weights:  [wt_seed0_0, wt_seed0_1, ..., wt_seed1_0, ...]
-        #   - valid_counts:  [count_seed0, count_seed1, ...]
-        #
-        # valid_counts[i] records how many top-k neighbors seed i contributed.
-        # The inducer uses valid_counts to slice flat_ids into per-seed groups
-        # and assign local indices.  Example:
-        #
-        #   4 seeds, valid_counts = [1, 6, 2, 1]  (10 total pairs)
-        #   flat_ids = [d0a, d1a, d1b, d1c, d1d, d1e, d1f, d2a, d2b, d3a]
-        #
-        #   seed 0 owns flat_ids[0:1],  seed 1 owns flat_ids[1:7],
-        #   seed 2 owns flat_ids[7:9],  seed 3 owns flat_ids[9:10]
-        # _node_type_to_edge_types only contains source types; destination-only
-        # types are absent but may have accumulated PPR scores during the walk.
-        # We union with all types seen in ppr_scores so they appear in the output.
-        all_node_types: set[NodeType] = set(self._node_type_to_edge_types.keys())
-        for seed_ppr in ppr_scores:
-            all_node_types.update(seed_ppr.keys())
-
+        # Translate ntype_id integer keys back to NodeType strings for the rest
+        # of the pipeline, and move tensors to the correct device.
         ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
         ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
         ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
 
-        for ntype in all_node_types:
-            flat_ids: list[int] = []
-            flat_weights: list[float] = []
-            valid_counts: list[int] = []
-
-            for i in range(batch_size):
-                type_scores = ppr_scores[i].get(ntype, {})
-                top_k = heapq.nlargest(
-                    self._max_ppr_nodes, type_scores.items(), key=lambda x: x[1]
-                )
-                if top_k:
-                    ids, weights = zip(*top_k)
-                    flat_ids.extend(ids)
-                    flat_weights.extend(weights)
-                valid_counts.append(len(top_k))
-
-            ntype_to_flat_ids[ntype] = torch.tensor(
-                flat_ids, dtype=torch.long, device=device
-            )
-            ntype_to_flat_weights[ntype] = torch.tensor(
-                flat_weights, dtype=torch.float, device=device
-            )
-            ntype_to_valid_counts[ntype] = torch.tensor(
-                valid_counts, dtype=torch.long, device=device
-            )
+        for ntype_id, (flat_ids, flat_weights, valid_counts) in ppr_state.extract_top_k(
+            self._max_ppr_nodes
+        ).items():
+            ntype = self._ntype_id_to_ntype[ntype_id]
+            ntype_to_flat_ids[ntype] = flat_ids.to(device)
+            ntype_to_flat_weights[ntype] = flat_weights.to(device)
+            ntype_to_valid_counts[ntype] = valid_counts.to(device)
 
         if self._is_homogeneous:
             assert (
@@ -596,7 +441,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ntype_to_valid_counts[_PPR_HOMOGENEOUS_NODE_TYPE],
             )
         else:
-            return ntype_to_flat_ids, ntype_to_flat_weights, ntype_to_valid_counts
+            return (
+                ntype_to_flat_ids,
+                ntype_to_flat_weights,
+                ntype_to_valid_counts,
+            )
 
     async def _sample_from_nodes(
         self,
@@ -683,20 +532,35 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # NodeType -> global IDs (same values as nodes_to_sample).
             src_dict = inducer.init_node(nodes_to_sample)
 
-            # Compute PPR for each seed type, collecting flat global neighbor IDs,
-            # weights, and per-seed counts.  Build nbr_dict for a single
-            # inducer.induce_next call using PPR edge types (seed_type, 'ppr', ntype)
-            # — the inducer only cares about etype[0] and etype[-1] as source/dest
-            # node types, so the relation name is arbitrary.
+            # Compute PPR for all seed types concurrently, collecting flat global
+            # neighbor IDs, weights, and per-seed counts.  Build nbr_dict for a
+            # single inducer.induce_next call using PPR edge types
+            # (seed_type, 'ppr', ntype) — the inducer only cares about etype[0]
+            # and etype[-1] as source/dest node types, so the relation name is
+            # arbitrary.
+            #
+            # Each seed type's PPR computation is entirely independent: it creates
+            # its own PPRForwardPushState and only reads shared sampler attributes
+            # (degree tensors, edge-type maps) which are immutable after __init__.
+            # Running them with asyncio.gather allows their fetch phases to overlap,
+            # which is most beneficial when there are 2+ distinct seed node types
+            # (e.g. cross-type supervision edges like user→story).
+            seed_types = list(nodes_to_sample.keys())
+            ppr_results = await asyncio.gather(
+                *[
+                    self._compute_ppr_scores(nodes_to_sample[seed_type], seed_type)
+                    for seed_type in seed_types
+                ]
+            )
+
             nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
             ppr_edge_type_to_flat_weights: dict[EdgeType, torch.Tensor] = {}
 
-            for seed_type, seed_nodes in nodes_to_sample.items():
-                (
-                    ntype_to_flat_ids,
-                    ntype_to_flat_weights,
-                    ntype_to_valid_counts,
-                ) = await self._compute_ppr_scores(seed_nodes, seed_type)
+            for seed_type, (
+                ntype_to_flat_ids,
+                ntype_to_flat_weights,
+                ntype_to_valid_counts,
+            ) in zip(seed_types, ppr_results):
                 assert isinstance(ntype_to_flat_ids, dict)
                 assert isinstance(ntype_to_flat_weights, dict)
                 assert isinstance(ntype_to_valid_counts, dict)
@@ -746,7 +610,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # rows_dict and cols_dict are keyed by PPR edge type and give
             # flat local source/destination indices respectively, aligned with
             # the flat_ids order passed to induce_next.
-            for ppr_edge_type, flat_weights in ppr_edge_type_to_flat_weights.items():
+            for (
+                ppr_edge_type,
+                flat_weights,
+            ) in ppr_edge_type_to_flat_weights.items():
                 rows = rows_dict.get(ppr_edge_type)
                 cols = cols_dict.get(ppr_edge_type)
                 if rows is not None and cols is not None:
