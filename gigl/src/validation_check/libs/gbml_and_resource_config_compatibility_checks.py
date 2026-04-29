@@ -124,7 +124,9 @@ def check_vertex_ai_trainer_tensorboard_compatibility(
         return
 
     trainer_resource_config = resource_config_wrapper.trainer_config
-    if isinstance(trainer_resource_config, gigl_resource_config_pb2.VertexAiResourceConfig):
+    if isinstance(
+        trainer_resource_config, gigl_resource_config_pb2.VertexAiResourceConfig
+    ):
         tensorboard_resource_name = trainer_resource_config.tensorboard_resource_name
     elif isinstance(
         trainer_resource_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig

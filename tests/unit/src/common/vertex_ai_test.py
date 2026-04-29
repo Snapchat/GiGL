@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from absl.testing import absltest
 
-from gigl.common.services.vertex_ai import VertexAIService, VertexAiJobConfig
+from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from tests.test_assets.test_case import TestCase
 
 

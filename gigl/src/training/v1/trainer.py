@@ -49,9 +49,7 @@ class Trainer:
                     gbml_config_uri=task_config_uri
                 )
             )
-            raw_tensorboard_logs_uri = (
-                gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
-            )
+            raw_tensorboard_logs_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
             tensorboard_logs_uri = (
                 UriFactory.create_uri(raw_tensorboard_logs_uri)
                 if gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard
