@@ -18,6 +18,7 @@ from gigl.utils.data_splitters import (
     _fast_hash,
     _get_padded_labels,
     get_labels_for_anchor_nodes,
+    get_max_labels_per_anchor_node_from_runtime_args,
     select_ssl_positive_label_edges,
 )
 from tests.test_assets.distributed.utils import (
@@ -809,6 +810,37 @@ class TestDataSplitters(TestCase):
     def test_get_padded_labels(self, _, node_ids, topo, expected):
         labels = _get_padded_labels(node_ids, topo)
         assert_close(labels, expected, rtol=0, atol=0)
+
+    def test_get_padded_labels_with_max_labels_per_anchor_node(self):
+        labels = _get_padded_labels(
+            torch.tensor([0, 1]),
+            Topology(
+                edge_index=torch.tensor([[0, 0, 1], [1, 2, 2]], dtype=torch.int64),
+                layout="CSR",
+            ),
+            max_labels_per_anchor_node=1,
+        )
+        assert_close(
+            labels,
+            torch.tensor([[1], [2]], dtype=torch.int64),
+            rtol=0,
+            atol=0,
+        )
+
+    def test_get_max_labels_per_anchor_node_from_runtime_args(self):
+        self.assertIsNone(get_max_labels_per_anchor_node_from_runtime_args({}))
+        self.assertEqual(
+            get_max_labels_per_anchor_node_from_runtime_args(
+                {"max_labels_per_anchor_node": "3"}
+            ),
+            3,
+        )
+
+    def test_get_max_labels_per_anchor_node_from_runtime_args_invalid(self):
+        with self.assertRaises(ValueError):
+            get_max_labels_per_anchor_node_from_runtime_args(
+                {"max_labels_per_anchor_node": "0"}
+            )
 
     @parameterized.expand(
         [
