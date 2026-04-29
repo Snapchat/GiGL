@@ -56,6 +56,7 @@ class KfpOrchestrator:
         dataflow_container_image: str,
         dst_compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         additional_job_args: Optional[dict[GiGLComponents, dict[str, str]]] = None,
+        env_vars: Optional[dict[str, str]] = None,
         tag: Optional[str] = None,
     ) -> Uri:
         """
@@ -68,6 +69,9 @@ class KfpOrchestrator:
             dst_compiled_pipeline_path (Uri): Destination path for the compiled pipeline YAML file. Defaults to
             :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
+            env_vars (Optional[dict[str, str]]): Environment variables baked into every GiGL-owned container at compile time.
+                Applied uniformly across all SPECED_COMPONENTS plus the GLT eligibility check and ``log_metrics_to_ui`` tasks.
+                The managed ``VertexNotificationEmailOp`` exit handler is intentionally excluded.
             tag (Optional[str]): Optional tag to include in the pipeline description.
         Returns:
             Uri: The URI of the compiled pipeline.
@@ -85,6 +89,7 @@ class KfpOrchestrator:
             cpu_container_image=cpu_container_image,
             dataflow_container_image=dataflow_container_image,
             additional_job_args=additional_job_args or {},
+            env_vars=env_vars or {},
         )
 
         Compiler().compile(
