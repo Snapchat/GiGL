@@ -163,6 +163,7 @@ class DistServer:
             self._backend_id_by_backend_key.clear()
             self._backend_state_by_backend_id.clear()
             self._channel_state_by_channel_id.clear()
+            self._destroyed_channel_ids.clear()
             self._fetch_stats_by_channel_id.clear()
 
     def wait_for_exit(self) -> None:
