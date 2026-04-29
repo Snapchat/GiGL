@@ -673,6 +673,12 @@ class DistServer:
         with self._lock:
             channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
+                # Idempotent re-destroy: the channel was already torn
+                # down by a prior destroy_sampling_input call. Re-assert
+                # the tombstone so a concurrent start_new_epoch_sampling
+                # still silent-no-ops rather than raising "unknown
+                # channel_id".
+                self._destroyed_channel_ids.add(channel_id)
                 return
             backend_state = self._backend_state_by_backend_id.get(
                 channel_state.backend_id

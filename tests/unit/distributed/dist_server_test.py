@@ -1291,6 +1291,27 @@ class TestStartNewEpochSamplingChannelLookup(TestCase):
         # Must NOT raise — silent no-op for tombstoned channel.
         server.start_new_epoch_sampling(channel_id=5, epoch=1)
 
+    def test_start_new_epoch_sampling_silent_after_double_destroy(self) -> None:
+        """Idempotent double-destroy must still tombstone the channel id
+        so a subsequent start_new_epoch_sampling silent-no-ops instead
+        of raising 'unknown channel_id'."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+
+        # First destroy on an unregistered id is a legitimate idempotent
+        # call; it must seed the tombstone so subsequent destroys also
+        # see it as already-destroyed.
+        server.destroy_sampling_input(channel_id=42)
+        # Second destroy hits the channel_state is None early-return.
+        # Before the fix, this branch did not tombstone, so the next
+        # start_new_epoch_sampling would raise.
+        server.destroy_sampling_input(channel_id=42)
+
+        # No raise expected — channel_id is tombstoned.
+        server.start_new_epoch_sampling(channel_id=42, epoch=1)
+
 
 class TestWaitAndShutdownServer(TestCase):
     def setUp(self) -> None:
