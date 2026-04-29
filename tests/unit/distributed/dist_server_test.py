@@ -1247,6 +1247,51 @@ class TestDistServerSampling(TestCase):
         runtime_2.shutdown.assert_not_called()
 
 
+class TestStartNewEpochSamplingChannelLookup(TestCase):
+    """Tests for the fail-fast / tombstone behaviour in start_new_epoch_sampling."""
+
+    def setUp(self) -> None:
+        dist_server._dist_server = None
+        self.dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+
+    def tearDown(self) -> None:
+        dist_server._dist_server = None
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+
+    def test_start_new_epoch_sampling_raises_on_unknown_channel(self) -> None:
+        """start_new_epoch_sampling must raise RuntimeError for a channel_id that was
+        never registered on this server.
+
+        The error message must contain both the word "unknown" and the channel_id
+        so callers can diagnose the bug.
+        """
+        server = dist_server.DistServer(self.dataset)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            server.start_new_epoch_sampling(channel_id=999, epoch=1)
+
+        error_message = str(ctx.exception)
+        self.assertIn("unknown", error_message)
+        self.assertIn("999", error_message)
+
+    def test_start_new_epoch_sampling_silent_on_destroyed_channel(self) -> None:
+        """start_new_epoch_sampling must silently no-op for a channel_id that was
+        previously registered and then destroyed (tombstoned).
+
+        This handles the legitimate destroy/start race where a compute peer's
+        start RPC arrives after destroy has already landed on the server.
+        """
+        server = dist_server.DistServer(self.dataset)
+        # Simulate: channel 5 was registered and then destroyed.
+        server._destroyed_channel_ids.add(5)
+
+        # Must NOT raise — silent no-op for tombstoned channel.
+        server.start_new_epoch_sampling(channel_id=5, epoch=1)
+
+
 class TestWaitAndShutdownServer(TestCase):
     def setUp(self) -> None:
         """Reset the global dataset before each test."""

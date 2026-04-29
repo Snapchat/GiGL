@@ -127,6 +127,7 @@ class DistServer:
         self._backend_id_by_backend_key: dict[str, int] = {}
         self._backend_state_by_backend_id: dict[int, SamplingBackendState] = {}
         self._channel_state_by_channel_id: dict[int, ChannelState] = {}
+        self._destroyed_channel_ids: set[int] = set()
         self._fetch_stats_by_channel_id: dict[int, _ChannelFetchStats] = {}
         self._log_every_n = log_every_n
 
@@ -656,6 +657,7 @@ class DistServer:
                 channel_state.backend_id
             )
             if backend_state is None:
+                self._destroyed_channel_ids.add(channel_id)
                 self._channel_state_by_channel_id.pop(channel_id, None)
                 self._fetch_stats_by_channel_id.pop(channel_id, None)
                 channel_state.destroyed = True
@@ -672,6 +674,7 @@ class DistServer:
                 if current_channel_state.backend_id != backend_state.backend_id:
                     return
                 current_channel_state.destroyed = True
+                self._destroyed_channel_ids.add(channel_id)
                 self._channel_state_by_channel_id.pop(channel_id, None)
                 self._fetch_stats_by_channel_id.pop(channel_id, None)
             backend_state.runtime.unregister_input(channel_id)
@@ -692,19 +695,32 @@ class DistServer:
         No-op if this channel has already started ``epoch`` or a later
         epoch (idempotent — safe to call repeatedly from retries).
 
+        No-op if the channel is in the destroyed-tombstone set: this
+        handles the legitimate destroy/start race window where a
+        compute peer's start RPC arrives after destroy has landed.
+
         Args:
             channel_id: The ID of the channel to start the epoch on.
             epoch: The epoch number to start.
 
+        Raises:
+            RuntimeError: If ``channel_id`` was never registered on this
+                server (vs. legitimately destroyed — destroyed ids are
+                tombstoned and treated as a silent no-op).
         """
         with self._lock:
             channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
-                return
+                if channel_id in self._destroyed_channel_ids:
+                    return
+                raise RuntimeError(
+                    f"start_new_epoch_sampling: unknown channel_id={channel_id}"
+                )
             backend_state = self._backend_state_by_backend_id.get(
                 channel_state.backend_id
             )
         if backend_state is None:
+            # Backend was torn down between the two lookups; treat as destroyed.
             return
 
         with backend_state.lock:
