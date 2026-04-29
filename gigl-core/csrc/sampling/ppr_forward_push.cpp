@@ -1,5 +1,12 @@
 #include "ppr_forward_push.h"
 
+// Pack (node_id, etype_id) into a single uint64 for use as a hash key.
+// Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
+static inline uint64_t packKey(int32_t nodeId, int32_t etypeId) {
+    return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) |
+           static_cast<uint32_t>(etypeId);
+}
+
 PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
                                          int32_t seedNodeTypeId,
                                          double alpha,
@@ -8,7 +15,6 @@ PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
                                          std::vector<int32_t> edgeTypeToDstNtypeId,
                                          std::vector<torch::Tensor> degreeTensors)
     : _alpha(alpha),
-      _oneMinusAlpha(1.0 - alpha),
       _requeueThresholdFactor(requeueThresholdFactor),
       // std::move transfers ownership of each vector into the member variable
       // without copying its contents — equivalent to Python's list hand-off
@@ -169,7 +175,7 @@ void PPRForwardPushState::pushResiduals(
                     continue;
                 }
 
-                double resPerNbr = _oneMinusAlpha * res / static_cast<double>(totalFetched);
+                double resPerNbr = (1.0 - _alpha) * res / static_cast<double>(totalFetched);
 
                 for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
                     // Invariant: fetched and _neighborCache are mutually exclusive for

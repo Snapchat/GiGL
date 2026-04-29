@@ -10,13 +10,6 @@
 #include <unordered_set>
 #include <vector>
 
-// Pack (node_id, etype_id) into a single uint64 for use as a hash key.
-// Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
-static inline uint64_t packKey(int32_t nodeId, int32_t etypeId) {
-    return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) |
-           static_cast<uint32_t>(etypeId);
-}
-
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
 // Hot-loop state lives here; distributed neighbor fetches are driven from Python.
 //
@@ -61,7 +54,6 @@ class PPRForwardPushState {
     [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t ntypeId) const;
 
     double _alpha;
-    double _oneMinusAlpha;            // precomputed 1 - alpha
     double _requeueThresholdFactor;   // alpha * eps; multiplied by degree for per-node threshold
 
     int32_t _batchSize;

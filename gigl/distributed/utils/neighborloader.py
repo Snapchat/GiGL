@@ -190,9 +190,10 @@ def strip_non_ppr_edge_types(
     for edge_type in list(data.edge_types):
         if edge_type not in ppr_edge_types:
             del data[edge_type]
-            # GLT does not guarantee an entry in num_sampled_edges for every edge type
-            # (e.g. types with zero samples may be absent), so use pop instead of del.
-            data.num_sampled_edges.pop(edge_type, None)
+            # num_sampled_edges may not exist at all (e.g. in tests or when GLT doesn't
+            # populate it), and may lack entries for edge types with zero samples.
+            if hasattr(data, "num_sampled_edges"):
+                data.num_sampled_edges.pop(edge_type, None)
     return data
 
 
