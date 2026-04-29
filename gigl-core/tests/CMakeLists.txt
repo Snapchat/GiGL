@@ -25,6 +25,22 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 # ---------------------------------------------------------------------------
+# Torch + sampling kernel (required by PPR tests)
+# ---------------------------------------------------------------------------
+foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
+    if(NOT TORCH_CMAKE_PREFIX AND EXISTS "${_prefix}/torch/share/cmake")
+        set(TORCH_CMAKE_PREFIX "${_prefix}/torch/share/cmake")
+    endif()
+endforeach()
+find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
+
+add_library(gigl_core_sampling STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/../csrc/sampling/ppr_forward_push.cpp"
+)
+target_include_directories(gigl_core_sampling PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../csrc")
+target_link_libraries(gigl_core_sampling PUBLIC "${TORCH_LIBRARIES}")
+
+# ---------------------------------------------------------------------------
 # Auto-discover test targets
 # ---------------------------------------------------------------------------
 # Any file named *_test.cpp in this directory (or subdirectories) is
@@ -45,7 +61,7 @@ foreach(test_source ${TEST_SOURCES})
     string(REPLACE "/" "_" test_name "${_rel}")
     string(REGEX REPLACE "\\.[^.]+$" "" test_name "${test_name}")
     add_executable(${test_name} ${test_source})
-    target_link_libraries(${test_name} GTest::gtest_main)
+    target_link_libraries(${test_name} GTest::gtest_main gigl_core_sampling)
     # add_test registers the binary with CTest. Each *_test binary is one
     # CTest entry; GoogleTest itself reports individual TEST() results inside it.
     add_test(NAME ${test_name} COMMAND ${test_name})
