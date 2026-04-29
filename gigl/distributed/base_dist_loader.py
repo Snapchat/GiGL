@@ -807,7 +807,7 @@ class BaseDistLoader(DistLoader):
             self._collocated_producer.shutdown()
         elif self._is_mp_worker:
             self._mp_producer.shutdown()
-        elif rpc_is_initialized() is True:
+        elif rpc_is_initialized():
             rpc_futures: list[torch.futures.Future[None]] = []
             for server_rank, channel_id in zip(
                 self._server_rank_list, self._channel_id_list
