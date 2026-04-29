@@ -8,7 +8,6 @@ import traceback
 from distutils.util import strtobool
 from typing import Any, Optional
 
-import tensorflow as tf
 import torch
 import torch.distributed
 import torch.nn.parallel
@@ -216,26 +215,20 @@ class GnnTrainingProcess:
     ):
         trainer_instance.setup_for_training()
         logger.info(f"Starting training at {current_formatted_datetime()}")
-        tensorboard_log_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
         profiler = get_torch_profiler_instance(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper
         )
 
-        file_writer = None
-        if gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard:
-            file_writer = tf.summary.create_file_writer(tensorboard_log_uri)
-
-        with file_writer.as_default() if file_writer else contextlib.nullcontext():
-            with (
-                profiler.profiler_context()  # type: ignore[attr-defined]
-                if profiler
-                else contextlib.nullcontext() as prof
-            ):
-                trainer_instance.train(
-                    gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-                    device=device,
-                    profiler=prof,
-                )
+        with (
+            profiler.profiler_context()  # type: ignore[attr-defined]
+            if profiler
+            else contextlib.nullcontext() as prof
+        ):
+            trainer_instance.train(
+                gbml_config_pb_wrapper=gbml_config_pb_wrapper,
+                device=device,
+                profiler=prof,
+            )
         if profiler:
             if does_path_exist(TMP_PROFILER_LOG_DIR_NAME):
                 file_loader = FileLoader()

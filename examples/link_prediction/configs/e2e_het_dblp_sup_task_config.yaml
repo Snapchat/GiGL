@@ -30,6 +30,7 @@ datasetConfig:
       # This argument is specific for the `PassthroughPreprocessorConfigForMockedAssets` preprocessor to indicate which dataset we should be using
       mocked_dataset_name: 'dblp_node_anchor_edge_features_lp'
 trainerConfig:
+  shouldLogToTensorboard: true
   trainerArgs:
     # Example argument to trainer
     log_every_n_batch: "50"

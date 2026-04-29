@@ -52,6 +52,7 @@ def launch_single_pool_job(
     cuda_docker_uri: Optional[str],
     component: GiGLComponents,
     vertex_ai_region: str,
+    tensorboard_logs_uri: Optional[Uri] = None,
 ) -> None:
     """Launch a single pool job on Vertex AI.
 
@@ -67,6 +68,7 @@ def launch_single_pool_job(
         cuda_docker_uri: Docker image URI for GPU execution
         component: The GiGL component (Trainer or Inferencer)
         vertex_ai_region: The Vertex AI region to launch the job in
+        tensorboard_logs_uri: Optional TensorBoard log URI for trainer jobs
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(
@@ -85,11 +87,12 @@ def launch_single_pool_job(
         resource_config_uri=resource_config_uri,
         command_str=process_command,
         args=process_runtime_args,
-        use_cuda=is_cpu_execution,
+        use_cuda=not is_cpu_execution,
         container_uri=container_uri,
         vertex_ai_resource_config=vertex_ai_resource_config,
         env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
         labels=resource_config_wrapper.get_resource_labels(component=component),
+        tensorboard_logs_uri=tensorboard_logs_uri,
     )
     logger.info(f"Launching {component.value} job with config: {job_config}")
 
@@ -115,6 +118,7 @@ def launch_graph_store_enabled_job(
     cpu_docker_uri: Optional[str],
     cuda_docker_uri: Optional[str],
     component: GiGLComponents,
+    tensorboard_logs_uri: Optional[Uri] = None,
 ) -> None:
     """Launch a graph store enabled job on Vertex AI with separate storage and compute pools.
 
@@ -131,6 +135,7 @@ def launch_graph_store_enabled_job(
         cpu_docker_uri: Docker image URI for CPU execution
         cuda_docker_uri: Docker image URI for GPU execution
         component: The GiGL component (Trainer or Inferencer)
+        tensorboard_logs_uri: Optional TensorBoard log URI for trainer jobs
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(
@@ -139,13 +144,16 @@ def launch_graph_store_enabled_job(
     storage_pool_config = vertex_ai_graph_store_config.graph_store_pool
     compute_pool_config = vertex_ai_graph_store_config.compute_pool
 
-    # Determine if CPU or GPU based on compute pool
-    is_cpu_execution = _determine_if_cpu_execution(
+    # Compute workers may use GPUs, but storage workers always run the CPU
+    # graph-store entrypoint.
+    is_compute_cpu_execution = _determine_if_cpu_execution(
         vertex_ai_resource_config=compute_pool_config
     )
     cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
     cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
-    container_uri = cpu_docker_uri if is_cpu_execution else cuda_docker_uri
+    compute_container_uri = (
+        cpu_docker_uri if is_compute_cpu_execution else cuda_docker_uri
+    )
 
     logger.info(f"Running {component.value} with command: {compute_commmand}")
 
@@ -153,7 +161,7 @@ def launch_graph_store_enabled_job(
         vertex_ai_graph_store_config.compute_cluster_local_world_size
     )
     if not num_compute_processes:
-        if is_cpu_execution:
+        if is_compute_cpu_execution:
             num_compute_processes = 1
         else:
             num_compute_processes = vertex_ai_graph_store_config.compute_pool.gpu_limit
@@ -176,11 +184,12 @@ def launch_graph_store_enabled_job(
         resource_config_uri=resource_config_uri,
         command_str=compute_commmand,
         args=compute_runtime_args,
-        use_cuda=is_cpu_execution,
-        container_uri=container_uri,
+        use_cuda=not is_compute_cpu_execution,
+        container_uri=compute_container_uri,
         vertex_ai_resource_config=compute_pool_config,
         env_vars=environment_variables,
         labels=labels,
+        tensorboard_logs_uri=tensorboard_logs_uri,
     )
 
     # Create storage pool job config
@@ -190,8 +199,8 @@ def launch_graph_store_enabled_job(
         resource_config_uri=resource_config_uri,
         command_str=storage_command,
         args=storage_args,
-        use_cuda=is_cpu_execution,
-        container_uri=container_uri,
+        use_cuda=False,
+        container_uri=cpu_docker_uri,
         vertex_ai_resource_config=storage_pool_config,
         env_vars=environment_variables,
         labels=labels,
@@ -227,6 +236,7 @@ def _build_job_config(
     vertex_ai_resource_config: VertexAiResourceConfig,
     env_vars: list[env_var.EnvVar],
     labels: Optional[dict[str, str]] = None,
+    tensorboard_logs_uri: Optional[Uri] = None,
 ) -> VertexAiJobConfig:
     """Build a VertexAiJobConfig for training or inference jobs.
 
@@ -247,6 +257,7 @@ def _build_job_config(
             machine type, GPU type, replica count, timeout, and scheduling strategy.
         env_vars (list[env_var.EnvVar]): Environment variables to set in the container.
         labels (Optional[dict[str, str]]): Labels to associate with the job. Defaults to None.
+        tensorboard_logs_uri (Optional[Uri]): TensorBoard log URI for trainer jobs.
 
     Returns:
         VertexAiJobConfig: A configuration object ready to be used with VertexAIService.launch_job().
@@ -262,6 +273,13 @@ def _build_job_config(
     )
 
     command = command_str.strip().split(" ")
+    base_output_dir = (
+        _get_base_output_dir_from_tensorboard_logs_uri(
+            tensorboard_logs_uri=tensorboard_logs_uri
+        )
+        if tensorboard_logs_uri is not None
+        else None
+    )
 
     job_config = VertexAiJobConfig(
         job_name=job_name,
@@ -291,8 +309,38 @@ def _build_job_config(
         reservation_affinity=_build_reservation_affinity(
             vertex_ai_resource_config.reservation_affinity
         ),
+        base_output_dir=base_output_dir,
+        tensorboard_resource_name=(
+            vertex_ai_resource_config.tensorboard_resource_name or None
+            if base_output_dir is not None
+            else None
+        ),
     )
     return job_config
+
+
+def _get_base_output_dir_from_tensorboard_logs_uri(
+    tensorboard_logs_uri: Uri,
+) -> str:
+    """Return the CustomJob base output directory for a TensorBoard log URI.
+
+    Args:
+        tensorboard_logs_uri: GiGL TensorBoard log URI. This is expected to
+            point at the ``logs/`` directory underneath the trainer asset dir.
+
+    Returns:
+        The parent directory to use as ``base_output_dir``.
+
+    Raises:
+        ValueError: If the URI does not contain a parent directory.
+    """
+    normalized_tensorboard_logs_uri = tensorboard_logs_uri.uri.rstrip("/")
+    base_output_dir, separator, _ = normalized_tensorboard_logs_uri.rpartition("/")
+    if not separator or not base_output_dir:
+        raise ValueError(
+            f"TensorBoard logs URI must include a parent directory, got {tensorboard_logs_uri.uri!r}."
+        )
+    return base_output_dir
 
 
 def _build_reservation_affinity(

@@ -43,6 +43,7 @@ trainer_resource_config:
     gpu_type: NVIDIA_TESLA_T4
     gpu_limit: 2
     num_replicas: 2
+    tensorboard_resource_name: "projects/USER_PROVIDED_PROJECT/locations/us-central1/tensorboards/USER_PROVIDED_TENSORBOARD_ID"
 inferencer_resource_config:
   vertex_ai_inferencer_config:
     machine_type: n1-standard-16

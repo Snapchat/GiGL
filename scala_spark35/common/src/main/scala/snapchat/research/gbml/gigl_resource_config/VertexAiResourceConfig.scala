@@ -36,6 +36,9 @@ package snapchat.research.gbml.gigl_resource_config
   * @param reservationAffinity
   *   Compute Engine reservation affinity for the job.
   *   See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+  * @param tensorboardResourceName
+  *   Existing Vertex AI TensorBoard resource to attach to the job.
+  *   Format: projects/{project}/locations/{region}/tensorboards/{tensorboard_id}
   */
 @SerialVersionUID(0L)
 final case class VertexAiResourceConfig(
@@ -48,6 +51,7 @@ final case class VertexAiResourceConfig(
     schedulingStrategy: _root_.scala.Predef.String = "",
     bootDiskSizeGb: _root_.scala.Int = 0,
     reservationAffinity: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity] = _root_.scala.None,
+    tensorboardResourceName: _root_.scala.Predef.String = "",
     unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
     ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[VertexAiResourceConfig] {
     @transient
@@ -113,6 +117,13 @@ final case class VertexAiResourceConfig(
       if (reservationAffinity.isDefined) {
         val __value = reservationAffinity.get
         __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
+      };
+
+      {
+        val __value = tensorboardResourceName
+        if (!__value.isEmpty) {
+          __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(10, __value)
+        }
       };
       __size += unknownFields.serializedSize
       __size
@@ -181,6 +192,12 @@ final case class VertexAiResourceConfig(
         _output__.writeUInt32NoTag(__m.serializedSize)
         __m.writeTo(_output__)
       };
+      {
+        val __v = tensorboardResourceName
+        if (!__v.isEmpty) {
+          _output__.writeString(10, __v)
+        }
+      };
       unknownFields.writeTo(_output__)
     }
     def withMachineType(__v: _root_.scala.Predef.String): VertexAiResourceConfig = copy(machineType = __v)
@@ -194,6 +211,7 @@ final case class VertexAiResourceConfig(
     def getReservationAffinity: snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity = reservationAffinity.getOrElse(snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity.defaultInstance)
     def clearReservationAffinity: VertexAiResourceConfig = copy(reservationAffinity = _root_.scala.None)
     def withReservationAffinity(__v: snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity): VertexAiResourceConfig = copy(reservationAffinity = Option(__v))
+    def withTensorboardResourceName(__v: _root_.scala.Predef.String): VertexAiResourceConfig = copy(tensorboardResourceName = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
     def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
     def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -231,6 +249,10 @@ final case class VertexAiResourceConfig(
           if (__t != 0) __t else null
         }
         case 9 => reservationAffinity.orNull
+        case 10 => {
+          val __t = tensorboardResourceName
+          if (__t != "") __t else null
+        }
       }
     }
     def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -245,6 +267,7 @@ final case class VertexAiResourceConfig(
         case 7 => _root_.scalapb.descriptors.PString(schedulingStrategy)
         case 8 => _root_.scalapb.descriptors.PInt(bootDiskSizeGb)
         case 9 => reservationAffinity.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
+        case 10 => _root_.scalapb.descriptors.PString(tensorboardResourceName)
       }
     }
     def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -264,6 +287,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     var __schedulingStrategy: _root_.scala.Predef.String = ""
     var __bootDiskSizeGb: _root_.scala.Int = 0
     var __reservationAffinity: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity] = _root_.scala.None
+    var __tensorboardResourceName: _root_.scala.Predef.String = ""
     var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
     var _done__ = false
     while (!_done__) {
@@ -288,6 +312,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
           __bootDiskSizeGb = _input__.readUInt32()
         case 74 =>
           __reservationAffinity = Option(__reservationAffinity.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+        case 82 =>
+          __tensorboardResourceName = _input__.readStringRequireUtf8()
         case tag =>
           if (_unknownFields__ == null) {
             _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -305,6 +331,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
         schedulingStrategy = __schedulingStrategy,
         bootDiskSizeGb = __bootDiskSizeGb,
         reservationAffinity = __reservationAffinity,
+        tensorboardResourceName = __tensorboardResourceName,
         unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
     )
   }
@@ -320,7 +347,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
         gcpRegionOverride = __fieldsMap.get(scalaDescriptor.findFieldByNumber(6).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
         schedulingStrategy = __fieldsMap.get(scalaDescriptor.findFieldByNumber(7).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
         bootDiskSizeGb = __fieldsMap.get(scalaDescriptor.findFieldByNumber(8).get).map(_.as[_root_.scala.Int]).getOrElse(0),
-        reservationAffinity = __fieldsMap.get(scalaDescriptor.findFieldByNumber(9).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity]])
+        reservationAffinity = __fieldsMap.get(scalaDescriptor.findFieldByNumber(9).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity]]),
+        tensorboardResourceName = __fieldsMap.get(scalaDescriptor.findFieldByNumber(10).get).map(_.as[_root_.scala.Predef.String]).getOrElse("")
       )
     case _ => throw new RuntimeException("Expected PMessage")
   }
@@ -344,7 +372,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     gcpRegionOverride = "",
     schedulingStrategy = "",
     bootDiskSizeGb = 0,
-    reservationAffinity = _root_.scala.None
+    reservationAffinity = _root_.scala.None,
+    tensorboardResourceName = ""
   )
   implicit class VertexAiResourceConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig](_l) {
     def machineType: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.machineType)((c_, f_) => c_.copy(machineType = f_))
@@ -357,6 +386,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     def bootDiskSizeGb: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Int] = field(_.bootDiskSizeGb)((c_, f_) => c_.copy(bootDiskSizeGb = f_))
     def reservationAffinity: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity] = field(_.getReservationAffinity)((c_, f_) => c_.copy(reservationAffinity = Option(f_)))
     def optionalReservationAffinity: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity]] = field(_.reservationAffinity)((c_, f_) => c_.copy(reservationAffinity = f_))
+    def tensorboardResourceName: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.tensorboardResourceName)((c_, f_) => c_.copy(tensorboardResourceName = f_))
   }
   final val MACHINE_TYPE_FIELD_NUMBER = 1
   final val GPU_TYPE_FIELD_NUMBER = 2
@@ -367,6 +397,7 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
   final val SCHEDULING_STRATEGY_FIELD_NUMBER = 7
   final val BOOT_DISK_SIZE_GB_FIELD_NUMBER = 8
   final val RESERVATION_AFFINITY_FIELD_NUMBER = 9
+  final val TENSORBOARD_RESOURCE_NAME_FIELD_NUMBER = 10
   def of(
     machineType: _root_.scala.Predef.String,
     gpuType: _root_.scala.Predef.String,
@@ -376,7 +407,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     gcpRegionOverride: _root_.scala.Predef.String,
     schedulingStrategy: _root_.scala.Predef.String,
     bootDiskSizeGb: _root_.scala.Int,
-    reservationAffinity: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity]
+    reservationAffinity: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiReservationAffinity],
+    tensorboardResourceName: _root_.scala.Predef.String
   ): _root_.snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig = _root_.snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig(
     machineType,
     gpuType,
@@ -386,7 +418,8 @@ object VertexAiResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat
     gcpRegionOverride,
     schedulingStrategy,
     bootDiskSizeGb,
-    reservationAffinity
+    reservationAffinity,
+    tensorboardResourceName
   )
   // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.VertexAiResourceConfig])
 }

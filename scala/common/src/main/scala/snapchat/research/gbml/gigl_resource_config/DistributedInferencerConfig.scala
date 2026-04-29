@@ -38,7 +38,7 @@ final case class DistributedInferencerConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       trainerConfig.vertexAiInferencerConfig.foreach { __v =>
@@ -165,7 +165,7 @@ object DistributedInferencerConfig extends scalapb.GeneratedMessageCompanion[sna
       override def number: _root_.scala.Int = 0
       override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
     }
-  
+
     @SerialVersionUID(0L)
     final case class VertexAiInferencerConfig(value: snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig) extends snapchat.research.gbml.gigl_resource_config.DistributedInferencerConfig.TrainerConfig {
       type ValueType = snapchat.research.gbml.gigl_resource_config.VertexAiResourceConfig

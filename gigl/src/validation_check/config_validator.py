@@ -18,6 +18,7 @@ from gigl.src.validation_check.libs.frozen_config_path_checks import (
 from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
     check_inferencer_graph_store_compatibility,
     check_trainer_graph_store_compatibility,
+    check_vertex_ai_trainer_tensorboard_compatibility,
 )
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
@@ -202,22 +203,27 @@ START_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS = {
     GiGLComponents.ConfigPopulator.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_vertex_ai_trainer_tensorboard_compatibility,
     ],
     GiGLComponents.DataPreprocessor.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_vertex_ai_trainer_tensorboard_compatibility,
     ],
     GiGLComponents.SubgraphSampler.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_vertex_ai_trainer_tensorboard_compatibility,
     ],
     GiGLComponents.SplitGenerator.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_vertex_ai_trainer_tensorboard_compatibility,
     ],
     GiGLComponents.Trainer.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_vertex_ai_trainer_tensorboard_compatibility,
     ],
     GiGLComponents.Inferencer.value: [
         check_inferencer_graph_store_compatibility,
