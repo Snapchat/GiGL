@@ -940,10 +940,10 @@ def wait_and_shutdown_server() -> None:
         _dist_server.wait_for_exit()
         try:
             _dist_server.shutdown()
-        except Exception as e:
+        except Exception:
             logger.exception(
-                f"DistServer.shutdown() failed during cluster teardown; "
-                f"continuing with barrier/shutdown_rpc anyway: {e}"
+                "DistServer.shutdown() failed during cluster teardown; "
+                "continuing with barrier/shutdown_rpc anyway"
             )
         _dist_server = None
         glt_dist_server._dist_server = None
