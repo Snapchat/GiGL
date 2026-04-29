@@ -114,7 +114,8 @@ class TestTensorBoardWriter(TestCase):
 
     def test_close_on_noop_writer_does_not_raise(self) -> None:
         writer = TensorBoardWriter(log_dir=None)
-        writer.close()  # No exception expected.
+        writer.close()
+        writer.close()  # Idempotent on no-op writer.
 
 
 if __name__ == "__main__":
