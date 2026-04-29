@@ -274,14 +274,11 @@ int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t ntypeId) con
     if (t.numel() == 0) {
         return 0;
     }
-    TORCH_CHECK(nodeId >= 0 && nodeId < static_cast<int32_t>(t.size(0)),
-                "Node ID ",
-                nodeId,
-                " out of range for degree tensor of ntype_id ",
-                ntypeId,
-                " (size=",
-                t.size(0),
-                "). This indicates corrupted graph data or a sampler bug.");
+    TORCH_CHECK(nodeId >= 0,
+                "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeId < static_cast<int32_t>(t.size(0)),
+                "Node ID ", nodeId, " out of range for degree tensor of ntype_id ",
+                ntypeId, " (size=", t.size(0), "). This indicates corrupted graph data or a sampler bug.");
     // data_ptr<int32_t>() returns a raw C pointer to the tensor's int32 data buffer.
     return t.data_ptr<int32_t>()[nodeId];
 }

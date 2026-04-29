@@ -17,9 +17,22 @@ static PPRForwardPushState makeState(
         {torch::tensor(degrees, torch::kInt)});
 }
 
+// Convenience wrapper: build the fetchedByEtypeId argument for pushResiduals
+// from flat vectors, keeping test call sites readable.
+static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+makeFetched(int32_t etypeId,
+            std::vector<int64_t> nodeIds,
+            std::vector<int64_t> flatNbrs,
+            std::vector<int64_t> counts) {
+    return {{etypeId,
+             {torch::tensor(nodeIds, torch::kLong),
+              torch::tensor(flatNbrs, torch::kLong),
+              torch::tensor(counts, torch::kLong)}}};
+}
+
 // After construction, drainQueue() returns the seed node under etype 0.
 TEST(PPRForwardPush, DrainQueueReturnsSeedNodeInitially) {
-    auto state = makeState({0}, 0.15, 1e-6, {1});
+    auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1});
     auto result = state.drainQueue();
     ASSERT_TRUE(result.has_value());
     ASSERT_NE(result->find(0), result->end());
@@ -29,7 +42,7 @@ TEST(PPRForwardPush, DrainQueueReturnsSeedNodeInitially) {
 
 // After convergence (sink node absorbs all residual), drainQueue() returns nullopt.
 TEST(PPRForwardPush, DrainQueueReturnsNulloptAfterConvergence) {
-    auto state = makeState({0}, 0.15, 1e-6, {0});  // node 0 is a sink (degree 0)
+    auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{0});
     state.drainQueue();
     state.pushResiduals({});
     EXPECT_FALSE(state.drainQueue().has_value());
@@ -38,7 +51,7 @@ TEST(PPRForwardPush, DrainQueueReturnsNulloptAfterConvergence) {
 // A sink seed node absorbs its full residual as PPR score (= alpha).
 TEST(PPRForwardPush, PprScoreAbsorbsAlpha) {
     const double alpha = 0.15;
-    auto state = makeState({0}, alpha, 1e-6, {0});
+    auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{0});
     state.drainQueue();
     state.pushResiduals({});
     auto topk = state.extractTopK(10);
@@ -51,14 +64,11 @@ TEST(PPRForwardPush, PprScoreAbsorbsAlpha) {
 // Node 0 (degree 1) pushes (1-alpha)*alpha residual to node 1 (sink).
 TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     const double alpha = 0.15;
-    auto state = makeState({0}, alpha, 1e-6, {1, 0});
+    auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1, 0});
 
     // Iteration 1: seed node 0 → neighbor node 1.
     state.drainQueue();
-    state.pushResiduals({{0,
-        {torch::tensor(std::vector<int64_t>{0}, torch::kLong),
-         torch::tensor(std::vector<int64_t>{1}, torch::kLong),
-         torch::tensor(std::vector<int64_t>{1}, torch::kLong)}}});
+    state.pushResiduals(makeFetched(/*etypeId=*/0, /*nodeIds=*/{0}, /*flatNbrs=*/{1}, /*counts=*/{1}));
 
     // Iteration 2: node 1 is a sink; absorbs its residual, no further push.
     state.drainQueue();
@@ -79,13 +89,10 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
 // Two seeds both push residual to node 2; the neighbor-lookup request deduplicates
 // to one entry, but getNodesDrainedPerIteration counts both seed queues.
 TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
-    auto state = makeState({0, 1}, 0.15, 1e-6, {1, 1, 0});
+    auto state = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1, 1, 0});
 
     state.drainQueue();
-    state.pushResiduals({{0,
-        {torch::tensor(std::vector<int64_t>{0, 1}, torch::kLong),
-         torch::tensor(std::vector<int64_t>{2, 2}, torch::kLong),
-         torch::tensor(std::vector<int64_t>{1, 1}, torch::kLong)}}});
+    state.pushResiduals(makeFetched(/*etypeId=*/0, /*nodeIds=*/{0, 1}, /*flatNbrs=*/{2, 2}, /*counts=*/{1, 1}));
 
     auto iter2 = state.drainQueue();
     ASSERT_TRUE(iter2.has_value());
@@ -96,13 +103,10 @@ TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
 
 // extractTopK respects the maxPprNodes limit.
 TEST(PPRForwardPush, ExtractTopKLimitsResults) {
-    auto state = makeState({0}, 0.15, 1e-6, {1, 0});
+    auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1, 0});
 
     state.drainQueue();
-    state.pushResiduals({{0,
-        {torch::tensor(std::vector<int64_t>{0}, torch::kLong),
-         torch::tensor(std::vector<int64_t>{1}, torch::kLong),
-         torch::tensor(std::vector<int64_t>{1}, torch::kLong)}}});
+    state.pushResiduals(makeFetched(/*etypeId=*/0, /*nodeIds=*/{0}, /*flatNbrs=*/{1}, /*counts=*/{1}));
     state.drainQueue();
     state.pushResiduals({});
 
