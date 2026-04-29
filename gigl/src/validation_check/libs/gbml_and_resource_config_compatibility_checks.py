@@ -135,3 +135,63 @@ def check_inferencer_graph_store_compatibility(
         raise AssertionError(
             f"If one of GbmlConfig.inferencer_config.graph_store_storage_config or GiglResourceConfig.inferencer_resource_config is set, the other must also be set. GbmlConfig.inferencer_config.graph_store_storage_config is set: {gbml_has_graph_store}, GiglResourceConfig.inferencer_resource_config is set: {resource_has_graph_store}."
         )
+
+
+def check_custom_resource_config_requires_glt_backend(
+    gbml_config_pb_wrapper: GbmlConfigPbWrapper,
+    resource_config_wrapper: GiglResourceConfigWrapper,
+) -> None:
+    """Enforce that ``CustomResourceConfig`` is only used with the GLT (v2) backend.
+
+    The v1 trainer/inferencer dispatchers never consult the
+    ``custom_trainer_config`` / ``custom_inferencer_config`` oneof, so pairing
+    a ``CustomResourceConfig`` with a task config that has
+    ``should_use_glt_backend=False`` would silently fall through the v1 path
+    and fail at runtime. Catch it up-front here so the failure is loud and
+    actionable at validation time.
+
+    Note on naming: the wrapper exposes ``should_use_glt_backend`` (bool) but
+    the raw YAML key users set is ``feature_flags.should_run_glt_backend``.
+    The wrapper translates one into the other; this check always reads the
+    wrapper property and never the raw map.
+
+    Args:
+        gbml_config_pb_wrapper: The GbmlConfig wrapper (template config).
+        resource_config_wrapper: The GiglResourceConfig wrapper (resource config).
+
+    Raises:
+        ValueError: If either the trainer or inferencer resource config is a
+            ``CustomResourceConfig`` and ``should_use_glt_backend`` is False.
+    """
+    logger.info(
+        "Config validation check: CustomResourceConfig requires GLT (v2) backend."
+    )
+    trainer_is_custom = isinstance(
+        resource_config_wrapper.trainer_config,
+        gigl_resource_config_pb2.CustomResourceConfig,
+    )
+    inferencer_is_custom = isinstance(
+        resource_config_wrapper.inferencer_config,
+        gigl_resource_config_pb2.CustomResourceConfig,
+    )
+    if not (trainer_is_custom or inferencer_is_custom):
+        return
+
+    if not gbml_config_pb_wrapper.should_use_glt_backend:
+        offending: list[str] = []
+        if trainer_is_custom:
+            offending.append("trainer_resource_config.custom_trainer_config")
+        if inferencer_is_custom:
+            offending.append("inferencer_resource_config.custom_inferencer_config")
+        raise ValueError(
+            "CustomResourceConfig is only wired into the GLT (v2) dispatchers "
+            "(glt_trainer.py / glt_inferencer.py); the v1 trainer/inferencer "
+            "never consult the custom oneof and would fall through to an "
+            "'Unsupported resource config' error at runtime. The following "
+            f"custom resource configs were set: {offending}, but the task "
+            "config has should_use_glt_backend=False (raw YAML key: "
+            "feature_flags.should_run_glt_backend). Either set "
+            "feature_flags.should_run_glt_backend='True' in the task config, "
+            "or replace the CustomResourceConfig with a built-in resource "
+            "config."
+        )
