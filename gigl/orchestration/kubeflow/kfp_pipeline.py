@@ -51,6 +51,16 @@ _speced_component_op_dict: Final[dict[GiGLComponents, kfp.components.YamlCompone
 }
 
 
+def _apply_env_vars(task: PipelineTask, env_vars: dict[str, str]) -> None:
+    """Apply each entry in ``env_vars`` to ``task`` via ``set_env_variable``.
+
+    The KFP v2 SDK's ``PipelineTask.set_env_variable`` takes a single name/value
+    pair per call, so we loop instead of passing a dict.
+    """
+    for name, value in env_vars.items():
+        task.set_env_variable(name=name, value=value)
+
+
 def _generate_component_task(
     component: GiGLComponents,
     job_name: str,
@@ -124,6 +134,10 @@ def _generate_component_task(
         task=component_task,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
+    _apply_env_vars(
+        task=component_task,
+        env_vars=common_pipeline_component_configs.env_vars,
+    )
 
     return component_task
 
@@ -145,10 +159,15 @@ def _generate_component_tasks(
         resource_config_uri=resource_config_uri,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
-    should_use_glt = check_glt_backend_eligibility_component(
+    glt_eligibility_task = check_glt_backend_eligibility_component(
         task_config_uri=template_or_frozen_config_uri,
         base_image=common_pipeline_component_configs.cpu_container_image,
     )
+    _apply_env_vars(
+        task=glt_eligibility_task,
+        env_vars=common_pipeline_component_configs.env_vars,
+    )
+    should_use_glt = glt_eligibility_task.output
 
     with kfp.dsl.Condition(start_at == GiGLComponents.ConfigPopulator.value):
         config_populator_task = _create_config_populator_task_op(
@@ -249,6 +268,9 @@ def generate_pipeline(
         stop_after: Optional[str] = None,
         notification_emails: Optional[List[str]] = None,
     ):
+        # VertexNotificationEmailOp is a Google-managed component, so we
+        # intentionally do not apply common_pipeline_component_configs.env_vars
+        # to it; see docs/plans/20260429-add-env-var-injection-to-kfp-runner.md.
         with kfp.dsl.ExitHandler(
             VertexNotificationEmailOp(recipients=notification_emails),
             name="Gigl Alerts",
@@ -451,6 +473,10 @@ def _create_trainer_task_op(
     )
     log_metrics_component.set_display_name(name="Log Trainer Eval Metrics")
     log_metrics_component.after(trainer_task)
+    _apply_env_vars(
+        task=log_metrics_component,
+        env_vars=common_pipeline_component_configs.env_vars,
+    )
 
     with kfp.dsl.Condition(stop_after != GiGLComponents.Trainer.value):
         inference_task = _create_inferencer_task_op(
@@ -484,4 +510,8 @@ def _create_post_processor_task_op(
     )
     log_metrics_component.set_display_name(name="Log PostProcessor Eval Metrics")
     log_metrics_component.after(post_processor_task)
+    _apply_env_vars(
+        task=log_metrics_component,
+        env_vars=common_pipeline_component_configs.env_vars,
+    )
     return post_processor_task
