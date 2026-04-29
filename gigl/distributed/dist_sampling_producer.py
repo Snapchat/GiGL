@@ -104,7 +104,6 @@ def _sampling_worker_loop(
             degree_tensors=degree_tensors,
             current_device=current_device,
         )
-
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
