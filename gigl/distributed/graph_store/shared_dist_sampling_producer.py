@@ -902,7 +902,13 @@ class SharedDistSamplingBackend:
             barrier = mp_context.Barrier(self.num_workers + 1)
             self._event_queue = mp_context.Queue()
             for rank in range(self.num_workers):
-                task_queue = mp_context.Queue()
+                # Bound the per-worker task queue so the producer thread
+                # exerts backpressure when workers fall behind. Without
+                # this, a producer faster than its workers will balloon
+                # memory unboundedly.
+                task_queue = mp_context.Queue(
+                    self.num_workers * self.worker_options.worker_concurrency
+                )
                 self._task_queues.append(task_queue)
                 worker = mp_context.Process(
                     target=_shared_sampling_worker_loop,
