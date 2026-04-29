@@ -77,9 +77,17 @@ class _FakeOutputChannel:
     def send(self, msg: object) -> None:
         self._messages.append(msg)
 
-    def recv(self, timeout_ms: int = 0) -> object:
+    def recv(self, timeout_ms: int | None = None, **_: object) -> object:
+        # Match graphlearn_torch.channel.shm_channel.ShmChannel semantics:
+        # timeout_ms=0 (or None) blocks indefinitely; positive timeout_ms
+        # raises QueueTimeoutError when the queue is empty.
         if not self._messages:
-            raise producer_module.QueueTimeoutError()
+            if timeout_ms is None or timeout_ms <= 0:
+                raise AssertionError(
+                    "_FakeOutputChannel.recv called with blocking timeout on "
+                    "empty channel — production code is about to deadlock."
+                )
+            raise producer_module.QueueTimeoutError("Timeout: Queue is empty.")
         self.drained_event.set()
         return self._messages.pop(0)
 
