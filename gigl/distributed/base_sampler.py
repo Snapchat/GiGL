@@ -4,8 +4,6 @@ from typing import Union
 
 import torch
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
-from graphlearn_torch.distributed.dist_feature import DistFeature
-from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NodeSamplerInput,
@@ -15,7 +13,6 @@ from graphlearn_torch.typing import NodeType
 
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
-    NODE_LABELS_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
@@ -196,46 +193,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             nodes_to_sample=nodes_to_sample,
             metadata=metadata,
         )
-
-    async def _attach_full_node_labels_to_metadata(
-        self,
-        all_sampled_nodes: torch.Tensor,
-        metadata: dict[str, torch.Tensor],
-    ) -> None:
-        """Fetch all node label columns and stash them in sampler metadata.
-
-        GLT's sampler truncates node labels to a single column (``nlabels.T[0]``)
-        before assembling the SampleMessage, so ``data.y`` only ever carries the
-        first label column.  This method fetches the full label tensor for all
-        sampled nodes and stores it in *metadata* under ``NODE_LABELS_METADATA_KEY``
-        so that ``DistNeighborLoader._collate_fn`` can replace the truncated
-        ``data.y`` with the complete multi-column tensor.
-
-        Only has an effect when:
-        - ``self.dist_node_labels`` is a ``DistFeature`` (i.e., the dataset has
-          node labels), and
-        - the fetched label tensor has more than one column (multi-label case).
-
-        For single-label datasets the method is a no-op, and GLT's existing
-        label path is used unchanged.
-
-        This method supports homogeneous graphs only.  Heterogeneous multi-label
-        support can be added here if needed in the future.
-
-        Args:
-            all_sampled_nodes: 1-D tensor of global node IDs for all nodes in the
-                sampled subgraph (``SamplerOutput.node`` for the homogeneous case).
-            metadata: The metadata dict that will be attached to ``SamplerOutput``.
-                Modified in-place.
-        """
-        if self.dist_node_labels is None:
-            return
-        if not isinstance(self.dist_node_labels, DistFeature):
-            return
-        fut = self.dist_node_labels.async_get(all_sampled_nodes)
-        full_labels: torch.Tensor = await wrap_torch_future(fut)
-        if full_labels.ndim == 2 and full_labels.shape[1] > 1:
-            metadata[NODE_LABELS_METADATA_KEY] = full_labels
 
     async def _sample_from_nodes(
         self,
