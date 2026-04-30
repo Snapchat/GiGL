@@ -270,7 +270,6 @@ class TrainingProcessArgs:
         model_uri (Uri): URI to save/load the trained model state dict.
         eval_metrics_uri (Optional[Uri]): Destination URI for writing evaluation metrics in
             KFP-compatible JSON format. If None, metrics are not written.
-        tensorboard_log_uri (Optional[Uri]): Destination URI for TensorBoard logs.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_feature_dim (int): Input node feature dimension for the model.
@@ -306,7 +305,6 @@ class TrainingProcessArgs:
     # Model
     model_uri: Uri
     eval_metrics_uri: Optional[Uri]
-    tensorboard_log_uri: Optional[Uri]
     hid_dim: int
     out_dim: int
     node_feature_dim: int
@@ -363,10 +361,7 @@ def _training_process(
 
     logger.info(f"---Rank {rank} training process group initialized")
     is_chief_process = args.machine_rank == 0 and local_rank == 0
-    tensorboard_writer = TensorBoardWriter.from_uri(
-        args.tensorboard_log_uri,
-        enabled=is_chief_process,
-    )
+    tensorboard_writer = TensorBoardWriter.from_env(enabled=is_chief_process)
 
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -839,12 +834,6 @@ def _run_example_training(
     eval_metrics_uri: Optional[Uri] = (
         UriFactory.create_uri(raw_eval_metrics_uri) if raw_eval_metrics_uri else None
     )
-    raw_tensorboard_log_uri = gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.tensorboard_logs_uri
-    tensorboard_log_uri: Optional[Uri] = (
-        UriFactory.create_uri(raw_tensorboard_log_uri)
-        if raw_tensorboard_log_uri
-        else None
-    )
 
     should_skip_training = gbml_config_pb_wrapper.shared_config.should_skip_training
 
@@ -860,7 +849,6 @@ def _run_example_training(
         dataset=dataset,
         model_uri=model_uri,
         eval_metrics_uri=eval_metrics_uri,
-        tensorboard_log_uri=tensorboard_log_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
         node_feature_dim=node_feature_dim,
