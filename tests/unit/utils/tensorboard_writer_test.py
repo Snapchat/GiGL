@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch
 
 from absl.testing import absltest
 
-from gigl.common import UriFactory
 from gigl.utils.tensorboard_writer import TensorBoardWriter
 from tests.test_assets.test_case import TestCase
 
@@ -13,19 +12,9 @@ from tests.test_assets.test_case import TestCase
 class TestTensorBoardWriter(TestCase):
     """Tests for the TensorBoardWriter class."""
 
-    def test_from_uri_returns_noop_when_disabled(self) -> None:
-        configured_uri = UriFactory.create_uri("gs://config/logs/")
-        with patch(
-            "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
-        ) as mock_create_file_writer:
-            writer = TensorBoardWriter.from_uri(configured_uri, enabled=False)
-            writer.log({"Loss/train": 1.0}, step=0)
-            writer.close()
-
-        mock_create_file_writer.assert_not_called()
-
-    def test_from_uri_prefers_vertex_env_var(self) -> None:
-        configured_uri = UriFactory.create_uri("gs://config/logs/")
+    def test_from_env_returns_noop_when_disabled(self) -> None:
+        # When disabled (e.g. non-chief rank), env var state is irrelevant
+        # and no TF writer is constructed.
         with patch.dict(
             os.environ,
             {"AIP_TENSORBOARD_LOG_DIR": "gs://vertex-managed/logs"},
@@ -34,28 +23,32 @@ class TestTensorBoardWriter(TestCase):
             with patch(
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
             ) as mock_create_file_writer:
-                TensorBoardWriter.from_uri(configured_uri)
+                writer = TensorBoardWriter.from_env(enabled=False)
+                writer.log({"Loss/train": 1.0}, step=0)
+                writer.close()
+
+        mock_create_file_writer.assert_not_called()
+
+    def test_from_env_uses_vertex_env_var(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"AIP_TENSORBOARD_LOG_DIR": "gs://vertex-managed/logs"},
+            clear=False,
+        ):
+            with patch(
+                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
+            ) as mock_create_file_writer:
+                TensorBoardWriter.from_env()
 
         mock_create_file_writer.assert_called_once_with("gs://vertex-managed/logs")
 
-    def test_from_uri_falls_back_to_configured_uri(self) -> None:
-        configured_uri = UriFactory.create_uri("gs://config/logs/")
+    def test_from_env_raises_when_env_var_missing(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with patch(
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
             ) as mock_create_file_writer:
-                TensorBoardWriter.from_uri(configured_uri)
-
-        mock_create_file_writer.assert_called_once_with(configured_uri.uri)
-
-    def test_from_uri_returns_noop_when_no_uri_anywhere(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            with patch(
-                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
-            ) as mock_create_file_writer:
-                writer = TensorBoardWriter.from_uri(configured_uri=None)
-                writer.log({"Loss/train": 1.0}, step=0)
-                writer.close()
+                with self.assertRaises(RuntimeError):
+                    TensorBoardWriter.from_env()
 
         mock_create_file_writer.assert_not_called()
 
