@@ -2,7 +2,7 @@
 # Invoked from the GiGL repo root via: $(MAKE) -C gigl-core <target>
 # All paths below are relative to gigl-core/.
 
-CPP_SOURCES := $(shell find csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
+CPP_SOURCES := $(shell find core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
@@ -12,7 +12,7 @@ CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
 # pyproject.toml, make skips the reinstall unless something actually changed.
 # We cd to the repo root so that no-build-isolation-package in the root pyproject.toml
 # is respected by uv pip install.
-.cache/cmake_build/CMakeInit.txt: $(shell find csrc \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
+.cache/cmake_build/CMakeInit.txt: $(shell find core \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
 	cd $(abspath $(CURDIR)/..) && uv pip install -e gigl-core/
 
 build_cpp_extensions: .cache/cmake_build/CMakeInit.txt

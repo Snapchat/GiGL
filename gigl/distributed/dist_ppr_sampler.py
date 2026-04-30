@@ -13,11 +13,9 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
-from gigl.common.logger import Logger
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.types.graph import is_label_edge_type
 
-_logger = Logger()
 
 # Trailing "." is an intentional separator.  These constants are used both to
 # write metadata keys (f"{KEY}{repr(edge_type)}" → e.g. "ppr_edge_index.('user', 'to', 'story')")
@@ -157,7 +155,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # We include both source types (have outgoing edges) and destination-only
         # types (no outgoing edges, but may accumulate PPR score during the walk)
         # so the kernel can index residual/ppr_score tables for any node it sees.
-        _all_node_types: list[NodeType] = sorted(
+        all_node_types: list[NodeType] = sorted(
             {nt for nt in self._node_type_to_edge_types}
             | {
                 self._get_destination_type(et)
@@ -166,20 +164,20 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             }
         )
         # dict.fromkeys preserves insertion order while deduplicating.
-        _all_edge_types: list[EdgeType] = list(
+        all_edge_types: list[EdgeType] = list(
             dict.fromkeys(
                 et for etypes in self._node_type_to_edge_types.values() for et in etypes
             )
         )
 
         self._node_type_to_id: dict[NodeType, int] = {
-            nt: i for i, nt in enumerate(_all_node_types)
+            nt: i for i, nt in enumerate(all_node_types)
         }
-        self._ntype_id_to_ntype: list[NodeType] = _all_node_types
+        self._ntype_id_to_ntype: list[NodeType] = all_node_types
         self._etype_to_etype_id: dict[EdgeType, int] = {
-            et: i for i, et in enumerate(_all_edge_types)
+            et: i for i, et in enumerate(all_edge_types)
         }
-        self._etype_id_to_etype: list[EdgeType] = _all_edge_types
+        self._etype_id_to_etype: list[EdgeType] = all_edge_types
 
         self._node_type_id_to_edge_type_ids: list[list[int]] = [
             [
@@ -295,21 +293,18 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # issues a single RPC round-trip; doing them in parallel rather than
         # sequentially cuts fetch latency from O(num_edge_types) to O(1).
         eids = list(nodes_by_etype_id.keys())
-        outputs: list[NeighborOutput] = await asyncio.gather(
-            *[
+        sample_tasks = []
+        for eid in eids:
+            etype = self._etype_id_to_etype[eid]
+            sample_tasks.append(
                 self._sample_one_hop(
                     srcs=nodes_by_etype_id[eid].to(device),
                     num_nbr=self._num_neighbors_per_hop,
                     # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
-                    etype=(
-                        self._etype_id_to_etype[eid]
-                        if self._etype_id_to_etype[eid] != _PPR_HOMOGENEOUS_EDGE_TYPE
-                        else None
-                    ),
+                    etype=None if etype == _PPR_HOMOGENEOUS_EDGE_TYPE else etype,
                 )
-                for eid in eids
-            ]
-        )
+            )
+        outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
         return {
             eid: (nodes_by_etype_id[eid], output.nbr, output.nbr_num)
             for eid, output in zip(eids, outputs)

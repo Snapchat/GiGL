@@ -1,33 +1,25 @@
 // Python bindings for PPRForwardPushState.
 //
-// Follows PyTorch's csrc convention: pure C++ algorithm lives in
-// ppr_forward_push.{h,cpp}; this file only handles type conversion between
-// Python (pybind11) and C++ types, then delegates to the C++ implementation.
+// Pure C++ algorithm lives in ppr_forward_push.{h,cpp}; this file only handles
+// type conversion between Python (pybind11) and C++ types, then delegates to
+// the C++ implementation.
 
 #include <pybind11/stl.h>
 #include <torch/extension.h>
 
+#include <cstdint>
+#include <tuple>
+#include <unordered_map>
+
 #include "ppr_forward_push.h"
 
 namespace py = pybind11;
+using gigl::PPRForwardPushState;
 
-// drainQueue: C++ returns std::optional<map<etype_id, Tensor>>.
-// Exposed to Python as: None (convergence) or dict[int, Tensor].
-static py::object drainQueueWrapper(PPRForwardPushState& self) {
-    auto result = self.drainQueue();
-    if (!result) {
-        return py::none();
-    }
-    py::dict d;
-    for (auto& [eid, tensor] : *result) {
-        d[py::int_(eid)] = tensor;
-    }
-    return d;
-}
-
-// pushResiduals: Python passes dict[int, tuple[Tensor, Tensor, Tensor]].
-// Convert to C++ map before delegating.
-static void pushResidualsWrapper(PPRForwardPushState& self, const py::dict& fetchedByEtypeId) {
+// pushResiduals: a wrapper is needed solely to release the GIL during the C++ push.
+// pybind11/stl.h handles all type conversions automatically; the other methods use
+// direct member function pointers for the same reason.
+static void pushResidualsWrapper(PPRForwardPushState& state, const py::dict& fetchedByEtypeId) {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> cppMap;
     // Dict iteration touches Python objects — GIL must be held here.
     for (auto item : fetchedByEtypeId) {
@@ -40,19 +32,8 @@ static void pushResidualsWrapper(PPRForwardPushState& self, const py::dict& fetc
     // from other concurrent PPR coroutines while this push runs.
     {
         py::gil_scoped_release release;
-        self.pushResiduals(cppMap);
+        state.pushResiduals(cppMap);
     }
-}
-
-// extractTopK: C++ returns map<ntype_id, tuple<Tensor, Tensor, Tensor>>.
-// Exposed to Python as dict[int, tuple[Tensor, Tensor, Tensor]].
-static py::dict extractTopKWrapper(PPRForwardPushState& self, int32_t maxPprNodes) {
-    auto result = self.extractTopK(maxPprNodes);
-    py::dict d;
-    for (auto& [nt, tup] : result) {
-        d[py::int_(nt)] = py::make_tuple(std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
-    }
-    return d;
 }
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
@@ -66,8 +47,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       std::vector<std::vector<int32_t>>,
                       std::vector<int32_t>,
                       std::vector<torch::Tensor>>())
-        .def("drain_queue", drainQueueWrapper)
+        .def("drain_queue", &PPRForwardPushState::drainQueue)
         .def("push_residuals", pushResidualsWrapper)
-        .def("extract_top_k", extractTopKWrapper)
+        .def("extract_top_k", &PPRForwardPushState::extractTopK)
         .def("get_nodes_drained_per_iteration", &PPRForwardPushState::getNodesDrainedPerIteration);
 }

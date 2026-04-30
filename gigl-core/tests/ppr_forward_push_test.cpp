@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "sampling/ppr_forward_push.h"
 
+using gigl::PPRForwardPushState;
+
 // Builds a single-edge-type, single-node-type PPRForwardPushState.
 static PPRForwardPushState makeState(
     std::vector<int64_t> seeds,

@@ -34,17 +34,17 @@ foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
 endforeach()
 find_package(Torch REQUIRED PATHS "${TORCH_CMAKE_PREFIX}")
 
-# Auto-discover all kernel sources under csrc/. python_*.cpp are pybind11
+# Auto-discover all kernel sources under core/. python_*.cpp are pybind11
 # extension entry points that belong to the wheel, not to the test library.
 if(CMAKE_CUDA_COMPILER)
-    file(GLOB_RECURSE _KERNEL_SRCS "${CMAKE_SOURCE_DIR}/csrc/*.cpp" "${CMAKE_SOURCE_DIR}/csrc/*.cu")
+    file(GLOB_RECURSE _KERNEL_SRCS "${CMAKE_SOURCE_DIR}/core/*.cpp" "${CMAKE_SOURCE_DIR}/core/*.cu")
 else()
-    file(GLOB_RECURSE _KERNEL_SRCS "${CMAKE_SOURCE_DIR}/csrc/*.cpp")
+    file(GLOB_RECURSE _KERNEL_SRCS "${CMAKE_SOURCE_DIR}/core/*.cpp")
 endif()
 list(FILTER _KERNEL_SRCS EXCLUDE REGEX ".*/python_[^/]*$")
 
 add_library(gigl_core_kernels STATIC ${_KERNEL_SRCS})
-target_include_directories(gigl_core_kernels PUBLIC "${CMAKE_SOURCE_DIR}/csrc")
+target_include_directories(gigl_core_kernels PUBLIC "${CMAKE_SOURCE_DIR}/core")
 target_link_libraries(gigl_core_kernels PUBLIC "${TORCH_LIBRARIES}")
 
 # ---------------------------------------------------------------------------

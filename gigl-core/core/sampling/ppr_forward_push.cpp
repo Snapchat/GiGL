@@ -1,8 +1,20 @@
 #include "ppr_forward_push.h"
 
+#include <torch/torch.h>
+
+#include <climits>
+#include <cstdint>
+#include <optional>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace gigl {
+
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
 // Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
-static inline uint64_t packKey(int32_t nodeId, int32_t etypeId) {
+static uint64_t packKey(int32_t nodeId, int32_t etypeId) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) |
            static_cast<uint32_t>(etypeId);
 }
@@ -23,8 +35,32 @@ PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
       _edgeTypeToDstNtypeId(std::move(edgeTypeToDstNtypeId)),
       _degreeTensors(std::move(degreeTensors)) {
     TORCH_CHECK(seedNodes.dim() == 1, "seedNodes must be 1D");
+    // int32_t is sufficient: batch sizes approaching 2B seeds are not a realistic concern.
     _batchSize = static_cast<int32_t>(seedNodes.size(0));
     _numNodeTypes = static_cast<int32_t>(_nodeTypeToEdgeTypeIds.size());
+
+    TORCH_CHECK(seedNodeTypeId >= 0,
+                "seedNodeTypeId ", seedNodeTypeId, " is negative.");
+    TORCH_CHECK(seedNodeTypeId < _numNodeTypes,
+                "seedNodeTypeId ", seedNodeTypeId, " out of range [0, ", _numNodeTypes, ").");
+    auto numEdgeTypes = static_cast<int32_t>(_edgeTypeToDstNtypeId.size());
+    for (int32_t eid = 0; eid < numEdgeTypes; ++eid) {
+        int32_t dstNt = _edgeTypeToDstNtypeId[eid];
+        TORCH_CHECK(dstNt >= 0,
+                    "edgeTypeToDstNtypeId[", eid, "] = ", dstNt, " is negative.");
+        TORCH_CHECK(dstNt < _numNodeTypes,
+                    "edgeTypeToDstNtypeId[", eid, "] = ", dstNt,
+                    " out of range [0, ", _numNodeTypes, ").");
+    }
+    for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
+        for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
+            TORCH_CHECK(eid >= 0,
+                        "nodeTypeToEdgeTypeIds[", nt, "] contains negative edge type id ", eid, ".");
+            TORCH_CHECK(eid < numEdgeTypes,
+                        "nodeTypeToEdgeTypeIds[", nt, "] contains edge type id ", eid,
+                        " out of range [0, ", numEdgeTypes, ").");
+        }
+    }
 
     // Allocate per-seed, per-node-type tables.
     // .assign(n, val) fills a vector with n copies of val — like [val] * n in Python.
@@ -53,6 +89,8 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     }
 
     // Reset the snapshot from the previous iteration.
+    // TODO: if this loop becomes a bottleneck, consider parallelising with
+    // std::for_each(std::execution::par_unseq, ...) or adding vectorisation hints.
     for (int32_t s = 0; s < _batchSize; ++s) {
         for (auto& qs : _queuedNodes[s]) {
             qs.clear();
@@ -71,11 +109,14 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
                 continue;
             }
 
-            // Move the live queue into the snapshot (no data copy — O(1)).
+            // Move the live queue into the snapshot in O(1) — avoids copying all node IDs.
+            // The explicit clear() after move is defensive: the standard only guarantees
+            // a moved-from container is "valid but unspecified", not necessarily empty.
             _queuedNodes[s][nt] = std::move(_queue[s][nt]);
             _queue[s][nt].clear();
-            totalDrainedThisRound += static_cast<int32_t>(_queuedNodes[s][nt].size());
-            _numNodesInQueue -= static_cast<int32_t>(_queuedNodes[s][nt].size());
+            auto numDrained = static_cast<int32_t>(_queuedNodes[s][nt].size());
+            totalDrainedThisRound += numDrained;
+            _numNodesInQueue -= numDrained;
 
             for (int32_t nodeId : _queuedNodes[s][nt]) {
                 for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
@@ -90,7 +131,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     _nodesDrainedPerIteration.push_back(totalDrainedThisRound);
 
     std::unordered_map<int32_t, torch::Tensor> result;
-    for (auto& [eid, nodeSet] : nodesToLookup) {
+    for (const auto& [eid, nodeSet] : nodesToLookup) {
         std::vector<int64_t> ids(nodeSet.begin(), nodeSet.end());
         result[eid] = torch::tensor(ids, torch::kLong);
     }
@@ -159,18 +200,23 @@ void PPRForwardPushState::pushResiduals(
                 // ones (which matters when num_neighbors_per_hop < true_degree).
                 int32_t totalFetched = 0;
                 for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
-                    auto fi = fetched.find(packKey(src, eid));
-                    if (fi != fetched.end()) {
-                        totalFetched += static_cast<int32_t>(fi->second.size());
+                    auto fetchedEntry = fetched.find(packKey(src, eid));
+                    if (fetchedEntry != fetched.end()) {
+                        totalFetched += static_cast<int32_t>(fetchedEntry->second.size());
                     } else {
-                        auto ci = _neighborCache.find(packKey(src, eid));
-                        if (ci != _neighborCache.end()) {
-                            totalFetched += static_cast<int32_t>(ci->second.size());
+                        auto cachedEntry = _neighborCache.find(packKey(src, eid));
+                        if (cachedEntry != _neighborCache.end()) {
+                            totalFetched += static_cast<int32_t>(cachedEntry->second.size());
                         }
                     }
                 }
-                // Destination-only nodes (or nodes with no fetched neighbors) absorb
-                // residual but do not push further.
+                // Two cases reach here:
+                //   1. True sink node (no outgoing edges): absorbing the full residual is correct.
+                //   2. Budget exhausted, no cache entry: the (1-α)·r that should flow to
+                //      neighbors has nowhere to go, so it gets absorbed into src's score instead.
+                //      This overstates src and understates its neighbors.  This is expected
+                //      behavior when max_fetch_iterations is set, which intentionally trades
+                //      theoretical PPR correctness for better throughput.
                 if (totalFetched == 0) {
                     continue;
                 }
@@ -182,14 +228,18 @@ void PPRForwardPushState::pushResiduals(
                     // any given (node, etype) key within one iteration.  drainQueue()
                     // only requests a fetch for nodes absent from _neighborCache, so a
                     // key is in at most one of the two.
+                    // Points at the neighbor list we will distribute residual to —
+                    // either from `fetched` (new this iteration) or `_neighborCache`
+                    // (seen in a previous iteration).  Null if neither has data for
+                    // this (node, etype) pair.  Does not own any memory.
                     const std::vector<int32_t>* nbrList = nullptr;
-                    auto fi = fetched.find(packKey(src, eid));
-                    if (fi != fetched.end()) {
-                        nbrList = &fi->second;
+                    auto fetchedEntry = fetched.find(packKey(src, eid));
+                    if (fetchedEntry != fetched.end()) {
+                        nbrList = &fetchedEntry->second;
                     } else {
-                        auto ci = _neighborCache.find(packKey(src, eid));
-                        if (ci != _neighborCache.end()) {
-                            nbrList = &ci->second;
+                        auto cachedEntry = _neighborCache.find(packKey(src, eid));
+                        if (cachedEntry != _neighborCache.end()) {
+                            nbrList = &cachedEntry->second;
                         }
                     }
                     if (!nbrList || nbrList->empty()) {
@@ -215,9 +265,9 @@ void PPRForwardPushState::pushResiduals(
                             for (int32_t peid : _nodeTypeToEdgeTypeIds[dstNt]) {
                                 uint64_t pk = packKey(nbr, peid);
                                 if (_neighborCache.find(pk) == _neighborCache.end()) {
-                                    auto pfi = fetched.find(pk);
-                                    if (pfi != fetched.end()) {
-                                        _neighborCache[pk] = pfi->second;
+                                    auto fetchedNbrEntry = fetched.find(pk);
+                                    if (fetchedNbrEntry != fetched.end()) {
+                                        _neighborCache[pk] = fetchedNbrEntry->second;
                                     }
                                 }
                             }
@@ -231,38 +281,31 @@ void PPRForwardPushState::pushResiduals(
 
 std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPushState::extractTopK(
     int32_t maxPprNodes) {
-    std::unordered_set<int32_t> active;
-    for (int32_t s = 0; s < _batchSize; ++s) {
-        for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
-            if (!_pprScores[s][nt].empty()) {
-                active.insert(nt);
-            }
-        }
-    }
-
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
-    for (int32_t nt : active) {
+    // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
+    // all-zero valid_counts).  This keeps the output shape consistent across batches so
+    // downstream model architectures see a fixed set of PPR edge types every iteration.
+    for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
         std::vector<int64_t> flatIds;
         std::vector<float> flatWeights;
         std::vector<int64_t> validCounts;
 
-        for (int32_t s = 0; s < _batchSize; ++s) {
-            const auto& scores = _pprScores[s][nt];
-            int32_t k = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
-            if (k > 0) {
-                std::vector<std::pair<int32_t, double>> items(scores.begin(), scores.end());
-                std::partial_sort(items.begin(), items.begin() + k, items.end(), [](const auto& a, const auto& b) {
-                    return a.second > b.second;
-                });
+        for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
+            const auto& scores = _pprScores[seedIdx][nt];
+            int32_t topK = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
+            if (topK > 0) {
+                std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
+                std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(),
+                                  [](const auto& a, const auto& b) { return a.second > b.second; });
 
-                for (int32_t i = 0; i < k; ++i) {
-                    flatIds.push_back(static_cast<int64_t>(items[i].first));
+                for (int32_t i = 0; i < topK; ++i) {
+                    flatIds.push_back(static_cast<int64_t>(scorePairs[i].first));
                     // Cast to float32 for output; internal scores stay double to
                     // avoid accumulated rounding errors in the push loop.
-                    flatWeights.push_back(static_cast<float>(items[i].second));
+                    flatWeights.push_back(static_cast<float>(scorePairs[i].second));
                 }
             }
-            validCounts.push_back(static_cast<int64_t>(k));
+            validCounts.push_back(static_cast<int64_t>(topK));
         }
 
         result[nt] = {torch::tensor(flatIds, torch::kLong),
@@ -285,6 +328,16 @@ int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t ntypeId) con
     TORCH_CHECK(nodeId < static_cast<int32_t>(t.size(0)),
                 "Node ID ", nodeId, " out of range for degree tensor of ntype_id ",
                 ntypeId, " (size=", t.size(0), "). This indicates corrupted graph data or a sampler bug.");
-    // data_ptr<int32_t>() returns a raw C pointer to the tensor's int32 data buffer.
-    return t.data_ptr<int32_t>()[nodeId];
+    if (t.scalar_type() == torch::kInt) {
+        return t.data_ptr<int32_t>()[nodeId];
+    }
+    if (t.scalar_type() == torch::kLong) {
+        return static_cast<int32_t>(
+            std::min<int64_t>(t.data_ptr<int64_t>()[nodeId], INT32_MAX));
+    }
+    TORCH_CHECK(false, "Unsupported degree tensor dtype: ", t.scalar_type(),
+                ". Expected torch.int32 or torch.int64.");
+    return 0;  // unreachable; suppresses compiler warning
 }
+
+}  // namespace gigl

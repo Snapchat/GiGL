@@ -190,8 +190,9 @@ def strip_non_ppr_edge_types(
     for edge_type in list(data.edge_types):
         if edge_type not in ppr_edge_types:
             del data[edge_type]
-            # num_sampled_edges may not exist at all (e.g. in tests or when GLT doesn't
-            # populate it), and may lack entries for edge types with zero samples.
+            # num_sampled_edges is set by GLT's standard k-hop sampler but not
+            # by PPR sampling, which constructs HeteroData manually.  Guard with
+            # hasattr rather than assuming it's always present.
             if hasattr(data, "num_sampled_edges"):
                 data.num_sampled_edges.pop(edge_type, None)
     return data
