@@ -820,9 +820,7 @@ class TestDataSplitters(TestCase):
             ),
             max_labels_per_anchor_node=1,
         )
-        self.assert_tensor_equality(
-            labels, torch.tensor([[1], [2]], dtype=torch.int64)
-        )
+        self.assert_tensor_equality(labels, torch.tensor([[1], [2]], dtype=torch.int64))
 
     def test_get_max_labels_per_anchor_node_from_runtime_args(self):
         self.assertIsNone(get_max_labels_per_anchor_node_from_runtime_args({}))
