@@ -12,6 +12,18 @@
 
 namespace gigl {
 
+// Per-seed, per-node-type PPR algorithm state.
+// Grouping all four tables into one struct keeps related data co-located in memory:
+// when the push loop accesses pprScores, residuals, queue, and queuedNodes for the
+// same (seed, ntype) pair, they are in the same cache line region rather than spread
+// across four separate top-level vectors.
+struct SeedNodeTypeState {
+    std::unordered_map<int32_t, double> pprScores;   // absorbed PPR mass
+    std::unordered_map<int32_t, double> residuals;   // unabsorbed mass waiting to push
+    std::unordered_set<int32_t> queue;               // nodes queued for the next drain
+    std::unordered_set<int32_t> queuedNodes;         // snapshot captured by drainQueue()
+};
+
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
 // Hot-loop state lives here; distributed neighbor fetches are driven from Python.
 //
@@ -54,7 +66,7 @@ class PPRForwardPushState {
 
    private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
-    [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t ntypeId) const;
+    [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
 
     double _alpha;
     double _requeueThresholdFactor;  // alpha * eps; per-node requeue threshold = factor * degree
@@ -71,28 +83,18 @@ class PPRForwardPushState {
     std::vector<int32_t> _edgeTypeToDstNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
 
-    // Per-seed, per-node-type PPR state.  All four tables share the same nesting:
+    // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
     //
     //   outer vector  [_batchSize]    — one entry per seed node in the batch
-    //   inner vector  [_numNodeTypes] — one entry per node type in the graph
-    //   map / set     {node_id → …}  — only nodes reached during the walk are present
+    //   inner vector  [_numNodeTypes] — one SeedNodeTypeState per node type
     //
     // int32_t is used for node and type IDs throughout to match PyG/GLT's signed-integer
     // convention (torch.int32 / torch.int64).  Signed types also make nodeId >= 0 checks
     // meaningful — an unsigned type would make that guard tautological.
     //
-    // All four tables are sized [_batchSize][_numNodeTypes] at construction and never
-    // resized, so [seedIdx][nt] indexing is always safe within the loop bounds.
-    //
-    // _pprScores:   absorbed PPR mass — the final output scores written by pushResiduals().
-    // _residuals:   unabsorbed mass waiting to be pushed to neighbors.
-    // _queue:       nodes whose residual exceeds the requeue threshold; drained each iteration.
-    // _queuedNodes: snapshot of _queue captured by drainQueue() so pushResiduals() knows
-    //               which nodes to process in the current iteration.
-    std::vector<std::vector<std::unordered_map<int32_t, double>>> _pprScores;
-    std::vector<std::vector<std::unordered_map<int32_t, double>>> _residuals;
-    std::vector<std::vector<std::unordered_set<int32_t>>> _queue;
-    std::vector<std::vector<std::unordered_set<int32_t>>> _queuedNodes;
+    // Sized [_batchSize][_numNodeTypes] at construction and never resized,
+    // so [seedIdx][nodeTypeId] indexing is always safe within the loop bounds.
+    std::vector<std::vector<SeedNodeTypeState>> _state;
 
     // Neighbor lists fetched from the distributed graph store, keyed by packKey(node_id, etype_id).
     // Populated incrementally as nodes are processed; avoids re-fetching the same node twice.

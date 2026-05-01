@@ -270,9 +270,10 @@ def _assert_ppr_scores_match_reference(
     """Assert sampler PPR scores match reference scores per node type.
 
     Checks that top-k node sets are identical and that per-node scores
-    are within atol=1e-5.  The forward push error per node is bounded by
-    O(alpha * eps * degree); for max degree 3, alpha=0.5, eps=1e-6 the
-    theoretical bound is ~1.5e-6, so 1e-5 provides a safety margin.
+    are within atol=2e-6.  The forward push error per node is bounded by
+    the per-node requeue threshold alpha * eps * degree; for max degree 3,
+    alpha=0.5, eps=1e-6 the per-node threshold is ~1.5e-6.  Tolerance is
+    set to 2e-6 to provide a small margin above this bound.
 
     Args:
         ntype_to_sampler_ppr: Sampler output from :func:`_extract_hetero_ppr_scores`.
@@ -291,7 +292,7 @@ def _assert_ppr_scores_match_reference(
         for node_id in reference_ppr[ntype_str]:
             ref_score = reference_ppr[ntype_str][node_id]
             sam_score = ntype_to_sampler_ppr[ntype_str][node_id]
-            assert abs(sam_score - ref_score) < 1e-5, (
+            assert abs(sam_score - ref_score) < 2e-6, (
                 f"{seed_id}, type {ntype_str}, node {node_id}: "
                 f"sampler={sam_score:.8f} vs reference={ref_score:.8f}"
             )
@@ -328,6 +329,12 @@ def _run_ppr_loader_correctness_check(
     batches_checked = 0
     for datum in loader:
         assert isinstance(datum, Data)
+
+        # PPR sampling does not count per-hop neighbors, so num_sampled_edges
+        # should be absent or empty on all PPR output batches.
+        assert not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0, (
+            f"Expected empty num_sampled_edges for PPR output, got {datum.num_sampled_edges}"
+        )
 
         assert hasattr(datum, "edge_index"), "Missing edge_index on Data"
         assert hasattr(datum, "edge_attr"), "Missing edge_attr on Data"
@@ -372,14 +379,15 @@ def _run_ppr_loader_correctness_check(
             f"  Reference: {sorted(reference_ppr.keys())}"
         )
 
-        # Forward push is an approximation; with eps=1e-6 the per-node error
-        # is bounded by O(alpha * eps * degree).  For this test graph
-        # (max degree 3, alpha=0.5, eps=1e-6) the theoretical bound is ~1.5e-6.
-        # Tolerance is set to 1e-5 to provide a safety margin above that bound.
+        # Forward push is an approximation; with eps=1e-6 the per-node
+        # requeue threshold is alpha * eps * degree.  For this test graph
+        # (max degree 3, alpha=0.5, eps=1e-6) the per-node threshold is
+        # ~1.5e-6.  Tolerance is set to 2e-6 to provide a small margin
+        # above this bound.
         for node_id in reference_ppr:
             ref_score = reference_ppr[node_id]
             sam_score = sampler_ppr[node_id]
-            assert abs(sam_score - ref_score) < 1e-5, (
+            assert abs(sam_score - ref_score) < 2e-6, (
                 f"Seed {seed_global_id}, node {node_id}: "
                 f"sampler={sam_score:.8f} vs reference={ref_score:.8f}"
             )
@@ -426,6 +434,12 @@ def _run_ppr_hetero_loader_correctness_check(
     batches_checked = 0
     for datum in loader:
         assert isinstance(datum, HeteroData)
+
+        # PPR sampling does not count per-hop neighbors, so num_sampled_edges
+        # should be absent or empty on all PPR output batches.
+        assert not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0, (
+            f"Expected empty num_sampled_edges for PPR output, got {datum.num_sampled_edges}"
+        )
 
         seed_global_id = datum[USER].batch[0].item()
 
@@ -507,6 +521,12 @@ def _run_ppr_ablp_loader_correctness_check(
     batches_checked = 0
     for datum in loader:
         assert isinstance(datum, HeteroData)
+
+        # PPR sampling does not count per-hop neighbors, so num_sampled_edges
+        # should be absent or empty on all PPR output batches.
+        assert not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0, (
+            f"Expected empty num_sampled_edges for PPR output, got {datum.num_sampled_edges}"
+        )
 
         # ABLP should produce positive labels alongside PPR metadata
         assert hasattr(datum, "y_positive"), "Missing y_positive on HeteroData"

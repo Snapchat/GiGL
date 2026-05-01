@@ -14,9 +14,9 @@ namespace gigl {
 
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
 // Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
-static uint64_t packKey(int32_t nodeId, int32_t etypeId) {
+static uint64_t packKey(int32_t nodeId, int32_t edgeTypeId) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) |
-           static_cast<uint32_t>(etypeId);
+           static_cast<uint32_t>(edgeTypeId);
 }
 
 PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
@@ -44,42 +44,39 @@ PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
     TORCH_CHECK(seedNodeTypeId < _numNodeTypes,
                 "seedNodeTypeId ", seedNodeTypeId, " out of range [0, ", _numNodeTypes, ").");
     auto numEdgeTypes = static_cast<int32_t>(_edgeTypeToDstNtypeId.size());
-    for (int32_t eid = 0; eid < numEdgeTypes; ++eid) {
-        int32_t dstNt = _edgeTypeToDstNtypeId[eid];
-        TORCH_CHECK(dstNt >= 0,
-                    "edgeTypeToDstNtypeId[", eid, "] = ", dstNt, " is negative.");
-        TORCH_CHECK(dstNt < _numNodeTypes,
-                    "edgeTypeToDstNtypeId[", eid, "] = ", dstNt,
+    for (int32_t edgeTypeId = 0; edgeTypeId < numEdgeTypes; ++edgeTypeId) {
+        int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
+        TORCH_CHECK(dstNodeTypeId >= 0,
+                    "edgeTypeToDstNtypeId[", edgeTypeId, "] = ", dstNodeTypeId, " is negative.");
+        TORCH_CHECK(dstNodeTypeId < _numNodeTypes,
+                    "edgeTypeToDstNtypeId[", edgeTypeId, "] = ", dstNodeTypeId,
                     " out of range [0, ", _numNodeTypes, ").");
     }
-    for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
-        for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
-            TORCH_CHECK(eid >= 0,
-                        "nodeTypeToEdgeTypeIds[", nt, "] contains negative edge type id ", eid, ".");
-            TORCH_CHECK(eid < numEdgeTypes,
-                        "nodeTypeToEdgeTypeIds[", nt, "] contains edge type id ", eid,
+    for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
+        for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+            TORCH_CHECK(edgeTypeId >= 0,
+                        "nodeTypeToEdgeTypeIds[", nodeTypeId, "] contains negative edge type id ", edgeTypeId, ".");
+            TORCH_CHECK(edgeTypeId < numEdgeTypes,
+                        "nodeTypeToEdgeTypeIds[", nodeTypeId, "] contains edge type id ", edgeTypeId,
                         " out of range [0, ", numEdgeTypes, ").");
         }
     }
 
-    // Allocate per-seed, per-node-type tables.
-    // .assign(n, val) fills a vector with n copies of val — like [val] * n in Python.
-    _pprScores.assign(_batchSize, std::vector<std::unordered_map<int32_t, double>>(_numNodeTypes));
-    _residuals.assign(_batchSize, std::vector<std::unordered_map<int32_t, double>>(_numNodeTypes));
-    _queue.assign(_batchSize, std::vector<std::unordered_set<int32_t>>(_numNodeTypes));
-    _queuedNodes.assign(_batchSize, std::vector<std::unordered_set<int32_t>>(_numNodeTypes));
+    // Allocate per-seed, per-node-type state.
+    // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
+    _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
     // supports [i] indexing with bounds checking in debug builds.
-    auto acc = seedNodes.accessor<int64_t, 1>();
+    auto seedNodeAcc = seedNodes.accessor<int64_t, 1>();
     _numNodesInQueue = _batchSize;
-    for (int32_t i = 0; i < _batchSize; ++i) {
-        auto seed = static_cast<int32_t>(acc[i]);
+    for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
+        auto seedNodeId = static_cast<int32_t>(seedNodeAcc[seedIdx]);
         // PPR initialisation: each seed starts with residual = alpha (the
         // restart probability).  The first push will move alpha into ppr_score
         // and distribute (1-alpha)*alpha to the seed's neighbors.
-        _residuals[i][seedNodeTypeId][seed] = _alpha;
-        _queue[i][seedNodeTypeId].insert(seed);
+        _state[seedIdx][seedNodeTypeId].residuals[seedNodeId] = _alpha;
+        _state[seedIdx][seedNodeTypeId].queue.insert(seedNodeId);
     }
 }
 
@@ -91,37 +88,38 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     // Reset the snapshot from the previous iteration.
     // TODO: if this loop becomes a bottleneck, consider parallelising with
     // std::for_each(std::execution::par_unseq, ...) or adding vectorisation hints.
-    for (int32_t s = 0; s < _batchSize; ++s) {
-        for (auto& qs : _queuedNodes[s]) {
-            qs.clear();
+    for (auto& perSeedState : _state) {
+        for (auto& nodeTypeState : perSeedState) {
+            nodeTypeState.queuedNodes.clear();
         }
     }
 
-    // nodesToLookup[eid] = set of node IDs that need a neighbor fetch for
-    // edge type eid this round.  Using a set deduplicates nodes that appear
+    // nodesToLookup[edgeTypeId] = set of node IDs that need a neighbor fetch for
+    // edge type edgeTypeId this round.  Using a set deduplicates nodes that appear
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
     std::unordered_map<int32_t, std::unordered_set<int32_t>> nodesToLookup;
 
     int32_t totalDrainedThisRound = 0;
-    for (int32_t s = 0; s < _batchSize; ++s) {
-        for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
-            if (_queue[s][nt].empty()) {
+    for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
+        for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
+            auto& seedNodeTypeState = _state[seedIdx][nodeTypeId];
+            if (seedNodeTypeState.queue.empty()) {
                 continue;
             }
 
             // Move the live queue into the snapshot in O(1) — avoids copying all node IDs.
             // The explicit clear() after move is defensive: the standard only guarantees
             // a moved-from container is "valid but unspecified", not necessarily empty.
-            _queuedNodes[s][nt] = std::move(_queue[s][nt]);
-            _queue[s][nt].clear();
-            auto numDrained = static_cast<int32_t>(_queuedNodes[s][nt].size());
+            seedNodeTypeState.queuedNodes = std::move(seedNodeTypeState.queue);
+            seedNodeTypeState.queue.clear();
+            auto numDrained = static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
             totalDrainedThisRound += numDrained;
             _numNodesInQueue -= numDrained;
 
-            for (int32_t nodeId : _queuedNodes[s][nt]) {
-                for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
-                    if (_neighborCache.find(packKey(nodeId, eid)) == _neighborCache.end()) {
-                        nodesToLookup[eid].insert(nodeId);
+            for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
+                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+                    if (_neighborCache.find(packKey(nodeId, edgeTypeId)) == _neighborCache.end()) {
+                        nodesToLookup[edgeTypeId].insert(nodeId);
                     }
                 }
             }
@@ -131,9 +129,9 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     _nodesDrainedPerIteration.push_back(totalDrainedThisRound);
 
     std::unordered_map<int32_t, torch::Tensor> result;
-    for (const auto& [eid, nodeSet] : nodesToLookup) {
-        std::vector<int64_t> ids(nodeSet.begin(), nodeSet.end());
-        result[eid] = torch::tensor(ids, torch::kLong);
+    for (const auto& [edgeTypeId, nodeSet] : nodesToLookup) {
+        std::vector<int64_t> nodeIdsToLookup(nodeSet.begin(), nodeSet.end());
+        result[edgeTypeId] = torch::tensor(nodeIdsToLookup, torch::kLong);
     }
     return result;
 }
@@ -144,31 +142,31 @@ const std::vector<int32_t>& PPRForwardPushState::getNodesDrainedPerIteration() c
 
 void PPRForwardPushState::pushResiduals(
     const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
-    // Step 1: Unpack the input map into a C++ map keyed by packKey(nodeId, etypeId)
+    // Step 1: Unpack the input map into a C++ map keyed by packKey(nodeId, edgeTypeId)
     // for fast lookup during the residual-push loop below.
     std::unordered_map<uint64_t, std::vector<int32_t>> fetched;
-    for (const auto& [eid, tup] : fetchedByEtypeId) {
-        const auto& nodeIdsT = std::get<0>(tup);
-        const auto& flatNbrsT = std::get<1>(tup);
-        const auto& countsT = std::get<2>(tup);
+    for (const auto& [edgeTypeId, neighborTensors] : fetchedByEtypeId) {
+        const auto& nodeIdsTensor = std::get<0>(neighborTensors);
+        const auto& flatNeighborIdsTensor = std::get<1>(neighborTensors);
+        const auto& countsTensor = std::get<2>(neighborTensors);
 
         // accessor<int64_t, 1>() gives a bounds-checked, typed 1-D view into
         // each tensor's data — equivalent to iterating over a NumPy array.
-        auto nodeAcc = nodeIdsT.accessor<int64_t, 1>();
-        auto nbrAcc = flatNbrsT.accessor<int64_t, 1>();
-        auto cntAcc = countsT.accessor<int64_t, 1>();
+        auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
+        auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
+        auto countsAccessor = countsTensor.accessor<int64_t, 1>();
 
         // Walk the flat neighbor list, slicing out each node's neighbors using
         // the running offset into the concatenated flat buffer.
         int64_t offset = 0;
-        for (int64_t i = 0; i < nodeIdsT.size(0); ++i) {
-            auto nid = static_cast<int32_t>(nodeAcc[i]);
-            int64_t count = cntAcc[i];
-            std::vector<int32_t> nbrs(count);
-            for (int64_t j = 0; j < count; ++j) {
-                nbrs[j] = static_cast<int32_t>(nbrAcc[offset + j]);
+        for (int64_t nodeIdx = 0; nodeIdx < nodeIdsTensor.size(0); ++nodeIdx) {
+            auto nodeId = static_cast<int32_t>(nodeIdsAccessor[nodeIdx]);
+            int64_t count = countsAccessor[nodeIdx];
+            std::vector<int32_t> neighborIds(count);
+            for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
+                neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
             }
-            fetched[packKey(nid, eid)] = std::move(nbrs);
+            fetched[packKey(nodeId, edgeTypeId)] = std::move(neighborIds);
             offset += count;
         }
     }
@@ -178,20 +176,20 @@ void PPRForwardPushState::pushResiduals(
     //   a. Absorb residual into the PPR score.
     //   b. Distribute (1-alpha) * residual equally to each neighbor.
     //   c. Enqueue any neighbor whose residual now exceeds the requeue threshold.
-    for (int32_t s = 0; s < _batchSize; ++s) {
-        for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
-            if (_queuedNodes[s][nt].empty()) {
+    for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
+        for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
+            auto& srcNodeTypeState = _state[seedIdx][nodeTypeId];
+            if (srcNodeTypeState.queuedNodes.empty()) {
                 continue;
             }
 
-            for (int32_t src : _queuedNodes[s][nt]) {
-                auto& srcRes = _residuals[s][nt];
-                auto it = srcRes.find(src);
-                double res = (it != srcRes.end()) ? it->second : 0.0;
+            for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
+                auto residualIter = srcNodeTypeState.residuals.find(sourceNodeId);
+                double sourceResidual = (residualIter != srcNodeTypeState.residuals.end()) ? residualIter->second : 0.0;
 
                 // a. Absorb: move residual into the PPR score.
-                _pprScores[s][nt][src] += res;
-                srcRes[src] = 0.0;
+                srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
+                srcNodeTypeState.residuals[sourceNodeId] = 0.0;
 
                 // b. Count total fetched/cached neighbors across all edge types for
                 // this source node.  We normalise by the number of neighbors we
@@ -199,12 +197,12 @@ void PPRForwardPushState::pushResiduals(
                 // distributed among known neighbors rather than leaking to unfetched
                 // ones (which matters when num_neighbors_per_hop < true_degree).
                 int32_t totalFetched = 0;
-                for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
-                    auto fetchedEntry = fetched.find(packKey(src, eid));
+                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+                    auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
                     if (fetchedEntry != fetched.end()) {
                         totalFetched += static_cast<int32_t>(fetchedEntry->second.size());
                     } else {
-                        auto cachedEntry = _neighborCache.find(packKey(src, eid));
+                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
                         if (cachedEntry != _neighborCache.end()) {
                             totalFetched += static_cast<int32_t>(cachedEntry->second.size());
                         }
@@ -221,53 +219,53 @@ void PPRForwardPushState::pushResiduals(
                     continue;
                 }
 
-                double resPerNbr = (1.0 - _alpha) * res / static_cast<double>(totalFetched);
+                double residualPerNeighbor = (1.0 - _alpha) * sourceResidual / static_cast<double>(totalFetched);
 
-                for (int32_t eid : _nodeTypeToEdgeTypeIds[nt]) {
+                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
                     // Invariant: fetched and _neighborCache are mutually exclusive for
                     // any given (node, etype) key within one iteration.  drainQueue()
                     // only requests a fetch for nodes absent from _neighborCache, so a
                     // key is in at most one of the two.
-                    // Points at the neighbor list we will distribute residual to —
+                    // Neighbor list for this (src, edgeTypeId) pair, if one exists —
                     // either from `fetched` (new this iteration) or `_neighborCache`
-                    // (seen in a previous iteration).  Null if neither has data for
-                    // this (node, etype) pair.  Does not own any memory.
-                    const std::vector<int32_t>* nbrList = nullptr;
-                    auto fetchedEntry = fetched.find(packKey(src, eid));
+                    // (seen in a previous iteration).
+                    std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
+                    auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
                     if (fetchedEntry != fetched.end()) {
-                        nbrList = &fetchedEntry->second;
+                        neighborList = std::cref(fetchedEntry->second);
                     } else {
-                        auto cachedEntry = _neighborCache.find(packKey(src, eid));
+                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
                         if (cachedEntry != _neighborCache.end()) {
-                            nbrList = &cachedEntry->second;
+                            neighborList = std::cref(cachedEntry->second);
                         }
                     }
-                    if (!nbrList || nbrList->empty()) {
+                    if (!neighborList || neighborList->get().empty()) {
                         continue;
                     }
 
-                    int32_t dstNt = _edgeTypeToDstNtypeId[eid];
+                    int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
 
                     // c. Accumulate residual for each neighbor and re-enqueue if threshold
                     // exceeded.
-                    for (int32_t nbr : *nbrList) {
-                        _residuals[s][dstNt][nbr] += resPerNbr;
+                    auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
+                    for (int32_t neighborNodeId : neighborList->get()) {
+                        dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
 
-                        double threshold = _requeueThresholdFactor * static_cast<double>(getTotalDegree(nbr, dstNt));
+                        double threshold = _requeueThresholdFactor * static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
 
-                        if (_queue[s][dstNt].find(nbr) == _queue[s][dstNt].end() &&
-                            _residuals[s][dstNt][nbr] >= threshold) {
-                            _queue[s][dstNt].insert(nbr);
+                        if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
+                            dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
+                            dstNodeTypeState.queue.insert(neighborNodeId);
                             ++_numNodesInQueue;
 
                             // Promote neighbor lists to the persistent cache: this node will
                             // be processed next iteration, so caching avoids a re-fetch.
-                            for (int32_t peid : _nodeTypeToEdgeTypeIds[dstNt]) {
-                                uint64_t pk = packKey(nbr, peid);
-                                if (_neighborCache.find(pk) == _neighborCache.end()) {
-                                    auto fetchedNbrEntry = fetched.find(pk);
-                                    if (fetchedNbrEntry != fetched.end()) {
-                                        _neighborCache[pk] = fetchedNbrEntry->second;
+                            for (int32_t neighborEdgeTypeId : _nodeTypeToEdgeTypeIds[dstNodeTypeId]) {
+                                uint64_t packedKey = packKey(neighborNodeId, neighborEdgeTypeId);
+                                if (_neighborCache.find(packedKey) == _neighborCache.end()) {
+                                    auto fetchedNeighborEntry = fetched.find(packedKey);
+                                    if (fetchedNeighborEntry != fetched.end()) {
+                                        _neighborCache[packedKey] = fetchedNeighborEntry->second;
                                     }
                                 }
                             }
@@ -285,57 +283,57 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
     // all-zero valid_counts).  This keeps the output shape consistent across batches so
     // downstream model architectures see a fixed set of PPR edge types every iteration.
-    for (int32_t nt = 0; nt < _numNodeTypes; ++nt) {
+    for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
         std::vector<int64_t> flatIds;
-        std::vector<float> flatWeights;
+        std::vector<double> flatWeights;
         std::vector<int64_t> validCounts;
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
-            const auto& scores = _pprScores[seedIdx][nt];
+            const auto& scores = _state[seedIdx][nodeTypeId].pprScores;
             int32_t topK = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
             if (topK > 0) {
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
                 std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(),
                                   [](const auto& a, const auto& b) { return a.second > b.second; });
 
-                for (int32_t i = 0; i < topK; ++i) {
-                    flatIds.push_back(static_cast<int64_t>(scorePairs[i].first));
-                    // Cast to float32 for output; internal scores stay double to
-                    // avoid accumulated rounding errors in the push loop.
-                    flatWeights.push_back(static_cast<float>(scorePairs[i].second));
+                for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
+                    flatIds.push_back(static_cast<int64_t>(scorePairs[rankIdx].first));
+                    flatWeights.push_back(scorePairs[rankIdx].second);
                 }
             }
             validCounts.push_back(static_cast<int64_t>(topK));
         }
 
-        result[nt] = {torch::tensor(flatIds, torch::kLong),
-                      torch::tensor(flatWeights, torch::kFloat),
-                      torch::tensor(validCounts, torch::kLong)};
+        result[nodeTypeId] = {torch::tensor(flatIds, torch::kLong),
+                              torch::tensor(flatWeights, torch::kDouble),
+                              torch::tensor(validCounts, torch::kLong)};
     }
     return result;
 }
 
-int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t ntypeId) const {
-    if (ntypeId >= static_cast<int32_t>(_degreeTensors.size())) {
-        return 0;
-    }
-    const auto& t = _degreeTensors[ntypeId];
-    if (t.numel() == 0) {
+int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const {
+    TORCH_CHECK(nodeTypeId >= 0,
+                "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeTypeId < static_cast<int32_t>(_degreeTensors.size()),
+                "nodeTypeId ", nodeTypeId, " out of range [0, ", _degreeTensors.size(),
+                "). This indicates a construction bug in the sampler.");
+    const auto& degreeTensor = _degreeTensors[nodeTypeId];
+    if (degreeTensor.numel() == 0) {
         return 0;
     }
     TORCH_CHECK(nodeId >= 0,
                 "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
-    TORCH_CHECK(nodeId < static_cast<int32_t>(t.size(0)),
+    TORCH_CHECK(nodeId < static_cast<int32_t>(degreeTensor.size(0)),
                 "Node ID ", nodeId, " out of range for degree tensor of ntype_id ",
-                ntypeId, " (size=", t.size(0), "). This indicates corrupted graph data or a sampler bug.");
-    if (t.scalar_type() == torch::kInt) {
-        return t.data_ptr<int32_t>()[nodeId];
+                nodeTypeId, " (size=", degreeTensor.size(0), "). This indicates corrupted graph data or a sampler bug.");
+    if (degreeTensor.scalar_type() == torch::kInt) {
+        return degreeTensor.data_ptr<int32_t>()[nodeId];
     }
-    if (t.scalar_type() == torch::kLong) {
+    if (degreeTensor.scalar_type() == torch::kLong) {
         return static_cast<int32_t>(
-            std::min<int64_t>(t.data_ptr<int64_t>()[nodeId], INT32_MAX));
+            std::min<int64_t>(degreeTensor.data_ptr<int64_t>()[nodeId], INT32_MAX));
     }
-    TORCH_CHECK(false, "Unsupported degree tensor dtype: ", t.scalar_type(),
+    TORCH_CHECK(false, "Unsupported degree tensor dtype: ", degreeTensor.scalar_type(),
                 ". Expected torch.int32 or torch.int64.");
     return 0;  // unreachable; suppresses compiler warning
 }

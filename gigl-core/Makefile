@@ -25,13 +25,11 @@ unit_test_cpp: .cache/cpp_tests/.configured
 	cmake --build .cache/cpp_tests --parallel
 	ctest --test-dir .cache/cpp_tests --output-on-failure
 
-# TODO: Remove the $(if ...) guards once C++ source files are permanently present in the
-# repo. The guards exist to silently no-op on branches that have no python_*.cpp files yet.
 check_format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
+	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
 
 format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 -i --style=file $(CPP_SOURCES))
+	clang-format-15 -i --style=file $(CPP_SOURCES)
 
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.

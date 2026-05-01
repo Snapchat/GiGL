@@ -3,6 +3,8 @@ from collections import defaultdict
 from typing import Optional, Union
 
 import torch
+# TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPushState
+# under a gigl.core namespace rather than importing directly from the C++ extension.
 from gigl_core import PPRForwardPushState
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
@@ -155,19 +157,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # We include both source types (have outgoing edges) and destination-only
         # types (no outgoing edges, but may accumulate PPR score during the walk)
         # so the kernel can index residual/ppr_score tables for any node it sees.
-        all_node_types: list[NodeType] = sorted(
-            {nt for nt in self._node_type_to_edge_types}
-            | {
-                self._get_destination_type(et)
-                for etypes in self._node_type_to_edge_types.values()
-                for et in etypes
-            }
-        )
-        # dict.fromkeys preserves insertion order while deduplicating.
-        all_edge_types: list[EdgeType] = list(
-            dict.fromkeys(
-                et for etypes in self._node_type_to_edge_types.values() for et in etypes
-            )
+        source_node_types: set[NodeType] = set(self._node_type_to_edge_types.keys())
+        destination_node_types: set[NodeType] = {
+            self._get_destination_type(et)
+            for etypes in self._node_type_to_edge_types.values()
+            for et in etypes
+        }
+        all_node_types: list[NodeType] = sorted(source_node_types | destination_node_types)
+        all_edge_types: list[EdgeType] = sorted(
+            {et for etypes in self._node_type_to_edge_types.values() for et in etypes}
         )
 
         self._node_type_to_id: dict[NodeType, int] = {
@@ -184,17 +182,17 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 self._etype_to_etype_id[et]
                 for et in self._node_type_to_edge_types.get(nt, [])
             ]
-            for nt in _all_node_types
+            for nt in all_node_types
         ]
         self._edge_type_id_to_dst_ntype_id: list[int] = [
             self._node_type_to_id[self._get_destination_type(et)]
-            for et in _all_edge_types
+            for et in all_edge_types
         ]
         # Degree tensors indexed by ntype_id.  Destination-only types get an empty
         # tensor; the C++ kernel returns 0 for those, matching _get_total_degree.
         self._degree_tensors_for_cpp: list[torch.Tensor] = [
             self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
-            for nt in _all_node_types
+            for nt in all_node_types
         ]
 
     def _build_total_degree_tensors(
@@ -615,7 +613,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     edge_index = torch.stack([rows, cols])
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
-                    flat_weights = torch.zeros(0, dtype=torch.float, device=self.device)
+                    flat_weights = torch.zeros(0, dtype=torch.double, device=self.device)
                 etype_str = repr(ppr_edge_type)
                 metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = edge_index
                 metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = flat_weights
