@@ -39,7 +39,7 @@ static void pushResidualsWrapper(PPRForwardPushState& state, const py::dict& fet
     }
 }
 
-}  // namespace gigl
+} // namespace gigl
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
 // module name derived from this file's path (e.g. "ppr_forward_push").

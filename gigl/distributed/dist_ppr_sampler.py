@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Optional, Union
 
 import torch
+
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPushState
 # under a gigl.core namespace rather than importing directly from the C++ extension.
 from gigl_core import PPRForwardPushState
@@ -17,7 +18,6 @@ from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.types.graph import is_label_edge_type
-
 
 # Trailing "." is an intentional separator.  These constants are used both to
 # write metadata keys (f"{KEY}{repr(edge_type)}" → e.g. "ppr_edge_index.('user', 'to', 'story')")
@@ -163,7 +163,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for etypes in self._node_type_to_edge_types.values()
             for et in etypes
         }
-        all_node_types: list[NodeType] = sorted(source_node_types | destination_node_types)
+        all_node_types: list[NodeType] = sorted(
+            source_node_types | destination_node_types
+        )
         all_edge_types: list[EdgeType] = sorted(
             {et for etypes in self._node_type_to_edge_types.values() for et in etypes}
         )
@@ -613,7 +615,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     edge_index = torch.stack([rows, cols])
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
-                    flat_weights = torch.zeros(0, dtype=torch.double, device=self.device)
+                    flat_weights = torch.zeros(
+                        0, dtype=torch.double, device=self.device
+                    )
                 etype_str = repr(ppr_edge_type)
                 metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = edge_index
                 metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = flat_weights

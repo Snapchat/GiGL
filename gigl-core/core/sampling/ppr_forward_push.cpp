@@ -15,8 +15,7 @@ namespace gigl {
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
 // Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
 static uint64_t packKey(int32_t nodeId, int32_t edgeTypeId) {
-    return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) |
-           static_cast<uint32_t>(edgeTypeId);
+    return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) | static_cast<uint32_t>(edgeTypeId);
 }
 
 PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
@@ -39,26 +38,38 @@ PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
     _batchSize = static_cast<int32_t>(seedNodes.size(0));
     _numNodeTypes = static_cast<int32_t>(_nodeTypeToEdgeTypeIds.size());
 
-    TORCH_CHECK(seedNodeTypeId >= 0,
-                "seedNodeTypeId ", seedNodeTypeId, " is negative.");
-    TORCH_CHECK(seedNodeTypeId < _numNodeTypes,
-                "seedNodeTypeId ", seedNodeTypeId, " out of range [0, ", _numNodeTypes, ").");
+    TORCH_CHECK(seedNodeTypeId >= 0, "seedNodeTypeId ", seedNodeTypeId, " is negative.");
+    TORCH_CHECK(
+        seedNodeTypeId < _numNodeTypes, "seedNodeTypeId ", seedNodeTypeId, " out of range [0, ", _numNodeTypes, ").");
     auto numEdgeTypes = static_cast<int32_t>(_edgeTypeToDstNtypeId.size());
     for (int32_t edgeTypeId = 0; edgeTypeId < numEdgeTypes; ++edgeTypeId) {
         int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
-        TORCH_CHECK(dstNodeTypeId >= 0,
-                    "edgeTypeToDstNtypeId[", edgeTypeId, "] = ", dstNodeTypeId, " is negative.");
+        TORCH_CHECK(dstNodeTypeId >= 0, "edgeTypeToDstNtypeId[", edgeTypeId, "] = ", dstNodeTypeId, " is negative.");
         TORCH_CHECK(dstNodeTypeId < _numNodeTypes,
-                    "edgeTypeToDstNtypeId[", edgeTypeId, "] = ", dstNodeTypeId,
-                    " out of range [0, ", _numNodeTypes, ").");
+                    "edgeTypeToDstNtypeId[",
+                    edgeTypeId,
+                    "] = ",
+                    dstNodeTypeId,
+                    " out of range [0, ",
+                    _numNodeTypes,
+                    ").");
     }
     for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
         for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
             TORCH_CHECK(edgeTypeId >= 0,
-                        "nodeTypeToEdgeTypeIds[", nodeTypeId, "] contains negative edge type id ", edgeTypeId, ".");
+                        "nodeTypeToEdgeTypeIds[",
+                        nodeTypeId,
+                        "] contains negative edge type id ",
+                        edgeTypeId,
+                        ".");
             TORCH_CHECK(edgeTypeId < numEdgeTypes,
-                        "nodeTypeToEdgeTypeIds[", nodeTypeId, "] contains edge type id ", edgeTypeId,
-                        " out of range [0, ", numEdgeTypes, ").");
+                        "nodeTypeToEdgeTypeIds[",
+                        nodeTypeId,
+                        "] contains edge type id ",
+                        edgeTypeId,
+                        " out of range [0, ",
+                        numEdgeTypes,
+                        ").");
         }
     }
 
@@ -251,7 +262,8 @@ void PPRForwardPushState::pushResiduals(
                     for (int32_t neighborNodeId : neighborList->get()) {
                         dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
 
-                        double threshold = _requeueThresholdFactor * static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
+                        double threshold = _requeueThresholdFactor *
+                                           static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
 
                         if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
                             dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
@@ -293,7 +305,9 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
             int32_t topK = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
             if (topK > 0) {
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
-                std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(),
+                std::partial_sort(scorePairs.begin(),
+                                  scorePairs.begin() + topK,
+                                  scorePairs.end(),
                                   [](const auto& a, const auto& b) { return a.second > b.second; });
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
@@ -312,30 +326,37 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
 }
 
 int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const {
-    TORCH_CHECK(nodeTypeId >= 0,
-                "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeTypeId >= 0, "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
     TORCH_CHECK(nodeTypeId < static_cast<int32_t>(_degreeTensors.size()),
-                "nodeTypeId ", nodeTypeId, " out of range [0, ", _degreeTensors.size(),
+                "nodeTypeId ",
+                nodeTypeId,
+                " out of range [0, ",
+                _degreeTensors.size(),
                 "). This indicates a construction bug in the sampler.");
     const auto& degreeTensor = _degreeTensors[nodeTypeId];
     if (degreeTensor.numel() == 0) {
         return 0;
     }
-    TORCH_CHECK(nodeId >= 0,
-                "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
     TORCH_CHECK(nodeId < static_cast<int32_t>(degreeTensor.size(0)),
-                "Node ID ", nodeId, " out of range for degree tensor of ntype_id ",
-                nodeTypeId, " (size=", degreeTensor.size(0), "). This indicates corrupted graph data or a sampler bug.");
+                "Node ID ",
+                nodeId,
+                " out of range for degree tensor of ntype_id ",
+                nodeTypeId,
+                " (size=",
+                degreeTensor.size(0),
+                "). This indicates corrupted graph data or a sampler bug.");
     if (degreeTensor.scalar_type() == torch::kInt) {
         return degreeTensor.data_ptr<int32_t>()[nodeId];
     }
     if (degreeTensor.scalar_type() == torch::kLong) {
-        return static_cast<int32_t>(
-            std::min<int64_t>(degreeTensor.data_ptr<int64_t>()[nodeId], INT32_MAX));
+        return static_cast<int32_t>(std::min<int64_t>(degreeTensor.data_ptr<int64_t>()[nodeId], INT32_MAX));
     }
-    TORCH_CHECK(false, "Unsupported degree tensor dtype: ", degreeTensor.scalar_type(),
+    TORCH_CHECK(false,
+                "Unsupported degree tensor dtype: ",
+                degreeTensor.scalar_type(),
                 ". Expected torch.int32 or torch.int64.");
-    return 0;  // unreachable; suppresses compiler warning
+    return 0; // unreachable; suppresses compiler warning
 }
 
-}  // namespace gigl
+} // namespace gigl

@@ -332,7 +332,9 @@ def _run_ppr_loader_correctness_check(
 
         # PPR sampling does not count per-hop neighbors, so num_sampled_edges
         # should be absent or empty on all PPR output batches.
-        assert not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0, (
+        assert (
+            not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0
+        ), (
             f"Expected empty num_sampled_edges for PPR output, got {datum.num_sampled_edges}"
         )
 
@@ -437,7 +439,9 @@ def _run_ppr_hetero_loader_correctness_check(
 
         # PPR sampling does not count per-hop neighbors, so num_sampled_edges
         # should be absent or empty on all PPR output batches.
-        assert not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0, (
+        assert (
+            not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0
+        ), (
             f"Expected empty num_sampled_edges for PPR output, got {datum.num_sampled_edges}"
         )
 
@@ -524,7 +528,9 @@ def _run_ppr_ablp_loader_correctness_check(
 
         # PPR sampling does not count per-hop neighbors, so num_sampled_edges
         # should be absent or empty on all PPR output batches.
-        assert not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0, (
+        assert (
+            not hasattr(datum, "num_sampled_edges") or len(datum.num_sampled_edges) == 0
+        ), (
             f"Expected empty num_sampled_edges for PPR output, got {datum.num_sampled_edges}"
         )
 
