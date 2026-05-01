@@ -815,7 +815,7 @@ class TestDistServerSampling(TestCase):
                 buffer_size="1MB",
             )
         )
-        self.server._channel_state_by_channel_id[channel_id].destroyed = True
+        self.server._channel_state_by_channel_id[channel_id].tombstoned = True
 
         msg, is_done = self.server.fetch_one_sampled_message(channel_id)
 
@@ -1240,8 +1240,16 @@ class TestDistServerSampling(TestCase):
             "neighbor_loader_1": 1,
         }
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as ctx:
             self.server.shutdown()
+
+        # Error message must surface every dimension of leftover state
+        # so an operator reading the storage log can pinpoint the
+        # bookkeeping that wasn't torn down.
+        error_message = str(ctx.exception)
+        self.assertIn("live_channels=", error_message)
+        self.assertIn("live_backends=", error_message)
+        self.assertIn("live_backend_keys=", error_message)
 
         runtime_1.shutdown.assert_not_called()
         runtime_2.shutdown.assert_not_called()
@@ -1286,7 +1294,7 @@ class TestStartNewEpochSamplingChannelLookup(TestCase):
         """
         server = dist_server.DistServer(self.dataset)
         # Simulate: channel 5 was registered and then destroyed.
-        server._destroyed_channel_ids.add(5)
+        server._tombstoned_channel_ids.add(5)
 
         # Must NOT raise — silent no-op for tombstoned channel.
         server.start_new_epoch_sampling(channel_id=5, epoch=1)
@@ -1323,15 +1331,15 @@ class TestWaitAndShutdownServer(TestCase):
         dist_server._dist_server = None
 
     def test_wait_and_shutdown_server_runs_barrier_when_state_remains(self) -> None:
-        """Regression: barrier+shutdown_rpc must run even when DistServer.shutdown raises.
+        """barrier+shutdown_rpc must run even when DistServer.shutdown raises;
+        the underlying RuntimeError must be re-raised after the barrier.
 
-        If a compute client crashes and leaves channels registered, DistServer.shutdown()
-        raises RuntimeError. Previously that exception propagated out of
-        wait_and_shutdown_server, skipping barrier() and shutdown_rpc() entirely —
-        causing healthy storage peers to hang on the barrier forever.
-
-        This test verifies that wait_and_shutdown_server catches the exception and still
-        calls barrier() and shutdown_rpc().
+        If a compute client crashes and leaves channels registered,
+        DistServer.shutdown() raises RuntimeError. The contract is:
+        wait_and_shutdown_server captures that exception, runs barrier()
+        and shutdown_rpc() so healthy storage peers do not hang on the
+        barrier forever, and then re-raises so the orchestrator sees a
+        non-zero exit on the failing storage process.
         """
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
         server = dist_server.DistServer(dataset)
@@ -1361,9 +1369,10 @@ class TestWaitAndShutdownServer(TestCase):
                 mock_shutdown_rpc,
             ),
         ):
-            # Must NOT raise even though DistServer.shutdown() raises internally.
-            dist_server.wait_and_shutdown_server()
+            with self.assertRaises(RuntimeError):
+                dist_server.wait_and_shutdown_server()
 
+        # Barrier and shutdown_rpc must have run before the re-raise.
         mock_barrier.assert_called_once()
         mock_shutdown_rpc.assert_called_once()
 
