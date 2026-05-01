@@ -1,7 +1,7 @@
 import sys
 from collections import abc
 from itertools import count
-from typing import Callable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -23,7 +23,6 @@ from gigl.distributed.dist_ppr_sampler import (
     PPR_WEIGHT_METADATA_KEY,
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
-from gigl.distributed.graph_store.dist_server import DistServer as GiglDistServer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import (
     PPRSamplerOptions,
@@ -88,7 +87,6 @@ class DistNeighborLoader(BaseDistLoader):
         channel_size: str = "4GB",
         prefetch_size: Optional[int] = None,
         process_start_gap_seconds: float = 60.0,
-        max_concurrent_producer_inits: Optional[int] = None,
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
@@ -152,16 +150,9 @@ class DistNeighborLoader(BaseDistLoader):
                 are active concurrently. (default: ``None``).
                 Only applicable in Graph Store mode.
                 If supplied and not it Graph Store mode, an error will be raised.
-            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader.
-                In colocated mode, each process sleeps ``local_rank * process_start_gap_seconds``
-                before initializing. In graph store mode, leader ranks are grouped into batches
-                of ``max_concurrent_producer_inits`` and each batch sleeps
-                ``batch_index * process_start_gap_seconds`` before dispatching RPCs.
-            max_concurrent_producer_inits (int): Maximum number of leader ranks that may
-                dispatch create-producer RPCs concurrently in graph store mode. Leaders are
-                grouped into batches of this size; each batch is staggered by
-                ``process_start_gap_seconds``. Only applies to graph store mode.
-                Defaults to ``None`` (no staggering).
+            process_start_gap_seconds (float): Delay between each process for initializing neighbor loader
+                in colocated mode. Each process sleeps ``local_rank * process_start_gap_seconds``
+                before initializing. Only applies to colocated mode.
             num_cpu_threads (Optional[int]): Number of cpu threads PyTorch should use for CPU training/inference
                 neighbor loading; on top of the per process parallelism.
                 Defaults to `2` if set to `None` when using cpu training/inference.
@@ -202,10 +193,6 @@ class DistNeighborLoader(BaseDistLoader):
                 raise ValueError(
                     f"prefetch_size must be None when using Colocated mode, received {prefetch_size}"
                 )
-            if max_concurrent_producer_inits is not None:
-                raise ValueError(
-                    f"max_concurrent_producer_inits must be None when using Colocated mode, received {max_concurrent_producer_inits}"
-                )
         logger.info(f"Sampling cluster setup: {self._sampling_cluster_setup.value}")
 
         self._instance_count = next(self._counter)
@@ -216,6 +203,8 @@ class DistNeighborLoader(BaseDistLoader):
                 local_process_rank=runtime.local_rank
             )
         )
+
+        backend_key: Optional[str] = None
 
         # Mode-specific setup
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
@@ -243,7 +232,12 @@ class DistNeighborLoader(BaseDistLoader):
             if prefetch_size is None:
                 logger.info(f"prefetch_size is not provided, using default of 4")
                 prefetch_size = 4
-            input_data, worker_options, dataset_schema = self._setup_for_graph_store(
+            (
+                input_data,
+                worker_options,
+                dataset_schema,
+                backend_key,
+            ) = self._setup_for_graph_store(
                 input_nodes=input_nodes,
                 dataset=dataset,
                 num_workers=num_workers,
@@ -271,22 +265,17 @@ class DistNeighborLoader(BaseDistLoader):
             drop_last=drop_last,
         )
 
-        # Build the producer: a pre-constructed producer for colocated mode,
-        # or an RPC callable for graph store mode.
+        producer: Optional[DistSamplingProducer] = None
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            producer: Union[DistSamplingProducer, Callable[..., int]] = (
-                BaseDistLoader.create_mp_producer(
-                    dataset=dataset,
-                    sampler_input=input_data,
-                    sampling_config=sampling_config,
-                    worker_options=worker_options,
-                    sampler_options=sampler_options,
-                )
+            producer = BaseDistLoader.create_mp_producer(
+                dataset=dataset,
+                sampler_input=input_data,
+                sampling_config=sampling_config,
+                worker_options=worker_options,
+                sampler_options=sampler_options,
             )
-        else:
-            producer = GiglDistServer.create_sampling_producer
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
@@ -300,8 +289,8 @@ class DistNeighborLoader(BaseDistLoader):
             runtime=runtime,
             producer=producer,
             sampler_options=sampler_options,
+            backend_key=backend_key,
             process_start_gap_seconds=process_start_gap_seconds,
-            max_concurrent_producer_inits=max_concurrent_producer_inits,
             non_blocking_transfers=non_blocking_transfers,
         )
 
@@ -320,7 +309,9 @@ class DistNeighborLoader(BaseDistLoader):
         worker_concurrency: int,
         prefetch_size: int,
         channel_size: str,
-    ) -> tuple[list[NodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema]:
+    ) -> tuple[
+        list[NodeSamplerInput], RemoteDistSamplingWorkerOptions, DatasetSchema, str
+    ]:
         if input_nodes is None:
             raise ValueError(
                 f"When using Graph Store mode, input nodes must be provided, received {input_nodes}"
@@ -341,11 +332,11 @@ class DistNeighborLoader(BaseDistLoader):
         edge_types = dataset.fetch_edge_types()
         compute_rank = torch.distributed.get_rank()
 
-        worker_key = f"compute_rank_{compute_rank}_worker_{self._instance_count}"
+        backend_key = f"dist_neighbor_loader_{self._instance_count}"
+        worker_key = f"{backend_key}_compute_rank_{compute_rank}"
         logger.info(f"Rank {compute_rank} worker key: {worker_key}")
         worker_options = BaseDistLoader.create_graph_store_worker_options(
             dataset=dataset,
-            compute_rank=compute_rank,
             worker_key=worker_key,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,
@@ -418,6 +409,7 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_feature_info=edge_feature_info,
                 edge_dir=dataset.fetch_edge_dir(),
             ),
+            backend_key,
         )
 
     def _setup_for_colocated(

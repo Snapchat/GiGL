@@ -79,6 +79,23 @@ message VertexAiTrainerConfig {
     uint32 num_workers = 1;
  }
 
+// Reservation affinity for a Vertex AI job.
+// Maps to google.cloud.aiplatform_v1.types.ReservationAffinity.
+// See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+message VertexAiReservationAffinity {
+  // One of "NO_RESERVATION", "ANY_RESERVATION", "SPECIFIC_RESERVATION".
+  // Unset/empty means no reservation_affinity is set on the MachineSpec and
+  // Vertex AI applies its own default behavior.
+  // Note: "TYPE_UNSPECIFIED" is rejected by the validator; use the empty
+  // string for "no preference".
+  string type = 1;
+
+  // Full resource names of reservations to consume.
+  // Required when type == "SPECIFIC_RESERVATION"; must be empty otherwise.
+  // Format: projects/{project}/zones/{zone}/reservations/{reservation_name}
+  repeated string reservation_resource_names = 2;
+}
+
 // Configuration for Vertex AI resources
 message VertexAiResourceConfig {
   // Machine type for job
@@ -109,6 +126,10 @@ message VertexAiResourceConfig {
   // Boot disk size in GB for the job.
   // If unset or zero, will use the default of 100 GB.
   uint32 boot_disk_size_gb = 8;
+
+  // Compute Engine reservation affinity for the job.
+  // See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+  VertexAiReservationAffinity reservation_affinity = 9;
  }
 
  // Configuration for KFP job resources

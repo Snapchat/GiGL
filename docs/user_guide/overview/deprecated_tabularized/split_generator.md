@@ -1,3 +1,8 @@
+```{warning}
+This page describes the deprecated tabularized pipeline. New in-memory subgraph sampling pipelines should use the
+[current architecture overview](../architecture.md) instead.
+```
+
 # Split Generator
 
 The Split Generator reads localized subgraph samples produced by Subgraph Sampler, and executes logic to split the data

@@ -1,9 +1,14 @@
 """Shared functionality for launching Vertex AI jobs for training and inference."""
 
 from collections.abc import Mapping
-from typing import Optional
+from typing import Final, Optional
 
-from google.cloud.aiplatform_v1.types import Scheduling, accelerator_type, env_var
+from google.cloud.aiplatform_v1.types import (
+    ReservationAffinity,
+    Scheduling,
+    accelerator_type,
+    env_var,
+)
 
 from gigl.common import Uri
 from gigl.common.constants import (
@@ -19,6 +24,7 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
 )
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
     VertexAiGraphStoreConfig,
+    VertexAiReservationAffinity,
     VertexAiResourceConfig,
 )
 
@@ -26,6 +32,11 @@ logger = Logger()
 
 _LAUNCHABLE_COMPONENTS: frozenset[GiGLComponents] = frozenset(
     [GiGLComponents.Trainer, GiGLComponents.Inferencer]
+)
+
+_RESERVATION_AFFINITY_KEY: Final[str] = "compute.googleapis.com/reservation-name"
+_VALID_RESERVATION_AFFINITY_TYPES: Final[frozenset[str]] = frozenset(
+    {"NO_RESERVATION", "ANY_RESERVATION", "SPECIFIC_RESERVATION"}
 )
 
 
@@ -277,8 +288,74 @@ def _build_job_config(
         )
         if vertex_ai_resource_config.scheduling_strategy
         else None,
+        reservation_affinity=_build_reservation_affinity(
+            vertex_ai_resource_config.reservation_affinity
+        ),
     )
     return job_config
+
+
+def _build_reservation_affinity(
+    affinity: VertexAiReservationAffinity,
+) -> Optional[ReservationAffinity]:
+    """Translate a proto VertexAiReservationAffinity to the SDK ReservationAffinity.
+
+    Returns ``None`` when the proto is fully unset (empty ``type`` with no
+    ``reservation_resource_names``) so the resulting ``MachineSpec`` is left
+    at the Vertex AI default.
+
+    Args:
+        affinity: The proto reservation affinity (always non-None because
+            proto3 singular message fields default to an empty instance).
+
+    Returns:
+        A ``ReservationAffinity`` message, or ``None`` when ``affinity`` is
+        unset.
+
+    Raises:
+        ValueError: If ``affinity.type`` is empty but
+            ``reservation_resource_names`` is set; if ``affinity.type`` is
+            not one of the accepted values; if ``SPECIFIC_RESERVATION`` is
+            requested without names; or if names are provided for
+            ``NO_RESERVATION`` / ``ANY_RESERVATION``.
+    """
+    names = list(affinity.reservation_resource_names)
+    if not affinity.type:
+        if names:
+            raise ValueError(
+                "reservation_resource_names is set but reservation_affinity.type "
+                "is empty. Set type to 'SPECIFIC_RESERVATION' or clear "
+                "reservation_resource_names."
+            )
+        return None
+
+    if affinity.type not in _VALID_RESERVATION_AFFINITY_TYPES:
+        raise ValueError(
+            f"Invalid reservation_affinity.type {affinity.type!r}. "
+            f"Expected one of: {sorted(_VALID_RESERVATION_AFFINITY_TYPES)}."
+        )
+    # Mirrors the scheduling_strategy pattern above: mypy does not treat
+    # ReservationAffinity.Type as subscriptable, so use getattr instead of
+    # ReservationAffinity.Type[affinity.type].
+    affinity_type = getattr(ReservationAffinity.Type, affinity.type)
+
+    if affinity_type == ReservationAffinity.Type.SPECIFIC_RESERVATION:
+        if not names:
+            raise ValueError(
+                "SPECIFIC_RESERVATION requires at least one entry in "
+                "reservation_resource_names "
+                "(format: projects/{p}/zones/{z}/reservations/{n})."
+            )
+        return ReservationAffinity(
+            reservation_affinity_type=affinity_type,
+            key=_RESERVATION_AFFINITY_KEY,
+            values=names,
+        )
+    if names:
+        raise ValueError(
+            f"reservation_resource_names must be empty for type {affinity.type}."
+        )
+    return ReservationAffinity(reservation_affinity_type=affinity_type)
 
 
 # TODO(svij): This function may need some work cc @zfan3, @xgao4
