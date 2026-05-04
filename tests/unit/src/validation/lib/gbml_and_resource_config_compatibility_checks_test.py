@@ -12,9 +12,10 @@ from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_check
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
 
-_FAKE_LAUNCHER_PATH = (
-    "tests.test_assets.custom_launcher_fixtures.fake_launcher_callable"
-)
+# Placeholder shell snippet used by CustomResourceConfig fixtures in this
+# module — these tests only exercise type-of-config dispatch, not actual
+# subprocess execution.
+_FAKE_COMMAND = "echo fake"
 
 # Helper functions for creating VertexAiGraphStoreConfig
 
@@ -239,9 +240,7 @@ def _create_resource_config_with_custom_trainer() -> GiglResourceConfigWrapper:
     """Create a GiglResourceConfig whose trainer is a CustomResourceConfig."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
     _create_shared_resource_config(config)
-    config.trainer_resource_config.custom_trainer_config.launcher_fn = (
-        _FAKE_LAUNCHER_PATH
-    )
+    config.trainer_resource_config.custom_trainer_config.command = _FAKE_COMMAND
     # Inferencer uses a built-in config so only the trainer path is custom.
     config.inferencer_resource_config.vertex_ai_inferencer_config.CopyFrom(
         _create_vertex_ai_resource_config()
@@ -256,9 +255,7 @@ def _create_resource_config_with_custom_inferencer() -> GiglResourceConfigWrappe
     config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
         _create_vertex_ai_resource_config()
     )
-    config.inferencer_resource_config.custom_inferencer_config.launcher_fn = (
-        _FAKE_LAUNCHER_PATH
-    )
+    config.inferencer_resource_config.custom_inferencer_config.command = _FAKE_COMMAND
     return GiglResourceConfigWrapper(resource_config=config)
 
 

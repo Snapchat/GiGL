@@ -37,7 +37,7 @@ class UDLAnchorBasedSupervisionEdgeSplitStrategy(
       *     (a) All pos_edges and hard_neg_edges belonging to the split.
       *     (b) message passing structure which should be pb.neighborhood and therefore the same across all splits
       *     (i.e. no masking).
-      *     (c) The message passing structure may be filtered down to only include edges that are not in the pos_edges 
+      *     (c) The message passing structure may be filtered down to only include edges that are not in the pos_edges
       *         and hard_neg_edges.
       * An output train-split sample needs to have >0 pos_edges in this setting for loss computation.
       * Output val/test-split samples may have 0 pos_edges (and even 0 hard_neg_edges), since these

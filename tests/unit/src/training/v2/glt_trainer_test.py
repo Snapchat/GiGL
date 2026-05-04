@@ -55,8 +55,8 @@ def _build_resource_config_with_custom_trainer() -> (
     )
     resource_config.trainer_resource_config.custom_trainer_config.CopyFrom(
         gigl_resource_config_pb2.CustomResourceConfig(
-            launcher_fn="my_project.launchers.ray.launch",
-            launcher_args={"cluster": "dev", "num_workers": "4"},
+            command="python -m my_project.launchers.ray.launch",
+            args=["--cluster=dev", "--num_workers=4"],
         )
     )
     return resource_config
@@ -123,10 +123,10 @@ class TestGLTTrainerCustomDispatch(TestCase):
         # The forwarded CustomResourceConfig matches what we put in the
         # resource config.
         forwarded = call_kwargs["custom_resource_config"]
-        self.assertEqual(forwarded.launcher_fn, "my_project.launchers.ray.launch")
+        self.assertEqual(forwarded.command, "python -m my_project.launchers.ray.launch")
         self.assertEqual(
-            dict(forwarded.launcher_args),
-            {"cluster": "dev", "num_workers": "4"},
+            list(forwarded.args),
+            ["--cluster=dev", "--num_workers=4"],
         )
 
 

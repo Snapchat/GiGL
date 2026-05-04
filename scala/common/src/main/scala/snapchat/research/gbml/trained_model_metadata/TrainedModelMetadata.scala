@@ -26,28 +26,28 @@ final case class TrainedModelMetadata(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = trainedModelUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
         }
       };
-      
+
       {
         val __value = scriptedModelUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(2, __value)
         }
       };
-      
+
       {
         val __value = evalMetricsUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
         }
       };
-      
+
       {
         val __value = tensorboardLogsUri
         if (!__value.isEmpty) {
@@ -64,7 +64,7 @@ final case class TrainedModelMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {

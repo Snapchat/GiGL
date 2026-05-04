@@ -245,8 +245,8 @@ class TestGiglResourceConfigWrapper(TestCase):
         """Test trainer_config with Custom (user-supplied launcher) configuration."""
         config = self._create_gigl_resource_config_with_direct_shared_config()
         trainer_config = gigl_resource_config_pb2.CustomResourceConfig(
-            launcher_fn="my_project.launchers.ray.launch",
-            launcher_args={"cluster": "dev", "num_workers": "4"},
+            command="python -m my_project.launchers.ray.launch",
+            args=["--cluster=dev", "--num_workers=4"],
         )
         config.trainer_resource_config.custom_trainer_config.CopyFrom(
             copy.deepcopy(trainer_config)
@@ -376,8 +376,8 @@ class TestGiglResourceConfigWrapper(TestCase):
         """Test inferencer_config with Custom (user-supplied launcher) configuration."""
         config = self._create_gigl_resource_config_with_direct_shared_config()
         inferencer_config = gigl_resource_config_pb2.CustomResourceConfig(
-            launcher_fn="my_project.launchers.ray.launch",
-            launcher_args={"cluster": "prod", "shards": "8"},
+            command="python -m my_project.launchers.ray.launch",
+            args=["--cluster=prod", "--shards=8"],
         )
         config.inferencer_resource_config.custom_inferencer_config.CopyFrom(
             copy.deepcopy(inferencer_config)

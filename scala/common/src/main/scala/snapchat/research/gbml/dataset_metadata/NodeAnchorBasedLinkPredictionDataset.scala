@@ -21,21 +21,21 @@ final case class NodeAnchorBasedLinkPredictionDataset(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = trainMainDataUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
         }
       };
-      
+
       {
         val __value = testMainDataUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(2, __value)
         }
       };
-      
+
       {
         val __value = valMainDataUri
         if (!__value.isEmpty) {
@@ -64,7 +64,7 @@ final case class NodeAnchorBasedLinkPredictionDataset(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {
@@ -250,14 +250,14 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -274,7 +274,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -318,7 +318,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
       def companion: snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry.type = snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry])
   }
-  
+
   object TrainNodeTypeToRandomNegativeDataUriEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry = {
@@ -383,7 +383,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.NodeAnchorBasedLinkPredictionDataset.TrainNodeTypeToRandomNegativeDataUriEntry])
   }
-  
+
   @SerialVersionUID(0L)
   final case class ValNodeTypeToRandomNegativeDataUriEntry(
       key: _root_.scala.Predef.String = "",
@@ -394,14 +394,14 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -418,7 +418,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -462,7 +462,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
       def companion: snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry.type = snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry])
   }
-  
+
   object ValNodeTypeToRandomNegativeDataUriEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry = {
@@ -527,7 +527,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.NodeAnchorBasedLinkPredictionDataset.ValNodeTypeToRandomNegativeDataUriEntry])
   }
-  
+
   @SerialVersionUID(0L)
   final case class TestNodeTypeToRandomNegativeDataUriEntry(
       key: _root_.scala.Predef.String = "",
@@ -538,14 +538,14 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -562,7 +562,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -606,7 +606,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
       def companion: snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry.type = snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry])
   }
-  
+
   object TestNodeTypeToRandomNegativeDataUriEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry = {
@@ -671,7 +671,7 @@ object NodeAnchorBasedLinkPredictionDataset extends scalapb.GeneratedMessageComp
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.NodeAnchorBasedLinkPredictionDataset.TestNodeTypeToRandomNegativeDataUriEntry])
   }
-  
+
   implicit class NodeAnchorBasedLinkPredictionDatasetLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.dataset_metadata.NodeAnchorBasedLinkPredictionDataset](_l) {
     def trainMainDataUri: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.trainMainDataUri)((c_, f_) => c_.copy(trainMainDataUri = f_))
     def testMainDataUri: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.testMainDataUri)((c_, f_) => c_.copy(testMainDataUri = f_))

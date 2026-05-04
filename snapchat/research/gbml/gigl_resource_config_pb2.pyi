@@ -398,44 +398,36 @@ global___VertexAiGraphStoreConfig = VertexAiGraphStoreConfig
 
 class CustomResourceConfig(google.protobuf.message.Message):
     """Lets user-defined launchers be piped in.
-    The callable referenced by `launcher_fn` is imported at runtime and
-    receives the opaque `launcher_args` map, e.g. a custom Ray or Kubernetes
-    entry point.
+    The launcher dispatcher invokes `command` (interpreted by /bin/sh -c so
+    leading "KEY=VALUE" assignments parse as inline env vars) with `args`
+    appended as positional arguments. String fields support OmegaConf
+    `${gigl:<key>}` substitutions, which the dispatcher resolves at exec
+    time from the runtime context (task_config_uri, applied_task_identifier,
+    component, etc.).
     """
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-    class LauncherArgsEntry(google.protobuf.message.Message):
-        DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-        KEY_FIELD_NUMBER: builtins.int
-        VALUE_FIELD_NUMBER: builtins.int
-        key: builtins.str
-        value: builtins.str
-        def __init__(
-            self,
-            *,
-            key: builtins.str = ...,
-            value: builtins.str = ...,
-        ) -> None: ...
-        def ClearField(self, field_name: typing_extensions.Literal["key", b"key", "value", b"value"]) -> None: ...
-
-    LAUNCHER_FN_FIELD_NUMBER: builtins.int
-    LAUNCHER_ARGS_FIELD_NUMBER: builtins.int
-    launcher_fn: builtins.str
-    """Fully-qualified Python import path to a callable.
-    e.g. "my_project.launchers.ray.launch"
+    COMMAND_FIELD_NUMBER: builtins.int
+    ARGS_FIELD_NUMBER: builtins.int
+    command: builtins.str
+    """Shell snippet invoked via /bin/sh -c. Leading "KEY=VALUE" assignments
+    are honored by the shell, so callers can inline env vars (e.g.
+    "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python -m my.cli").
     """
     @property
-    def launcher_args(self) -> google.protobuf.internal.containers.ScalarMap[builtins.str, builtins.str]:
-        """Opaque key/value args forwarded to the launcher."""
+    def args(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+        """Positional arguments appended after the command. Each element is
+        shell-quoted by the dispatcher so values containing spaces/quotes
+        survive the shell pass.
+        """
     def __init__(
         self,
         *,
-        launcher_fn: builtins.str = ...,
-        launcher_args: collections.abc.Mapping[builtins.str, builtins.str] | None = ...,
+        command: builtins.str = ...,
+        args: collections.abc.Iterable[builtins.str] | None = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing_extensions.Literal["launcher_args", b"launcher_args", "launcher_fn", b"launcher_fn"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["args", b"args", "command", b"command"]) -> None: ...
 
 global___CustomResourceConfig = CustomResourceConfig
 

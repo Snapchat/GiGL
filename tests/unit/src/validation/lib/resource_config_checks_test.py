@@ -21,12 +21,12 @@ from gigl.src.validation_check.libs.resource_config_checks import (
     check_if_trainer_resource_config_valid,
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
-from tests.test_assets import custom_launcher_fixtures
 from tests.test_assets.test_case import TestCase
 
-_FAKE_LAUNCHER_PATH = (
-    "tests.test_assets.custom_launcher_fixtures.fake_launcher_callable"
-)
+# Placeholder shell snippet used by CustomResourceConfig fixtures —
+# subprocess invocation is patched in the dry-run tests below, so the
+# command never actually executes.
+_FAKE_COMMAND = "echo fake"
 
 # Helper functions for creating valid configurations
 
@@ -215,28 +215,24 @@ def _create_valid_local_inferencer_config() -> (
 
 
 def _create_valid_custom_trainer_config(
-    launcher_fn: str = _FAKE_LAUNCHER_PATH,
-    launcher_args: dict[str, str] | None = None,
+    command: str = _FAKE_COMMAND,
+    args: list[str] | None = None,
 ) -> gigl_resource_config_pb2.GiglResourceConfig:
     """Create a GiglResourceConfig with a CustomResourceConfig trainer."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
-    config.trainer_resource_config.custom_trainer_config.launcher_fn = launcher_fn
-    for key, value in (launcher_args or {}).items():
-        config.trainer_resource_config.custom_trainer_config.launcher_args[key] = value
+    config.trainer_resource_config.custom_trainer_config.command = command
+    config.trainer_resource_config.custom_trainer_config.args.extend(args or [])
     return config
 
 
 def _create_valid_custom_inferencer_config(
-    launcher_fn: str = _FAKE_LAUNCHER_PATH,
-    launcher_args: dict[str, str] | None = None,
+    command: str = _FAKE_COMMAND,
+    args: list[str] | None = None,
 ) -> gigl_resource_config_pb2.GiglResourceConfig:
     """Create a GiglResourceConfig with a CustomResourceConfig inferencer."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
-    config.inferencer_resource_config.custom_inferencer_config.launcher_fn = launcher_fn
-    for key, value in (launcher_args or {}).items():
-        config.inferencer_resource_config.custom_inferencer_config.launcher_args[
-            key
-        ] = value
+    config.inferencer_resource_config.custom_inferencer_config.command = command
+    config.inferencer_resource_config.custom_inferencer_config.args.extend(args or [])
     return config
 
 
@@ -840,7 +836,7 @@ class TestCustomResourceConfigBypass(TestCase):
     def test_trainer_custom_config_bypasses_machine_validation(self):
         """CustomResourceConfig trainer bypasses _validate_machine_config entirely."""
         config = _create_valid_custom_trainer_config(
-            launcher_args={"cluster_size": "4"}
+            args=["--cluster_size=4"]
         )
         with patch(
             "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
@@ -851,7 +847,7 @@ class TestCustomResourceConfigBypass(TestCase):
     def test_inferencer_custom_config_bypasses_machine_validation(self):
         """CustomResourceConfig inferencer bypasses _validate_machine_config entirely."""
         config = _create_valid_custom_inferencer_config(
-            launcher_args={"cluster_size": "4"}
+            args=["--cluster_size=4"]
         )
         with patch(
             "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
@@ -877,15 +873,15 @@ class TestCustomResourceConfigBypass(TestCase):
             check_if_inferencer_resource_config_valid(resource_config_pb=config)
         mock_validate.assert_called_once()
 
-    def test_empty_launcher_fn_raises_via_dry_run(self):
-        """Empty launcher_fn is caught by launch_custom's guard at dry-run time."""
-        config = _create_valid_custom_trainer_config(launcher_fn="")
+    def test_empty_command_raises_via_dry_run(self):
+        """Empty command is caught by launch_custom's guard at dry-run time."""
+        config = _create_valid_custom_trainer_config(command="")
         with self.assertRaises(ValueError):
             check_if_custom_resource_config_dry_run_valid(
                 resource_config_pb=config,
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                applied_task_identifier="job-empty-fn",
+                applied_task_identifier="job-empty-command",
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
                 component=GiGLComponents.Trainer,
@@ -893,17 +889,18 @@ class TestCustomResourceConfigBypass(TestCase):
 
 
 class TestCustomResourceConfigDryRun(TestCase):
-    """Test suite for ``check_if_custom_resource_config_dry_run_valid``."""
+    """Test suite for ``check_if_custom_resource_config_dry_run_valid``.
 
-    def setUp(self) -> None:
-        super().setUp()
-        custom_launcher_fixtures.FAKE_LAUNCHER_CALLS.clear()
+    Dry-run dispatch flows through ``launch_custom``, which logs the
+    resolved shell line and returns *before* spawning a subprocess. Tests
+    patch ``subprocess.run`` to assert it is never invoked on the dry-run
+    path.
+    """
 
-    def test_trainer_dry_run_invokes_launcher_with_flag(self):
-        """Trainer CustomResourceConfig routes to launch_custom with is_dry_run=True."""
-        config = _create_valid_custom_trainer_config(
-            launcher_args={"cluster_size": "4"}
-        )
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_trainer_dry_run_does_not_spawn_subprocess(self, mock_run):
+        """Dry-run logs the resolved shell line; subprocess.run is not called."""
+        config = _create_valid_custom_trainer_config(args=["--cluster_size=4"])
         check_if_custom_resource_config_dry_run_valid(
             resource_config_pb=config,
             task_config_uri=Uri("gs://bucket/task.yaml"),
@@ -913,17 +910,12 @@ class TestCustomResourceConfigDryRun(TestCase):
             cuda_docker_uri="gcr.io/p/cuda:tag",
             component=GiGLComponents.Trainer,
         )
-        calls = custom_launcher_fixtures.FAKE_LAUNCHER_CALLS
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["is_dry_run"], True)
-        self.assertEqual(calls[0]["component"], GiGLComponents.Trainer)
-        self.assertEqual(calls[0]["launcher_args"], {"cluster_size": "4"})
+        mock_run.assert_not_called()
 
-    def test_inferencer_dry_run_invokes_launcher_with_flag(self):
-        """Inferencer CustomResourceConfig routes to launch_custom with is_dry_run=True."""
-        config = _create_valid_custom_inferencer_config(
-            launcher_args={"cluster_size": "8"}
-        )
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_inferencer_dry_run_does_not_spawn_subprocess(self, mock_run):
+        """Symmetric to the trainer case."""
+        config = _create_valid_custom_inferencer_config(args=["--cluster_size=8"])
         check_if_custom_resource_config_dry_run_valid(
             resource_config_pb=config,
             task_config_uri=Uri("gs://bucket/task.yaml"),
@@ -933,13 +925,11 @@ class TestCustomResourceConfigDryRun(TestCase):
             cuda_docker_uri=None,
             component=GiGLComponents.Inferencer,
         )
-        calls = custom_launcher_fixtures.FAKE_LAUNCHER_CALLS
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["is_dry_run"], True)
-        self.assertEqual(calls[0]["component"], GiGLComponents.Inferencer)
+        mock_run.assert_not_called()
 
-    def test_non_custom_trainer_is_no_op(self):
-        """Non-custom trainer config is a no-op (doesn't invoke launcher)."""
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_non_custom_trainer_is_no_op(self, mock_run):
+        """Non-custom trainer config is a no-op (subprocess never invoked)."""
         config = _create_valid_vertex_ai_trainer_config()
         check_if_custom_resource_config_dry_run_valid(
             resource_config_pb=config,
@@ -950,10 +940,11 @@ class TestCustomResourceConfigDryRun(TestCase):
             cuda_docker_uri=None,
             component=GiGLComponents.Trainer,
         )
-        self.assertEqual(custom_launcher_fixtures.FAKE_LAUNCHER_CALLS, [])
+        mock_run.assert_not_called()
 
-    def test_non_custom_inferencer_is_no_op(self):
-        """Non-custom inferencer config is a no-op (doesn't invoke launcher)."""
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_non_custom_inferencer_is_no_op(self, mock_run):
+        """Non-custom inferencer config is a no-op (subprocess never invoked)."""
         config = _create_valid_vertex_ai_inferencer_config()
         check_if_custom_resource_config_dry_run_valid(
             resource_config_pb=config,
@@ -964,7 +955,7 @@ class TestCustomResourceConfigDryRun(TestCase):
             cuda_docker_uri=None,
             component=GiGLComponents.Inferencer,
         )
-        self.assertEqual(custom_launcher_fixtures.FAKE_LAUNCHER_CALLS, [])
+        mock_run.assert_not_called()
 
     def test_unsupported_component_raises(self):
         """Only Trainer and Inferencer are supported; other components raise ValueError."""

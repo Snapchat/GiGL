@@ -1,6 +1,5 @@
 """Unit tests for ``gigl.src.common.custom_launcher``."""
 
-from typing import Optional
 from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest
@@ -9,156 +8,185 @@ from gigl.common import Uri
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.custom_launcher import launch_custom
 from snapchat.research.gbml import gigl_resource_config_pb2
-from tests.test_assets import custom_launcher_fixtures
 from tests.test_assets.test_case import TestCase
-
-# Fixture referenced by its canonical dotted path so ``import_obj`` and the
-# test module both bind to the same module object (and thus the same call
-# list).
-_FAKE_LAUNCHER_PATH = (
-    "tests.test_assets.custom_launcher_fixtures.fake_launcher_callable"
-)
-_NOT_CALLABLE_PATH = "tests.test_assets.custom_launcher_fixtures.NOT_CALLABLE_SENTINEL"
 
 
 class TestLaunchCustom(TestCase):
-    """Exercises ``launch_custom`` dispatch, guards, and arg forwarding."""
+    """Exercises ``launch_custom`` subprocess dispatch and guards.
 
-    def setUp(self) -> None:
-        super().setUp()
-        custom_launcher_fixtures.FAKE_LAUNCHER_CALLS.clear()
+    The launcher resolves ``${gigl:*}`` placeholders in the proto's
+    ``command`` / ``args`` fields against the runtime kwargs and shells
+    out via ``subprocess.run``. Tests patch ``subprocess.run`` to
+    capture the resolved shell line without actually spawning processes.
+    """
 
     def _build_config(
         self,
-        launcher_fn: str,
-        launcher_args: Optional[dict[str, str]] = None,
+        command: str,
+        args: list[str] | None = None,
     ) -> gigl_resource_config_pb2.CustomResourceConfig:
         return gigl_resource_config_pb2.CustomResourceConfig(
-            launcher_fn=launcher_fn,
-            launcher_args=launcher_args or {},
+            command=command,
+            args=args or [],
         )
 
-    def test_dispatches_with_expected_kwargs(self) -> None:
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_dispatches_subprocess_with_resolved_command_and_args(
+        self, mock_run: MagicMock
+    ) -> None:
         config = self._build_config(
-            launcher_fn=_FAKE_LAUNCHER_PATH,
-            launcher_args={"cluster_size": "4", "image": "gcr.io/p/img:tag"},
+            command="python -m my.cli",
+            args=[
+                "--task_config_uri=${gigl:task_config_uri}",
+                "--component=${gigl:component}",
+                "--cuda=${gigl:cuda_docker_image}",
+                "--applied_task_identifier=${gigl:applied_task_identifier}",
+            ],
         )
-        task_uri = Uri("gs://bucket/task.yaml")
-        resource_uri = Uri("gs://bucket/resource.yaml")
-
         launch_custom(
             custom_resource_config=config,
             applied_task_identifier="job-42",
-            task_config_uri=task_uri,
-            resource_config_uri=resource_uri,
-            process_command="python -m gigl.src.training.v2.glt_trainer",
-            process_runtime_args={"lr": "0.01"},
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="ignored",
+            process_runtime_args={"ignored": "v"},
             cpu_docker_uri="gcr.io/p/cpu:tag",
             cuda_docker_uri="gcr.io/p/cuda:tag",
             component=GiGLComponents.Trainer,
+            is_dry_run=False,
+        )
+
+        mock_run.assert_called_once()
+        shell_line = mock_run.call_args.args[0]
+        self.assertIn("python -m my.cli", shell_line)
+        self.assertIn("--task_config_uri=gs://bucket/task.yaml", shell_line)
+        # component should resolve to the Title-case name (matching CLI
+        # argparse choices), NOT the lowercase enum value.
+        self.assertIn("--component=Trainer", shell_line)
+        self.assertIn("--cuda=gcr.io/p/cuda:tag", shell_line)
+        self.assertIn("--applied_task_identifier=job-42", shell_line)
+        # No leftover ${gigl:*} placeholders in the shell line.
+        self.assertNotIn("${gigl:", shell_line)
+        # subprocess invoked with shell=True and check=True.
+        self.assertTrue(mock_run.call_args.kwargs.get("shell", False))
+        self.assertTrue(mock_run.call_args.kwargs.get("check", False))
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_is_dry_run_skips_subprocess(self, mock_run: MagicMock) -> None:
+        config = self._build_config(command="echo", args=["hi"])
+        launch_custom(
+            custom_resource_config=config,
+            applied_task_identifier="job",
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="",
+            process_runtime_args={},
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Trainer,
             is_dry_run=True,
         )
+        mock_run.assert_not_called()
 
-        calls = custom_launcher_fixtures.FAKE_LAUNCHER_CALLS
-        self.assertEqual(len(calls), 1)
-        call_kwargs = calls[0]
-        self.assertEqual(call_kwargs["applied_task_identifier"], "job-42")
-        self.assertEqual(call_kwargs["task_config_uri"], task_uri)
-        self.assertEqual(call_kwargs["resource_config_uri"], resource_uri)
-        self.assertEqual(
-            call_kwargs["process_command"],
-            "python -m gigl.src.training.v2.glt_trainer",
-        )
-        self.assertEqual(call_kwargs["process_runtime_args"], {"lr": "0.01"})
-        # launcher_args is materialized from the proto map as a plain dict.
-        self.assertEqual(
-            call_kwargs["launcher_args"],
-            {"cluster_size": "4", "image": "gcr.io/p/img:tag"},
-        )
-        self.assertIsInstance(call_kwargs["launcher_args"], dict)
-        self.assertEqual(call_kwargs["cpu_docker_uri"], "gcr.io/p/cpu:tag")
-        self.assertEqual(call_kwargs["cuda_docker_uri"], "gcr.io/p/cuda:tag")
-        self.assertEqual(call_kwargs["component"], GiGLComponents.Trainer)
-        self.assertTrue(call_kwargs["is_dry_run"])
-
-    def test_is_dry_run_defaults_to_false(self) -> None:
-        config = self._build_config(launcher_fn=_FAKE_LAUNCHER_PATH)
-
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_is_dry_run_defaults_to_false(self, mock_run: MagicMock) -> None:
+        config = self._build_config(command="echo", args=[])
         launch_custom(
             custom_resource_config=config,
             applied_task_identifier="job-43",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="python -m foo",
+            process_command="",
             process_runtime_args={},
             cpu_docker_uri=None,
             cuda_docker_uri=None,
             component=GiGLComponents.Inferencer,
         )
+        mock_run.assert_called_once()
 
-        calls = custom_launcher_fixtures.FAKE_LAUNCHER_CALLS
-        self.assertEqual(len(calls), 1)
-        self.assertFalse(calls[0]["is_dry_run"])
-
-    def test_empty_launcher_fn_raises_value_error(self) -> None:
-        config = self._build_config(launcher_fn="")
-
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_empty_command_raises_value_error(self, mock_run: MagicMock) -> None:
+        config = self._build_config(command="", args=["ignored"])
         with self.assertRaises(ValueError):
             launch_custom(
                 custom_resource_config=config,
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="python -m foo",
+                process_command="",
                 process_runtime_args={},
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
                 component=GiGLComponents.Trainer,
             )
+        mock_run.assert_not_called()
 
-    def test_non_callable_launcher_raises_type_error(self) -> None:
-        config = self._build_config(launcher_fn=_NOT_CALLABLE_PATH)
-
-        with self.assertRaises(TypeError):
-            launch_custom(
-                custom_resource_config=config,
-                applied_task_identifier="job",
-                task_config_uri=Uri("gs://bucket/task.yaml"),
-                resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="python -m foo",
-                process_runtime_args={},
-                cpu_docker_uri=None,
-                cuda_docker_uri=None,
-                component=GiGLComponents.Trainer,
-            )
-
-    def test_invalid_component_raises_value_error(self) -> None:
-        config = self._build_config(launcher_fn=_FAKE_LAUNCHER_PATH)
-
-        # Any non-Trainer, non-Inferencer component must be rejected before
-        # the launcher is invoked.
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_invalid_component_raises_value_error(self, mock_run: MagicMock) -> None:
+        config = self._build_config(command="echo")
         with self.assertRaises(ValueError):
             launch_custom(
                 custom_resource_config=config,
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="python -m foo",
+                process_command="",
                 process_runtime_args={},
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
                 component=GiGLComponents.DataPreprocessor,
             )
-        self.assertEqual(len(custom_launcher_fixtures.FAKE_LAUNCHER_CALLS), 0)
+        mock_run.assert_not_called()
 
-    def test_logs_launcher_arg_keys_not_values(self) -> None:
-        # Confirm launcher_args keys (but not values) appear in the log line,
-        # so launcher_args cannot leak secrets into logs.
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_args_with_spaces_are_shell_quoted(self, mock_run: MagicMock) -> None:
         config = self._build_config(
-            launcher_fn=_FAKE_LAUNCHER_PATH,
-            launcher_args={"secret_token": "s3cr3t", "cluster_size": "4"},
+            command="echo", args=["a b c", "--name=with space"]
         )
+        launch_custom(
+            custom_resource_config=config,
+            applied_task_identifier="job",
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="",
+            process_runtime_args={},
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Trainer,
+        )
+        shell_line = mock_run.call_args.args[0]
+        # shlex.quote wraps tokens with spaces in single quotes so the
+        # shell sees one argv element per proto args[] entry.
+        self.assertIn("'a b c'", shell_line)
+        self.assertIn("'--name=with space'", shell_line)
 
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_process_command_and_runtime_args_are_not_plumbed(
+        self, mock_run: MagicMock
+    ) -> None:
+        # Confirm the resolver dict does not carry process_command or
+        # process_runtime_args — consumers re-derive them from
+        # ${gigl:task_config_uri} on the receiving side.
+        config = self._build_config(command="python", args=["-m", "foo"])
+        launch_custom(
+            custom_resource_config=config,
+            applied_task_identifier="job",
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="should-not-appear",
+            process_runtime_args={"unused_lr": "0.42"},
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Trainer,
+        )
+        shell_line = mock_run.call_args.args[0]
+        self.assertNotIn("should-not-appear", shell_line)
+        self.assertNotIn("unused_lr", shell_line)
+        self.assertNotIn("0.42", shell_line)
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_logs_resolved_shell_line(self, mock_run: MagicMock) -> None:
+        config = self._build_config(command="echo", args=["${gigl:component}"])
         mock_logger = MagicMock()
         with patch("gigl.src.common.custom_launcher.logger", new=mock_logger):
             launch_custom(
@@ -166,18 +194,17 @@ class TestLaunchCustom(TestCase):
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="python -m foo",
+                process_command="",
                 process_runtime_args={},
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
-                component=GiGLComponents.Trainer,
+                component=GiGLComponents.Inferencer,
+                is_dry_run=False,
             )
-
         mock_logger.info.assert_called_once()
         (log_line,), _ = mock_logger.info.call_args
-        self.assertIn("cluster_size", log_line)
-        self.assertIn("secret_token", log_line)
-        self.assertNotIn("s3cr3t", log_line)
+        self.assertIn("Inferencer", log_line)
+        self.assertIn("dry_run=False", log_line)
 
 
 if __name__ == "__main__":

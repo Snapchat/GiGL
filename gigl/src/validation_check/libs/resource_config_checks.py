@@ -391,7 +391,7 @@ def check_if_custom_resource_config_dry_run_valid(
 
     logger.info(
         f"Invoking custom launcher dry-run for {component.value} via "
-        f"{component_config.launcher_fn}."
+        f"{component_config.command!r}."
     )
     launch_custom(
         custom_resource_config=component_config,

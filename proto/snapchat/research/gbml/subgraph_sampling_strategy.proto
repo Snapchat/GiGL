@@ -4,7 +4,7 @@ package snapchat.research.gbml;
 
 import "snapchat/research/gbml/graph_schema.proto";
 
-message RandomUniform { // Randomly sample nodes from the neighborhood without replacement. 
+message RandomUniform { // Randomly sample nodes from the neighborhood without replacement.
     int32 num_nodes_to_sample = 1;
 }
 
