@@ -27,6 +27,36 @@ Cluster teardown is a strict three-phase sequence:
    ``DistServer.exit`` flips, then runs ``DistServer.shutdown()``
    (strict validation — see below), ``barrier()``, ``shutdown_rpc()``.
 
+An example fo the teardown protocol:
+```python
+def compute_process():
+    train_loader = ...
+    val_loader = ...
+    test_loader = ...
+
+    loaders = [train_loader, val_loader, test_loader]
+    for data in train_loader:
+        train(data)
+        if should_val():
+            for data in val_loader:
+                val(data)
+    # Shutdown the loaders after training and validation.
+    train_loader.shutdown()
+    val_loader.shutdown()
+
+    for data in test_loader:
+        test(data)
+    # Shutdown the loader after testing.
+    test_loader.shutdown()
+
+
+    # Step 2: Per-compute-process
+    shutdown_compute_proccess()
+
+# Step 3: Per-storage-process
+wait_and_shutdown_server()
+```
+
 ``DistServer.shutdown()`` does no teardown work itself. It validates
 that phase 1 ran for every channel/backend, raises ``RuntimeError`` if
 state remains, and drops residual tombstone/stats bookkeeping. The
@@ -631,7 +661,7 @@ class DistServer:
                     raise RuntimeError(
                         f"init_sampling_backend: backend_key={opts.backend_key} "
                         f"is being torn down; a new backend cannot be "
-                        f"initialized until teardown completes."
+                        f"initialized until teardown completes. This is an odd bug, please report it."
                     )
                 if backend_state.init_error is not None:
                     raise RuntimeError(

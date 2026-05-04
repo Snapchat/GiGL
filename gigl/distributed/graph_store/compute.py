@@ -88,6 +88,7 @@ def shutdown_compute_proccess() -> None:
     ``torch.distributed.destroy_process_group`` exactly once per
     compute process. (Function name is misspelled and kept for
     back-compat with downstream training scripts.)
+    # TODO(kmonte): fix typo.
 
     Should be called *once* per compute process (e.g. one per process
     per compute node, once per
