@@ -10,6 +10,7 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from gigl.src.common.vertex_ai_launcher import (
+    _build_job_config,
     launch_graph_store_enabled_job,
     launch_single_pool_job,
 )
@@ -333,6 +334,52 @@ class TestVertexAILauncher(TestCase):
             "cost_resource_group": "gigl_inference",
         }
         self.assertEqual(job_config.labels, expected_labels)
+
+
+    def test_build_job_config_threads_experiment_name(self) -> None:
+        """Test that tensorboard_experiment_name is forwarded to VertexAiJobConfig."""
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+        )
+        cfg = _build_job_config(
+            job_name="job",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+            tensorboard_experiment_name="my-comparison",
+        )
+        self.assertEqual(cfg.tensorboard_experiment_name, "my-comparison")
+
+    def test_build_job_config_experiment_name_default(self) -> None:
+        """Test that tensorboard_experiment_name defaults to None/empty when not provided."""
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+        )
+        cfg = _build_job_config(
+            job_name="job",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+        )
+        self.assertFalse(cfg.tensorboard_experiment_name)
 
 
 if __name__ == "__main__":

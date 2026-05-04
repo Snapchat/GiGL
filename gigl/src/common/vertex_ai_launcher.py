@@ -237,6 +237,7 @@ def _build_job_config(
     env_vars: list[env_var.EnvVar],
     labels: Optional[dict[str, str]] = None,
     tensorboard_logs_uri: Optional[Uri] = None,
+    tensorboard_experiment_name: Optional[str] = None,
 ) -> VertexAiJobConfig:
     """Build a VertexAiJobConfig for training or inference jobs.
 
@@ -258,6 +259,9 @@ def _build_job_config(
         env_vars (list[env_var.EnvVar]): Environment variables to set in the container.
         labels (Optional[dict[str, str]]): Labels to associate with the job. Defaults to None.
         tensorboard_logs_uri (Optional[Uri]): TensorBoard log URI for trainer jobs.
+        tensorboard_experiment_name (Optional[str]): If set, the job is
+            submitted as a run of the named Vertex AI Experiment. See
+            ``VertexAiJobConfig.tensorboard_experiment_name``.
 
     Returns:
         VertexAiJobConfig: A configuration object ready to be used with VertexAIService.launch_job().
@@ -315,6 +319,7 @@ def _build_job_config(
             if base_output_dir is not None
             else None
         ),
+        tensorboard_experiment_name=tensorboard_experiment_name,
     )
     return job_config
 
