@@ -111,5 +111,101 @@ class TestTensorBoardWriter(TestCase):
         writer.close()  # Idempotent on no-op writer.
 
 
+class TestTensorBoardWriterUploader(TestCase):
+    """Tests for the chief-rank ``aiplatform.start_upload_tb_log`` hook."""
+
+    _LOG_DIR = "gs://vertex-managed/logs"
+    _TB_RESOURCE = "projects/my-project/locations/us-central1/tensorboards/42"
+    _EXPERIMENT = "my-comparison"
+
+    def test_uploader_starts_when_both_env_vars_present(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR,
+                "GIGL_TENSORBOARD_RESOURCE_NAME": self._TB_RESOURCE,
+                "GIGL_TENSORBOARD_EXPERIMENT_NAME": self._EXPERIMENT,
+            },
+            clear=True,
+        ):
+            with patch(
+                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
+            ):
+                with patch(
+                    "google.cloud.aiplatform.start_upload_tb_log"
+                ) as mock_start, patch(
+                    "google.cloud.aiplatform.init"
+                ) as mock_init, patch(
+                    "google.cloud.aiplatform.end_upload_tb_log"
+                ) as mock_end:
+                    writer = TensorBoardWriter.from_env()
+                    writer.close()
+
+        mock_init.assert_called_once_with(
+            project="my-project", location="us-central1"
+        )
+        mock_start.assert_called_once_with(
+            tensorboard_id="42",
+            tensorboard_experiment_name=self._EXPERIMENT,
+            logdir=self._LOG_DIR,
+        )
+        mock_end.assert_called_once()
+
+    def test_uploader_does_not_start_when_only_log_dir_set(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR},
+            clear=True,
+        ):
+            with patch(
+                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
+            ):
+                with patch(
+                    "google.cloud.aiplatform.start_upload_tb_log"
+                ) as mock_start, patch(
+                    "google.cloud.aiplatform.end_upload_tb_log"
+                ) as mock_end:
+                    writer = TensorBoardWriter.from_env()
+                    writer.close()
+
+        mock_start.assert_not_called()
+        mock_end.assert_not_called()
+
+    def test_invalid_tb_resource_name_raises(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR,
+                "GIGL_TENSORBOARD_RESOURCE_NAME": "not-a-valid-resource-name",
+                "GIGL_TENSORBOARD_EXPERIMENT_NAME": self._EXPERIMENT,
+            },
+            clear=True,
+        ):
+            with patch(
+                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    TensorBoardWriter.from_env()
+
+        self.assertIn("GIGL_TENSORBOARD_RESOURCE_NAME", str(ctx.exception))
+
+    def test_uploader_skipped_for_disabled_writer(self) -> None:
+        """Non-chief ranks (enabled=False) skip both the writer and uploader."""
+        with patch.dict(
+            os.environ,
+            {
+                "AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR,
+                "GIGL_TENSORBOARD_RESOURCE_NAME": self._TB_RESOURCE,
+                "GIGL_TENSORBOARD_EXPERIMENT_NAME": self._EXPERIMENT,
+            },
+            clear=True,
+        ):
+            with patch("google.cloud.aiplatform.start_upload_tb_log") as mock_start:
+                writer = TensorBoardWriter.from_env(enabled=False)
+                writer.close()
+
+        mock_start.assert_not_called()
+
+
 if __name__ == "__main__":
     absltest.main()

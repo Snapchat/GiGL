@@ -1,7 +1,8 @@
 """TensorBoard writer for GiGL training entrypoints."""
 
 import os
-from typing import Any, Optional
+import re
+from typing import Any, Final, Optional
 
 import tensorflow as tf
 
@@ -15,7 +16,25 @@ import tensorflow as tf
 # References:
 #   https://cloud.google.com/vertex-ai/docs/training/code-requirements
 #   https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#FIELDS.base_output_directory
-_VERTEX_TENSORBOARD_LOG_DIR_ENV_KEY = "AIP_TENSORBOARD_LOG_DIR"
+_VERTEX_TENSORBOARD_LOG_DIR_ENV_KEY: Final[str] = "AIP_TENSORBOARD_LOG_DIR"
+
+# Set by GiGL's launcher (``gigl/src/common/vertex_ai_launcher.py``) when the
+# user requested a stable Vertex AI ``TensorboardExperiment`` for cross-job
+# comparison. When both env vars are set on the chief rank, the writer also
+# starts a background uploader (``aiplatform.start_upload_tb_log``) that
+# streams events from the log dir to that experiment's backing TB. Without
+# these, the writer just writes files to ``AIP_TENSORBOARD_LOG_DIR`` and no
+# upload happens.
+_GIGL_TENSORBOARD_RESOURCE_NAME_ENV_KEY: Final[str] = "GIGL_TENSORBOARD_RESOURCE_NAME"
+_GIGL_TENSORBOARD_EXPERIMENT_NAME_ENV_KEY: Final[str] = (
+    "GIGL_TENSORBOARD_EXPERIMENT_NAME"
+)
+
+_TENSORBOARD_RESOURCE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^projects/(?P<project>[^/]+)"
+    r"/locations/(?P<location>[^/]+)"
+    r"/tensorboards/(?P<tensorboard_id>[^/]+)$"
+)
 
 
 class TensorBoardWriter:
@@ -32,17 +51,26 @@ class TensorBoardWriter:
         ...     tb.log({"Loss/train": loss, "Loss/val": vloss}, step=batch_idx)
     """
 
-    def __init__(self, log_dir: Optional[str]) -> None:
+    def __init__(
+        self,
+        log_dir: Optional[str],
+        *,
+        upload_started: bool = False,
+    ) -> None:
         """Initialize the writer.
 
         Args:
             log_dir: Destination directory for TensorBoard events. When
                 ``None``, the writer is a no-op and allocates no TF resources.
+            upload_started: Whether ``aiplatform.start_upload_tb_log`` has
+                been called and needs a paired ``end_upload_tb_log`` on
+                ``close()``.
         """
         self._writer: Optional[Any] = (
             tf.summary.create_file_writer(log_dir) if log_dir else None
         )
         self._closed = False
+        self._upload_started = upload_started
 
     @classmethod
     def from_env(cls, *, enabled: bool = True) -> "TensorBoardWriter":
@@ -52,10 +80,18 @@ class TensorBoardWriter:
         the environment. This is the path non-chief ranks take so they can
         share the same call sites as the chief.
 
-        When ``enabled`` is ``True``, the env var must be set; otherwise this
-        raises ``RuntimeError`` rather than silently no-op'ing. The env var is
-        populated by Vertex AI from ``CustomJobSpec.baseOutputDirectory`` (see
-        the references in this module's header).
+        When ``enabled`` is ``True``:
+
+        - ``AIP_TENSORBOARD_LOG_DIR`` must be set; otherwise this raises
+          ``RuntimeError`` rather than silently no-op'ing. The env var is
+          populated by Vertex AI from ``CustomJobSpec.baseOutputDirectory``
+          (see the references in this module's header).
+        - If ``GIGL_TENSORBOARD_RESOURCE_NAME`` and
+          ``GIGL_TENSORBOARD_EXPERIMENT_NAME`` are also set, this also starts
+          a background ``aiplatform`` uploader that streams events from the
+          log dir to the named ``TensorboardExperiment`` under the configured
+          ``Tensorboard`` instance. The uploader is shut down on
+          :meth:`close`.
 
         Args:
             enabled: Whether this caller is responsible for writing events.
@@ -67,6 +103,8 @@ class TensorBoardWriter:
         Raises:
             RuntimeError: If ``enabled`` is True and ``AIP_TENSORBOARD_LOG_DIR``
                 is not set in the environment.
+            ValueError: If ``GIGL_TENSORBOARD_RESOURCE_NAME`` is set but does
+                not match ``projects/.../locations/.../tensorboards/...``.
         """
         if not enabled:
             return cls(log_dir=None)
@@ -78,7 +116,9 @@ class TensorBoardWriter:
                 "a Vertex AI CustomJob with baseOutputDirectory configured. "
                 "See https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#FIELDS.base_output_directory."
             )
-        return cls(log_dir=log_dir)
+
+        upload_started = _maybe_start_uploader(log_dir=log_dir)
+        return cls(log_dir=log_dir, upload_started=upload_started)
 
     def log(self, metrics: dict[str, float], step: int) -> None:
         """Write each metric scalar at ``step`` and flush.
@@ -98,16 +138,66 @@ class TensorBoardWriter:
             self._writer.flush()
 
     def close(self) -> None:
-        """Close the underlying TF writer.
+        """Close the underlying TF writer and stop the uploader if running.
 
         Idempotent; safe to call multiple times and on no-op writers.
         """
-        if self._writer is not None and not self._closed:
+        if self._closed:
+            return
+        if self._writer is not None:
             self._writer.close()
-            self._closed = True
+        if self._upload_started:
+            # Local import keeps the optional aiplatform dependency out of
+            # the no-op path.
+            from google.cloud import aiplatform
+
+            aiplatform.end_upload_tb_log()
+        self._closed = True
 
     def __enter__(self) -> "TensorBoardWriter":
         return self
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+
+def _maybe_start_uploader(*, log_dir: str) -> bool:
+    """Start the aiplatform TB uploader iff the GiGL env vars are present.
+
+    Returns ``True`` if the uploader was started (caller must arrange for
+    ``aiplatform.end_upload_tb_log`` on shutdown), ``False`` otherwise.
+
+    Args:
+        log_dir: Directory the uploader watches for new event files.
+
+    Raises:
+        ValueError: If ``GIGL_TENSORBOARD_RESOURCE_NAME`` is set but does not
+            match the expected resource-name format.
+    """
+    tb_resource_name = os.environ.get(_GIGL_TENSORBOARD_RESOURCE_NAME_ENV_KEY)
+    experiment_name = os.environ.get(_GIGL_TENSORBOARD_EXPERIMENT_NAME_ENV_KEY)
+    if not tb_resource_name or not experiment_name:
+        return False
+
+    match = _TENSORBOARD_RESOURCE_NAME_PATTERN.match(tb_resource_name)
+    if not match:
+        raise ValueError(
+            f"{_GIGL_TENSORBOARD_RESOURCE_NAME_ENV_KEY}={tb_resource_name!r} "
+            "does not match projects/.../locations/.../tensorboards/...; "
+            "the GiGL launcher should set this to the same resource name "
+            "configured on GiglResourceConfig."
+        )
+
+    # Local import: aiplatform is only needed when the user opts in.
+    from google.cloud import aiplatform
+
+    aiplatform.init(
+        project=match["project"],
+        location=match["location"],
+    )
+    aiplatform.start_upload_tb_log(
+        tensorboard_id=match["tensorboard_id"],
+        tensorboard_experiment_name=experiment_name,
+        logdir=log_dir,
+    )
+    return True

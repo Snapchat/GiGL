@@ -354,47 +354,6 @@ class VertexAIService:
 
         return self._submit_job(worker_pool_specs, compute_pool_job_config)
 
-    def _ensure_experiment_with_backing_tb(
-        self,
-        experiment_name: str,
-        tensorboard_resource_name: str,
-    ) -> None:
-        """Ensure ``experiment_name`` exists with ``tensorboard_resource_name`` as its backing TB.
-
-        Idempotent. Creates the Vertex AI Experiment if missing and assigns the
-        backing TB. If the experiment already exists with a different backing
-        TB, raises ``ValueError`` (silently uploading to the wrong TB would be
-        surprising and hard to debug).
-
-        Args:
-            experiment_name: The name of the Vertex AI Experiment.
-            tensorboard_resource_name: The fully-qualified resource name of the
-                Vertex AI Tensorboard to use as the backing TB.
-
-        Raises:
-            ValueError: If the experiment already exists with a different
-                backing tensorboard resource name.
-        """
-        experiment = aiplatform.Experiment.get(experiment_name)
-        if experiment is None:
-            experiment = aiplatform.Experiment.create(experiment_name)
-            experiment.assign_backing_tensorboard(tensorboard_resource_name)
-            return
-
-        backing = experiment.get_backing_tensorboard_resource()
-        if backing is None:
-            experiment.assign_backing_tensorboard(tensorboard_resource_name)
-            return
-
-        if backing.resource_name != tensorboard_resource_name:
-            raise ValueError(
-                f"Vertex AI Experiment {experiment_name!r} already has a "
-                f"backing tensorboard {backing.resource_name!r} that does not "
-                f"match the configured {tensorboard_resource_name!r}. Either "
-                "use a fresh experiment name or update the resource config to "
-                "the existing backing TB."
-            )
-
     def _submit_job(
         self,
         worker_pool_specs: Union[list[WorkerPoolSpec], list[dict]],
@@ -430,15 +389,15 @@ class VertexAIService:
                     f"is not a valid Vertex AI Experiment ID; it must match "
                     f"{_VERTEX_RESOURCE_ID_PATTERN.pattern}."
                 )
-            self._ensure_experiment_with_backing_tb(
-                experiment_name=job_config.tensorboard_experiment_name,
-                tensorboard_resource_name=job_config.tensorboard_resource_name,
-            )
-            # Don't pass experiment_run: when experiment is set but
-            # experiment_run is not, the SDK auto-generates an ExperimentRun
-            # for this job. Passing a name here invokes the run *getter*,
-            # which 404s for a not-yet-created run.
-            submit_kwargs["experiment"] = job_config.tensorboard_experiment_name
+            # Don't set ``experiment=`` or ``tensorboard=`` on submit. The
+            # SDK forbids both together, ``experiment=`` alone does NOT
+            # trigger TB streaming (Vertex's auto-uploader is gated on
+            # ``tensorboard=``), and ``tensorboard=`` alone uploads to a
+            # job-scoped experiment we can't rename. Instead, the launcher
+            # has injected ``GIGL_TENSORBOARD_*`` env vars into the worker
+            # container, and the trainer's ``TensorBoardWriter.from_env``
+            # runs ``aiplatform.start_upload_tb_log`` on the chief rank to
+            # stream events to the user-chosen experiment.
         else:
             submit_kwargs["tensorboard"] = job_config.tensorboard_resource_name
         job.submit(**submit_kwargs)

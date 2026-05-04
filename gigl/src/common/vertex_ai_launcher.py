@@ -297,12 +297,36 @@ def _build_job_config(
         else None
     )
 
+    # When the user opted into a stable Vertex AI TensorboardExperiment,
+    # ``VertexAIService._submit_job`` does NOT pass ``tensorboard=`` on submit
+    # (Vertex's auto-uploader would route to a job-scoped experiment we can't
+    # rename). Instead, the chief-rank trainer streams events itself via
+    # ``aiplatform.start_upload_tb_log``. Inject the resource name and
+    # experiment name as container env vars so the trainer can find them.
+    container_env_vars = list(env_vars)
+    if (
+        tensorboard_experiment_name
+        and vertex_ai_resource_config.tensorboard_resource_name
+    ):
+        container_env_vars.extend(
+            [
+                env_var.EnvVar(
+                    name="GIGL_TENSORBOARD_RESOURCE_NAME",
+                    value=vertex_ai_resource_config.tensorboard_resource_name,
+                ),
+                env_var.EnvVar(
+                    name="GIGL_TENSORBOARD_EXPERIMENT_NAME",
+                    value=tensorboard_experiment_name,
+                ),
+            ]
+        )
+
     job_config = VertexAiJobConfig(
         job_name=job_name,
         container_uri=container_uri,
         command=command,
         args=job_args,
-        environment_variables=env_vars,
+        environment_variables=container_env_vars,
         machine_type=vertex_ai_resource_config.machine_type,
         accelerator_type=vertex_ai_resource_config.gpu_type.upper().replace("-", "_"),
         accelerator_count=vertex_ai_resource_config.gpu_limit,

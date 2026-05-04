@@ -488,6 +488,67 @@ class TestVertexAILauncher(TestCase):
         )
         self.assertIsNone(cfg.tensorboard_experiment_name)
 
+    def test_build_job_config_injects_gigl_tensorboard_env_vars(self) -> None:
+        """When tensorboard_experiment_name is set with a TB resource, the
+        launcher injects env vars so the trainer's chief-rank uploader can
+        find the destination experiment.
+        """
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+        )
+        cfg = _build_job_config(
+            job_name="job",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+            tensorboard_experiment_name="my-comparison",
+        )
+        env = {ev.name: ev.value for ev in cfg.environment_variables or []}
+        self.assertEqual(
+            env["GIGL_TENSORBOARD_RESOURCE_NAME"],
+            "projects/p/locations/us/tensorboards/1",
+        )
+        self.assertEqual(env["GIGL_TENSORBOARD_EXPERIMENT_NAME"], "my-comparison")
+
+    def test_build_job_config_no_gigl_env_vars_when_experiment_name_unset(
+        self,
+    ) -> None:
+        """The GIGL_TENSORBOARD_* env vars are NOT injected on the legacy
+        ``submit(tensorboard=...)`` path.
+        """
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+        )
+        cfg = _build_job_config(
+            job_name="job",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+        )
+        env_names = {ev.name for ev in cfg.environment_variables or []}
+        self.assertNotIn("GIGL_TENSORBOARD_RESOURCE_NAME", env_names)
+        self.assertNotIn("GIGL_TENSORBOARD_EXPERIMENT_NAME", env_names)
+
 
 if __name__ == "__main__":
     absltest.main()
