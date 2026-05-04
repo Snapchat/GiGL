@@ -441,7 +441,7 @@ class TestVertexAILauncher(TestCase):
             compute_job_config.tensorboard_experiment_name, experiment_name
         )
         # Storage pool MUST NOT have the experiment name
-        self.assertFalse(storage_job_config.tensorboard_experiment_name)
+        self.assertIsNone(storage_job_config.tensorboard_experiment_name)
 
     def test_build_job_config_threads_experiment_name(self) -> None:
         """Test that tensorboard_experiment_name is forwarded to VertexAiJobConfig."""
@@ -486,7 +486,7 @@ class TestVertexAILauncher(TestCase):
             vertex_ai_resource_config=resource_config,
             env_vars=[],
         )
-        self.assertFalse(cfg.tensorboard_experiment_name)
+        self.assertIsNone(cfg.tensorboard_experiment_name)
 
 
 if __name__ == "__main__":
