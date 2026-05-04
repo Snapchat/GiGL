@@ -120,6 +120,28 @@ def check_vertex_ai_trainer_tensorboard_compatibility(
         "Config validation check: Vertex AI trainer TensorBoard compatibility between template and resource configs."
     )
 
+    experiment_name = gbml_config_pb_wrapper.trainer_config.tensorboard_experiment_name
+    if experiment_name:
+        trainer_resource_config = resource_config_wrapper.trainer_config
+        if isinstance(
+            trainer_resource_config, gigl_resource_config_pb2.VertexAiResourceConfig
+        ):
+            tb_resource = trainer_resource_config.tensorboard_resource_name
+        elif isinstance(
+            trainer_resource_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
+        ):
+            tb_resource = (
+                trainer_resource_config.compute_pool.tensorboard_resource_name
+            )
+        else:
+            tb_resource = ""
+        assert tb_resource, (
+            "GbmlConfig.trainer_config.tensorboard_experiment_name is set "
+            f"({experiment_name!r}) but no Vertex AI TensorBoard resource is "
+            "configured on the trainer resource config; the experiment needs a "
+            "backing TB resource."
+        )
+
     if not gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard:
         return
 
