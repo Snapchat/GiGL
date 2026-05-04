@@ -53,6 +53,7 @@ def launch_single_pool_job(
     component: GiGLComponents,
     vertex_ai_region: str,
     tensorboard_logs_uri: Optional[Uri] = None,
+    tensorboard_experiment_name: Optional[str] = None,
 ) -> None:
     """Launch a single pool job on Vertex AI.
 
@@ -69,6 +70,10 @@ def launch_single_pool_job(
         component: The GiGL component (Trainer or Inferencer)
         vertex_ai_region: The Vertex AI region to launch the job in
         tensorboard_logs_uri: Optional TensorBoard log URI for trainer jobs
+        tensorboard_experiment_name: Optional Vertex AI Experiment name. When set,
+            the trainer's CustomJob is submitted as a run of the named experiment so
+            multiple jobs sharing the name can be compared on a single TensorBoard
+            page. See ``VertexAiJobConfig.tensorboard_experiment_name``.
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(
@@ -93,6 +98,7 @@ def launch_single_pool_job(
         env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
         labels=resource_config_wrapper.get_resource_labels(component=component),
         tensorboard_logs_uri=tensorboard_logs_uri,
+        tensorboard_experiment_name=tensorboard_experiment_name,
     )
     logger.info(f"Launching {component.value} job with config: {job_config}")
 
@@ -119,6 +125,7 @@ def launch_graph_store_enabled_job(
     cuda_docker_uri: Optional[str],
     component: GiGLComponents,
     tensorboard_logs_uri: Optional[Uri] = None,
+    tensorboard_experiment_name: Optional[str] = None,
 ) -> None:
     """Launch a graph store enabled job on Vertex AI with separate storage and compute pools.
 
@@ -136,6 +143,10 @@ def launch_graph_store_enabled_job(
         cuda_docker_uri: Docker image URI for GPU execution
         component: The GiGL component (Trainer or Inferencer)
         tensorboard_logs_uri: Optional TensorBoard log URI for trainer jobs
+        tensorboard_experiment_name: Optional Vertex AI Experiment name. When set,
+            the trainer's CustomJob is submitted as a run of the named experiment so
+            multiple jobs sharing the name can be compared on a single TensorBoard
+            page. See ``VertexAiJobConfig.tensorboard_experiment_name``.
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(
@@ -190,6 +201,7 @@ def launch_graph_store_enabled_job(
         env_vars=environment_variables,
         labels=labels,
         tensorboard_logs_uri=tensorboard_logs_uri,
+        tensorboard_experiment_name=tensorboard_experiment_name,
     )
 
     # Create storage pool job config
