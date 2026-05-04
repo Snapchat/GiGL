@@ -1,15 +1,15 @@
 #include <gtest/gtest.h>
 #include "sampling/ppr_forward_push.h"
 
-using gigl::PPRForwardPushState;
+using gigl::PPRForwardPush;
 
-// Builds a single-edge-type, single-node-type PPRForwardPushState.
-static PPRForwardPushState makeState(
-    std::vector<int64_t> seeds,
+// Builds a single-edge-type, single-node-type PPRForwardPush.
+static PPRForwardPush makeState(
+    const std::vector<int64_t>& seeds,
     double alpha,
     double requeueThresholdFactor,
-    std::vector<int32_t> degrees) {
-    return PPRForwardPushState(
+    const std::vector<int32_t>& degrees) {
+    return PPRForwardPush(
         torch::tensor(seeds, torch::kLong),
         /*seedNodeTypeId=*/0,
         alpha,
@@ -23,9 +23,9 @@ static PPRForwardPushState makeState(
 // from flat vectors, keeping test call sites readable.
 static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
 makeFetched(int32_t edgeTypeId,
-            std::vector<int64_t> nodeIds,
-            std::vector<int64_t> flatNeighborIds,
-            std::vector<int64_t> counts) {
+            const std::vector<int64_t>& nodeIds,
+            const std::vector<int64_t>& flatNeighborIds,
+            const std::vector<int64_t>& counts) {
     return {{edgeTypeId,
              {torch::tensor(nodeIds, torch::kLong),
               torch::tensor(flatNeighborIds, torch::kLong),
@@ -37,9 +37,10 @@ TEST(PPRForwardPush, DrainQueueReturnsSeedNodeInitially) {
     auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1});
     auto result = state.drainQueue();
     ASSERT_TRUE(result.has_value());
-    ASSERT_NE(result->find(0), result->end());
-    EXPECT_EQ(result->at(0).size(0), 1);
-    EXPECT_EQ(result->at(0)[0].item<int64_t>(), 0);
+    const auto& nodeMap = result.value();
+    ASSERT_NE(nodeMap.find(0), nodeMap.end());
+    EXPECT_EQ(nodeMap.at(0).size(0), 1);
+    EXPECT_EQ(nodeMap.at(0)[0].item<int64_t>(), 0);
 }
 
 // After convergence (sink node absorbs all residual), drainQueue() returns nullopt.
@@ -60,7 +61,7 @@ TEST(PPRForwardPush, PprScoreAbsorbsAlpha) {
     ASSERT_NE(topk.find(0), topk.end());
     const auto& [ids, weights, counts] = topk.at(0);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
-    EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5f);
+    EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5F);
 }
 
 // Node 0 (degree 1) pushes (1-alpha)*alpha residual to node 1 (sink).
@@ -84,8 +85,8 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     ASSERT_EQ(counts[0].item<int64_t>(), 2);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     EXPECT_EQ(ids[1].item<int64_t>(), 1);
-    EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5f);
-    EXPECT_NEAR(weights[1].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5f);
+    EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5F);
+    EXPECT_NEAR(weights[1].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5F);
 }
 
 // Two seeds (0 and 1) both push residual to sink node 2.  The neighbor-lookup
@@ -99,8 +100,9 @@ TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
 
     auto iter2 = state.drainQueue();
     ASSERT_TRUE(iter2.has_value());
-    ASSERT_NE(iter2->find(0), iter2->end());
-    EXPECT_EQ(iter2->at(0).size(0), 1);  // node 2 deduplicated in the lookup request
+    const auto& iter2Map = iter2.value();
+    ASSERT_NE(iter2Map.find(0), iter2Map.end());
+    EXPECT_EQ(iter2Map.at(0).size(0), 1);  // node 2 deduplicated in the lookup request
 
     state.pushResiduals({});
     EXPECT_FALSE(state.drainQueue().has_value());

@@ -1,3 +1,3 @@
-from gigl_core.ppr_forward_push import PPRForwardPushState
+from gigl_core.ppr_forward_push import PPRForwardPush
 
-__all__ = ["PPRForwardPushState"]
+__all__ = ["PPRForwardPush"]

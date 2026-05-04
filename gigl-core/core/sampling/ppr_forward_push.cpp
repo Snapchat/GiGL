@@ -18,13 +18,13 @@ static uint64_t packKey(int32_t nodeId, int32_t edgeTypeId) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) | static_cast<uint32_t>(edgeTypeId);
 }
 
-PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
-                                         int32_t seedNodeTypeId,
-                                         double alpha,
-                                         double requeueThresholdFactor,
-                                         std::vector<std::vector<int32_t>> nodeTypeToEdgeTypeIds,
-                                         std::vector<int32_t> edgeTypeToDstNtypeId,
-                                         std::vector<torch::Tensor> degreeTensors)
+PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
+                               int32_t seedNodeTypeId,
+                               double alpha,
+                               double requeueThresholdFactor,
+                               std::vector<std::vector<int32_t>> nodeTypeToEdgeTypeIds,
+                               std::vector<int32_t> edgeTypeToDstNtypeId,
+                               std::vector<torch::Tensor> degreeTensors)
     : _alpha(alpha),
       _requeueThresholdFactor(requeueThresholdFactor),
       // std::move transfers ownership of each vector into the member variable
@@ -91,7 +91,7 @@ PPRForwardPushState::PPRForwardPushState(const torch::Tensor& seedNodes,
     }
 }
 
-std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::drainQueue() {
+std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQueue() {
     if (_numNodesInQueue == 0) {
         return std::nullopt;
     }
@@ -146,7 +146,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     return result;
 }
 
-void PPRForwardPushState::pushResiduals(
+void PPRForwardPush::pushResiduals(
     const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
     // Step 1: Unpack the input map into a C++ map keyed by packKey(nodeId, edgeTypeId)
     // for fast lookup during the residual-push loop below.
@@ -232,9 +232,12 @@ void PPRForwardPushState::pushResiduals(
                     // any given (node, etype) key within one iteration.  drainQueue()
                     // only requests a fetch for nodes absent from _neighborCache, so a
                     // key is in at most one of the two.
-                    // Neighbor list for this (src, edgeTypeId) pair, if one exists —
-                    // either from `fetched` (new this iteration) or `_neighborCache`
-                    // (seen in a previous iteration).
+                    //
+                    // Neighbor list for this (src, edgeTypeId) pair, borrowed from whichever
+                    // map holds it.  reference_wrapper is used because std::optional cannot
+                    // hold a reference directly, and we want to avoid copying the vector —
+                    // the data already exists in fetched or _neighborCache and both outlive
+                    // this loop body.  Access via neighborList->get().
                     std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
                     auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
                     if (fetchedEntry != fetched.end()) {
@@ -284,7 +287,7 @@ void PPRForwardPushState::pushResiduals(
     }
 }
 
-std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPushState::extractTopK(
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::extractTopK(
     int32_t maxPprNodes) {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
@@ -320,7 +323,7 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
     return result;
 }
 
-int32_t PPRForwardPushState::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const {
+int32_t PPRForwardPush::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const {
     TORCH_CHECK(nodeTypeId >= 0, "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
     TORCH_CHECK(nodeTypeId < static_cast<int32_t>(_degreeTensors.size()),
                 "nodeTypeId ",

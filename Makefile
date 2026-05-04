@@ -165,20 +165,11 @@ type_check:
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
 
-check_lint_cpp: build_cpp_extensions
-	uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA)
+check_lint_cpp:
+	$(MAKE) -C gigl-core check_lint_cpp
 
-# Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
-# changes expressions, adds/removes keywords), not just style. Run manually and
-# review the diff before committing. Note: --fix cannot auto-repair every check;
-# some violations require manual edits.
-# --extra-arg=-Wno-ignored-optimization-argument suppresses GCC-specific LTO flags
-# (-fno-fat-lto-objects, -flto=auto) that cmake writes into compile_commands.json.
-# clang-tidy forwards compiler warnings via clang-diagnostic-*, and .clang-tidy sets
-# WarningsAsErrors: '*', so the warning must be silenced at the compiler level before
-# clang-tidy ever sees it.
-fix_lint_cpp: build_cpp_extensions
-	clang-tidy-15 --fix --extra-arg=-Wno-ignored-optimization-argument -p gigl-core/.cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA)
+fix_lint_cpp:
+	$(MAKE) -C gigl-core fix_lint_cpp
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

@@ -1,6 +1,6 @@
 import torch
 
-class PPRForwardPushState:
+class PPRForwardPush:
     def __init__(
         self,
         seed_nodes: torch.Tensor,

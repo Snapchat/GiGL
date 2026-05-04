@@ -33,6 +33,21 @@ check_format_cpp:
 format_cpp:
 	clang-format-15 -i --style=file $(CPP_SOURCES)
 
+# Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
+# changes expressions, adds/removes keywords), not just style. Run manually and
+# review the diff before committing. Note: --fix cannot auto-repair every check;
+# some violations require manual edits.
+# --extra-arg=-Wno-ignored-optimization-argument suppresses GCC-specific LTO flags
+# (-fno-fat-lto-objects, -flto=auto) that cmake writes into compile_commands.json.
+# clang-tidy forwards compiler warnings via clang-diagnostic-*, and .clang-tidy sets
+# WarningsAsErrors: '*', so the warning must be silenced at the compiler level before
+# clang-tidy ever sees it.
+check_lint_cpp: build_cpp_extensions
+	uv run python scripts/run_cpp_lint.py $(CPP_SOURCES_NO_CUDA)
+
+fix_lint_cpp: build_cpp_extensions
+	clang-tidy-15 --fix --extra-arg=-Wno-ignored-optimization-argument -p .cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA)
+
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.
 clean_cpp:
@@ -43,4 +58,4 @@ clean_build_files_cpp:
 
 # Declare targets as phony so make always runs their recipes, even if a file or
 # directory with the same name happens to exist on disk.
-.PHONY: build_cpp_extensions unit_test_cpp check_format_cpp format_cpp clean_cpp clean_build_files_cpp
+.PHONY: build_cpp_extensions unit_test_cpp check_format_cpp format_cpp check_lint_cpp fix_lint_cpp clean_cpp clean_build_files_cpp

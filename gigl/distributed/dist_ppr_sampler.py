@@ -4,9 +4,9 @@ from typing import Optional, Union
 
 import torch
 
-# TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPushState
+# TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
-from gigl_core import PPRForwardPushState
+from gigl_core import PPRForwardPush
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -146,7 +146,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # Build integer ID mappings for the C++ forward-push kernel.  String
         # NodeType / EdgeType keys are only used at the Python boundary
         # (translating to/from _sample_one_hop); all hot-loop state inside
-        # PPRForwardPushState is indexed by int32 IDs.
+        # PPRForwardPush is indexed by int32 IDs.
         #
         # We include both source types (have outgoing edges) and destination-only
         # types (no outgoing edges, but may accumulate PPR score during the walk)
@@ -365,7 +365,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
 
-        ppr_state = PPRForwardPushState(
+        ppr_state = PPRForwardPush(
             seed_nodes,
             self._node_type_to_id[seed_node_type],
             self._alpha,
@@ -529,7 +529,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # arbitrary.
             #
             # Each seed type's PPR computation is entirely independent: it creates
-            # its own PPRForwardPushState and only reads shared sampler attributes
+            # its own PPRForwardPush and only reads shared sampler attributes
             # (degree tensors, edge-type maps) which are immutable after __init__.
             # Running them with asyncio.gather allows their fetch phases to overlap,
             # which is most beneficial when there are 2+ distinct seed node types
