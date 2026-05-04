@@ -60,6 +60,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 """
 
 import datetime
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Final, Optional, Union
@@ -86,6 +87,39 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
+
+# Vertex AI Experiment / ExperimentRun resource IDs are MetadataStore Context
+# IDs and must satisfy this regex (the SDK builds the run's resource ID as
+# ``<experiment>-<run>``, so each part must individually conform).
+_VERTEX_RESOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[a-z0-9][a-z0-9-]{0,127}$"
+)
+
+
+def _sanitize_vertex_run_id(value: str) -> str:
+    """Coerce a GiGL job name to a valid Vertex AI ExperimentRun ID.
+
+    Lowercases the string and replaces ``_`` with ``-``. Validates the result.
+
+    Args:
+        value: A job name (typically GiGL ``gigl_train_...`` style).
+
+    Returns:
+        A string matching ``[a-z0-9][a-z0-9-]{0,127}``.
+
+    Raises:
+        ValueError: If sanitization can't produce a valid Vertex AI resource ID
+            (e.g. the input contains characters other than ``[A-Za-z0-9_-]`` or
+            is too long).
+    """
+    sanitized = value.lower().replace("_", "-")
+    if not _VERTEX_RESOURCE_ID_PATTERN.match(sanitized):
+        raise ValueError(
+            f"Cannot derive a valid Vertex AI ExperimentRun ID from {value!r}; "
+            f"after lowercasing and replacing underscores got {sanitized!r}, "
+            f"which does not match {_VERTEX_RESOURCE_ID_PATTERN.pattern}."
+        )
+    return sanitized
 
 
 @dataclass
@@ -415,12 +449,22 @@ class VertexAIService:
                     "tensorboard_experiment_name is set but tensorboard_resource_name "
                     "is not; the experiment needs a backing TB resource."
                 )
+            if not _VERTEX_RESOURCE_ID_PATTERN.match(
+                job_config.tensorboard_experiment_name
+            ):
+                raise ValueError(
+                    f"tensorboard_experiment_name {job_config.tensorboard_experiment_name!r} "
+                    f"is not a valid Vertex AI Experiment ID; it must match "
+                    f"{_VERTEX_RESOURCE_ID_PATTERN.pattern}."
+                )
             self._ensure_experiment_with_backing_tb(
                 experiment_name=job_config.tensorboard_experiment_name,
                 tensorboard_resource_name=job_config.tensorboard_resource_name,
             )
             submit_kwargs["experiment"] = job_config.tensorboard_experiment_name
-            submit_kwargs["experiment_run"] = job_config.job_name
+            submit_kwargs["experiment_run"] = _sanitize_vertex_run_id(
+                job_config.job_name
+            )
         else:
             submit_kwargs["tensorboard"] = job_config.tensorboard_resource_name
         job.submit(**submit_kwargs)
