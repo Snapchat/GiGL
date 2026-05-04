@@ -59,6 +59,7 @@ class TestVertexAIService(TestCase):
             submit_kwargs["tensorboard"],
             job_config.tensorboard_resource_name,
         )
+        self.assertNotIn("experiment", submit_kwargs)
 
 
     def test_vertex_ai_job_config_carries_experiment_name(self) -> None:
@@ -70,6 +71,83 @@ class TestVertexAIService(TestCase):
             tensorboard_experiment_name="my-comparison",
         )
         self.assertEqual(cfg.tensorboard_experiment_name, "my-comparison")
+
+    @patch("gigl.common.services.vertex_ai.aiplatform.Experiment")
+    @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_submit_job_uses_experiment_when_set(
+        self,
+        mock_aiplatform_init: Mock,
+        mock_custom_job_class: Mock,
+        mock_experiment_cls: Mock,
+    ) -> None:
+        """When tensorboard_experiment_name is set, submit uses experiment= and experiment_run= instead of tensorboard=."""
+        mock_exp = Mock()
+        mock_exp.get_backing_tensorboard_resource.return_value = Mock(
+            resource_name="projects/test/locations/us-central1/tensorboards/123"
+        )
+        mock_experiment_cls.get.return_value = mock_exp
+
+        mock_job = Mock()
+        mock_job.resource_name = "projects/test/locations/us-central1/customJobs/456"
+        mock_job.name = "456"
+        mock_custom_job_class.return_value = mock_job
+
+        service = VertexAIService(
+            project="test-project",
+            location="us-central1",
+            service_account="svc@test-project.iam.gserviceaccount.com",
+            staging_bucket="gs://test-staging-bucket",
+        )
+
+        job_config = VertexAiJobConfig(
+            job_name="test-job-exp",
+            container_uri="gcr.io/test/image:latest",
+            command=["python", "-m", "trainer"],
+            base_output_dir="gs://test-perm-bucket/test-job/trainer",
+            tensorboard_resource_name="projects/test/locations/us-central1/tensorboards/123",
+            tensorboard_experiment_name="my-comparison",
+        )
+
+        service.launch_job(job_config=job_config)
+
+        mock_job.submit.assert_called_once()
+        submit_kwargs = mock_job.submit.call_args.kwargs
+        self.assertEqual(submit_kwargs["experiment"], "my-comparison")
+        self.assertEqual(submit_kwargs["experiment_run"], job_config.job_name)
+        self.assertNotIn("tensorboard", submit_kwargs)
+
+    @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_submit_job_raises_when_experiment_name_set_but_no_tb_resource(
+        self,
+        mock_aiplatform_init: Mock,
+        mock_custom_job_class: Mock,
+    ) -> None:
+        """When tensorboard_experiment_name is set but tensorboard_resource_name is empty, raises ValueError."""
+        mock_job = Mock()
+        mock_custom_job_class.return_value = mock_job
+
+        service = VertexAIService(
+            project="test-project",
+            location="us-central1",
+            service_account="svc@test-project.iam.gserviceaccount.com",
+            staging_bucket="gs://test-staging-bucket",
+        )
+
+        job_config = VertexAiJobConfig(
+            job_name="test-job-no-tb",
+            container_uri="gcr.io/test/image:latest",
+            command=["python", "-m", "trainer"],
+            base_output_dir="gs://test-perm-bucket/test-job/trainer",
+            tensorboard_resource_name="",
+            tensorboard_experiment_name="my-comparison",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            service.launch_job(job_config=job_config)
+
+        self.assertIn("tensorboard_resource_name", str(ctx.exception))
 
 
 class TestEnsureExperimentWithBackingTb(TestCase):

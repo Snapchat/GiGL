@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Final, Optional, Union
+from typing import Any, Final, Optional, Union
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -403,13 +403,27 @@ class VertexAIService:
             staging_bucket=self._staging_bucket,
             base_output_dir=job_config.base_output_dir,
         )
-        job.submit(
+        submit_kwargs: dict[str, Any] = dict(
             service_account=self._service_account,
             timeout=job_config.timeout_s,
             enable_web_access=job_config.enable_web_access,
             scheduling_strategy=job_config.scheduling_strategy,
-            tensorboard=job_config.tensorboard_resource_name,
         )
+        if job_config.tensorboard_experiment_name:
+            if not job_config.tensorboard_resource_name:
+                raise ValueError(
+                    "tensorboard_experiment_name is set but tensorboard_resource_name "
+                    "is not; the experiment needs a backing TB resource."
+                )
+            self._ensure_experiment_with_backing_tb(
+                experiment_name=job_config.tensorboard_experiment_name,
+                tensorboard_resource_name=job_config.tensorboard_resource_name,
+            )
+            submit_kwargs["experiment"] = job_config.tensorboard_experiment_name
+            submit_kwargs["experiment_run"] = job_config.job_name
+        else:
+            submit_kwargs["tensorboard"] = job_config.tensorboard_resource_name
+        job.submit(**submit_kwargs)
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")
         # Copying https://github.com/googleapis/python-aiplatform/blob/v1.48.0/google/cloud/aiplatform/jobs.py#L207-L215
