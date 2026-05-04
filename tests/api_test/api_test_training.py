@@ -26,6 +26,7 @@ frozen config generated from the `config_populator` component after the run has 
 import argparse
 import statistics
 import time
+import warnings
 from collections.abc import Iterator
 from typing import Literal, Optional
 
@@ -641,9 +642,11 @@ def _run_example_training(
     mp.set_start_method("spawn")
     logger.info(f"Starting sub process method: {mp.get_start_method()}")
 
-    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        gbml_config_uri=UriFactory.create_uri(task_config_uri)
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+            gbml_config_uri=UriFactory.create_uri(task_config_uri)
+        )
 
     # Training Hyperparameters for the training and test processes
 

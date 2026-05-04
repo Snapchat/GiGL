@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import warnings
 
 import google.protobuf.message
 from absl.testing import absltest
@@ -159,6 +160,7 @@ def _create_valid_offline_subgraph_sampling_task_config() -> gbml_config_pb2.Gbm
         dataset_config=dataset_config,
         trainer_config=trainer_config,
         inferencer_config=inferencer_config,
+        feature_flags={"should_run_glt_backend": "False"},
     )
 
 
@@ -331,12 +333,14 @@ class TestConfigValidationPerSGSBackends(TestCase):
             else self._offline_resource_config_uri
         )
 
-        kfp_validation_checks(
-            job_name="resource_config_validation_test",
-            task_config_uri=task_config_uri,
-            start_at="config_populator",
-            resource_config_uri=resource_config_uri,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            kfp_validation_checks(
+                job_name="resource_config_validation_test",
+                task_config_uri=task_config_uri,
+                start_at="config_populator",
+                resource_config_uri=resource_config_uri,
+            )
 
     def test_resource_config_validation_failure_with_mock_configs(
         self,
@@ -344,12 +348,14 @@ class TestConfigValidationPerSGSBackends(TestCase):
         # For this setting, we should expect failure since the live SGS resource config does not have
         # sufficient fields to specify how to do offline subgraph sampling.
         with self.assertRaises(AssertionError):
-            kfp_validation_checks(
-                job_name="resource_config_validation_test",
-                task_config_uri=self._offline_task_config_uri,
-                start_at="config_populator",
-                resource_config_uri=self._live_resource_config_uri,
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                kfp_validation_checks(
+                    job_name="resource_config_validation_test",
+                    task_config_uri=self._offline_task_config_uri,
+                    start_at="config_populator",
+                    resource_config_uri=self._live_resource_config_uri,
+                )
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+import warnings
+
 from parameterized import param, parameterized
 
 from gigl.common.logger import Logger
@@ -22,6 +24,7 @@ _TEMPLATE_CONFIG_FOR_SGS = gbml_config_pb2.GbmlConfig(
     task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata(
         node_based_task_metadata=gbml_config_pb2.GbmlConfig.TaskMetadata.NodeBasedTaskMetadata()
     ),
+    feature_flags={"should_run_glt_backend": "False"},
 )
 
 _TEMPLATE_CONFIG_FOR_GLT = gbml_config_pb2.GbmlConfig(
@@ -46,9 +49,11 @@ class ConfigPopulatorUnitTest(TestCase):
             applied_task_identifier=self.applied_task_identifier,
             template_gbml_config_pb=_TEMPLATE_CONFIG_FOR_SGS,
         )
-        gbml_config_pb_wrapper = GbmlConfigPbWrapper(
-            gbml_config_pb=frozen_gbml_config_pb
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            gbml_config_pb_wrapper = GbmlConfigPbWrapper(
+                gbml_config_pb=frozen_gbml_config_pb
+            )
 
         # Check that preprocessed metadata uri is set.
         self.assertNotEqual(
@@ -148,9 +153,11 @@ class ConfigPopulatorUnitTest(TestCase):
         frozen_gbml_config_pb.feature_flags["should_populate_embeddings_path"] = str(
             should_populate_embeddings_path
         )
-        gbml_config_pb_wrapper = GbmlConfigPbWrapper(
-            gbml_config_pb=frozen_gbml_config_pb
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            gbml_config_pb_wrapper = GbmlConfigPbWrapper(
+                gbml_config_pb=frozen_gbml_config_pb
+            )
 
         # Check that preprocessed metadata uri is set.
         self.assertNotEqual(

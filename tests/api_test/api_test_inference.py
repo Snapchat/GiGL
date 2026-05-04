@@ -23,6 +23,7 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_test` fr
 import argparse
 import gc
 import time
+import warnings
 
 import torch
 import torch.multiprocessing as mp
@@ -299,9 +300,11 @@ def _run_example_inference(
     dataset = build_dataset_from_task_config_uri(task_config_uri=task_config_uri)
 
     # Read from GbmlConfig for preprocessed data metadata, GNN model uri, and bigquery embedding table path, and additional inference args
-    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        gbml_config_uri=UriFactory.create_uri(task_config_uri)
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+            gbml_config_uri=UriFactory.create_uri(task_config_uri)
+        )
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
