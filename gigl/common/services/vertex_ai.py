@@ -88,38 +88,11 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 
-# Vertex AI Experiment / ExperimentRun resource IDs are MetadataStore Context
-# IDs and must satisfy this regex (the SDK builds the run's resource ID as
-# ``<experiment>-<run>``, so each part must individually conform).
+# Vertex AI Experiment IDs are MetadataStore Context IDs and must satisfy
+# this regex.
 _VERTEX_RESOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^[a-z0-9][a-z0-9-]{0,127}$"
 )
-
-
-def _sanitize_vertex_run_id(value: str) -> str:
-    """Coerce a GiGL job name to a valid Vertex AI ExperimentRun ID.
-
-    Lowercases the string and replaces ``_`` with ``-``. Validates the result.
-
-    Args:
-        value: A job name (typically GiGL ``gigl_train_...`` style).
-
-    Returns:
-        A string matching ``[a-z0-9][a-z0-9-]{0,127}``.
-
-    Raises:
-        ValueError: If sanitization can't produce a valid Vertex AI resource ID
-            (e.g. the input contains characters other than ``[A-Za-z0-9_-]`` or
-            is too long).
-    """
-    sanitized = value.lower().replace("_", "-")
-    if not _VERTEX_RESOURCE_ID_PATTERN.match(sanitized):
-        raise ValueError(
-            f"Cannot derive a valid Vertex AI ExperimentRun ID from {value!r}; "
-            f"after lowercasing and replacing underscores got {sanitized!r}, "
-            f"which does not match {_VERTEX_RESOURCE_ID_PATTERN.pattern}."
-        )
-    return sanitized
 
 
 @dataclass
@@ -461,10 +434,11 @@ class VertexAIService:
                 experiment_name=job_config.tensorboard_experiment_name,
                 tensorboard_resource_name=job_config.tensorboard_resource_name,
             )
+            # Don't pass experiment_run: when experiment is set but
+            # experiment_run is not, the SDK auto-generates an ExperimentRun
+            # for this job. Passing a name here invokes the run *getter*,
+            # which 404s for a not-yet-created run.
             submit_kwargs["experiment"] = job_config.tensorboard_experiment_name
-            submit_kwargs["experiment_run"] = _sanitize_vertex_run_id(
-                job_config.job_name
-            )
         else:
             submit_kwargs["tensorboard"] = job_config.tensorboard_resource_name
         job.submit(**submit_kwargs)

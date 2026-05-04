@@ -4,11 +4,7 @@ from unittest.mock import Mock, patch
 
 from absl.testing import absltest
 
-from gigl.common.services.vertex_ai import (
-    VertexAiJobConfig,
-    VertexAIService,
-    _sanitize_vertex_run_id,
-)
+from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from tests.test_assets.test_case import TestCase
 
 
@@ -118,7 +114,8 @@ class TestVertexAIService(TestCase):
         mock_job.submit.assert_called_once()
         submit_kwargs = mock_job.submit.call_args.kwargs
         self.assertEqual(submit_kwargs["experiment"], "my-comparison")
-        self.assertEqual(submit_kwargs["experiment_run"], job_config.job_name)
+        # experiment_run intentionally NOT set: Vertex auto-generates one.
+        self.assertNotIn("experiment_run", submit_kwargs)
         self.assertNotIn("tensorboard", submit_kwargs)
 
     @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
@@ -263,82 +260,8 @@ class TestEnsureExperimentWithBackingTb(TestCase):
         mock_existing_experiment.assign_backing_tensorboard.assert_not_called()
 
 
-class TestSanitizeVertexRunId(TestCase):
-    """Tests for the _sanitize_vertex_run_id helper."""
-
-    def test_lowercases_and_replaces_underscores(self) -> None:
-        self.assertEqual(
-            _sanitize_vertex_run_id("gigl_train_hom_cora_sup_test_on_20260504_192055"),
-            "gigl-train-hom-cora-sup-test-on-20260504-192055",
-        )
-
-    def test_already_valid_passthrough(self) -> None:
-        self.assertEqual(
-            _sanitize_vertex_run_id("already-valid-id-123"),
-            "already-valid-id-123",
-        )
-
-    def test_uppercase_lowered(self) -> None:
-        self.assertEqual(_sanitize_vertex_run_id("MyJob"), "myjob")
-
-    def test_invalid_chars_after_sanitization_raises(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            _sanitize_vertex_run_id("has spaces and !@#")
-        self.assertIn("Vertex AI ExperimentRun ID", str(ctx.exception))
-
-    def test_leading_hyphen_rejected(self) -> None:
-        # Underscores at the start become hyphens, which violates the regex
-        # (the first character must be alphanumeric).
-        with self.assertRaises(ValueError):
-            _sanitize_vertex_run_id("_leading_underscore")
-
-
-class TestSubmitJobSanitizesRunId(TestCase):
-    """Tests that _submit_job applies sanitization and validation."""
-
-    @patch("gigl.common.services.vertex_ai.aiplatform.Experiment")
-    @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
-    @patch("gigl.common.services.vertex_ai.aiplatform.init")
-    def test_underscored_job_name_is_sanitized_for_experiment_run(
-        self,
-        mock_aiplatform_init: Mock,
-        mock_custom_job_class: Mock,
-        mock_experiment_cls: Mock,
-    ) -> None:
-        """The GiGL ``gigl_train_...`` job name must be coerced to a valid Vertex AI run ID."""
-        mock_exp = Mock()
-        mock_exp.get_backing_tensorboard_resource.return_value = Mock(
-            resource_name="projects/test/locations/us-central1/tensorboards/123"
-        )
-        mock_experiment_cls.get.return_value = mock_exp
-
-        mock_job = Mock()
-        mock_job.resource_name = "projects/test/locations/us-central1/customJobs/456"
-        mock_job.name = "456"
-        mock_custom_job_class.return_value = mock_job
-
-        service = VertexAIService(
-            project="test-project",
-            location="us-central1",
-            service_account="svc@test-project.iam.gserviceaccount.com",
-            staging_bucket="gs://test-staging-bucket",
-        )
-
-        job_config = VertexAiJobConfig(
-            job_name="gigl_train_my_run_20260504",
-            container_uri="gcr.io/test/image:latest",
-            command=["python", "-m", "trainer"],
-            base_output_dir="gs://test-perm-bucket/run/trainer",
-            tensorboard_resource_name="projects/test/locations/us-central1/tensorboards/123",
-            tensorboard_experiment_name="my-comparison",
-        )
-
-        service.launch_job(job_config=job_config)
-
-        submit_kwargs = mock_job.submit.call_args.kwargs
-        self.assertEqual(
-            submit_kwargs["experiment_run"], "gigl-train-my-run-20260504"
-        )
+class TestSubmitJobValidatesExperimentName(TestCase):
+    """Tests that _submit_job validates the user-supplied experiment name."""
 
     @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
     @patch("gigl.common.services.vertex_ai.aiplatform.init")
