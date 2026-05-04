@@ -61,5 +61,16 @@ class TestVertexAIService(TestCase):
         )
 
 
+    def test_vertex_ai_job_config_carries_experiment_name(self) -> None:
+        cfg = VertexAiJobConfig(
+            job_name="job",
+            container_uri="gcr.io/p/img:tag",
+            command=["python", "-m", "x"],
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+            tensorboard_experiment_name="my-comparison",
+        )
+        self.assertEqual(cfg.tensorboard_experiment_name, "my-comparison")
+
+
 if __name__ == "__main__":
     absltest.main()

@@ -140,6 +140,11 @@ class VertexAiJobConfig:
             ``AIP_TENSORBOARD_LOG_DIR`` from this directory.
         tensorboard_resource_name: Optional existing Vertex AI TensorBoard
             resource to attach to the job.
+        tensorboard_experiment_name: Optional Vertex AI Experiment name. When
+            set, the job is submitted with ``experiment=<name>`` (mutually
+            exclusive with ``tensorboard_resource_name`` on submit; see
+            ``_submit_job``). Multiple jobs sharing this name appear as
+            comparable runs on a single TensorBoard page.
     """
 
     job_name: str
@@ -160,6 +165,7 @@ class VertexAiJobConfig:
     reservation_affinity: Optional[ReservationAffinity] = None
     base_output_dir: Optional[str] = None
     tensorboard_resource_name: Optional[str] = None
+    tensorboard_experiment_name: Optional[str] = None
 
 
 class VertexAIService:
