@@ -201,6 +201,16 @@ message GbmlConfig {
     // Weather to log to tensorboard or not (defaults to false)
     bool should_log_to_tensorboard = 12;
 
+    // Optional. When set, the trainer's CustomJob is submitted as a run of
+    // a Vertex AI Experiment with this name (instead of attaching the raw
+    // Tensorboard resource directly). Multiple jobs that share the same
+    // value land in the same backing TensorboardExperiment, so they appear
+    // as comparable runs on one TensorBoard page. Requires
+    // GiglResourceConfig...tensorboard_resource_name to be set; that TB
+    // becomes the experiment's backing TB. Allowed characters: lowercase
+    // letters, digits, hyphens (Vertex AI Experiment ID rules).
+    string tensorboard_experiment_name = 14;
+
     // Configuration for GraphStore storage.
     // If setup, then GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config must be set.
     // e.g. With separte job configs for storage and compute jobs.

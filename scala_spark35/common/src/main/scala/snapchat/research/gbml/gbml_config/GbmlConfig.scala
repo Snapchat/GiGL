@@ -3966,6 +3966,15 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     *   Arguments to parameterize training process with.
     * @param shouldLogToTensorboard
     *   Weather to log to tensorboard or not (defaults to false)
+    * @param tensorboardExperimentName
+    *   Optional. When set, the trainer's CustomJob is submitted as a run of
+    *   a Vertex AI Experiment with this name (instead of attaching the raw
+    *   Tensorboard resource directly). Multiple jobs that share the same
+    *   value land in the same backing TensorboardExperiment, so they appear
+    *   as comparable runs on one TensorBoard page. Requires
+    *   GiglResourceConfig...tensorboard_resource_name to be set; that TB
+    *   becomes the experiment's backing TB. Allowed characters: lowercase
+    *   letters, digits, hyphens (Vertex AI Experiment ID rules).
     */
   @SerialVersionUID(0L)
   final case class TrainerConfig(
@@ -3973,6 +3982,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       trainerArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String] = _root_.scala.collection.immutable.Map.empty,
       executable: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty,
       shouldLogToTensorboard: _root_.scala.Boolean = false,
+      tensorboardExperimentName: _root_.scala.Predef.String = "",
       storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty,
       unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
       ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[TrainerConfig] {
@@ -4004,6 +4014,13 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           val __value = shouldLogToTensorboard
           if (__value != false) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeBoolSize(12, __value)
+          }
+        };
+
+        {
+          val __value = tensorboardExperimentName
+          if (!__value.isEmpty) {
+            __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(14, __value)
           }
         };
         if (storageConfig.graphStoreStorageConfig.isDefined) {
@@ -4047,6 +4064,12 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           _output__.writeUInt32NoTag(__m.serializedSize)
           __m.writeTo(_output__)
         };
+        {
+          val __v = tensorboardExperimentName
+          if (!__v.isEmpty) {
+            _output__.writeString(14, __v)
+          }
+        };
         executable.clsPath.foreach { __v =>
           val __m = __v
           _output__.writeString(100, __m)
@@ -4067,6 +4090,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def getCommand: _root_.scala.Predef.String = executable.command.getOrElse("")
       def withCommand(__v: _root_.scala.Predef.String): TrainerConfig = copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(__v))
       def withShouldLogToTensorboard(__v: _root_.scala.Boolean): TrainerConfig = copy(shouldLogToTensorboard = __v)
+      def withTensorboardExperimentName(__v: _root_.scala.Predef.String): TrainerConfig = copy(tensorboardExperimentName = __v)
       def getGraphStoreStorageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig = storageConfig.graphStoreStorageConfig.getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig.defaultInstance)
       def withGraphStoreStorageConfig(__v: snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig): TrainerConfig = copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(__v))
       def clearExecutable: TrainerConfig = copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty)
@@ -4088,6 +4112,10 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             val __t = shouldLogToTensorboard
             if (__t != false) __t else null
           }
+          case 14 => {
+            val __t = tensorboardExperimentName
+            if (__t != "") __t else null
+          }
           case 13 => storageConfig.graphStoreStorageConfig.orNull
         }
       }
@@ -4099,6 +4127,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           case 100 => executable.clsPath.map(_root_.scalapb.descriptors.PString(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 101 => executable.command.map(_root_.scalapb.descriptors.PString(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 12 => _root_.scalapb.descriptors.PBoolean(shouldLogToTensorboard)
+          case 14 => _root_.scalapb.descriptors.PString(tensorboardExperimentName)
           case 13 => storageConfig.graphStoreStorageConfig.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
         }
       }
@@ -4113,6 +4142,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       var __trainerClsPath: _root_.scala.Predef.String = ""
       val __trainerArgs: _root_.scala.collection.mutable.Builder[(_root_.scala.Predef.String, _root_.scala.Predef.String), _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = _root_.scala.collection.immutable.Map.newBuilder[_root_.scala.Predef.String, _root_.scala.Predef.String]
       var __shouldLogToTensorboard: _root_.scala.Boolean = false
+      var __tensorboardExperimentName: _root_.scala.Predef.String = ""
       var __executable: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty
       var __storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty
       var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
@@ -4131,6 +4161,8 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
             __executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(_input__.readStringRequireUtf8())
           case 96 =>
             __shouldLogToTensorboard = _input__.readBool()
+          case 114 =>
+            __tensorboardExperimentName = _input__.readStringRequireUtf8()
           case 106 =>
             __storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(__storageConfig.graphStoreStorageConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
           case tag =>
@@ -4144,6 +4176,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           trainerClsPath = __trainerClsPath,
           trainerArgs = __trainerArgs.result(),
           shouldLogToTensorboard = __shouldLogToTensorboard,
+          tensorboardExperimentName = __tensorboardExperimentName,
           executable = __executable,
           storageConfig = __storageConfig,
           unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
@@ -4156,6 +4189,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
           trainerClsPath = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           trainerArgs = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).map(_.as[_root_.scala.Seq[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry]]).getOrElse(_root_.scala.Seq.empty).iterator.map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig._typemapper_trainerArgs.toCustom(_)).toMap,
           shouldLogToTensorboard = __fieldsMap.get(scalaDescriptor.findFieldByNumber(12).get).map(_.as[_root_.scala.Boolean]).getOrElse(false),
+          tensorboardExperimentName = __fieldsMap.get(scalaDescriptor.findFieldByNumber(14).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           executable = __fieldsMap.get(scalaDescriptor.findFieldByNumber(100).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Predef.String]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.ClsPath(_))
               .orElse[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable](__fieldsMap.get(scalaDescriptor.findFieldByNumber(101).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Predef.String]]).map(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(_)))
               .getOrElse(snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty),
@@ -4183,6 +4217,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       trainerClsPath = "",
       trainerArgs = _root_.scala.collection.immutable.Map.empty,
       shouldLogToTensorboard = false,
+      tensorboardExperimentName = "",
       executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Empty,
       storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.Empty
     )
@@ -4393,6 +4428,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       def clsPath: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.getClsPath)((c_, f_) => c_.copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.ClsPath(f_)))
       def command: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.getCommand)((c_, f_) => c_.copy(executable = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable.Command(f_)))
       def shouldLogToTensorboard: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Boolean] = field(_.shouldLogToTensorboard)((c_, f_) => c_.copy(shouldLogToTensorboard = f_))
+      def tensorboardExperimentName: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.tensorboardExperimentName)((c_, f_) => c_.copy(tensorboardExperimentName = f_))
       def graphStoreStorageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.GraphStoreStorageConfig] = field(_.getGraphStoreStorageConfig)((c_, f_) => c_.copy(storageConfig = snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig.GraphStoreStorageConfig(f_)))
       def executable: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable] = field(_.executable)((c_, f_) => c_.copy(executable = f_))
       def storageConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig] = field(_.storageConfig)((c_, f_) => c_.copy(storageConfig = f_))
@@ -4402,6 +4438,7 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     final val CLS_PATH_FIELD_NUMBER = 100
     final val COMMAND_FIELD_NUMBER = 101
     final val SHOULD_LOG_TO_TENSORBOARD_FIELD_NUMBER = 12
+    final val TENSORBOARD_EXPERIMENT_NAME_FIELD_NUMBER = 14
     final val GRAPH_STORE_STORAGE_CONFIG_FIELD_NUMBER = 13
     @transient
     private[gbml_config] val _typemapper_trainerArgs: _root_.scalapb.TypeMapper[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry, (_root_.scala.Predef.String, _root_.scala.Predef.String)] = implicitly[_root_.scalapb.TypeMapper[snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.TrainerArgsEntry, (_root_.scala.Predef.String, _root_.scala.Predef.String)]]
@@ -4410,12 +4447,14 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       trainerArgs: _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String],
       executable: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.Executable,
       shouldLogToTensorboard: _root_.scala.Boolean,
+      tensorboardExperimentName: _root_.scala.Predef.String,
       storageConfig: snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig.StorageConfig
     ): _root_.snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig = _root_.snapchat.research.gbml.gbml_config.GbmlConfig.TrainerConfig(
       trainerClsPath,
       trainerArgs,
       executable,
       shouldLogToTensorboard,
+      tensorboardExperimentName,
       storageConfig
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GbmlConfig.TrainerConfig])
