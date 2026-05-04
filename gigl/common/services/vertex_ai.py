@@ -347,6 +347,47 @@ class VertexAIService:
 
         return self._submit_job(worker_pool_specs, compute_pool_job_config)
 
+    def _ensure_experiment_with_backing_tb(
+        self,
+        experiment_name: str,
+        tensorboard_resource_name: str,
+    ) -> None:
+        """Ensure ``experiment_name`` exists with ``tensorboard_resource_name`` as its backing TB.
+
+        Idempotent. Creates the Vertex AI Experiment if missing and assigns the
+        backing TB. If the experiment already exists with a different backing
+        TB, raises ``ValueError`` (silently uploading to the wrong TB would be
+        surprising and hard to debug).
+
+        Args:
+            experiment_name: The name of the Vertex AI Experiment.
+            tensorboard_resource_name: The fully-qualified resource name of the
+                Vertex AI Tensorboard to use as the backing TB.
+
+        Raises:
+            ValueError: If the experiment already exists with a different
+                backing tensorboard resource name.
+        """
+        experiment = aiplatform.Experiment.get(experiment_name)
+        if experiment is None:
+            experiment = aiplatform.Experiment.create(experiment_name)
+            experiment.assign_backing_tensorboard(tensorboard_resource_name)
+            return
+
+        backing = experiment.get_backing_tensorboard_resource()
+        if backing is None:
+            experiment.assign_backing_tensorboard(tensorboard_resource_name)
+            return
+
+        if backing.resource_name != tensorboard_resource_name:
+            raise ValueError(
+                f"Vertex AI Experiment {experiment_name!r} already has a "
+                f"backing tensorboard {backing.resource_name!r} that does not "
+                f"match the configured {tensorboard_resource_name!r}. Either "
+                "use a fresh experiment name or update the resource config to "
+                "the existing backing TB."
+            )
+
     def _submit_job(
         self,
         worker_pool_specs: Union[list[WorkerPoolSpec], list[dict]],

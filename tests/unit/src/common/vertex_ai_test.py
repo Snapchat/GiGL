@@ -72,5 +72,114 @@ class TestVertexAIService(TestCase):
         self.assertEqual(cfg.tensorboard_experiment_name, "my-comparison")
 
 
+class TestEnsureExperimentWithBackingTb(TestCase):
+    """Tests for VertexAIService._ensure_experiment_with_backing_tb."""
+
+    _TB_RESOURCE_NAME = "projects/p/locations/us-central1/tensorboards/42"
+    _EXPERIMENT_NAME = "my-experiment"
+
+    def _make_service(self, mock_init: Mock) -> VertexAIService:
+        return VertexAIService(
+            project="test-project",
+            location="us-central1",
+            service_account="svc@test.iam.gserviceaccount.com",
+            staging_bucket="gs://test-bucket",
+        )
+
+    @patch("gigl.common.services.vertex_ai.aiplatform.Experiment")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_experiment_does_not_exist_creates_and_assigns(
+        self,
+        mock_init: Mock,
+        mock_experiment_class: Mock,
+    ) -> None:
+        """When the experiment doesn't exist, creates it and assigns backing TB."""
+        mock_experiment_class.get.return_value = None
+        mock_new_experiment = Mock()
+        mock_experiment_class.create.return_value = mock_new_experiment
+
+        service = self._make_service(mock_init)
+        service._ensure_experiment_with_backing_tb(
+            self._EXPERIMENT_NAME, self._TB_RESOURCE_NAME
+        )
+
+        mock_experiment_class.get.assert_called_once_with(self._EXPERIMENT_NAME)
+        mock_experiment_class.create.assert_called_once_with(self._EXPERIMENT_NAME)
+        mock_new_experiment.assign_backing_tensorboard.assert_called_once_with(
+            self._TB_RESOURCE_NAME
+        )
+
+    @patch("gigl.common.services.vertex_ai.aiplatform.Experiment")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_experiment_exists_no_backing_tb_assigns(
+        self,
+        mock_init: Mock,
+        mock_experiment_class: Mock,
+    ) -> None:
+        """When the experiment exists with no backing TB, assigns the backing TB."""
+        mock_existing_experiment = Mock()
+        mock_existing_experiment.get_backing_tensorboard_resource.return_value = None
+        mock_experiment_class.get.return_value = mock_existing_experiment
+
+        service = self._make_service(mock_init)
+        service._ensure_experiment_with_backing_tb(
+            self._EXPERIMENT_NAME, self._TB_RESOURCE_NAME
+        )
+
+        mock_experiment_class.create.assert_not_called()
+        mock_existing_experiment.assign_backing_tensorboard.assert_called_once_with(
+            self._TB_RESOURCE_NAME
+        )
+
+    @patch("gigl.common.services.vertex_ai.aiplatform.Experiment")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_experiment_exists_different_backing_tb_raises(
+        self,
+        mock_init: Mock,
+        mock_experiment_class: Mock,
+    ) -> None:
+        """When the experiment exists with a different backing TB, raises ValueError."""
+        mock_backing = Mock()
+        mock_backing.resource_name = "projects/p/locations/us-central1/tensorboards/99"
+        mock_existing_experiment = Mock()
+        mock_existing_experiment.get_backing_tensorboard_resource.return_value = (
+            mock_backing
+        )
+        mock_experiment_class.get.return_value = mock_existing_experiment
+
+        service = self._make_service(mock_init)
+        with self.assertRaises(ValueError) as ctx:
+            service._ensure_experiment_with_backing_tb(
+                self._EXPERIMENT_NAME, self._TB_RESOURCE_NAME
+            )
+
+        self.assertIn("backing tensorboard", str(ctx.exception).lower())
+
+    @patch("gigl.common.services.vertex_ai.aiplatform.Experiment")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_experiment_exists_matching_backing_tb_is_noop(
+        self,
+        mock_init: Mock,
+        mock_experiment_class: Mock,
+    ) -> None:
+        """When the experiment exists with the correct backing TB, does nothing."""
+        mock_backing = Mock()
+        mock_backing.resource_name = self._TB_RESOURCE_NAME
+        mock_existing_experiment = Mock()
+        mock_existing_experiment.get_backing_tensorboard_resource.return_value = (
+            mock_backing
+        )
+        mock_experiment_class.get.return_value = mock_existing_experiment
+
+        service = self._make_service(mock_init)
+        # Should not raise and should not call assign or create
+        service._ensure_experiment_with_backing_tb(
+            self._EXPERIMENT_NAME, self._TB_RESOURCE_NAME
+        )
+
+        mock_experiment_class.create.assert_not_called()
+        mock_existing_experiment.assign_backing_tensorboard.assert_not_called()
+
+
 if __name__ == "__main__":
     absltest.main()
