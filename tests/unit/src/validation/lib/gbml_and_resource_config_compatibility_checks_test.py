@@ -104,10 +104,21 @@ def _create_gbml_config_with_tensorboard_enabled() -> GbmlConfigPbWrapper:
 
 def _create_gbml_config_with_tensorboard_experiment_name(
     experiment_name: str = "my-comparison",
+    tensorboard_logs_uri: str = "",
 ) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with trainer tensorboard_experiment_name set."""
+    """Create a GbmlConfig with trainer tensorboard_experiment_name set.
+
+    Args:
+        experiment_name: The TensorBoard experiment name to set.
+        tensorboard_logs_uri: Optional GCS URI for TensorBoard logs. When non-empty,
+            sets ``shared_config.trained_model_metadata.tensorboard_logs_uri``.
+    """
     gbml_config = gbml_config_pb2.GbmlConfig()
     gbml_config.trainer_config.tensorboard_experiment_name = experiment_name
+    if tensorboard_logs_uri:
+        gbml_config.shared_config.trained_model_metadata.tensorboard_logs_uri = (
+            tensorboard_logs_uri
+        )
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
@@ -313,9 +324,10 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
         self.assertIn("tensorboard_experiment_name", str(ctx.exception))
 
     def test_experiment_name_set_with_tensorboard_resource_does_not_raise(self):
-        """tensorboard_experiment_name set and TB resource present → no exception."""
+        """tensorboard_experiment_name set, TB resource present, and logs URI set → no exception."""
         gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
-            experiment_name="my-comparison"
+            experiment_name="my-comparison",
+            tensorboard_logs_uri="gs://test-bucket/run/logs/",
         )
         resource_config = _create_resource_config_with_trainer_tensorboard(
             tensorboard_resource_name=(
@@ -329,15 +341,51 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
         )
 
     def test_experiment_name_set_with_graph_store_tensorboard_resource_does_not_raise(self):
-        """tensorboard_experiment_name set and graph-store TB resource present → no exception."""
+        """tensorboard_experiment_name set, graph-store TB resource present, and logs URI set → no exception."""
         gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
-            experiment_name="my-comparison"
+            experiment_name="my-comparison",
+            tensorboard_logs_uri="gs://test-bucket/run/logs/",
         )
         resource_config = _create_resource_config_with_trainer_tensorboard(
             tensorboard_resource_name=(
                 "projects/test-project/locations/us-central1/tensorboards/test"
             ),
             use_graph_store=True,
+        )
+
+        check_vertex_ai_trainer_tensorboard_compatibility(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
+
+    def test_experiment_name_set_without_tensorboard_logs_uri_raises(self):
+        """tensorboard_experiment_name set and TB resource present but logs URI empty → AssertionError mentioning tensorboard_logs_uri."""
+        gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
+            experiment_name="my-comparison",
+        )
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            )
+        )
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("tensorboard_logs_uri", str(ctx.exception))
+
+    def test_experiment_name_set_with_all_three_does_not_raise(self):
+        """tensorboard_experiment_name, tensorboard_resource_name, and tensorboard_logs_uri all set → no exception."""
+        gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
+            experiment_name="my-comparison",
+            tensorboard_logs_uri="gs://test-bucket/run/logs/",
+        )
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            )
         )
 
         check_vertex_ai_trainer_tensorboard_compatibility(

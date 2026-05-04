@@ -141,6 +141,16 @@ def check_vertex_ai_trainer_tensorboard_compatibility(
             "configured on the trainer resource config; the experiment needs a "
             "backing TB resource."
         )
+        tb_logs_uri = (
+            gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
+        )
+        assert tb_logs_uri, (
+            "GbmlConfig.trainer_config.tensorboard_experiment_name is set "
+            f"({experiment_name!r}) but "
+            "GbmlConfig.shared_config.trained_model_metadata.tensorboard_logs_uri "
+            "is not; the trainer needs a log directory under the CustomJob's "
+            "base_output_directory for the Experiment to receive events."
+        )
 
     if not gbml_config_pb_wrapper.trainer_config.should_log_to_tensorboard:
         return
