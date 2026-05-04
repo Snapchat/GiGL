@@ -16,7 +16,7 @@ outputs:
   comment_id:
     description: 'The ID of the created or updated comment'
     value: ${{steps.comment.outputs.result}}
-    
+
 
 runs:
   using: 'composite'
