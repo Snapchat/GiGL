@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from distutils.util import strtobool
 from typing import Optional
@@ -108,6 +109,18 @@ class GbmlConfigPbWrapper:
         else:
             logger.info(
                 "Skipping populating subgraph_sampling_strategy_pb_wrapper as the message is missing from the input config"
+            )
+
+        # The should_run_glt_backend feature flag is deprecated. Emit a
+        # DeprecationWarning whenever it appears in the loaded config so that
+        # callers update their configs before the flag is removed entirely.
+        if "should_run_glt_backend" in self.gbml_config_pb.feature_flags:
+            warnings.warn(
+                "The 'should_run_glt_backend' feature flag is deprecated and "
+                "will be removed in a future release. GLT is the default and "
+                "only supported backend; remove the flag from your config.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
     def __load_preprocessed_metadata_pb_wrapper(self, uri: str) -> None:
@@ -447,17 +460,20 @@ class GbmlConfigPbWrapper:
 
     @property
     def should_use_glt_backend(self) -> bool:
-        """
-        Allows access to should_use_glt_backend under GbmlConfig
+        """Returns whether to use GLT as a backend for the current run.
+
+        .. deprecated::
+            The ``should_run_glt_backend`` feature flag is deprecated and will
+            be removed in a future release. GLT is the default and only
+            supported backend going forward. Remove the flag from your config.
 
         Returns:
-            bool: Whether to use GLT as a backend for current run
+            bool: Whether to use GLT as a backend for current run. Defaults to True.
         """
-
         return bool(
             strtobool(
                 dict(self.gbml_config_pb.feature_flags).get(
-                    "should_run_glt_backend", "False"
+                    "should_run_glt_backend", "True"
                 )
             )
         )
