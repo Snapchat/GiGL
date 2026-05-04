@@ -54,6 +54,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       std::vector<torch::Tensor>>())
         .def("drain_queue", &gigl::PPRForwardPushState::drainQueue)
         .def("push_residuals", gigl::pushResidualsWrapper)
-        .def("extract_top_k", &gigl::PPRForwardPushState::extractTopK)
-        .def("get_nodes_drained_per_iteration", &gigl::PPRForwardPushState::getNodesDrainedPerIteration);
+        .def("extract_top_k", &gigl::PPRForwardPushState::extractTopK);
 }

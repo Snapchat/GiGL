@@ -61,8 +61,6 @@ class PPRForwardPushState {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
     extractTopK(int32_t maxPprNodes);
 
-    // Total nodes drained per drainQueue() call, across all seeds and node types.
-    [[nodiscard]] const std::vector<int32_t>& getNodesDrainedPerIteration() const;
 
    private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
@@ -100,8 +98,6 @@ class PPRForwardPushState {
     // Populated incrementally as nodes are processed; avoids re-fetching the same node twice.
     std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
 
-    // Total nodes drained (across all seeds and types) per drainQueue() call.
-    std::vector<int32_t> _nodesDrainedPerIteration;
 };
 
 }  // namespace gigl

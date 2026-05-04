@@ -15,7 +15,9 @@ CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
 .cache/cmake_build/CMakeInit.txt: $(shell find core \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
 	cd $(abspath $(CURDIR)/..) && uv pip install -e gigl-core/
 
-build_cpp_extensions: .cache/cmake_build/CMakeInit.txt
+# Also depend on the test cmake configure so that .cache/cpp_tests/compile_commands.json
+# is generated automatically, giving clangd visibility into test files and gtest headers.
+build_cpp_extensions: .cache/cmake_build/CMakeInit.txt .cache/cpp_tests/.configured
 
 .cache/cpp_tests/.configured: CMakeLists.txt tests/CMakeLists.txt .cache/cmake_build/CMakeInit.txt
 	cmake -C .cache/cmake_build/CMakeInit.txt -S . -B .cache/cpp_tests -DGIGL_CORE_BUILD_TESTS=ON

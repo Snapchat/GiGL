@@ -110,7 +110,6 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
     std::unordered_map<int32_t, std::unordered_set<int32_t>> nodesToLookup;
 
-    int32_t totalDrainedThisRound = 0;
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
         for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
             auto& seedNodeTypeState = _state[seedIdx][nodeTypeId];
@@ -123,9 +122,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
             // a moved-from container is "valid but unspecified", not necessarily empty.
             seedNodeTypeState.queuedNodes = std::move(seedNodeTypeState.queue);
             seedNodeTypeState.queue.clear();
-            auto numDrained = static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
-            totalDrainedThisRound += numDrained;
-            _numNodesInQueue -= numDrained;
+            _numNodesInQueue -= static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
 
             for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
@@ -137,18 +134,12 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
         }
     }
 
-    _nodesDrainedPerIteration.push_back(totalDrainedThisRound);
-
     std::unordered_map<int32_t, torch::Tensor> result;
     for (const auto& [edgeTypeId, nodeSet] : nodesToLookup) {
         std::vector<int64_t> nodeIdsToLookup(nodeSet.begin(), nodeSet.end());
         result[edgeTypeId] = torch::tensor(nodeIdsToLookup, torch::kLong);
     }
     return result;
-}
-
-const std::vector<int32_t>& PPRForwardPushState::getNodesDrainedPerIteration() const {
-    return _nodesDrainedPerIteration;
 }
 
 void PPRForwardPushState::pushResiduals(

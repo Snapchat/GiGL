@@ -22,13 +22,13 @@ static PPRForwardPushState makeState(
 // Convenience wrapper: build the fetchedByEtypeId argument for pushResiduals
 // from flat vectors, keeping test call sites readable.
 static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-makeFetched(int32_t etypeId,
+makeFetched(int32_t edgeTypeId,
             std::vector<int64_t> nodeIds,
-            std::vector<int64_t> flatNbrs,
+            std::vector<int64_t> flatNeighborIds,
             std::vector<int64_t> counts) {
-    return {{etypeId,
+    return {{edgeTypeId,
              {torch::tensor(nodeIds, torch::kLong),
-              torch::tensor(flatNbrs, torch::kLong),
+              torch::tensor(flatNeighborIds, torch::kLong),
               torch::tensor(counts, torch::kLong)}}};
 }
 
@@ -70,7 +70,7 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
 
     // Iteration 1: seed node 0 → neighbor node 1.
     state.drainQueue();
-    state.pushResiduals(makeFetched(/*etypeId=*/0, /*nodeIds=*/{0}, /*flatNbrs=*/{1}, /*counts=*/{1}));
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1}, /*counts=*/{1}));
 
     // Iteration 2: node 1 is a sink; absorbs its residual, no further push.
     state.drainQueue();
@@ -88,19 +88,33 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     EXPECT_NEAR(weights[1].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5f);
 }
 
-// Two seeds both push residual to node 2; the neighbor-lookup request deduplicates
-// to one entry, but getNodesDrainedPerIteration counts both seed queues.
+// Two seeds (0 and 1) both push residual to sink node 2.  The neighbor-lookup
+// request must deduplicate to one entry for node 2, yet both seeds must still
+// accumulate a PPR score for it.
 TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
     auto state = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1, 1, 0});
 
     state.drainQueue();
-    state.pushResiduals(makeFetched(/*etypeId=*/0, /*nodeIds=*/{0, 1}, /*flatNbrs=*/{2, 2}, /*counts=*/{1, 1}));
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0, 1}, /*flatNeighborIds=*/{2, 2}, /*counts=*/{1, 1}));
 
     auto iter2 = state.drainQueue();
     ASSERT_TRUE(iter2.has_value());
     ASSERT_NE(iter2->find(0), iter2->end());
-    EXPECT_EQ(iter2->at(0).size(0), 1);               // node 2 deduplicated in lookup
-    EXPECT_EQ(state.getNodesDrainedPerIteration()[1], 2);  // but drained from 2 seed queues
+    EXPECT_EQ(iter2->at(0).size(0), 1);  // node 2 deduplicated in the lookup request
+
+    state.pushResiduals({});
+    EXPECT_FALSE(state.drainQueue().has_value());
+
+    auto topk = state.extractTopK(10);
+    ASSERT_NE(topk.find(0), topk.end());
+    const auto& [ids, weights, counts] = topk.at(0);
+    // Each seed (batch indices 0 and 1) should have 2 nodes in its top-k.
+    EXPECT_EQ(counts[0].item<int64_t>(), 2);  // seed 0: nodes {0, 2}
+    EXPECT_EQ(counts[1].item<int64_t>(), 2);  // seed 1: nodes {1, 2}
+    // The flat id layout is [seed0_top1, seed0_top2, seed1_top1, seed1_top2].
+    // Within each seed the highest scorer comes first, so seed-node beats node 2.
+    EXPECT_EQ(ids[1].item<int64_t>(), 2);  // seed 0's second node is node 2
+    EXPECT_EQ(ids[3].item<int64_t>(), 2);  // seed 1's second node is node 2
 }
 
 // extractTopK respects the maxPprNodes limit.
@@ -108,7 +122,7 @@ TEST(PPRForwardPush, ExtractTopKLimitsResults) {
     auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1, 0});
 
     state.drainQueue();
-    state.pushResiduals(makeFetched(/*etypeId=*/0, /*nodeIds=*/{0}, /*flatNbrs=*/{1}, /*counts=*/{1}));
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1}, /*counts=*/{1}));
     state.drainQueue();
     state.pushResiduals({});
 
