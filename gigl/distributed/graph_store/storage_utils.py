@@ -114,7 +114,7 @@ def _run_storage_server_session(
        nodes for collective operations (e.g., degree tensor aggregation).
     3. **Waits for the server to exit.** The server blocks until clients
        call
-       :func:`gigl.distributed.graph_store.compute.shutdown_compute_proccess`.
+       :func:`gigl.distributed.graph_store.compute.shutdown_compute_process`.
 
     .. note::
         The GLT server is initialised *before* the ``torch.distributed``
@@ -167,7 +167,7 @@ def _run_storage_server_session(
         f"{storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
     # Wait for the server to exit.  Will block until clients also shut
-    # down (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`).
+    # down (with `gigl.distributed.graph_store.compute.shutdown_compute_process`).
     wait_and_shutdown_server()
 
     torch.distributed.destroy_process_group()

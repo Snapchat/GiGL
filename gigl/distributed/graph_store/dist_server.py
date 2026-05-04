@@ -19,9 +19,8 @@ Cluster teardown is a strict three-phase sequence:
    ``runtime.shutdown`` for the backend.
 2. **Per-compute-process.** After all loaders are torn down, the
    compute process calls
-   ``gigl.distributed.graph_store.compute.shutdown_compute_proccess``
-   (note the misspelling — kept for back-compat with downstream
-   training scripts), which calls ``glt.distributed.shutdown_client``
+   ``gigl.distributed.graph_store.compute.shutdown_compute_process``,
+   which calls ``glt.distributed.shutdown_client``
    and tears down the compute torch process group.
 3. **Per-storage-process.** ``wait_and_shutdown_server`` blocks until
    ``DistServer.exit`` flips, then runs ``DistServer.shutdown()``
@@ -51,7 +50,7 @@ def compute_process():
 
 
     # Step 2: Per-compute-process
-    shutdown_compute_proccess()
+    shutdown_compute_process()
 
 # Step 3: Per-storage-process
 wait_and_shutdown_server()
