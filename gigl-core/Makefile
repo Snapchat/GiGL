@@ -43,7 +43,7 @@ format_cpp:
 # WarningsAsErrors: '*', so the warning must be silenced at the compiler level before
 # clang-tidy ever sees it.
 check_lint_cpp: build_cpp_extensions
-	uv run python scripts/run_cpp_lint.py $(CPP_SOURCES_NO_CUDA)
+	cd $(abspath $(CURDIR)/..) && uv run python gigl-core/scripts/run_cpp_lint.py $(addprefix gigl-core/,$(CPP_SOURCES_NO_CUDA))
 
 fix_lint_cpp: build_cpp_extensions
 	clang-tidy-15 --fix --extra-arg=-Wno-ignored-optimization-argument -p .cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA)
