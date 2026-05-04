@@ -29,11 +29,6 @@ PPR_WEIGHT_METADATA_KEY = "ppr_weight."
 # Sentinel type names for homogeneous graphs.  The PPR algorithm uses
 # dict[NodeType, ...] internally for both homo and hetero graphs; these
 # sentinels let the homogeneous path reuse the same dict-based code.
-# TODO (mkolodner-sc): The sentinel approach adds an extra dict lookup on
-# every operation in the hot loop for homogeneous graphs (always resolving
-# the same single key).  Profile whether this overhead is meaningful
-# compared to the neighbor fetch and residual update costs, and consider
-# splitting into separate homo/hetero loop implementations if so.
 _PPR_HOMOGENEOUS_NODE_TYPE = "ppr_homogeneous_node_type"
 _PPR_HOMOGENEOUS_EDGE_TYPE = (
     _PPR_HOMOGENEOUS_NODE_TYPE,
@@ -99,7 +94,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     ):
         super().__init__(*args, **kwargs)
         self._alpha = alpha
-        self._eps = eps
         self._max_ppr_nodes = max_ppr_nodes
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop

@@ -61,7 +61,6 @@ class PPRForwardPushState {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
     extractTopK(int32_t maxPprNodes);
 
-
    private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
     [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;

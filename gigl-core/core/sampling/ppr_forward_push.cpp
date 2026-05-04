@@ -110,6 +110,10 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPushState::d
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
     std::unordered_map<int32_t, std::unordered_set<int32_t>> nodesToLookup;
 
+    // TODO: For homogeneous graphs _numNodeTypes == 1, so the inner loop always
+    // executes exactly once (nodeTypeId=0).  std::vector indexing is cheap, but a
+    // dedicated homogeneous code path could eliminate the loop entirely.  Profile
+    // before splitting.
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
         for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
             auto& seedNodeTypeState = _state[seedIdx][nodeTypeId];
