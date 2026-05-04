@@ -46,7 +46,7 @@ object EgoNetGeneration {
     spark.sql(
       s"""
         SELECT DISTINCT * FROM (
-          SELECT 
+          SELECT
             dst_node_id as src_node_id,
             src_node_id as dst_node_id,
             ${DEFAULT_EDGE_TYPE} as edge_type,
@@ -454,10 +454,10 @@ class EgoNetGeneration(
     val toNodeIdColumn        = flags.to_node_id_column
 
     println(s"""
-    Running EgoNetGeneration Job w/ 
-      nodeTableName: ${nodeTableName}, 
-      edgeTableName: ${edgeTableName}, 
-      fromNodeIdColumn: ${fromNodeIdColumn}, 
+    Running EgoNetGeneration Job w/
+      nodeTableName: ${nodeTableName},
+      edgeTableName: ${edgeTableName},
+      fromNodeIdColumn: ${fromNodeIdColumn},
       toNodeIdColumn: ${toNodeIdColumn}
     """)
 
