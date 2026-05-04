@@ -70,6 +70,11 @@ def get_max_labels_per_anchor_node_from_runtime_args(
             f"Invalid {MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG} value "
             f"{raw_max_labels_per_anchor_node!r}. Expected a positive integer."
         ) from exc
+    if parsed_max_labels_per_anchor_node <= 0:
+        raise ValueError(
+            f"Invalid {MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG} value "
+            f"{raw_max_labels_per_anchor_node!r}. Expected a positive integer."
+        )
     return parsed_max_labels_per_anchor_node
 
 
