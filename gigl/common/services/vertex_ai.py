@@ -360,7 +360,7 @@ class VertexAIService:
         # Since for some reason upgrading from VertexAI v1.27.1 to v1.48.0
         # caused the logs to occasionally not be printed.
         logger.info(
-            f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
+            f"See job logs at: https://console.cloud.google.com/agent-platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
         job.wait_for_completion()
         return job
