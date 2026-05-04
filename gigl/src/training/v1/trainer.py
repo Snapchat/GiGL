@@ -55,6 +55,9 @@ class Trainer:
                 if raw_tensorboard_logs_uri
                 else None
             )
+            tensorboard_experiment_name = (
+                gbml_config_pb_wrapper.trainer_config.tensorboard_experiment_name or None
+            )
             launch_single_pool_job(
                 vertex_ai_resource_config=trainer_config,
                 job_name=str(applied_task_identifier),
@@ -68,6 +71,7 @@ class Trainer:
                 component=GiGLComponents.Trainer,
                 vertex_ai_region=resource_config.vertex_ai_trainer_region,
                 tensorboard_logs_uri=tensorboard_logs_uri,
+                tensorboard_experiment_name=tensorboard_experiment_name,
             )
 
         elif isinstance(trainer_config, LocalResourceConfig):
