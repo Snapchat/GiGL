@@ -24,7 +24,6 @@ from gigl.distributed.dist_ppr_sampler import (
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler import NODE_LABELS_METADATA_KEY
 from gigl.distributed.sampler_options import (
     PPRSamplerOptions,
     SamplerOptions,
@@ -558,17 +557,6 @@ class DistNeighborLoader(BaseDistLoader):
             attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
             if isinstance(data, HeteroData):
                 data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
-
-        # GLT truncates multi-column node labels to a single column (nlabels.T[0]).
-        # The sampler stashes the full label tensor in metadata so we can restore it here.
-        # Homo: key is exactly NODE_LABELS_METADATA_KEY.
-        # Hetero: key is NODE_LABELS_METADATA_KEY + ntype (non-empty suffix).
-        for key in [k for k in list(metadata.keys()) if k.startswith(NODE_LABELS_METADATA_KEY)]:
-            ntype_suffix = key[len(NODE_LABELS_METADATA_KEY):]
-            if ntype_suffix:
-                data[ntype_suffix].y = metadata.pop(key)
-            else:
-                data.y = metadata.pop(key)
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.

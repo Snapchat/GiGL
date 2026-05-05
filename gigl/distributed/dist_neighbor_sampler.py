@@ -185,13 +185,4 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                 )
 
         self.inducer_pool.put(inducer)
-
-        # For multi-column node labels, stash the full label tensor in metadata
-        # so _collate_fn can restore it after GLT truncates data.y.
-        await self._attach_full_node_labels_to_metadata(
-            sampled_nodes=sample_output.node,
-            input_type=input_type,
-            metadata=metadata,
-        )
-
         return sample_output
