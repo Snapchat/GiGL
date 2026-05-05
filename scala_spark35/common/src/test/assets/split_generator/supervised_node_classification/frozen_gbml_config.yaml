@@ -29,3 +29,5 @@ sharedConfig:
       labeledTfrecordUriPrefix:  common/src/test/assets/split_generator/supervised_node_classification/sgs_output/labeled/samples/
       unlabeledTfrecordUriPrefix:  common/src/test/assets/split_generator/supervised_node_classification/sgs_output/unlabeled/samples/
   preprocessedMetadataUri: common/src/test/assets/split_generator/supervised_node_classification/preprocessed_metadata.yaml
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed
