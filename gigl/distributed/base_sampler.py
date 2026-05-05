@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -198,16 +198,27 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             metadata=metadata,
         )
 
-    async def _colloate_fn(
+    async def _send_adapter(
         self,
-        output: Union[SamplerOutput, HeteroSamplerOutput],
-    ) -> SampleMessage:
-        """Redirect to ``_collate_fn`` (corrected spelling).
+        async_func,
+        *args,
+        **kwargs,
+    ) -> Optional[SampleMessage]:
+        """Override GLT's ``_send_adapter`` to call ``_collate_fn`` (corrected spelling).
 
-        GLT's ``_send_adapter`` calls ``self._colloate_fn`` by name (typo), so this
-        stub must exist to intercept the call. All logic lives in ``_collate_fn``.
+        GLT's original calls ``self._colloate_fn`` (typo). This override is the
+        only place in GiGL that references the typo — everything else uses
+        ``_collate_fn``.
+
+        Copied from ``graphlearn_torch.distributed.DistNeighborSampler._send_adapter``
+        (GLT 0.2.4) with the single change of ``_colloate_fn`` → ``_collate_fn``.
         """
-        return await self._collate_fn(output)
+        sampler_output = await async_func(*args, **kwargs)
+        res = await self._collate_fn(sampler_output)
+        if self.channel is None:
+            return res
+        self.channel.send(res)
+        return None
 
     async def _collate_fn(
         self,
