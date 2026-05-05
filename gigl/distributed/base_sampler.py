@@ -13,6 +13,7 @@ from graphlearn_torch.sampler import (
     SamplerOutput,
 )
 from graphlearn_torch.typing import NodeType, as_str
+from graphlearn_torch.utils import reverse_edge_type
 
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
@@ -201,50 +202,169 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         self,
         output: Union[SamplerOutput, HeteroSamplerOutput],
     ) -> SampleMessage:
+        """Redirect to ``_collate_fn`` (corrected spelling).
+
+        GLT's ``_send_adapter`` calls ``self._colloate_fn`` by name (typo), so this
+        stub must exist to intercept the call. All logic lives in ``_collate_fn``.
+        """
+        return await self._collate_fn(output)
+
+    async def _collate_fn(
+        self,
+        output: Union[SamplerOutput, HeteroSamplerOutput],
+    ) -> SampleMessage:
         """Collect labels and features for the sampled subgraph into a SampleMessage.
 
-        Delegates to ``GLTDistNeighborSampler._colloate_fn``, then fetches node
-        labels via ``async_get`` to restore any columns dropped by GLT.
+        Copied from ``graphlearn_torch.distributed.DistNeighborSampler._colloate_fn``
+        (GLT 0.2.4).  The method name preserves GLT's original typo so that this
+        override is matched correctly at runtime.
 
-        GLT's implementation writes ``nlabels.T[0]`` for the ``DistFeature`` path,
-        which silently discards all label columns beyond the first and breaks
-        multi-label node classification.  After calling super, this override
-        fetches the label tensor and replaces the truncated value only when the
-        tensor has more than one column.  Single-label datasets keep GLT's 1-D
-        result unchanged, so existing code is unaffected.
-
-        The method name preserves GLT's original typo so the override is matched
-        correctly at runtime.
-
-        The fetch is only run when ``dist_node_labels`` is a ``DistFeature``; all
-        other label configurations (no labels, plain ``torch.Tensor``) pass through
-        unchanged because GLT does not truncate them.
+        The only behavioural change from the GLT original is in the ``DistFeature``
+        label-fetch paths (both homogeneous and heterogeneous): GLT writes
+        ``nlabels.T[0]``, which silently discards all label columns beyond the first
+        and breaks multi-label node classification.  This override writes the full
+        ``nlabels`` tensor instead, avoiding the extra RPC call that a super()-then-
+        re-fetch approach would require.  The non-``DistFeature`` path (plain
+        ``torch.Tensor`` labels) is unchanged — it never applied ``.T[0]``.
 
         Args:
-            output: The sampler output returned by ``_sample_from_nodes``.
+            output: The ``SamplerOutput`` or ``HeteroSamplerOutput`` returned by
+                ``_sample_from_nodes``.
 
         Returns:
-            A ``SampleMessage`` ready to be sent over the sampling channel.
+            A ``SampleMessage`` (``dict[str, torch.Tensor]``) ready to be sent
+            over the sampling channel or returned directly to the loader.
         """
-        result = await super()._colloate_fn(output)
-        if not isinstance(self.dist_node_labels, DistFeature):
-            return result
+        result_map: SampleMessage = {}
         is_hetero = self.dist_graph.data_cls == "hetero"
+        result_map["#IS_HETERO"] = torch.LongTensor([int(is_hetero)])
+        if isinstance(output.metadata, dict):
+            for k, v in output.metadata.items():
+                result_map[f"#META.{k}"] = v
+
         if is_hetero:
+            for ntype, nodes in output.node.items():
+                result_map[f"{as_str(ntype)}.ids"] = nodes
+                if output.num_sampled_nodes is not None:
+                    if ntype in output.num_sampled_nodes:
+                        result_map[f"{as_str(ntype)}.num_sampled_nodes"] = torch.tensor(
+                            output.num_sampled_nodes[ntype], device=self.device
+                        )
+            for etype, rows in output.row.items():
+                etype_str = as_str(etype)
+                result_map[f"{etype_str}.rows"] = rows
+                result_map[f"{etype_str}.cols"] = output.col[etype]
+                if self.with_edge:
+                    result_map[f"{etype_str}.eids"] = output.edge[etype]
+                if output.num_sampled_edges is not None:
+                    if etype in output.num_sampled_edges:
+                        result_map[f"{etype_str}.num_sampled_edges"] = torch.tensor(
+                            output.num_sampled_edges[etype], device=self.device
+                        )
             input_type = output.input_type
-            if input_type is not None and not isinstance(input_type, tuple):
-                fut = self.dist_node_labels.async_get(
-                    output.node[input_type], input_type
-                )
-                nlabels = await wrap_torch_future(fut)
-                if nlabels.ndim == 2 and nlabels.shape[1] > 1:
-                    result[f"{as_str(input_type)}.nlabels"] = nlabels
+            assert input_type is not None
+            if not isinstance(input_type, tuple):
+                if self.dist_node_labels is not None:
+                    if isinstance(self.dist_node_labels, DistFeature):
+                        fut = self.dist_node_labels.async_get(
+                            output.node[input_type], input_type
+                        )
+                        nlabels = await wrap_torch_future(fut)
+                        # GLT writes nlabels.T[0], which truncates multi-column labels
+                        # to a single column. Preserve 1-D shape for single-label but
+                        # keep the full matrix for multi-label.
+                        result_map[f"{as_str(input_type)}.nlabels"] = (
+                            nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
+                        )
+                    else:
+                        node_labels = self.dist_node_labels.get(input_type, None)
+                        if node_labels is not None:
+                            result_map[f"{as_str(input_type)}.nlabels"] = node_labels[
+                                output.node[input_type].to(node_labels.device)
+                            ]
+            if self.dist_node_feature is not None:
+                if self.use_all2all:
+                    sorted_ntype = sorted(self.dist_node_feature.feature_pb.keys())
+                    nfeat_dict = self.dist_node_feature.get_all2all(
+                        output, sorted_ntype
+                    )
+                    for ntype, nfeats in nfeat_dict.items():
+                        result_map[f"{as_str(ntype)}.nfeats"] = nfeats
+                else:
+                    nfeat_fut_dict = {}
+                    for ntype, nodes in output.node.items():
+                        nodes = nodes.to(torch.long)
+                        nfeat_fut_dict[ntype] = self.dist_node_feature.async_get(
+                            nodes, ntype
+                        )
+                    for ntype, fut in nfeat_fut_dict.items():
+                        nfeats = await wrap_torch_future(fut)
+                        result_map[f"{as_str(ntype)}.nfeats"] = nfeats
+            if self.dist_edge_feature is not None and self.with_edge:
+                efeat_fut_dict = {}
+                for etype in self.edge_types:
+                    if self.edge_dir == "in":
+                        eids = result_map.get(
+                            f"{as_str(reverse_edge_type(etype))}.eids", None
+                        )
+                    elif self.edge_dir == "out":
+                        eids = result_map.get(f"{as_str(etype)}.eids", None)
+                    if eids is not None:
+                        eids = eids.to(torch.long)
+                        efeat_fut_dict[etype] = self.dist_edge_feature.async_get(
+                            eids, etype
+                        )
+                for etype, fut in efeat_fut_dict.items():
+                    efeats = await wrap_torch_future(fut)
+                    if self.edge_dir == "out":
+                        result_map[f"{as_str(etype)}.efeats"] = efeats
+                    elif self.edge_dir == "in":
+                        result_map[f"{as_str(reverse_edge_type(etype))}.efeats"] = (
+                            efeats
+                        )
+            if output.batch is not None:
+                for ntype, batch in output.batch.items():
+                    result_map[f"{as_str(ntype)}.batch"] = batch
         else:
-            fut = self.dist_node_labels.async_get(output.node)
-            nlabels = await wrap_torch_future(fut)
-            if nlabels.ndim == 2 and nlabels.shape[1] > 1:
-                result["nlabels"] = nlabels
-        return result
+            result_map["ids"] = output.node
+            result_map["rows"] = output.row
+            result_map["cols"] = output.col
+            if output.num_sampled_nodes is not None:
+                result_map["num_sampled_nodes"] = torch.tensor(
+                    output.num_sampled_nodes, device=self.device
+                )
+                result_map["num_sampled_edges"] = torch.tensor(
+                    output.num_sampled_edges, device=self.device
+                )
+            if self.with_edge:
+                result_map["eids"] = output.edge
+            if self.dist_node_labels is not None:
+                if isinstance(self.dist_node_labels, DistFeature):
+                    fut = self.dist_node_labels.async_get(output.node)
+                    nlabels = await wrap_torch_future(fut)
+                    # GLT writes nlabels.T[0], which truncates multi-column labels
+                    # to a single column. Preserve 1-D shape for single-label but
+                    # keep the full matrix for multi-label.
+                    result_map["nlabels"] = (
+                        nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
+                    )
+                else:
+                    result_map["nlabels"] = self.dist_node_labels[
+                        output.node.to(self.dist_node_labels.device)
+                    ]
+            if self.dist_node_feature is not None:
+                fut = self.dist_node_feature.async_get(output.node)
+                nfeats = await wrap_torch_future(fut)
+                result_map["nfeats"] = nfeats
+            if self.dist_edge_feature is not None:
+                eids = result_map["eids"]
+                fut = self.dist_edge_feature.async_get(eids)
+                efeats = await wrap_torch_future(fut)
+                result_map["efeats"] = efeats
+            if output.batch is not None:
+                result_map["batch"] = output.batch
+
+        return result_map
 
     async def _sample_from_nodes(
         self,
