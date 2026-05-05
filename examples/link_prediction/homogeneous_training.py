@@ -363,211 +363,17 @@ def _training_process(
     is_chief_process = args.machine_rank == 0 and local_rank == 0
     tensorboard_writer = TensorBoardWriter.from_env(enabled=is_chief_process)
 
-    try:
-        loss_fn = RetrievalLoss(
-            loss=torch.nn.CrossEntropyLoss(reduction="mean"),
-            temperature=0.07,
-            remove_accidental_hits=True,
-        )
-        batch_idx = 0
+    loss_fn = RetrievalLoss(
+        loss=torch.nn.CrossEntropyLoss(reduction="mean"),
+        temperature=0.07,
+        remove_accidental_hits=True,
+    )
+    batch_idx = 0
 
-        if not args.should_skip_training:
-            train_main_loader, train_random_negative_loader = _setup_dataloaders(
-                dataset=args.dataset,
-                split="train",
-                num_neighbors=args.num_neighbors,
-                sampling_workers_per_process=args.sampling_workers_per_process,
-                main_batch_size=args.main_batch_size,
-                random_batch_size=args.random_batch_size,
-                device=device,
-                sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
-                process_start_gap_seconds=args.process_start_gap_seconds,
-            )
-
-            # We keep track of both the dataloader and the iterator for it
-            # so we can clean up resources from the dataloader later.
-            train_main_loader_iter = InfiniteIterator(train_main_loader)
-            train_random_negative_loader_iter = InfiniteIterator(
-                train_random_negative_loader
-            )
-
-            val_main_loader, val_random_negative_loader = _setup_dataloaders(
-                dataset=args.dataset,
-                split="val",
-                num_neighbors=args.num_neighbors,
-                sampling_workers_per_process=args.sampling_workers_per_process,
-                main_batch_size=args.main_batch_size,
-                random_batch_size=args.random_batch_size,
-                device=device,
-                sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
-                process_start_gap_seconds=args.process_start_gap_seconds,
-            )
-
-            # We keep track of both the dataloader and the iterator for it
-            # so we can clean up resources from the dataloader later.
-            val_main_loader_iter = InfiniteIterator(val_main_loader)
-            val_random_negative_loader_iter = InfiniteIterator(
-                val_random_negative_loader
-            )
-
-            model = init_example_gigl_homogeneous_model(
-                node_feature_dim=args.node_feature_dim,
-                edge_feature_dim=args.edge_feature_dim,
-                hid_dim=args.hid_dim,
-                out_dim=args.out_dim,
-                device=device,
-                wrap_with_ddp=True,  # We initialize the model for DDP
-                # Find unused parameters in the encoder.
-                # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
-                find_unused_encoder_parameters=True,
-            )
-
-            optimizer = torch.optim.AdamW(
-                params=model.parameters(),
-                lr=args.learning_rate,
-                weight_decay=args.weight_decay,
-            )
-            logger.info(
-                f"Model initialized on rank {rank} training device {device}\n{model}"
-            )
-
-            # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
-            torch.distributed.barrier()
-
-            # Entering the training loop
-            training_start_time = time.time()
-            avg_train_loss = 0.0
-            last_n_batch_avg_loss: list[float] = []
-            last_n_batch_time: list[float] = []
-            num_max_train_batches_per_process = args.num_max_train_batches // world_size
-            num_val_batches_per_process = args.num_val_batches // world_size
-            logger.info(
-                f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
-            )
-
-            model.train()
-
-            # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
-            batch_start = time.time()
-            for main_data, random_data in zip(
-                train_main_loader_iter, train_random_negative_loader_iter
-            ):
-                if batch_idx >= num_max_train_batches_per_process:
-                    logger.info(
-                        f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
-                        f"stopping training on machine {args.machine_rank} local rank {local_rank}"
-                    )
-                    break
-                loss = _compute_loss(
-                    model=model,
-                    main_data=main_data,
-                    random_negative_data=random_data,
-                    loss_fn=loss_fn,
-                    device=device,
-                )
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                avg_train_loss = _sync_metric_across_processes(metric=loss)
-                last_n_batch_avg_loss.append(avg_train_loss)
-                last_n_batch_time.append(time.time() - batch_start)
-                batch_start = time.time()
-                batch_idx += 1
-                if batch_idx % args.log_every_n_batch == 0:
-                    mean_batch_time = statistics.mean(last_n_batch_time)
-                    mean_train_loss = statistics.mean(last_n_batch_avg_loss)
-                    logger.info(
-                        f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
-                    )
-                    if torch.cuda.is_available():
-                        # Wait for GPU operations to finish
-                        torch.cuda.synchronize()
-                    logger.info(
-                        f"rank={rank}, mean(batch_time)={mean_batch_time:.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
-                    )
-                    tensorboard_writer.log(
-                        {
-                            "Time/batch_mean_sec": mean_batch_time,
-                            "Loss/train": mean_train_loss,
-                        },
-                        step=batch_idx,
-                    )
-                    last_n_batch_time.clear()
-                    # log the global average training loss
-                    logger.info(
-                        f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={mean_train_loss:.6f}"
-                    )
-                    last_n_batch_avg_loss.clear()
-
-                if batch_idx % args.val_every_n_batch == 0:
-                    logger.info(f"rank={rank}, batch={batch_idx}, validating...")
-                    model.eval()
-                    global_avg_val_loss = _run_validation_loops(
-                        model=model,
-                        main_loader=val_main_loader_iter,
-                        random_negative_loader=val_random_negative_loader_iter,
-                        loss_fn=loss_fn,
-                        device=device,
-                        log_every_n_batch=args.log_every_n_batch,
-                        num_batches=num_val_batches_per_process,
-                    )
-                    tensorboard_writer.log(
-                        {"Loss/val": global_avg_val_loss}, step=batch_idx
-                    )
-                    model.train()
-
-            logger.info(f"---Rank {rank} finished training")
-
-            # Memory cleanup and waiting for all processes to finish
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
-                torch.cuda.synchronize()  # Ensures all CUDA operations have finished
-            torch.distributed.barrier()  # Waits for all processes to reach the current point
-
-            # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
-            # observed that not all memory may be cleaned up, leading to OOM.
-            train_main_loader.shutdown()
-            train_random_negative_loader.shutdown()
-            val_main_loader.shutdown()
-            val_random_negative_loader.shutdown()
-
-            # We save the model on the process with the 0th node rank and 0th local rank.
-            if args.machine_rank == 0 and local_rank == 0:
-                logger.info(
-                    f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
-                )
-                # We unwrap the model from DDP to save it
-                # We do this so we can use the model without DDP later, e.g. for inference.
-                save_state_dict(
-                    model=model.unwrap_from_ddp(), save_to_path_uri=args.model_uri
-                )
-        else:  # should_skip_training is True, meaning we should only run testing
-            state_dict = load_state_dict_from_uri(
-                load_from_uri=args.model_uri, device=device
-            )
-            model = init_example_gigl_homogeneous_model(
-                node_feature_dim=args.node_feature_dim,
-                edge_feature_dim=args.edge_feature_dim,
-                hid_dim=args.hid_dim,
-                out_dim=args.out_dim,
-                device=device,
-                wrap_with_ddp=True,  # We initialize the model for DDP
-                # Find unused parameters in the encoder.
-                # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
-                find_unused_encoder_parameters=True,
-                state_dict=state_dict,  # We load the model state dict for testing
-            )
-            logger.info(
-                f"Model initialized on rank {rank} training device {device}\n{model}"
-            )
-
-        logger.info(f"---Rank {rank} started testing")
-        testing_start_time = time.time()
-        model.eval()
-
-        test_main_loader, test_random_negative_loader = _setup_dataloaders(
+    if not args.should_skip_training:
+        train_main_loader, train_random_negative_loader = _setup_dataloaders(
             dataset=args.dataset,
-            split="test",
+            split="train",
             num_neighbors=args.num_neighbors,
             sampling_workers_per_process=args.sampling_workers_per_process,
             main_batch_size=args.main_batch_size,
@@ -579,19 +385,135 @@ def _training_process(
 
         # We keep track of both the dataloader and the iterator for it
         # so we can clean up resources from the dataloader later.
-        # Since we are doing testing, we only want to go through the data once, so we use iter instead of InfiniteIterator.
-        test_main_loader_iter = iter(test_main_loader)
-        test_random_negative_loader_iter = iter(test_random_negative_loader)
-
-        global_avg_test_loss = _run_validation_loops(
-            model=model,
-            main_loader=test_main_loader_iter,
-            random_negative_loader=test_random_negative_loader_iter,
-            loss_fn=loss_fn,
-            device=device,
-            log_every_n_batch=args.log_every_n_batch,
+        train_main_loader_iter = InfiniteIterator(train_main_loader)
+        train_random_negative_loader_iter = InfiniteIterator(
+            train_random_negative_loader
         )
-        tensorboard_writer.log({"Loss/test": global_avg_test_loss}, step=batch_idx)
+
+        val_main_loader, val_random_negative_loader = _setup_dataloaders(
+            dataset=args.dataset,
+            split="val",
+            num_neighbors=args.num_neighbors,
+            sampling_workers_per_process=args.sampling_workers_per_process,
+            main_batch_size=args.main_batch_size,
+            random_batch_size=args.random_batch_size,
+            device=device,
+            sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
+            process_start_gap_seconds=args.process_start_gap_seconds,
+        )
+
+        # We keep track of both the dataloader and the iterator for it
+        # so we can clean up resources from the dataloader later.
+        val_main_loader_iter = InfiniteIterator(val_main_loader)
+        val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
+
+        model = init_example_gigl_homogeneous_model(
+            node_feature_dim=args.node_feature_dim,
+            edge_feature_dim=args.edge_feature_dim,
+            hid_dim=args.hid_dim,
+            out_dim=args.out_dim,
+            device=device,
+            wrap_with_ddp=True,  # We initialize the model for DDP
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
+        )
+
+        optimizer = torch.optim.AdamW(
+            params=model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+        )
+        logger.info(
+            f"Model initialized on rank {rank} training device {device}\n{model}"
+        )
+
+        # We add a barrier to wait for all processes to finish preparing the dataloader and initializing the model prior to the start of training
+        torch.distributed.barrier()
+
+        # Entering the training loop
+        training_start_time = time.time()
+        avg_train_loss = 0.0
+        last_n_batch_avg_loss: list[float] = []
+        last_n_batch_time: list[float] = []
+        num_max_train_batches_per_process = args.num_max_train_batches // world_size
+        num_val_batches_per_process = args.num_val_batches // world_size
+        logger.info(
+            f"num_max_train_batches_per_process is set to {num_max_train_batches_per_process}"
+        )
+
+        model.train()
+
+        # start_time gets updated every log_every_n_batch batches, batch_start gets updated every batch
+        batch_start = time.time()
+        for main_data, random_data in zip(
+            train_main_loader_iter, train_random_negative_loader_iter
+        ):
+            if batch_idx >= num_max_train_batches_per_process:
+                logger.info(
+                    f"num_max_train_batches_per_process={num_max_train_batches_per_process} reached, "
+                    f"stopping training on machine {args.machine_rank} local rank {local_rank}"
+                )
+                break
+            loss = _compute_loss(
+                model=model,
+                main_data=main_data,
+                random_negative_data=random_data,
+                loss_fn=loss_fn,
+                device=device,
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            avg_train_loss = _sync_metric_across_processes(metric=loss)
+            last_n_batch_avg_loss.append(avg_train_loss)
+            last_n_batch_time.append(time.time() - batch_start)
+            batch_start = time.time()
+            batch_idx += 1
+            if batch_idx % args.log_every_n_batch == 0:
+                mean_batch_time = statistics.mean(last_n_batch_time)
+                mean_train_loss = statistics.mean(last_n_batch_avg_loss)
+                logger.info(
+                    f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
+                )
+                if torch.cuda.is_available():
+                    # Wait for GPU operations to finish
+                    torch.cuda.synchronize()
+                logger.info(
+                    f"rank={rank}, mean(batch_time)={mean_batch_time:.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                )
+                tensorboard_writer.log(
+                    {
+                        "Time/batch_mean_sec": mean_batch_time,
+                        "Loss/train": mean_train_loss,
+                    },
+                    step=batch_idx,
+                )
+                last_n_batch_time.clear()
+                # log the global average training loss
+                logger.info(
+                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={mean_train_loss:.6f}"
+                )
+                last_n_batch_avg_loss.clear()
+
+            if batch_idx % args.val_every_n_batch == 0:
+                logger.info(f"rank={rank}, batch={batch_idx}, validating...")
+                model.eval()
+                global_avg_val_loss = _run_validation_loops(
+                    model=model,
+                    main_loader=val_main_loader_iter,
+                    random_negative_loader=val_random_negative_loader_iter,
+                    loss_fn=loss_fn,
+                    device=device,
+                    log_every_n_batch=args.log_every_n_batch,
+                    num_batches=num_val_batches_per_process,
+                )
+                tensorboard_writer.log(
+                    {"Loss/val": global_avg_val_loss}, step=batch_idx
+                )
+                model.train()
+
+        logger.info(f"---Rank {rank} finished training")
 
         # Memory cleanup and waiting for all processes to finish
         if torch.cuda.is_available():
@@ -599,34 +521,104 @@ def _training_process(
             torch.cuda.synchronize()  # Ensures all CUDA operations have finished
         torch.distributed.barrier()  # Waits for all processes to reach the current point
 
-        test_main_loader.shutdown()
-        test_random_negative_loader.shutdown()
+        # We explicitly shutdown all the dataloaders to reduce their memory footprint. Otherwise, experimentally we have
+        # observed that not all memory may be cleaned up, leading to OOM.
+        train_main_loader.shutdown()
+        train_random_negative_loader.shutdown()
+        val_main_loader.shutdown()
+        val_random_negative_loader.shutdown()
 
-        # Write eval metrics on the lead process only
-        # These get written to some JSON under the gcs://<PERM ASSETS BUCKET>/<APPLIED TASK IDENTIFIER>/trainer/trainer_eval_metrics.json
-        # And then the "Log Trainer Eval Metrics" component in the KFP pipeline UI will log them to the UI,
-        # as a metrics artifact.
-        if (
-            args.machine_rank == 0
-            and local_rank == 0
-            and args.eval_metrics_uri is not None
-        ):
-            eval_metrics = EvalMetricsCollection(
-                metrics=[
-                    EvalMetric.from_eval_metric_type(
-                        EvalMetricType.loss, global_avg_test_loss
-                    )
-                ]
+        # We save the model on the process with the 0th node rank and 0th local rank.
+        if args.machine_rank == 0 and local_rank == 0:
+            logger.info(
+                f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
             )
-            write_eval_metrics_to_uri(
-                eval_metrics=eval_metrics, eval_metrics_uri=args.eval_metrics_uri
+            # We unwrap the model from DDP to save it
+            # We do this so we can use the model without DDP later, e.g. for inference.
+            save_state_dict(
+                model=model.unwrap_from_ddp(), save_to_path_uri=args.model_uri
             )
-
-        logger.info(
-            f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
+    else:  # should_skip_training is True, meaning we should only run testing
+        state_dict = load_state_dict_from_uri(
+            load_from_uri=args.model_uri, device=device
         )
-    finally:
-        tensorboard_writer.close()
+        model = init_example_gigl_homogeneous_model(
+            node_feature_dim=args.node_feature_dim,
+            edge_feature_dim=args.edge_feature_dim,
+            hid_dim=args.hid_dim,
+            out_dim=args.out_dim,
+            device=device,
+            wrap_with_ddp=True,  # We initialize the model for DDP
+            # Find unused parameters in the encoder.
+            # We do this as the encoder model is initialized with all edge types in the graph, but the training task only uses a subset of them.
+            find_unused_encoder_parameters=True,
+            state_dict=state_dict,  # We load the model state dict for testing
+        )
+        logger.info(
+            f"Model initialized on rank {rank} training device {device}\n{model}"
+        )
+
+    logger.info(f"---Rank {rank} started testing")
+    testing_start_time = time.time()
+    model.eval()
+
+    test_main_loader, test_random_negative_loader = _setup_dataloaders(
+        dataset=args.dataset,
+        split="test",
+        num_neighbors=args.num_neighbors,
+        sampling_workers_per_process=args.sampling_workers_per_process,
+        main_batch_size=args.main_batch_size,
+        random_batch_size=args.random_batch_size,
+        device=device,
+        sampling_worker_shared_channel_size=args.sampling_worker_shared_channel_size,
+        process_start_gap_seconds=args.process_start_gap_seconds,
+    )
+
+    # We keep track of both the dataloader and the iterator for it
+    # so we can clean up resources from the dataloader later.
+    # Since we are doing testing, we only want to go through the data once, so we use iter instead of InfiniteIterator.
+    test_main_loader_iter = iter(test_main_loader)
+    test_random_negative_loader_iter = iter(test_random_negative_loader)
+
+    global_avg_test_loss = _run_validation_loops(
+        model=model,
+        main_loader=test_main_loader_iter,
+        random_negative_loader=test_random_negative_loader_iter,
+        loss_fn=loss_fn,
+        device=device,
+        log_every_n_batch=args.log_every_n_batch,
+    )
+    tensorboard_writer.log({"Loss/test": global_avg_test_loss}, step=batch_idx)
+
+    # Memory cleanup and waiting for all processes to finish
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # Releases all unoccupied cached memory currently held by the caching allocator on the CUDA-enabled GPU
+        torch.cuda.synchronize()  # Ensures all CUDA operations have finished
+    torch.distributed.barrier()  # Waits for all processes to reach the current point
+
+    test_main_loader.shutdown()
+    test_random_negative_loader.shutdown()
+
+    # Write eval metrics on the lead process only
+    # These get written to some JSON under the gcs://<PERM ASSETS BUCKET>/<APPLIED TASK IDENTIFIER>/trainer/trainer_eval_metrics.json
+    # And then the "Log Trainer Eval Metrics" component in the KFP pipeline UI will log them to the UI,
+    # as a metrics artifact.
+    if args.machine_rank == 0 and local_rank == 0 and args.eval_metrics_uri is not None:
+        eval_metrics = EvalMetricsCollection(
+            metrics=[
+                EvalMetric.from_eval_metric_type(
+                    EvalMetricType.loss, global_avg_test_loss
+                )
+            ]
+        )
+        write_eval_metrics_to_uri(
+            eval_metrics=eval_metrics, eval_metrics_uri=args.eval_metrics_uri
+        )
+
+    logger.info(
+        f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
+    )
+    tensorboard_writer.close()
 
     torch.distributed.destroy_process_group()
 
