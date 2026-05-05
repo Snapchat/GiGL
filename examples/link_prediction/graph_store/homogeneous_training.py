@@ -495,7 +495,9 @@ def _training_process(
             )
 
             val_main_loader_iter = InfiniteIterator(val_main_loader)
-            val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
+            val_random_negative_loader_iter = InfiniteIterator(
+                val_random_negative_loader
+            )
 
             model = init_example_gigl_homogeneous_model(
                 node_feature_dim=args.node_feature_dim,

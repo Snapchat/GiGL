@@ -328,7 +328,9 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
             resource_config_wrapper=resource_config,
         )
 
-    def test_experiment_name_set_with_graph_store_tensorboard_resource_does_not_raise(self):
+    def test_experiment_name_set_with_graph_store_tensorboard_resource_does_not_raise(
+        self,
+    ):
         """tensorboard_experiment_name set and graph-store TB resource present → no exception."""
         gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
             experiment_name="my-comparison"

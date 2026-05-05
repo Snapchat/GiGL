@@ -336,7 +336,6 @@ class TestVertexAILauncher(TestCase):
         }
         self.assertEqual(job_config.labels, expected_labels)
 
-
     @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
     def test_launch_single_pool_job_threads_experiment_name(
         self, mock_vertex_ai_service_class
@@ -523,9 +522,7 @@ class TestVertexAILauncher(TestCase):
         # GIGL_TENSORBOARD_RUN_NAME must be sanitized (underscores in the
         # job_name become hyphens) and carry a launch-unique timestamp suffix.
         run_name = env["GIGL_TENSORBOARD_RUN_NAME"]
-        self.assertRegex(
-            run_name, r"^gigl-train-some-task-\d{8}-\d{6}$"
-        )
+        self.assertRegex(run_name, r"^gigl-train-some-task-\d{8}-\d{6}$")
 
     def test_build_job_config_run_name_is_unique_per_call(self) -> None:
         """Two builds of the same job_name produce two distinct run names."""

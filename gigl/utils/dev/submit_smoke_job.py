@@ -150,9 +150,7 @@ def _verify_per_job_experiment(
     job_id: str,
 ) -> None:
     """The auto-uploader names its TensorboardExperiment after the job's numeric ID."""
-    experiment_resource_name = (
-        f"{tensorboard_resource_name}/experiments/{job_id}"
-    )
+    experiment_resource_name = f"{tensorboard_resource_name}/experiments/{job_id}"
     runs = aiplatform.TensorboardRun.list(
         tensorboard_experiment_name=experiment_resource_name,
     )
@@ -217,9 +215,7 @@ def _print_tb_urls(
     experiment_name: Optional[str],
 ) -> None:
     base = f"https://{region}.tensorboard.googleusercontent.com/experiment"
-    qualifier = (
-        f"projects+{project}+locations+{region}+tensorboards+{tensorboard_id}"
-    )
+    qualifier = f"projects+{project}+locations+{region}+tensorboards+{tensorboard_id}"
     per_job = f"{base}/{qualifier}+experiments+{job_id}"
     logger.info(f"Per-job TB URL: {per_job}")
     if experiment_name:

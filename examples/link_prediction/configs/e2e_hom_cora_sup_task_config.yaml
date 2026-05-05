@@ -18,12 +18,12 @@ trainerConfig:
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
   command: python -m examples.link_prediction.homogeneous_training
-  # Optional. When set, the trainer's CustomJob is submitted as a run of the
-  # named Vertex AI Experiment. Multiple jobs sharing this name appear as
-  # comparable runs on a single TensorBoard page. Requires
-  # GiglResourceConfig.trainerResourceConfig...tensorboardResourceName to be
-  # set. See proto/snapchat/research/gbml/gbml_config.proto for details.
-  tensorboardExperimentName: "kmonte-test-experiment"
+  # To enable cross-job TensorBoard comparison, override
+  # ``trainerConfig.tensorboardExperimentName`` in your own task config and
+  # configure ``GiglResourceConfig.trainerResourceConfig...tensorboardResourceName``.
+  # Left unset here so the default e2e CORA test stays compatible with
+  # resource configs that don't include a TensorBoard instance. See
+  # ``proto/snapchat/research/gbml/gbml_config.proto`` for details.
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer

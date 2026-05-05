@@ -152,22 +152,16 @@ class TestTensorBoardWriterUploader(TestCase):
             with patch(
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
             ) as mock_create_file_writer:
-                with patch(
-                    "google.cloud.aiplatform.start_upload_tb_log"
-                ) as mock_start, patch(
-                    "google.cloud.aiplatform.init"
-                ) as mock_init, patch(
-                    "google.cloud.aiplatform.end_upload_tb_log"
-                ) as mock_end:
+                with (
+                    patch("google.cloud.aiplatform.start_upload_tb_log") as mock_start,
+                    patch("google.cloud.aiplatform.init") as mock_init,
+                    patch("google.cloud.aiplatform.end_upload_tb_log") as mock_end,
+                ):
                     writer = TensorBoardWriter.from_env()
                     writer.close()
 
-        mock_create_file_writer.assert_called_once_with(
-            f"{self._LOG_DIR}/my-run"
-        )
-        mock_init.assert_called_once_with(
-            project="my-project", location="us-central1"
-        )
+        mock_create_file_writer.assert_called_once_with(f"{self._LOG_DIR}/my-run")
+        mock_init.assert_called_once_with(project="my-project", location="us-central1")
         # Uploader watches the PARENT log dir so the run-name subdir is
         # discovered as a TensorboardRun via os.path.relpath.
         mock_start.assert_called_once_with(
@@ -183,14 +177,11 @@ class TestTensorBoardWriterUploader(TestCase):
             {"AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR},
             clear=True,
         ):
-            with patch(
-                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
-            ):
-                with patch(
-                    "google.cloud.aiplatform.start_upload_tb_log"
-                ) as mock_start, patch(
-                    "google.cloud.aiplatform.end_upload_tb_log"
-                ) as mock_end:
+            with patch("gigl.utils.tensorboard_writer.tf.summary.create_file_writer"):
+                with (
+                    patch("google.cloud.aiplatform.start_upload_tb_log") as mock_start,
+                    patch("google.cloud.aiplatform.end_upload_tb_log") as mock_end,
+                ):
                     writer = TensorBoardWriter.from_env()
                     writer.close()
 
@@ -207,9 +198,7 @@ class TestTensorBoardWriterUploader(TestCase):
             },
             clear=True,
         ):
-            with patch(
-                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
-            ):
+            with patch("gigl.utils.tensorboard_writer.tf.summary.create_file_writer"):
                 with self.assertRaises(ValueError) as ctx:
                     TensorBoardWriter.from_env()
 
@@ -251,10 +240,13 @@ class TestTensorBoardWriterUploader(TestCase):
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer",
                 return_value=underlying_writer,
             ):
-                with patch(
-                    "google.cloud.aiplatform.start_upload_tb_log",
-                    side_effect=RuntimeError("boom"),
-                ), patch("google.cloud.aiplatform.init"):
+                with (
+                    patch(
+                        "google.cloud.aiplatform.start_upload_tb_log",
+                        side_effect=RuntimeError("boom"),
+                    ),
+                    patch("google.cloud.aiplatform.init"),
+                ):
                     with self.assertRaises(RuntimeError):
                         TensorBoardWriter.from_env()
 

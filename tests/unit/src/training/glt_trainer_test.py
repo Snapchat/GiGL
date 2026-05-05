@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 from gigl.common import UriFactory
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.training.v2.glt_trainer import GLTTrainer
-from snapchat.research.gbml import gbml_config_pb2
-from snapchat.research.gbml import gigl_resource_config_pb2
+from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
 
 

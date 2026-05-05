@@ -130,9 +130,7 @@ def check_vertex_ai_trainer_tensorboard_compatibility(
         elif isinstance(
             trainer_resource_config, gigl_resource_config_pb2.VertexAiGraphStoreConfig
         ):
-            tb_resource = (
-                trainer_resource_config.compute_pool.tensorboard_resource_name
-            )
+            tb_resource = trainer_resource_config.compute_pool.tensorboard_resource_name
         else:
             tb_resource = ""
         assert tb_resource, (

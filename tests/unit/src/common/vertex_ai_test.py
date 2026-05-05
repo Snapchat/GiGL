@@ -65,7 +65,6 @@ class TestVertexAIService(TestCase):
         )
         self.assertNotIn("experiment", submit_kwargs)
 
-
     def test_vertex_ai_job_config_carries_experiment_name(self) -> None:
         cfg = VertexAiJobConfig(
             job_name="job",

@@ -56,7 +56,8 @@ class Trainer:
                 else None
             )
             tensorboard_experiment_name = (
-                gbml_config_pb_wrapper.trainer_config.tensorboard_experiment_name or None
+                gbml_config_pb_wrapper.trainer_config.tensorboard_experiment_name
+                or None
             )
             launch_single_pool_job(
                 vertex_ai_resource_config=trainer_config,

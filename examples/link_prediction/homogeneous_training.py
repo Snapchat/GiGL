@@ -406,7 +406,9 @@ def _training_process(
             # We keep track of both the dataloader and the iterator for it
             # so we can clean up resources from the dataloader later.
             val_main_loader_iter = InfiniteIterator(val_main_loader)
-            val_random_negative_loader_iter = InfiniteIterator(val_random_negative_loader)
+            val_random_negative_loader_iter = InfiniteIterator(
+                val_random_negative_loader
+            )
 
             model = init_example_gigl_homogeneous_model(
                 node_feature_dim=args.node_feature_dim,
@@ -604,7 +606,11 @@ def _training_process(
         # These get written to some JSON under the gcs://<PERM ASSETS BUCKET>/<APPLIED TASK IDENTIFIER>/trainer/trainer_eval_metrics.json
         # And then the "Log Trainer Eval Metrics" component in the KFP pipeline UI will log them to the UI,
         # as a metrics artifact.
-        if args.machine_rank == 0 and local_rank == 0 and args.eval_metrics_uri is not None:
+        if (
+            args.machine_rank == 0
+            and local_rank == 0
+            and args.eval_metrics_uri is not None
+        ):
             eval_metrics = EvalMetricsCollection(
                 metrics=[
                     EvalMetric.from_eval_metric_type(

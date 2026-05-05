@@ -25,14 +25,11 @@ through running each component: `config_populator` -> `data_preprocessor` -> `tr
 
 ## Vertex AI TensorBoard
 
-The example trainer configs enable TensorBoard logging with
-`trainerConfig.shouldLogToTensorboard: true`.
+The example trainer configs enable TensorBoard logging with `trainerConfig.shouldLogToTensorboard: true`.
 
-To surface those events in Vertex AI TensorBoard, set
-`tensorboard_resource_name` on the trainer Vertex resource config, use a
-regional bucket, and keep the bucket, CustomJob, and TensorBoard instance in
-the same region. The attached service account should have
-`roles/storage.admin` and `roles/aiplatform.user`.
+To surface those events in Vertex AI TensorBoard, set `tensorboard_resource_name` on the trainer Vertex resource config,
+use a regional bucket, and keep the bucket, CustomJob, and TensorBoard instance in the same region. The attached service
+account should have `roles/storage.admin` and `roles/aiplatform.user`.
 
 ```{toctree}
 :maxdepth: 2
