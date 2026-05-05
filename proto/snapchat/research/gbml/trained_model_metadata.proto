@@ -9,6 +9,9 @@ message TrainedModelMetadata{
   string scripted_model_uri = 2;
   // The path where evaluation metrics are stored
   string eval_metrics_uri = 3;
-  // Path where tensorboard logs will be stored
+  // Path where tensorboard logs will be stored. Vertex AI maps this URI to
+  // ``AIP_TENSORBOARD_LOG_DIR`` inside trainer containers via
+  // ``CustomJobSpec.baseOutputDirectory``. See
+  // https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec.
   string tensorboard_logs_uri = 4;
 }

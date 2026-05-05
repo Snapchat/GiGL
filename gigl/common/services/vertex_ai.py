@@ -134,7 +134,9 @@ class VertexAiJobConfig:
 
     Each field maps to a property on the ``WorkerPoolSpec`` /
     ``MachineSpec`` / ``DiskSpec`` / ``ContainerSpec`` protos that Vertex AI
-    uses to describe a CustomJob.
+    uses to describe a CustomJob. See
+    https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
+    for the canonical reference.
 
     Example:
         >>> from google.cloud.aiplatform_v1.types import ReservationAffinity
@@ -427,7 +429,9 @@ class VertexAIService:
         # ``tensorboard_experiment_name`` is also set, the launcher injects
         # ``GIGL_TENSORBOARD_*`` env vars and the trainer's chief rank
         # additionally streams events to the user-named experiment via
-        # ``aiplatform.start_upload_tb_log``.
+        # ``aiplatform.start_upload_tb_log``. See
+        # https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-training
+        # for Vertex's auto-uploader contract.
         job.submit(
             service_account=self._service_account,
             timeout=job_config.timeout_s,

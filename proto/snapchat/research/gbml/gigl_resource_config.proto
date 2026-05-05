@@ -133,6 +133,8 @@ message VertexAiResourceConfig {
 
   // Existing Vertex AI TensorBoard resource to attach to the job.
   // Format: projects/{project}/locations/{region}/tensorboards/{tensorboard_id}
+  // See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
+  // for the Tensorboard data model.
   string tensorboard_resource_name = 10;
  }
 

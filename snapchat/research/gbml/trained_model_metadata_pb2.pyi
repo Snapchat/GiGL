@@ -28,7 +28,11 @@ class TrainedModelMetadata(google.protobuf.message.Message):
     eval_metrics_uri: builtins.str
     """The path where evaluation metrics are stored"""
     tensorboard_logs_uri: builtins.str
-    """Path where tensorboard logs will be stored"""
+    """Path where tensorboard logs will be stored. Vertex AI maps this URI to
+    ``AIP_TENSORBOARD_LOG_DIR`` inside trainer containers via
+    ``CustomJobSpec.baseOutputDirectory``. See
+    https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec.
+    """
     def __init__(
         self,
         *,

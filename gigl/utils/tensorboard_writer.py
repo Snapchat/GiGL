@@ -189,7 +189,10 @@ def _maybe_start_uploader(*, parent_log_dir: str) -> bool:
 
     Watches ``parent_log_dir`` (not the run-name subdir under it), so the
     SDK's ``LogdirLoader`` discovers each run via
-    ``os.path.relpath(subdir, parent_log_dir)``.
+    ``os.path.relpath(subdir, parent_log_dir)``. The Vertex AI TensorBoard
+    data model (``Tensorboard`` → ``TensorboardExperiment`` → ``TensorboardRun``
+    → ``TensorboardTimeSeries``) is documented at
+    https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview.
 
     Returns ``True`` if the uploader was started (caller must arrange for
     ``aiplatform.end_upload_tb_log`` on shutdown), ``False`` otherwise.

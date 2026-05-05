@@ -12,7 +12,10 @@ package snapchat.research.gbml.trained_model_metadata
   * @param evalMetricsUri
   *   The path where evaluation metrics are stored
   * @param tensorboardLogsUri
-  *   Path where tensorboard logs will be stored
+  *   Path where tensorboard logs will be stored. Vertex AI maps this URI to
+  *   ``AIP_TENSORBOARD_LOG_DIR`` inside trainer containers via
+  *   ``CustomJobSpec.baseOutputDirectory``. See
+  *   https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec.
   */
 @SerialVersionUID(0L)
 final case class TrainedModelMetadata(
@@ -26,28 +29,28 @@ final case class TrainedModelMetadata(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = trainedModelUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
         }
       };
-      
+
       {
         val __value = scriptedModelUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(2, __value)
         }
       };
-      
+
       {
         val __value = evalMetricsUri
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
         }
       };
-      
+
       {
         val __value = tensorboardLogsUri
         if (!__value.isEmpty) {
@@ -64,7 +67,7 @@ final case class TrainedModelMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {

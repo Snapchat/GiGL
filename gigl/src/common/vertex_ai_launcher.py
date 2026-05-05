@@ -350,6 +350,10 @@ def _build_job_config(
     # ``TensorboardRun`` in the named experiment, so two jobs sharing
     # ``tensorboard_experiment_name`` show up as two runs (instead of merging
     # into one ``default`` run).
+    #
+    # References:
+    #   https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
+    #   https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
     container_env_vars = list(env_vars)
     if (
         tensorboard_experiment_name

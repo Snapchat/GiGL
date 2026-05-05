@@ -298,6 +298,8 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     tensorboard_resource_name: builtins.str
     """Existing Vertex AI TensorBoard resource to attach to the job.
     Format: projects/{project}/locations/{region}/tensorboards/{tensorboard_id}
+    See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
+    for the Tensorboard data model.
     """
     def __init__(
         self,
