@@ -3967,14 +3967,15 @@ object GbmlConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
     * @param shouldLogToTensorboard
     *   Weather to log to tensorboard or not (defaults to false)
     * @param tensorboardExperimentName
-    *   Optional. When set, the trainer's CustomJob is submitted as a run of
-    *   a Vertex AI Experiment with this name (instead of attaching the raw
-    *   Tensorboard resource directly). Multiple jobs that share the same
-    *   value land in the same backing TensorboardExperiment, so they appear
-    *   as comparable runs on one TensorBoard page. Requires
-    *   GiglResourceConfig...tensorboard_resource_name to be set; that TB
-    *   becomes the experiment's backing TB. Allowed characters: lowercase
-    *   letters, digits, hyphens (Vertex AI Experiment ID rules).
+    *   Optional. When set, the trainer's chief rank streams events to a
+    *   TensorboardExperiment with this name on the configured Tensorboard
+    *   resource, in addition to Vertex's built-in per-job auto-upload.
+    *   Multiple jobs that share the same value land in the same
+    *   TensorboardExperiment, so they appear as comparable runs on one
+    *   TensorBoard page. Requires
+    *   GiglResourceConfig...tensorboard_resource_name to be set. Allowed
+    *   characters: lowercase letters, digits, hyphens (Vertex AI Experiment
+    *   ID rules).
     */
   @SerialVersionUID(0L)
   final case class TrainerConfig(

@@ -260,7 +260,7 @@ run_all_e2e_tests:
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
-compile_gigl_kubeflow_pipeline: compile_jars push_new_docker_images
+compile_gigl_kubeflow_pipeline:  push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
 		--container_image_cuda=${DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG} \

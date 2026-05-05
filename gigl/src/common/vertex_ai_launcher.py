@@ -297,12 +297,13 @@ def _build_job_config(
         else None
     )
 
-    # When the user opted into a stable Vertex AI TensorboardExperiment,
-    # ``VertexAIService._submit_job`` does NOT pass ``tensorboard=`` on submit
-    # (Vertex's auto-uploader would route to a job-scoped experiment we can't
-    # rename). Instead, the chief-rank trainer streams events itself via
-    # ``aiplatform.start_upload_tb_log``. Inject the resource name and
-    # experiment name as container env vars so the trainer can find them.
+    # When the user opted into a stable Vertex AI TensorboardExperiment via
+    # ``tensorboard_experiment_name``, inject env vars into the worker so the
+    # chief-rank trainer can stream events directly to that experiment via
+    # ``aiplatform.start_upload_tb_log``. (Vertex's built-in auto-uploader
+    # still runs in parallel — see ``VertexAIService._submit_job`` — and
+    # writes to a per-job auto-named experiment so the "Open TensorBoard"
+    # link on the VAI job page resolves correctly.)
     container_env_vars = list(env_vars)
     if (
         tensorboard_experiment_name

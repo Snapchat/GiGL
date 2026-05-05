@@ -74,14 +74,14 @@ class TestVertexAIService(TestCase):
 
     @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
     @patch("gigl.common.services.vertex_ai.aiplatform.init")
-    def test_submit_job_skips_experiment_and_tensorboard_when_experiment_name_set(
+    def test_submit_job_passes_tensorboard_with_or_without_experiment_name(
         self,
         mock_aiplatform_init: Mock,
         mock_custom_job_class: Mock,
     ) -> None:
-        """When tensorboard_experiment_name is set, submit passes neither
-        ``experiment`` nor ``tensorboard`` — the trainer streams events itself
-        via the chief-rank uploader.
+        """``tensorboard=`` is always passed when a TB resource is set, so the
+        VAI job page's "Open TensorBoard" link works. The chief-rank uploader
+        (driven by injected env vars) handles cross-job comparison separately.
         """
         mock_job = Mock()
         mock_job.resource_name = "projects/test/locations/us-central1/customJobs/456"
@@ -108,9 +108,12 @@ class TestVertexAIService(TestCase):
 
         mock_job.submit.assert_called_once()
         submit_kwargs = mock_job.submit.call_args.kwargs
+        self.assertEqual(
+            submit_kwargs["tensorboard"],
+            "projects/test/locations/us-central1/tensorboards/123",
+        )
         self.assertNotIn("experiment", submit_kwargs)
         self.assertNotIn("experiment_run", submit_kwargs)
-        self.assertNotIn("tensorboard", submit_kwargs)
 
     @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
     @patch("gigl.common.services.vertex_ai.aiplatform.init")

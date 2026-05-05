@@ -147,11 +147,15 @@ class VertexAiJobConfig:
             ``AIP_TENSORBOARD_LOG_DIR`` from this directory.
         tensorboard_resource_name: Optional existing Vertex AI TensorBoard
             resource to attach to the job.
-        tensorboard_experiment_name: Optional Vertex AI Experiment name. When
-            set, the job is submitted with ``experiment=<name>`` (mutually
-            exclusive with ``tensorboard_resource_name`` on submit; see
-            ``_submit_job``). Multiple jobs sharing this name appear as
-            comparable runs on a single TensorBoard page.
+        tensorboard_experiment_name: Optional Vertex AI ``TensorboardExperiment``
+            name for cross-job comparison. When set, the launcher injects
+            ``GIGL_TENSORBOARD_*`` env vars into the worker container; the
+            trainer's chief rank then streams events to this experiment via
+            ``aiplatform.start_upload_tb_log`` *in addition to* Vertex's
+            built-in per-job auto-upload (which is gated on
+            ``tensorboard_resource_name`` and is what the "Open TensorBoard"
+            link on the VAI job page resolves to). Multiple jobs sharing this
+            name appear as comparable runs on a single TensorBoard page.
     """
 
     job_name: str
@@ -389,16 +393,14 @@ class VertexAIService:
                     f"is not a valid Vertex AI Experiment ID; it must match "
                     f"{_VERTEX_RESOURCE_ID_PATTERN.pattern}."
                 )
-            # Don't set ``experiment=`` or ``tensorboard=`` on submit. The
-            # SDK forbids both together, ``experiment=`` alone does NOT
-            # trigger TB streaming (Vertex's auto-uploader is gated on
-            # ``tensorboard=``), and ``tensorboard=`` alone uploads to a
-            # job-scoped experiment we can't rename. Instead, the launcher
-            # has injected ``GIGL_TENSORBOARD_*`` env vars into the worker
-            # container, and the trainer's ``TensorBoardWriter.from_env``
-            # runs ``aiplatform.start_upload_tb_log`` on the chief rank to
-            # stream events to the user-chosen experiment.
-        else:
+        if job_config.tensorboard_resource_name:
+            # Always pass ``tensorboard=<resource>`` whenever a TB resource is
+            # configured, so the Vertex AI job page shows an "Open TensorBoard"
+            # link to the auto-named per-job experiment. When
+            # ``tensorboard_experiment_name`` is also set, the launcher has
+            # injected ``GIGL_TENSORBOARD_*`` env vars and the trainer's chief
+            # rank additionally streams events to the user-named experiment
+            # via ``aiplatform.start_upload_tb_log``.
             submit_kwargs["tensorboard"] = job_config.tensorboard_resource_name
         job.submit(**submit_kwargs)
         job.wait_for_resource_creation()

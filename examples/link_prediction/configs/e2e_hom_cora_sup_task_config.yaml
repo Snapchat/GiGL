@@ -23,7 +23,7 @@ trainerConfig:
   # comparable runs on a single TensorBoard page. Requires
   # GiglResourceConfig.trainerResourceConfig...tensorboardResourceName to be
   # set. See proto/snapchat/research/gbml/gbml_config.proto for details.
-  tensorboardExperimentName: "homogeneous-link-prediction-comparison"
+  tensorboardExperimentName: "kmonte-test-experiment"
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
