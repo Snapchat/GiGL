@@ -1,6 +1,7 @@
 """Tests for GraphTransformerEncoder."""
 
 from typing import cast
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -139,6 +140,37 @@ class TestGraphTransformerEncoder(TestCase):
 
         norms = torch.norm(embeddings, p=2, dim=-1)
         self.assertTrue(torch.allclose(norms, torch.ones_like(norms), atol=1e-5))
+
+    def test_forward_does_not_request_relation_masks_when_relation_attention_disabled(
+        self,
+    ) -> None:
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder()
+        fake_sequences = torch.zeros((3, 2, self._hid_dim))
+        fake_valid_mask = torch.ones((3, 2), dtype=torch.bool)
+        fake_auxiliary_data = {
+            "anchor_bias": None,
+            "pairwise_bias": None,
+            "pairwise_relation_mask": None,
+            "token_input": None,
+        }
+
+        with patch(
+            "gigl.nn.graph_transformer.heterodata_to_graph_transformer_input",
+            return_value=(
+                fake_sequences,
+                fake_valid_mask,
+                fake_auxiliary_data,
+            ),
+        ) as mock_transform:
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._user_node_type,
+                device=self._device,
+            )
+
+        self.assertIsNone(mock_transform.call_args.kwargs["relation_edge_types"])
+        self.assertEqual(embeddings.shape, (3, self._out_dim))
 
     def test_forward_defaults_to_first_node_type(self) -> None:
         """Test that omitted anchor node type defaults to the first node type."""
