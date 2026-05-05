@@ -2,7 +2,7 @@
 
 Runs clangd --check on each file in parallel and prints a clean summary.
 Expects compile_commands.json to already exist at
-gigl-core/.cache/cmake_build/compile_commands.json; call
+.cache/cmake_build/compile_commands.json; call
 ``make build_cpp_extensions`` first if it is absent or stale
 (``make check_lint_cpp`` does this automatically via a Makefile prerequisite).
 
@@ -17,10 +17,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-COMPILE_COMMANDS = (
-    _REPO_ROOT / "gigl-core" / ".cache" / "cmake_build" / "compile_commands.json"
-)
+_GIGL_CORE_ROOT = Path(__file__).resolve().parent.parent
+COMPILE_COMMANDS = _GIGL_CORE_ROOT / ".cache" / "cmake_build" / "compile_commands.json"
 
 # Matches real clang-tidy diagnostics emitted by clangd:
 #   E[HH:MM:SS.mmm] [check-name] Line N: message

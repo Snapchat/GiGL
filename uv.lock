@@ -784,6 +784,7 @@ dev = [
     { name = "pandas-stubs" },
     { name = "parameterized" },
     { name = "pre-commit" },
+    { name = "pybind11" },
     { name = "pydata-sphinx-theme" },
     { name = "ruff" },
     { name = "scikit-build-core" },
@@ -818,6 +819,7 @@ docs = [
     { name = "sphinx-tabs" },
 ]
 gigl-core-build-backend = [
+    { name = "pybind11" },
     { name = "scikit-build-core" },
 ]
 lint = [
@@ -910,6 +912,7 @@ dev = [
     { name = "pandas-stubs", specifier = "==2.2.2.240807" },
     { name = "parameterized", specifier = "==0.9.0" },
     { name = "pre-commit", specifier = "==3.3.2" },
+    { name = "pybind11", specifier = ">=2.12" },
     { name = "pydata-sphinx-theme", specifier = "==0.16.1" },
     { name = "ruff", specifier = "==0.15.10" },
     { name = "scikit-build-core", specifier = ">=0.10" },
@@ -943,7 +946,10 @@ docs = [
     { name = "sphinx-rtd-theme", specifier = "==2.0.0" },
     { name = "sphinx-tabs", specifier = "==3.4.5" },
 ]
-gigl-core-build-backend = [{ name = "scikit-build-core", specifier = ">=0.10" }]
+gigl-core-build-backend = [
+    { name = "pybind11", specifier = ">=2.12" },
+    { name = "scikit-build-core", specifier = ">=0.10" },
+]
 lint = [
     { name = "mdformat", specifier = "==0.7.22" },
     { name = "mdformat-tables", specifier = "==1.0.0" },
@@ -3068,6 +3074,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e9/e6/78ebbb10a8c8e4b61a59249394a4a594c1a7af95593dc933a349c8d00964/pyasn1_modules-0.4.2.tar.gz", hash = "sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6", size = 307892, upload-time = "2025-03-28T02:41:22.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl", hash = "sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a", size = 181259, upload-time = "2025-03-28T02:41:19.028Z" },
+]
+
+[[package]]
+name = "pybind11"
+version = "3.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/f0/35145a3c3baffeef55d4b8324caa33abaa8fa56ab345ecd4b2211d09163e/pybind11-3.0.4.tar.gz", hash = "sha256:3286b59c8a774b9ee650169302dd5a4eedc30a8617905a0560dd8ee44775130c", size = 589533, upload-time = "2026-04-19T03:08:15.925Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/06/c3a23c9a0263b136c519f033a58d4641e73065fefc7754e9667ec206d992/pybind11-3.0.4-py3-none-any.whl", hash = "sha256:961720ee652da51d531b7b2451a6bd2bc042b0106e6d9baa48ecb7d58034ce63", size = 314166, upload-time = "2026-04-19T03:08:14.091Z" },
 ]
 
 [[package]]
