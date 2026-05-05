@@ -25,63 +25,63 @@ sealed abstract class Component(val value: _root_.scala.Int) extends _root_.scal
 object Component extends _root_.scalapb.GeneratedEnumCompanion[Component] {
   sealed trait Recognized extends Component
   implicit def enumCompanion: _root_.scalapb.GeneratedEnumCompanion[Component] = this
-  
+
   @SerialVersionUID(0L)
   case object Component_Unknown extends Component(0) with Component.Recognized {
     val index = 0
     val name = "Component_Unknown"
     override def isComponentUnknown: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Config_Validator extends Component(1) with Component.Recognized {
     val index = 1
     val name = "Component_Config_Validator"
     override def isComponentConfigValidator: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Config_Populator extends Component(2) with Component.Recognized {
     val index = 2
     val name = "Component_Config_Populator"
     override def isComponentConfigPopulator: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Data_Preprocessor extends Component(3) with Component.Recognized {
     val index = 3
     val name = "Component_Data_Preprocessor"
     override def isComponentDataPreprocessor: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Subgraph_Sampler extends Component(4) with Component.Recognized {
     val index = 4
     val name = "Component_Subgraph_Sampler"
     override def isComponentSubgraphSampler: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Split_Generator extends Component(5) with Component.Recognized {
     val index = 5
     val name = "Component_Split_Generator"
     override def isComponentSplitGenerator: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Trainer extends Component(6) with Component.Recognized {
     val index = 6
     val name = "Component_Trainer"
     override def isComponentTrainer: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   case object Component_Inferencer extends Component(7) with Component.Recognized {
     val index = 7
     val name = "Component_Inferencer"
     override def isComponentInferencer: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   final case class Unrecognized(unrecognizedValue: _root_.scala.Int) extends Component(unrecognizedValue) with _root_.scalapb.UnrecognizedEnum
   lazy val values: scala.collection.immutable.Seq[ValueType] = scala.collection.immutable.Seq(Component_Unknown, Component_Config_Validator, Component_Config_Populator, Component_Data_Preprocessor, Component_Subgraph_Sampler, Component_Split_Generator, Component_Trainer, Component_Inferencer)

@@ -163,7 +163,7 @@ Enforced via `readability-identifier-naming`:
 | Option                                                     | Value                  | Effect                                                                                                                                                                                |
 | ---------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WarningsAsErrors`                                         | `*`                    | Every check failure is a hard error in CI                                                                                                                                             |
-| `HeaderFilterRegex`                                        | `.*/gigl-core/csrc/.*` | Scopes checks to our own headers. Using `.*` causes clang-tidy to report warnings from every PyTorch/pybind11 header it parses, flooding output with thousands of third-party issues. |
+| `HeaderFilterRegex`                                        | `.*/gigl-core/core/.*` | Scopes checks to our own headers. Using `.*` causes clang-tidy to report warnings from every PyTorch/pybind11 header it parses, flooding output with thousands of third-party issues. |
 | `FormatStyle`                                              | `none`                 | clang-tidy does not auto-reformat; use clang-format separately                                                                                                                        |
 | `bugprone-string-constructor.LargeLengthThreshold`         | `8388608` (8 MB)       | Strings larger than 8 MB from a length argument are flagged                                                                                                                           |
 | `modernize-loop-convert.NamingStyle`                       | `camelBack`            | Auto-generated loop variable names use camelBack, matching `readability-identifier-naming.VariableCase`                                                                               |
@@ -174,7 +174,7 @@ ______________________________________________________________________
 
 ## pybind11 Extension Modules
 
-Extension modules live under `gigl-core/csrc/`.
+Extension modules live under `gigl-core/core/`.
 
 ### Naming convention
 
@@ -184,11 +184,11 @@ Extension modules live under `gigl-core/csrc/`.
 | `<name>.cpp` / `<name>.cu` | Implementation — function and class definitions                  |
 | `<name>.h`                 | Declarations (function signatures, class definitions, constants) |
 
-Example: to add a `my_op` extension under `gigl-core/csrc/sampling/`:
+Example: to add a `my_op` extension under `gigl-core/core/sampling/`:
 
 ```
-gigl-core/csrc/sampling/python_my_op.cpp   ← pybind11 bindings
-gigl-core/csrc/sampling/my_op.cpp          ← implementation
+gigl-core/core/sampling/python_my_op.cpp   ← pybind11 bindings
+gigl-core/core/sampling/my_op.cpp          ← implementation
 ```
 
 The compiled `.so` is installed into the `gigl_core` package and importable as `gigl_core.<name>`.

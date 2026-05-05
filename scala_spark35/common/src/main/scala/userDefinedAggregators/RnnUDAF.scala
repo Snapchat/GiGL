@@ -70,16 +70,16 @@ class RnnUDAF(
     extends Aggregator[RnnUDAF.InTwoHopData, RnnUDAF.BufferRNN, Array[Byte]] {
 
   /**
-    * Introduces a custom user defined aggregation function that 
+    * Introduces a custom user defined aggregation function that
     * allows for more efficient "GROUP BY" on "root_node_id" when formulating a 2 hop subgraph,
     * as compared to using default Spark aggregate functions like array_append, array_union, array_agg, et al.
     * These functions are quite expensive and not suitable for aggregating all types of columns.
-    * 
+    *
     * The UDAF is used to aggregate the 2-hop subgraph information into a single RootedNodeNeighborhood
     * protobuf message (byte array).
-    * 
+    *
     * sampleN: Option[Int] - The number of edges to sample from the 1-hop and 2-hop neighbors of the root node.
-    * 
+    *
     * Example usage:
     * spark.udf.register("rnnUDAF", F.udaf(new RnnUDAF(sampleN = Some(VAL))))
     * ...
@@ -99,9 +99,9 @@ class RnnUDAF(
     *       _2_hop_node_features,
     *       _2_hop_edge_features,
     *       _2_hop_edge_type
-    *   ) as result 
+    *   ) as result
     * FROM
-    *  ... 
+    *  ...
     * GROUP BY
     *  _root_node_id, _root_node_type
     */
