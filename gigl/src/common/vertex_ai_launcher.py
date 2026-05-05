@@ -130,7 +130,7 @@ def launch_single_pool_job(
         resource_config_uri=resource_config_uri,
         command_str=process_command,
         args=process_runtime_args,
-        use_cuda=not is_cpu_execution,
+        use_cuda=is_cpu_execution,
         container_uri=container_uri,
         vertex_ai_resource_config=vertex_ai_resource_config,
         env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
@@ -193,16 +193,13 @@ def launch_graph_store_enabled_job(
     storage_pool_config = vertex_ai_graph_store_config.graph_store_pool
     compute_pool_config = vertex_ai_graph_store_config.compute_pool
 
-    # Compute workers may use GPUs, but storage workers always run the CPU
-    # graph-store entrypoint.
-    is_compute_cpu_execution = _determine_if_cpu_execution(
+    # Determine if CPU or GPU based on compute pool
+    is_cpu_execution = _determine_if_cpu_execution(
         vertex_ai_resource_config=compute_pool_config
     )
     cpu_docker_uri = cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
     cuda_docker_uri = cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
-    compute_container_uri = (
-        cpu_docker_uri if is_compute_cpu_execution else cuda_docker_uri
-    )
+    container_uri = cpu_docker_uri if is_cpu_execution else cuda_docker_uri
 
     logger.info(f"Running {component.value} with command: {compute_commmand}")
 
@@ -210,7 +207,7 @@ def launch_graph_store_enabled_job(
         vertex_ai_graph_store_config.compute_cluster_local_world_size
     )
     if not num_compute_processes:
-        if is_compute_cpu_execution:
+        if is_cpu_execution:
             num_compute_processes = 1
         else:
             num_compute_processes = vertex_ai_graph_store_config.compute_pool.gpu_limit
@@ -233,8 +230,8 @@ def launch_graph_store_enabled_job(
         resource_config_uri=resource_config_uri,
         command_str=compute_commmand,
         args=compute_runtime_args,
-        use_cuda=not is_compute_cpu_execution,
-        container_uri=compute_container_uri,
+        use_cuda=is_cpu_execution,
+        container_uri=container_uri,
         vertex_ai_resource_config=compute_pool_config,
         env_vars=environment_variables,
         labels=labels,
@@ -248,8 +245,8 @@ def launch_graph_store_enabled_job(
         resource_config_uri=resource_config_uri,
         command_str=storage_command,
         args=storage_args,
-        use_cuda=False,
-        container_uri=cpu_docker_uri,
+        use_cuda=is_cpu_execution,
+        container_uri=container_uri,
         vertex_ai_resource_config=storage_pool_config,
         env_vars=environment_variables,
         labels=labels,
