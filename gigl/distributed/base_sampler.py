@@ -203,20 +203,20 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     ) -> SampleMessage:
         """Collect labels and features for the sampled subgraph into a SampleMessage.
 
-        Delegates to ``GLTDistNeighborSampler._colloate_fn``, then re-fetches node
+        Delegates to ``GLTDistNeighborSampler._colloate_fn``, then fetches node
         labels via ``async_get`` to restore any columns dropped by GLT.
 
         GLT's implementation writes ``nlabels.T[0]`` for the ``DistFeature`` path,
         which silently discards all label columns beyond the first and breaks
         multi-label node classification.  After calling super, this override
-        re-fetches the label tensor and replaces the truncated value only when the
+        fetches the label tensor and replaces the truncated value only when the
         tensor has more than one column.  Single-label datasets keep GLT's 1-D
         result unchanged, so existing code is unaffected.
 
         The method name preserves GLT's original typo so the override is matched
         correctly at runtime.
 
-        The re-fetch only runs when ``dist_node_labels`` is a ``DistFeature``; all
+        The fetch is only run when ``dist_node_labels`` is a ``DistFeature``; all
         other label configurations (no labels, plain ``torch.Tensor``) pass through
         unchanged because GLT does not truncate them.
 
@@ -233,7 +233,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if is_hetero:
             input_type = output.input_type
             if input_type is not None and not isinstance(input_type, tuple):
-                fut = self.dist_node_labels.async_get(output.node[input_type], input_type)
+                fut = self.dist_node_labels.async_get(
+                    output.node[input_type], input_type
+                )
                 nlabels = await wrap_torch_future(fut)
                 if nlabels.ndim == 2 and nlabels.shape[1] > 1:
                     result[f"{as_str(input_type)}.nlabels"] = nlabels

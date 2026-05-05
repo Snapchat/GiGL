@@ -361,7 +361,9 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
             f"Expected 2 label columns for story, got {story_datum[_STORY].y.shape[1]}"
         )
         assert_tensor_equality(story_datum[_STORY].y[:, 0], story_datum[_STORY].node)
-        assert_tensor_equality(story_datum[_STORY].y[:, 1], story_datum[_STORY].node * 10)
+        assert_tensor_equality(
+            story_datum[_STORY].y[:, 1], story_datum[_STORY].node * 10
+        )
 
     shutdown_rpc()
 
@@ -638,8 +640,12 @@ class DistributedNeighborLoaderTest(TestCase):
                 ),
             },
             partitioned_node_features={
-                _USER: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
-                _STORY: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
             },
             partitioned_edge_features=None,
             partitioned_positive_labels=None,
