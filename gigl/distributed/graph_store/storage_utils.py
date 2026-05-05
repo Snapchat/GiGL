@@ -35,7 +35,10 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
+<<<<<<< HEAD
     get_max_labels_per_anchor_node_from_runtime_args,
+=======
+>>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 )
 
 logger = Logger()
@@ -78,8 +81,12 @@ def build_storage_dataset(
             ``0.1`` selects 10 % of edges.
         max_labels_per_anchor_node: Optional cap for how many labels to
             materialize per anchor node when the storage server serves ABLP
+<<<<<<< HEAD
             input. If ``None``, this is inferred from the task config's
             ``trainer_args``.
+=======
+            input.
+>>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 
     Returns:
         A partitioned :class:`DistDataset` ready to be served.
@@ -96,6 +103,10 @@ def build_storage_dataset(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
+<<<<<<< HEAD
+=======
+    # TODO: Pipe in max_labels_per_anchor_node to build_dataset.
+>>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,

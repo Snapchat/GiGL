@@ -8,7 +8,7 @@ from absl.testing import absltest
 from torch import Tensor
 from torch_geometric.data import HeteroData
 
-from gigl.src.common.models.graph_transformer.graph_transformer import (
+from gigl.nn.graph_transformer import (
     FeedForwardNetwork,
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,

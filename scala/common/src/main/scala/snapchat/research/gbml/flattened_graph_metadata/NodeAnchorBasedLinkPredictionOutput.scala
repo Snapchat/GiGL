@@ -22,7 +22,7 @@ final case class NodeAnchorBasedLinkPredictionOutput(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = tfrecordUriPrefix
         if (!__value.isEmpty) {
@@ -43,7 +43,7 @@ final case class NodeAnchorBasedLinkPredictionOutput(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {
@@ -153,14 +153,14 @@ object NodeAnchorBasedLinkPredictionOutput extends scalapb.GeneratedMessageCompa
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -177,7 +177,7 @@ object NodeAnchorBasedLinkPredictionOutput extends scalapb.GeneratedMessageCompa
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -221,7 +221,7 @@ object NodeAnchorBasedLinkPredictionOutput extends scalapb.GeneratedMessageCompa
       def companion: snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry.type = snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry])
   }
-  
+
   object NodeTypeToRandomNegativeTfrecordUriPrefixEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry = {
@@ -286,7 +286,7 @@ object NodeAnchorBasedLinkPredictionOutput extends scalapb.GeneratedMessageCompa
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.NodeAnchorBasedLinkPredictionOutput.NodeTypeToRandomNegativeTfrecordUriPrefixEntry])
   }
-  
+
   implicit class NodeAnchorBasedLinkPredictionOutputLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.flattened_graph_metadata.NodeAnchorBasedLinkPredictionOutput](_l) {
     def tfrecordUriPrefix: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.tfrecordUriPrefix)((c_, f_) => c_.copy(tfrecordUriPrefix = f_))
     def nodeTypeToRandomNegativeTfrecordUriPrefix: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.nodeTypeToRandomNegativeTfrecordUriPrefix)((c_, f_) => c_.copy(nodeTypeToRandomNegativeTfrecordUriPrefix = f_))

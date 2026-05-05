@@ -60,7 +60,7 @@ class NebulaQueryResponseTranslator(
       case SamplingOp.SamplingMethod.RandomUniform(value) => {
         val numNodesToSample = value.numNodesToSample
         s"""GO 1 STEP
-        FROM ${nebulaVID} 
+        FROM ${nebulaVID}
         OVER ${nebulaEdgeType} ${outgoingEdgesModifier}
         YIELD
           src(edge) as ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME},
@@ -74,33 +74,33 @@ class NebulaQueryResponseTranslator(
       case SamplingOp.SamplingMethod.RandomWeighted(value) => {
         val numNodesToSample = value.numNodesToSample
         val edgeFeatName     = value.edgeFeatName
-        s"""GO 1 STEP 
-        FROM ${nebulaVID} 
+        s"""GO 1 STEP
+        FROM ${nebulaVID}
         OVER ${nebulaEdgeType} ${outgoingEdgesModifier}
-        YIELD 
+        YIELD
           src(edge) as ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME},
           dst(edge) as ${NebulaQueryResponseTranslator.RESULT_DST_NODE_ID_COL_NAME},
           ${nebulaEdgeType}.${edgeFeatName} * rand() as ${edgeFeatName} |
         ORDER BY $$-.${edgeFeatName} DESC |
         LIMIT ${numNodesToSample} |
-        YIELD 
-          $$-.${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME} AS ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME}, 
+        YIELD
+          $$-.${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME} AS ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME},
           $$-.${NebulaQueryResponseTranslator.RESULT_DST_NODE_ID_COL_NAME} AS ${NebulaQueryResponseTranslator.RESULT_DST_NODE_ID_COL_NAME}"""
       }
       case SamplingOp.SamplingMethod.TopK(value) => {
         val numNodesToSample = value.numNodesToSample
         val edgeFeatName     = value.edgeFeatName
-        s"""GO 1 STEP 
-        FROM ${nebulaVID} 
+        s"""GO 1 STEP
+        FROM ${nebulaVID}
         OVER ${nebulaEdgeType} ${outgoingEdgesModifier}
-        YIELD 
+        YIELD
           src(edge) as ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME},
           dst(edge) as ${NebulaQueryResponseTranslator.RESULT_DST_NODE_ID_COL_NAME},
           ${nebulaEdgeType}.${edgeFeatName} as ${edgeFeatName} |
         ORDER BY $$-.${edgeFeatName} DESC |
         LIMIT ${numNodesToSample} |
-        YIELD 
-          $$-.${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME} AS ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME}, 
+        YIELD
+          $$-.${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME} AS ${NebulaQueryResponseTranslator.RESULT_SRC_NODE_ID_COL_NAME},
           $$-.${NebulaQueryResponseTranslator.RESULT_DST_NODE_ID_COL_NAME} AS ${NebulaQueryResponseTranslator.RESULT_DST_NODE_ID_COL_NAME}"""
       }
       case SamplingOp.SamplingMethod.UserDefined(value) => {

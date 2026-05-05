@@ -1,64 +1,43 @@
-"""Graph Transformer encoder for heterogeneous graphs.
+"""Deprecated module - kept for backwards compatibility.
 
-Adapted from RelGT's LocalModule (https://github.com/snap-stanford/relgt).
-Converts heterogeneous graph data into fixed-length sequences via
-``heterodata_to_graph_transformer_input``, processes through a stack of pre-norm
-transformer encoder layers, then produces per-node embeddings via
-attention-weighted neighbor readout.
-
-Conforms to the same forward interface as ``HGT`` and ``SimpleHGN`` in
-``gigl.src.common.models.pyg.heterogeneous``, making it a drop-in
-replacement as the encoder in ``LinkPredictionGNN``.
+The implementation now lives in :mod:`gigl.nn.graph_transformer`. Importing
+classes from here will continue to work but logs a deprecation warning at
+instantiation time. This shim will be removed in a future release.
 """
 
-import math
-from typing import Callable, Literal, Optional, cast
+from typing import Any
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch_geometric.data.hetero_data
-from torch import Tensor
+from gigl.common.logger import Logger
+from gigl.nn.graph_transformer import FeedForwardNetwork as _FeedForwardNetwork
+from gigl.nn.graph_transformer import (
+    GraphTransformerEncoder as _GraphTransformerEncoder,
+)
+from gigl.nn.graph_transformer import (
+    GraphTransformerEncoderLayer as _GraphTransformerEncoderLayer,
+)
 
-from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.transforms.graph_transformer import (
-    PPR_WEIGHT_FEATURE_NAME,
-    SequenceAuxiliaryData,
-    TokenInputData,
-    heterodata_to_graph_transformer_input,
+logger = Logger()
+
+_DEPRECATION_MSG = (
+    "gigl.src.common.models.graph_transformer.graph_transformer is deprecated "
+    "and will be removed in a future release. Please import from "
+    "`gigl.nn.graph_transformer` instead."
 )
 
 
-def _get_node_type_positional_encodings(
-    data: torch_geometric.data.hetero_data.HeteroData,
-    node_type: NodeType,
-    pe_attr_names: list[str],
-    device: torch.device,
-) -> Tensor:
-    """Collect concatenated node-level PE for a single node type."""
-    pe_parts = []
-    sorted_node_types = sorted(data.node_types)
-    node_store = data[node_type]
+class FeedForwardNetwork(_FeedForwardNetwork):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        logger.warning(_DEPRECATION_MSG)
+        super().__init__(*args, **kwargs)
 
-    for attr_name in pe_attr_names:
-        if hasattr(node_store, attr_name):
-            pe_parts.append(getattr(node_store, attr_name).to(device))
-            continue
 
-        attr_dim = None
-        for other_node_type in sorted_node_types:
-            other_store = data[other_node_type]
-            if hasattr(other_store, attr_name):
-                attr_dim = getattr(other_store, attr_name).size(-1)
-                break
-        if attr_dim is None:
-            raise ValueError(
-                f"Positional encoding '{attr_name}' not found in any node type."
-            )
-        pe_parts.append(torch.zeros(node_store.num_nodes, attr_dim, device=device))
+class GraphTransformerEncoderLayer(_GraphTransformerEncoderLayer):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        logger.warning(_DEPRECATION_MSG)
+        super().__init__(*args, **kwargs)
 
-    return torch.cat(pe_parts, dim=-1)
 
+<<<<<<< HEAD
 
 def _build_sinusoidal_sequence_position_table(
     max_seq_len: int,
@@ -1271,3 +1250,9 @@ class GraphTransformerEncoder(nn.Module):
         output = (anchor + neighbor_aggregation).squeeze(1)  # (batch, hid_dim)
 
         return output
+=======
+class GraphTransformerEncoder(_GraphTransformerEncoder):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        logger.warning(_DEPRECATION_MSG)
+        super().__init__(*args, **kwargs)
+>>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230

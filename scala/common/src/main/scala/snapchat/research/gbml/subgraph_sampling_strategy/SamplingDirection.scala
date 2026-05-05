@@ -16,7 +16,7 @@ sealed abstract class SamplingDirection(val value: _root_.scala.Int) extends _ro
 object SamplingDirection extends _root_.scalapb.GeneratedEnumCompanion[SamplingDirection] {
   sealed trait Recognized extends SamplingDirection
   implicit def enumCompanion: _root_.scalapb.GeneratedEnumCompanion[SamplingDirection] = this
-  
+
   /** Sample incoming edges to the dst nodes (default)
     */
   @SerialVersionUID(0L)
@@ -25,7 +25,7 @@ object SamplingDirection extends _root_.scalapb.GeneratedEnumCompanion[SamplingD
     val name = "INCOMING"
     override def isIncoming: _root_.scala.Boolean = true
   }
-  
+
   /** Sample outgoing edges from the src nodes
     */
   @SerialVersionUID(0L)
@@ -34,7 +34,7 @@ object SamplingDirection extends _root_.scalapb.GeneratedEnumCompanion[SamplingD
     val name = "OUTGOING"
     override def isOutgoing: _root_.scala.Boolean = true
   }
-  
+
   @SerialVersionUID(0L)
   final case class Unrecognized(unrecognizedValue: _root_.scala.Int) extends SamplingDirection(unrecognizedValue) with _root_.scalapb.UnrecognizedEnum
   lazy val values = scala.collection.immutable.Seq(INCOMING, OUTGOING)

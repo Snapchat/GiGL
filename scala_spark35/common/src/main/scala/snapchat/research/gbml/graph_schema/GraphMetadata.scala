@@ -58,7 +58,7 @@ final case class GraphMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       nodeTypes.foreach { __v =>
@@ -205,7 +205,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (__value != 0) {
@@ -226,7 +226,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -269,7 +269,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
       def companion: snapchat.research.gbml.graph_schema.GraphMetadata.CondensedEdgeTypeMapEntry.type = snapchat.research.gbml.graph_schema.GraphMetadata.CondensedEdgeTypeMapEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GraphMetadata.CondensedEdgeTypeMapEntry])
   }
-  
+
   object CondensedEdgeTypeMapEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.graph_schema.GraphMetadata.CondensedEdgeTypeMapEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.graph_schema.GraphMetadata.CondensedEdgeTypeMapEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.graph_schema.GraphMetadata.CondensedEdgeTypeMapEntry = {
@@ -341,7 +341,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GraphMetadata.CondensedEdgeTypeMapEntry])
   }
-  
+
   @SerialVersionUID(0L)
   final case class CondensedNodeTypeMapEntry(
       key: _root_.scala.Int = 0,
@@ -352,14 +352,14 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (__value != 0) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -376,7 +376,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -420,7 +420,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
       def companion: snapchat.research.gbml.graph_schema.GraphMetadata.CondensedNodeTypeMapEntry.type = snapchat.research.gbml.graph_schema.GraphMetadata.CondensedNodeTypeMapEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.GraphMetadata.CondensedNodeTypeMapEntry])
   }
-  
+
   object CondensedNodeTypeMapEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.graph_schema.GraphMetadata.CondensedNodeTypeMapEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.graph_schema.GraphMetadata.CondensedNodeTypeMapEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.graph_schema.GraphMetadata.CondensedNodeTypeMapEntry = {
@@ -485,7 +485,7 @@ object GraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat.research
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.GraphMetadata.CondensedNodeTypeMapEntry])
   }
-  
+
   implicit class GraphMetadataLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.graph_schema.GraphMetadata]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.graph_schema.GraphMetadata](_l) {
     def nodeTypes: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Seq[_root_.scala.Predef.String]] = field(_.nodeTypes)((c_, f_) => c_.copy(nodeTypes = f_))
     def edgeTypes: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Seq[snapchat.research.gbml.graph_schema.EdgeType]] = field(_.edgeTypes)((c_, f_) => c_.copy(edgeTypes = f_))
