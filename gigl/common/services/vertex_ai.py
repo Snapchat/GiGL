@@ -63,7 +63,7 @@ import datetime
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Final, Optional, Union
+from typing import Final, Optional, Union
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -406,12 +406,6 @@ class VertexAIService:
             staging_bucket=self._staging_bucket,
             base_output_dir=job_config.base_output_dir,
         )
-        submit_kwargs: dict[str, Any] = dict(
-            service_account=self._service_account,
-            timeout=job_config.timeout_s,
-            enable_web_access=job_config.enable_web_access,
-            scheduling_strategy=job_config.scheduling_strategy,
-        )
         if job_config.tensorboard_experiment_name:
             if not job_config.tensorboard_resource_name:
                 raise ValueError(
@@ -426,16 +420,21 @@ class VertexAIService:
                     f"is not a valid Vertex AI Experiment ID; it must match "
                     f"{_VERTEX_RESOURCE_ID_PATTERN.pattern}."
                 )
-        if job_config.tensorboard_resource_name:
-            # Always pass ``tensorboard=<resource>`` whenever a TB resource is
-            # configured, so the Vertex AI job page shows an "Open TensorBoard"
-            # link to the auto-named per-job experiment. When
-            # ``tensorboard_experiment_name`` is also set, the launcher has
-            # injected ``GIGL_TENSORBOARD_*`` env vars and the trainer's chief
-            # rank additionally streams events to the user-named experiment
-            # via ``aiplatform.start_upload_tb_log``.
-            submit_kwargs["tensorboard"] = job_config.tensorboard_resource_name
-        job.submit(**submit_kwargs)
+
+        # Always pass ``tensorboard=<resource>`` when a TB resource is
+        # configured so the Vertex AI job page shows an "Open TensorBoard"
+        # link to the auto-named per-job experiment. When
+        # ``tensorboard_experiment_name`` is also set, the launcher injects
+        # ``GIGL_TENSORBOARD_*`` env vars and the trainer's chief rank
+        # additionally streams events to the user-named experiment via
+        # ``aiplatform.start_upload_tb_log``.
+        job.submit(
+            service_account=self._service_account,
+            timeout=job_config.timeout_s,
+            enable_web_access=job_config.enable_web_access,
+            scheduling_strategy=job_config.scheduling_strategy,
+            tensorboard=job_config.tensorboard_resource_name or None,
+        )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")
         # Copying https://github.com/googleapis/python-aiplatform/blob/v1.48.0/google/cloud/aiplatform/jobs.py#L207-L215
