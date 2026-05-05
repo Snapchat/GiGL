@@ -39,17 +39,6 @@ MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG: Final[str] = "max_labels_per_anchor_node
 
 def validate_max_labels_per_anchor_node(
     max_labels_per_anchor_node: Optional[int],
-<<<<<<< HEAD
-) -> Optional[int]:
-    """Validate the optional per-anchor label cap."""
-    if max_labels_per_anchor_node is None:
-        return None
-    if max_labels_per_anchor_node <= 0:
-        raise ValueError(
-            "max_labels_per_anchor_node must be a positive integer when provided."
-        )
-    return max_labels_per_anchor_node
-=======
 ) -> None:
     """Validate the optional per-anchor label cap.
 
@@ -63,7 +52,6 @@ def validate_max_labels_per_anchor_node(
         raise ValueError(
             "max_labels_per_anchor_node must be a positive integer when provided."
         )
->>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 
 
 def get_max_labels_per_anchor_node_from_runtime_args(
@@ -82,16 +70,12 @@ def get_max_labels_per_anchor_node_from_runtime_args(
             f"Invalid {MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG} value "
             f"{raw_max_labels_per_anchor_node!r}. Expected a positive integer."
         ) from exc
-<<<<<<< HEAD
-    return validate_max_labels_per_anchor_node(parsed_max_labels_per_anchor_node)
-=======
     if parsed_max_labels_per_anchor_node <= 0:
         raise ValueError(
             f"Invalid {MAX_LABELS_PER_ANCHOR_NODE_RUNTIME_ARG} value "
             f"{raw_max_labels_per_anchor_node!r}. Expected a positive integer."
         )
     return parsed_max_labels_per_anchor_node
->>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 
 
 @runtime_checkable
@@ -715,13 +699,7 @@ def _get_padded_labels(
     Returns:
         The shape of the returned tensor is [N, max_number_of_labels].
     """
-<<<<<<< HEAD
-    max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
-        max_labels_per_anchor_node
-    )
-=======
     validate_max_labels_per_anchor_node(max_labels_per_anchor_node)
->>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
     # indptr is the ROW_INDEX of a CSR matrix.
     # and indices is the COL_INDEX of a CSR matrix.
     # See https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)

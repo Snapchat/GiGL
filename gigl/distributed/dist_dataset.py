@@ -29,10 +29,6 @@ from gigl.types.graph import (
 from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
     NodeSplitter,
-<<<<<<< HEAD
-    validate_max_labels_per_anchor_node,
-=======
->>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 )
 from gigl.utils.share_memory import share_memory
 
@@ -153,13 +149,7 @@ class DistDataset(glt.distributed.DistDataset):
         self._degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = degree_tensor
-<<<<<<< HEAD
-        self._max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
-            max_labels_per_anchor_node
-        )
-=======
         self._max_labels_per_anchor_node = max_labels_per_anchor_node
->>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -354,13 +344,7 @@ class DistDataset(glt.distributed.DistDataset):
     def max_labels_per_anchor_node(
         self, new_max_labels_per_anchor_node: Optional[int]
     ) -> None:
-<<<<<<< HEAD
-        self._max_labels_per_anchor_node = validate_max_labels_per_anchor_node(
-            new_max_labels_per_anchor_node
-        )
-=======
         self._max_labels_per_anchor_node = new_max_labels_per_anchor_node
->>>>>>> 62d33243162de9daca9be67b4c0d1f73e7319230
 
     @property
     def train_node_ids(
