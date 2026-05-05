@@ -58,13 +58,13 @@ The `submit(experiment=…)` SDK path and the `_ensure_experiment_with_backing_t
 - `tests/unit/src/common/vertex_ai_test.py` — rename `test_submit_job_skips_experiment_and_tensorboard_when_experiment_name_set` to `test_submit_job_passes_tensorboard_with_or_without_experiment_name` and assert `tensorboard=` is set in both branches.
 - `tests/unit/src/common/vertex_ai_launcher_test.py` — assert `GIGL_TENSORBOARD_RUN_NAME` is injected when an experiment name is set; not injected otherwise.
 - `tests/unit/utils/tensorboard_writer_test.py` — assert the writer's effective `log_dir` is the subdir (`<parent>/<run_name>/`) when `GIGL_TENSORBOARD_RUN_NAME` is set; assert `start_upload_tb_log` is called with `logdir=<parent>` (NOT the subdir) and no `run_name_prefix`.
-- `tools/dev_submit_tb_smoke_job.py` — **new** local iteration tool. The `tools/` directory already exists in the repo (Codex correction).
+- `python -m gigl.utils.dev.submit_smoke_job` — **new** local iteration tool. The `tools/` directory already exists in the repo (Codex correction).
 
 ## Local iteration tool
 
 A standalone Python script that bypasses ConfigPopulator and the full pipeline. Goal: <2 min from "I changed code" to "I see whether TB shows up."
 
-Path: `tools/dev_submit_tb_smoke_job.py`.
+Path: `python -m gigl.utils.dev.submit_smoke_job`.
 
 What it does:
 
@@ -142,10 +142,10 @@ Verify: `make type_check`; manually re-read each modified entrypoint to confirm 
 
 Commit: `examples: scope TensorBoardWriter to a context manager in all training entrypoints`.
 
-### Step 4: write `tools/dev_submit_tb_smoke_job.py` + `gigl/utils/dev/tb_smoke_main.py`
+### Step 4: write `python -m gigl.utils.dev.submit_smoke_job` + `gigl/utils/dev/tb_smoke_main.py`
 
 - `gigl/utils/dev/tb_smoke_main.py`: new module. ~25 lines. Uses `TensorBoardWriter.from_env(enabled=True)` to write 3 scalar events (`{"smoke/value": float(step)}` at steps 0, 1, 2) inside a `with` block, then `time.sleep(30)` to let both uploaders flush. Module-level entry so it can be invoked with `python -m gigl.utils.dev.tb_smoke_main`.
-- `tools/dev_submit_tb_smoke_job.py`: new top-level script.
+- `python -m gigl.utils.dev.submit_smoke_job`: new top-level script.
   - argparse for `--project`, `--region`, `--service-account`, `--staging-bucket`, `--tensorboard`, optional `--experiment-name`, `--container-uri`, `--dry-run`.
   - Builds `VertexAiResourceConfig` and `GiglResourceConfig` protos inline (mirror the patterns in `tests/unit/src/common/vertex_ai_launcher_test.py:_create_gigl_resource_config_with_single_pool_inference` for shape).
   - Calls `launch_single_pool_job(... vertex_ai_region=<region>, tensorboard_logs_uri=GcsUri("gs://<staging>/tb-smoke/<timestamp>/logs/"), tensorboard_experiment_name=<flag>)`.
@@ -156,7 +156,7 @@ Commit: `examples: scope TensorBoardWriter to a context manager in all training 
     - For each expected run: `aiplatform.TensorboardTimeSeries.list(tensorboard_run_name=<full run resource>)` — assert at least one time series with at least one tag (Codex Issue 4 fix).
   - Print both UI URLs.
 
-Verify (offline): `python tools/dev_submit_tb_smoke_job.py --dry-run --project=… --region=… --service-account=… --staging-bucket=gs://… --tensorboard=projects/…/tensorboards/… --experiment-name=tb-smoke-multi` prints the `VertexAiJobConfig` and exits 0 without touching GCP.
+Verify (offline): `python python -m gigl.utils.dev.submit_smoke_job --dry-run --project=… --region=… --service-account=… --staging-bucket=gs://… --tensorboard=projects/…/tensorboards/… --experiment-name=tb-smoke-multi` prints the `VertexAiJobConfig` and exits 0 without touching GCP.
 
 Commit: `tools: add dev_submit_tb_smoke_job + tb_smoke_main for fast TB iteration`.
 
