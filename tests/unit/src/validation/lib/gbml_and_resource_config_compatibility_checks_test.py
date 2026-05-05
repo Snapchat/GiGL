@@ -102,13 +102,9 @@ def _create_gbml_config_with_tensorboard_enabled() -> GbmlConfigPbWrapper:
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
-def _create_gbml_config_with_tensorboard_experiment_name(
-    experiment_name: str = "my-comparison",
-) -> GbmlConfigPbWrapper:
-    """Create a GbmlConfig with trainer tensorboard_experiment_name set."""
-    gbml_config = gbml_config_pb2.GbmlConfig()
-    gbml_config.trainer_config.tensorboard_experiment_name = experiment_name
-    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
+def _create_empty_gbml_config() -> GbmlConfigPbWrapper:
+    """Create a minimal GbmlConfig (no flags set)."""
+    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb2.GbmlConfig())
 
 
 def _create_resource_config_with_both_graph_stores() -> GiglResourceConfigWrapper:
@@ -146,6 +142,7 @@ def _create_resource_config_without_graph_stores() -> GiglResourceConfigWrapper:
 def _create_resource_config_with_trainer_tensorboard(
     *,
     tensorboard_resource_name: str,
+    tensorboard_experiment_name: str = "",
     use_graph_store: bool = False,
 ) -> GiglResourceConfigWrapper:
     """Create a GiglResourceConfig with a trainer TensorBoard resource."""
@@ -157,12 +154,43 @@ def _create_resource_config_with_trainer_tensorboard(
         graph_store_config.compute_pool.tensorboard_resource_name = (
             tensorboard_resource_name
         )
+        graph_store_config.compute_pool.tensorboard_experiment_name = (
+            tensorboard_experiment_name
+        )
         config.trainer_resource_config.vertex_ai_graph_store_trainer_config.CopyFrom(
             graph_store_config
         )
     else:
         vertex_ai_resource_config = _create_vertex_ai_resource_config()
         vertex_ai_resource_config.tensorboard_resource_name = tensorboard_resource_name
+        vertex_ai_resource_config.tensorboard_experiment_name = (
+            tensorboard_experiment_name
+        )
+        config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
+            vertex_ai_resource_config
+        )
+
+    return GiglResourceConfigWrapper(resource_config=config)
+
+
+def _create_resource_config_with_experiment_name_only(
+    *,
+    experiment_name: str,
+    use_graph_store: bool = False,
+) -> GiglResourceConfigWrapper:
+    """Create a GiglResourceConfig with experiment_name set but NO TB resource."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    _create_shared_resource_config(config)
+
+    if use_graph_store:
+        graph_store_config = _create_vertex_ai_graph_store_config()
+        graph_store_config.compute_pool.tensorboard_experiment_name = experiment_name
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.CopyFrom(
+            graph_store_config
+        )
+    else:
+        vertex_ai_resource_config = _create_vertex_ai_resource_config()
+        vertex_ai_resource_config.tensorboard_experiment_name = experiment_name
         config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
             vertex_ai_resource_config
         )
@@ -300,10 +328,10 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
 
     def test_experiment_name_set_without_tensorboard_resource_raises(self):
         """tensorboard_experiment_name set but no TB resource → AssertionError mentioning the field."""
-        gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_experiment_name_only(
             experiment_name="my-comparison"
         )
-        resource_config = _create_resource_config_without_graph_stores()
 
         with self.assertRaises(AssertionError) as ctx:
             check_vertex_ai_trainer_tensorboard_compatibility(
@@ -314,13 +342,12 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
 
     def test_experiment_name_set_with_tensorboard_resource_does_not_raise(self):
         """tensorboard_experiment_name set and TB resource present → no exception."""
-        gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
-            experiment_name="my-comparison"
-        )
+        gbml_config = _create_empty_gbml_config()
         resource_config = _create_resource_config_with_trainer_tensorboard(
             tensorboard_resource_name=(
                 "projects/test-project/locations/us-central1/tensorboards/test"
-            )
+            ),
+            tensorboard_experiment_name="my-comparison",
         )
 
         check_vertex_ai_trainer_tensorboard_compatibility(
@@ -332,13 +359,12 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
         self,
     ):
         """tensorboard_experiment_name set and graph-store TB resource present → no exception."""
-        gbml_config = _create_gbml_config_with_tensorboard_experiment_name(
-            experiment_name="my-comparison"
-        )
+        gbml_config = _create_empty_gbml_config()
         resource_config = _create_resource_config_with_trainer_tensorboard(
             tensorboard_resource_name=(
                 "projects/test-project/locations/us-central1/tensorboards/test"
             ),
+            tensorboard_experiment_name="my-comparison",
             use_graph_store=True,
         )
 

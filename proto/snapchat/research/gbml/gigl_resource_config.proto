@@ -136,6 +136,16 @@ message VertexAiResourceConfig {
   // See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
   // for the Tensorboard data model.
   string tensorboard_resource_name = 10;
+
+  // Optional. When set, the trainer's chief rank streams events to a
+  // TensorboardExperiment with this name on the TB resource above, in
+  // addition to Vertex's per-job auto-upload. Multiple jobs that share this
+  // value land in the same TensorboardExperiment, so they appear as
+  // comparable runs on one TensorBoard page. Requires
+  // tensorboard_resource_name above to be set. Allowed characters:
+  // lowercase letters, digits, hyphens (Vertex AI Experiment ID rules).
+  // See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview.
+  string tensorboard_experiment_name = 11;
  }
 
  // Configuration for KFP job resources

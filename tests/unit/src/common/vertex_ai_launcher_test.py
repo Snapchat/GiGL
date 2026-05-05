@@ -337,20 +337,10 @@ class TestVertexAILauncher(TestCase):
         self.assertEqual(job_config.labels, expected_labels)
 
     @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
-    def test_launch_single_pool_job_threads_experiment_name(
+    def test_launch_single_pool_job_reads_experiment_name_from_resource_config(
         self, mock_vertex_ai_service_class
     ):
-        """Test that tensorboard_experiment_name is forwarded to the VertexAiJobConfig
-        when passed to launch_single_pool_job."""
-        job_name = "test-single-pool-tb-exp"
-        task_config_uri = Uri("gs://bucket/task_config.yaml")
-        resource_config_uri = Uri("gs://bucket/resource_config.yaml")
-        process_command = "python -m gigl.src.training.v2.glt_trainer"
-        process_runtime_args: dict[str, str] = {}
-        cpu_docker_uri = "gcr.io/project/cpu-image:tag"
-        cuda_docker_uri = "gcr.io/project/cuda-image:tag"
-        component = GiGLComponents.Trainer
-        vertex_ai_region = "us-central1"
+        """tensorboard_experiment_name on the resource config flows to the VertexAiJobConfig."""
         experiment_name = "my-single-pool-experiment"
 
         gigl_resource_config_proto = (
@@ -362,24 +352,24 @@ class TestVertexAILauncher(TestCase):
             resource_config=gigl_resource_config_proto
         )
         vertex_ai_config = gigl_resource_config_proto.inferencer_resource_config.vertex_ai_inferencer_config
+        vertex_ai_config.tensorboard_experiment_name = experiment_name
 
         mock_service_instance = Mock()
         mock_vertex_ai_service_class.return_value = mock_service_instance
 
         launch_single_pool_job(
             vertex_ai_resource_config=vertex_ai_config,
-            job_name=job_name,
-            task_config_uri=task_config_uri,
-            resource_config_uri=resource_config_uri,
-            process_command=process_command,
-            process_runtime_args=process_runtime_args,
+            job_name="test-single-pool-tb-exp",
+            task_config_uri=Uri("gs://bucket/task_config.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource_config.yaml"),
+            process_command="python -m gigl.src.training.v2.glt_trainer",
+            process_runtime_args={},
             resource_config_wrapper=resource_config_wrapper,
-            cpu_docker_uri=cpu_docker_uri,
-            cuda_docker_uri=cuda_docker_uri,
-            component=component,
-            vertex_ai_region=vertex_ai_region,
+            cpu_docker_uri="gcr.io/project/cpu-image:tag",
+            cuda_docker_uri="gcr.io/project/cuda-image:tag",
+            component=GiGLComponents.Trainer,
+            vertex_ai_region="us-central1",
             tensorboard_logs_uri=Uri("gs://bucket/job/trainer/logs/"),
-            tensorboard_experiment_name=experiment_name,
         )
 
         mock_service_instance.launch_job.assert_called_once()
@@ -388,19 +378,12 @@ class TestVertexAILauncher(TestCase):
         self.assertEqual(job_config.tensorboard_experiment_name, experiment_name)
 
     @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
-    def test_launch_graph_store_job_threads_experiment_name_to_compute_pool_only(
+    def test_launch_graph_store_job_reads_experiment_name_from_compute_pool(
         self, mock_vertex_ai_service_class
     ):
-        """Test that tensorboard_experiment_name is forwarded to the compute pool's
-        VertexAiJobConfig but NOT to the storage pool's VertexAiJobConfig."""
-        job_name = "test-graph-store-tb-exp"
-        task_config_uri = Uri("gs://bucket/task_config.yaml")
-        resource_config_uri = Uri("gs://bucket/resource_config.yaml")
-        process_command = "python -m gigl.src.training.v2.glt_trainer"
-        process_runtime_args: dict[str, str] = {}
-        cpu_docker_uri = "gcr.io/project/cpu-image:tag"
-        cuda_docker_uri = "gcr.io/project/cuda-image:tag"
-        component = GiGLComponents.Trainer
+        """compute_pool.tensorboard_experiment_name flows to the compute pool's
+        VertexAiJobConfig; storage pool stays empty.
+        """
         experiment_name = "my-graph-store-experiment"
 
         gigl_resource_config_proto = _create_gigl_resource_config_with_graph_store(
@@ -410,25 +393,25 @@ class TestVertexAILauncher(TestCase):
             resource_config=gigl_resource_config_proto
         )
         graph_store_config = gigl_resource_config_proto.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        graph_store_config.compute_pool.tensorboard_experiment_name = experiment_name
 
         mock_service_instance = Mock()
         mock_vertex_ai_service_class.return_value = mock_service_instance
 
         launch_graph_store_enabled_job(
             vertex_ai_graph_store_config=graph_store_config,
-            job_name=job_name,
-            task_config_uri=task_config_uri,
-            resource_config_uri=resource_config_uri,
-            compute_commmand=process_command,
-            compute_runtime_args=process_runtime_args,
+            job_name="test-graph-store-tb-exp",
+            task_config_uri=Uri("gs://bucket/task_config.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource_config.yaml"),
+            compute_commmand="python -m gigl.src.training.v2.glt_trainer",
+            compute_runtime_args={},
             resource_config_wrapper=resource_config_wrapper,
             storage_command="python -m gigl.distributed.graph_store.storage_main",
             storage_args={},
-            cpu_docker_uri=cpu_docker_uri,
-            cuda_docker_uri=cuda_docker_uri,
-            component=component,
+            cpu_docker_uri="gcr.io/project/cpu-image:tag",
+            cuda_docker_uri="gcr.io/project/cuda-image:tag",
+            component=GiGLComponents.Trainer,
             tensorboard_logs_uri=Uri("gs://bucket/job/trainer/logs/"),
-            tensorboard_experiment_name=experiment_name,
         )
 
         mock_service_instance.launch_graph_store_job.assert_called_once()
@@ -436,21 +419,20 @@ class TestVertexAILauncher(TestCase):
         compute_job_config = call_args.kwargs["compute_pool_job_config"]
         storage_job_config = call_args.kwargs["storage_pool_job_config"]
 
-        # Compute pool SHOULD have the experiment name
         self.assertEqual(
             compute_job_config.tensorboard_experiment_name, experiment_name
         )
-        # Storage pool MUST NOT have the experiment name
         self.assertIsNone(storage_job_config.tensorboard_experiment_name)
 
     def test_build_job_config_threads_experiment_name(self) -> None:
-        """Test that tensorboard_experiment_name is forwarded to VertexAiJobConfig."""
+        """tensorboard_experiment_name on the resource config flows to VertexAiJobConfig."""
         resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
             machine_type="n1-standard-4",
             gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
             gpu_limit=0,
             num_replicas=1,
             tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+            tensorboard_experiment_name="my-comparison",
         )
         cfg = _build_job_config(
             job_name="job",
@@ -463,7 +445,6 @@ class TestVertexAILauncher(TestCase):
             vertex_ai_resource_config=resource_config,
             env_vars=[],
             tensorboard_logs_uri=Uri("gs://b/run/logs/"),
-            tensorboard_experiment_name="my-comparison",
         )
         self.assertEqual(cfg.tensorboard_experiment_name, "my-comparison")
 
@@ -499,6 +480,7 @@ class TestVertexAILauncher(TestCase):
             gpu_limit=0,
             num_replicas=1,
             tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+            tensorboard_experiment_name="my-comparison",
         )
         cfg = _build_job_config(
             job_name="gigl_train_some_task",
@@ -511,7 +493,6 @@ class TestVertexAILauncher(TestCase):
             vertex_ai_resource_config=resource_config,
             env_vars=[],
             tensorboard_logs_uri=Uri("gs://b/run/logs/"),
-            tensorboard_experiment_name="my-comparison",
         )
         env = {ev.name: ev.value for ev in cfg.environment_variables or []}
         self.assertEqual(
@@ -532,6 +513,7 @@ class TestVertexAILauncher(TestCase):
             gpu_limit=0,
             num_replicas=1,
             tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+            tensorboard_experiment_name="my-comparison",
         )
         kwargs = dict(
             job_name="gigl_train_same_name",
@@ -544,7 +526,6 @@ class TestVertexAILauncher(TestCase):
             vertex_ai_resource_config=resource_config,
             env_vars=[],
             tensorboard_logs_uri=Uri("gs://b/run/logs/"),
-            tensorboard_experiment_name="my-comparison",
         )
         first = _build_job_config(**kwargs)  # type: ignore[arg-type]
         # Sleep one second so the timestamp suffix changes deterministically.

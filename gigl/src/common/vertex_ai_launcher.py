@@ -87,9 +87,12 @@ def launch_single_pool_job(
     component: GiGLComponents,
     vertex_ai_region: str,
     tensorboard_logs_uri: Optional[Uri] = None,
-    tensorboard_experiment_name: Optional[str] = None,
 ) -> aiplatform.CustomJob:
     """Launch a single pool job on Vertex AI.
+
+    The ``tensorboard_resource_name`` and ``tensorboard_experiment_name``
+    fields on ``vertex_ai_resource_config`` drive TensorBoard wiring; the
+    launcher reads them directly off the proto.
 
     Args:
         vertex_ai_resource_config: The Vertex AI resource configuration
@@ -104,10 +107,6 @@ def launch_single_pool_job(
         component: The GiGL component (Trainer or Inferencer)
         vertex_ai_region: The Vertex AI region to launch the job in
         tensorboard_logs_uri: Optional TensorBoard log URI for trainer jobs
-        tensorboard_experiment_name: Optional Vertex AI Experiment name. When set,
-            the trainer's CustomJob is submitted as a run of the named experiment so
-            multiple jobs sharing the name can be compared on a single TensorBoard
-            page. See ``VertexAiJobConfig.tensorboard_experiment_name``.
 
     Returns:
         The submitted ``aiplatform.CustomJob``. Useful for callers that need
@@ -137,7 +136,6 @@ def launch_single_pool_job(
         env_vars=[env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3")],
         labels=resource_config_wrapper.get_resource_labels(component=component),
         tensorboard_logs_uri=tensorboard_logs_uri,
-        tensorboard_experiment_name=tensorboard_experiment_name,
     )
     logger.info(f"Launching {component.value} job with config: {job_config}")
 
@@ -164,9 +162,14 @@ def launch_graph_store_enabled_job(
     cuda_docker_uri: Optional[str],
     component: GiGLComponents,
     tensorboard_logs_uri: Optional[Uri] = None,
-    tensorboard_experiment_name: Optional[str] = None,
 ) -> None:
     """Launch a graph store enabled job on Vertex AI with separate storage and compute pools.
+
+    The ``compute_pool`` of ``vertex_ai_graph_store_config`` carries
+    ``tensorboard_resource_name`` and ``tensorboard_experiment_name`` (the
+    same Vertex AI metaparams that single-pool reads off its own
+    ``VertexAiResourceConfig``); the launcher reads them directly off the
+    proto.
 
     Args:
         vertex_ai_graph_store_config: The Vertex AI graph store configuration
@@ -182,10 +185,6 @@ def launch_graph_store_enabled_job(
         cuda_docker_uri: Docker image URI for GPU execution
         component: The GiGL component (Trainer or Inferencer)
         tensorboard_logs_uri: Optional TensorBoard log URI for trainer jobs
-        tensorboard_experiment_name: Optional Vertex AI Experiment name. When set,
-            the trainer's CustomJob is submitted as a run of the named experiment so
-            multiple jobs sharing the name can be compared on a single TensorBoard
-            page. See ``VertexAiJobConfig.tensorboard_experiment_name``.
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(
@@ -240,7 +239,6 @@ def launch_graph_store_enabled_job(
         env_vars=environment_variables,
         labels=labels,
         tensorboard_logs_uri=tensorboard_logs_uri,
-        tensorboard_experiment_name=tensorboard_experiment_name,
     )
 
     # Create storage pool job config
@@ -288,13 +286,17 @@ def _build_job_config(
     env_vars: list[env_var.EnvVar],
     labels: Optional[dict[str, str]] = None,
     tensorboard_logs_uri: Optional[Uri] = None,
-    tensorboard_experiment_name: Optional[str] = None,
 ) -> VertexAiJobConfig:
     """Build a VertexAiJobConfig for training or inference jobs.
 
     This function constructs a configuration object for running GiGL training or inference
     jobs on Vertex AI. It assembles job arguments, sets appropriate job naming conventions,
     and configures resource specifications based on the provided parameters.
+
+    ``tensorboard_resource_name`` and ``tensorboard_experiment_name`` come
+    from ``vertex_ai_resource_config`` directly — single-pool launches read
+    them off the trainer's ``VertexAiResourceConfig``; graph-store launches
+    pass ``compute_pool`` here, which carries the same fields.
 
     Args:
         job_name (str): The base name for the job. Will be prefixed with "gigl_train_" or "gigl_infer_".
@@ -310,13 +312,13 @@ def _build_job_config(
         env_vars (list[env_var.EnvVar]): Environment variables to set in the container.
         labels (Optional[dict[str, str]]): Labels to associate with the job. Defaults to None.
         tensorboard_logs_uri (Optional[Uri]): TensorBoard log URI for trainer jobs.
-        tensorboard_experiment_name (Optional[str]): If set, the job is
-            submitted as a run of the named Vertex AI Experiment. See
-            ``VertexAiJobConfig.tensorboard_experiment_name``.
 
     Returns:
         VertexAiJobConfig: A configuration object ready to be used with VertexAIService.launch_job().
     """
+    tensorboard_experiment_name = (
+        vertex_ai_resource_config.tensorboard_experiment_name or None
+    )
     job_args = (
         [
             f"--job_name={job_name}",

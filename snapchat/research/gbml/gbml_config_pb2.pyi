@@ -542,7 +542,6 @@ class GbmlConfig(google.protobuf.message.Message):
         CLS_PATH_FIELD_NUMBER: builtins.int
         COMMAND_FIELD_NUMBER: builtins.int
         SHOULD_LOG_TO_TENSORBOARD_FIELD_NUMBER: builtins.int
-        TENSORBOARD_EXPERIMENT_NAME_FIELD_NUMBER: builtins.int
         GRAPH_STORE_STORAGE_CONFIG_FIELD_NUMBER: builtins.int
         trainer_cls_path: builtins.str
         """(deprecated)
@@ -557,17 +556,6 @@ class GbmlConfig(google.protobuf.message.Message):
         """Command to use for launching trainer job"""
         should_log_to_tensorboard: builtins.bool
         """Weather to log to tensorboard or not (defaults to false)"""
-        tensorboard_experiment_name: builtins.str
-        """Optional. When set, the trainer's chief rank streams events to a
-        TensorboardExperiment with this name on the configured Tensorboard
-        resource, in addition to Vertex's built-in per-job auto-upload.
-        Multiple jobs that share the same value land in the same
-        TensorboardExperiment, so they appear as comparable runs on one
-        TensorBoard page. Requires
-        GiglResourceConfig...tensorboard_resource_name to be set. Allowed
-        characters: lowercase letters, digits, hyphens (Vertex AI Experiment
-        ID rules).
-        """
         @property
         def graph_store_storage_config(self) -> global___GbmlConfig.GraphStoreStorageConfig: ...
         def __init__(
@@ -578,11 +566,10 @@ class GbmlConfig(google.protobuf.message.Message):
             cls_path: builtins.str = ...,
             command: builtins.str = ...,
             should_log_to_tensorboard: builtins.bool = ...,
-            tensorboard_experiment_name: builtins.str = ...,
             graph_store_storage_config: global___GbmlConfig.GraphStoreStorageConfig | None = ...,
         ) -> None: ...
         def HasField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "storage_config", b"storage_config"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "should_log_to_tensorboard", b"should_log_to_tensorboard", "storage_config", b"storage_config", "tensorboard_experiment_name", b"tensorboard_experiment_name", "trainer_args", b"trainer_args", "trainer_cls_path", b"trainer_cls_path"]) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["cls_path", b"cls_path", "command", b"command", "executable", b"executable", "graph_store_storage_config", b"graph_store_storage_config", "should_log_to_tensorboard", b"should_log_to_tensorboard", "storage_config", b"storage_config", "trainer_args", b"trainer_args", "trainer_cls_path", b"trainer_cls_path"]) -> None: ...
         @typing.overload
         def WhichOneof(self, oneof_group: typing_extensions.Literal["executable", b"executable"]) -> typing_extensions.Literal["cls_path", "command"] | None: ...
         @typing.overload
