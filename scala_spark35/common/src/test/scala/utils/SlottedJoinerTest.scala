@@ -89,11 +89,11 @@ class SlottedJoinerTest extends AnyFunSuite with BeforeAndAfterAll with SharedSp
                 slottedOnSrc.dst_node as root_node,
                 slottedOnDst.dst_node as 1_hop_node,
                 slottedOnDst.src_node as 2_hop_node
-            FROM 
-                slottedOnSrc 
-            JOIN 
-                slottedOnDst 
-            ON 
+            FROM
+                slottedOnSrc
+            JOIN
+                slottedOnDst
+            ON
                 slottedOnSrc.src_node = slottedOnDst.dst_node
         """,
       numSlots = numSlots,

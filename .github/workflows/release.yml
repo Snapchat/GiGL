@@ -59,7 +59,7 @@ jobs:
       run: |
         # Remove stale cmake cache from previous runs on self-hosted runners.
         rm -rf gigl-core/.cache/cmake_build
-        uv build --wheel gigl-core/ --locked
+        uv build --wheel gigl-core/
 
     - name: Publish gigl-core wheel
       working-directory: gigl-core
@@ -73,5 +73,5 @@ jobs:
     # when gigl becomes available.
     - name: Build and publish gigl wheel
       run: |
-        uv build --wheel --locked
+        uv build --wheel
         uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess

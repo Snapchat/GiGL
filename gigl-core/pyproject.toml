@@ -29,8 +29,8 @@ editable.rebuild = false
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "CMakeLists.txt" },
-    { file = "csrc/**/*.h" },
-    { file = "csrc/**/*.cpp" },
-    { file = "csrc/**/*.cu" },
-    { file = "csrc/**/*.cuh" },
+    { file = "core/**/*.h" },
+    { file = "core/**/*.cpp" },
+    { file = "core/**/*.cu" },
+    { file = "core/**/*.cuh" },
 ]

@@ -263,10 +263,10 @@ class RnnUDAFTest extends AnyFunSuite with BeforeAndAfterAll with SharedSparkSes
                 _2_hop_node_features,
                 _2_hop_edge_features,
                 _2_hop_edge_type
-            ) as result 
-        FROM 
-            test_view 
-        GROUP BY 
+            ) as result
+        FROM
+            test_view
+        GROUP BY
             _root_node_id, _root_node_type
     """)
 

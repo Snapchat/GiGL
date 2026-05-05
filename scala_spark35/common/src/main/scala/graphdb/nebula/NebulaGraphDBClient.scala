@@ -27,8 +27,8 @@ import scala.collection.JavaConversions._
   To use SessionPool, you must config the graph space to connect for SessionPool.
   The SessionPool is thread-safe, and support retry(release old session and get available session from SessionPool) for both connection error,
   session error and execution error(caused by bad storaged server), and the retry mechanism needs users to config retryTimes and intervalTime between retrys.
- 
- 
+
+
   This class needs to be serializable if defined outside of mapPartitions, nebula client however is has underlying classes that are not serializable
   ConnectionPool + getSession - java.io.NotSerializableException: com.vesoft.nebula.client.graph.net.RoundRobinLoadBalancer
   SessionPool - Task not serializable: java.io.NotSerializableException: java.util.concurrent.ScheduledThreadPoolExecutor
