@@ -4,7 +4,11 @@ from unittest.mock import Mock, patch
 
 from absl.testing import absltest
 
-from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.common.services.vertex_ai import (
+    VertexAiJobConfig,
+    VertexAIService,
+    _build_tensorboard_experiment_url,
+)
 from tests.test_assets.test_case import TestCase
 
 
@@ -182,6 +186,112 @@ class TestSubmitJobValidatesExperimentName(TestCase):
             service.launch_job(job_config=job_config)
 
         self.assertIn("tensorboard_experiment_name", str(ctx.exception))
+
+
+class TestBuildTensorboardExperimentUrl(TestCase):
+    """Tests for the small URL-builder helper used in submit-time logging."""
+
+    def test_builds_url_for_well_formed_resource_name(self) -> None:
+        url = _build_tensorboard_experiment_url(
+            tensorboard_resource_name="projects/p/locations/us-central1/tensorboards/42",
+            experiment_id="my-exp",
+        )
+        self.assertEqual(
+            url,
+            "https://us-central1.tensorboard.googleusercontent.com/experiment/"
+            "projects+p+locations+us-central1+tensorboards+42+experiments+my-exp",
+        )
+
+    def test_returns_none_for_malformed_resource_name(self) -> None:
+        # A stray bad TB resource name should never break submission — the
+        # caller falls back to no URL log.
+        self.assertIsNone(
+            _build_tensorboard_experiment_url(
+                tensorboard_resource_name="not-a-resource-name",
+                experiment_id="my-exp",
+            )
+        )
+
+
+class TestSubmitJobLogsTensorboardUrls(TestCase):
+    """Tests that _submit_job logs both per-job and cross-job TB URLs."""
+
+    @patch("gigl.common.services.vertex_ai.logger.info")
+    @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_logs_both_urls_when_experiment_name_set(
+        self,
+        mock_aiplatform_init: Mock,
+        mock_custom_job_class: Mock,
+        mock_logger_info: Mock,
+    ) -> None:
+        mock_job = Mock()
+        mock_job.resource_name = "projects/p/locations/us-central1/customJobs/9876"
+        mock_job.name = "9876"  # numeric job ID
+        mock_custom_job_class.return_value = mock_job
+
+        service = VertexAIService(
+            project="p",
+            location="us-central1",
+            service_account="svc@p.iam.gserviceaccount.com",
+            staging_bucket="gs://staging",
+        )
+        job_config = VertexAiJobConfig(
+            job_name="my-job",
+            container_uri="gcr.io/p/img",
+            command=["python", "-m", "trainer"],
+            base_output_dir="gs://staging/my-job/trainer",
+            tensorboard_resource_name="projects/p/locations/us-central1/tensorboards/42",
+            tensorboard_experiment_name="my-exp",
+        )
+
+        service.launch_job(job_config=job_config)
+
+        emitted = " ".join(call.args[0] for call in mock_logger_info.call_args_list)
+        # Per-job URL keyed on the job's numeric ID.
+        self.assertIn(
+            "experiments+9876",
+            emitted,
+        )
+        # Cross-job URL keyed on the user-supplied experiment name.
+        self.assertIn(
+            "experiments+my-exp",
+            emitted,
+        )
+
+    @patch("gigl.common.services.vertex_ai.logger.info")
+    @patch("gigl.common.services.vertex_ai.aiplatform.CustomJob")
+    @patch("gigl.common.services.vertex_ai.aiplatform.init")
+    def test_logs_only_per_job_url_when_no_experiment_name(
+        self,
+        mock_aiplatform_init: Mock,
+        mock_custom_job_class: Mock,
+        mock_logger_info: Mock,
+    ) -> None:
+        mock_job = Mock()
+        mock_job.resource_name = "projects/p/locations/us-central1/customJobs/9876"
+        mock_job.name = "9876"
+        mock_custom_job_class.return_value = mock_job
+
+        service = VertexAIService(
+            project="p",
+            location="us-central1",
+            service_account="svc@p.iam.gserviceaccount.com",
+            staging_bucket="gs://staging",
+        )
+        job_config = VertexAiJobConfig(
+            job_name="my-job",
+            container_uri="gcr.io/p/img",
+            command=["python", "-m", "trainer"],
+            base_output_dir="gs://staging/my-job/trainer",
+            tensorboard_resource_name="projects/p/locations/us-central1/tensorboards/42",
+        )
+
+        service.launch_job(job_config=job_config)
+
+        emitted = " ".join(call.args[0] for call in mock_logger_info.call_args_list)
+        self.assertIn("experiments+9876", emitted)
+        self.assertNotIn("cross-job comparison", emitted)
 
 
 if __name__ == "__main__":

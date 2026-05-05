@@ -94,6 +94,39 @@ _VERTEX_RESOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^[a-z0-9][a-z0-9-]{0,127}$"
 )
 
+# Captures the trailing tensorboard ID from a fully-qualified resource name.
+# Used only for building the human-readable TB UI URL.
+_VERTEX_TENSORBOARD_ID_FROM_RESOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^projects/(?P<project>[^/]+)"
+    r"/locations/(?P<location>[^/]+)"
+    r"/tensorboards/(?P<tensorboard_id>[^/]+)$"
+)
+
+
+def _build_tensorboard_experiment_url(
+    *,
+    tensorboard_resource_name: str,
+    experiment_id: str,
+) -> Optional[str]:
+    """Return the TB UI URL for ``experiment_id`` under the given TB resource.
+
+    Returns ``None`` if ``tensorboard_resource_name`` doesn't parse as
+    ``projects/.../locations/.../tensorboards/...`` — defensive so a stray
+    log line never breaks job submission.
+    """
+    match = _VERTEX_TENSORBOARD_ID_FROM_RESOURCE_PATTERN.match(
+        tensorboard_resource_name
+    )
+    if not match:
+        return None
+    return (
+        f"https://{match['location']}.tensorboard.googleusercontent.com/experiment/"
+        f"projects+{match['project']}"
+        f"+locations+{match['location']}"
+        f"+tensorboards+{match['tensorboard_id']}"
+        f"+experiments+{experiment_id}"
+    )
+
 
 @dataclass
 class VertexAiJobConfig:
@@ -411,6 +444,27 @@ class VertexAIService:
         logger.info(
             f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
+        if job_config.tensorboard_resource_name:
+            # Per-job TensorboardExperiment: name == job's numeric ID, set by
+            # Vertex's auto-uploader. This is what the "Open TensorBoard" link
+            # on the VAI job page resolves to.
+            per_job_url = _build_tensorboard_experiment_url(
+                tensorboard_resource_name=job_config.tensorboard_resource_name,
+                experiment_id=job.name,
+            )
+            if per_job_url:
+                logger.info(f"View TensorBoard (per-job): {per_job_url}")
+            if job_config.tensorboard_experiment_name:
+                comparison_url = _build_tensorboard_experiment_url(
+                    tensorboard_resource_name=job_config.tensorboard_resource_name,
+                    experiment_id=job_config.tensorboard_experiment_name,
+                )
+                if comparison_url:
+                    logger.info(
+                        "View TensorBoard (cross-job comparison, "
+                        f"experiment={job_config.tensorboard_experiment_name!r}): "
+                        f"{comparison_url}"
+                    )
         job.wait_for_completion()
         return job
 
