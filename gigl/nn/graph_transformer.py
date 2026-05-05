@@ -22,6 +22,7 @@ from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
@@ -432,6 +433,9 @@ class GraphTransformerEncoder(nn.Module):
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
+        pairwise_hard_attention_bias_attr_names: List of hard pairwise attention
+            constraint names. These are structural controls synthesized from the
+            sampled graph. Supported values: ``['one_hop_masked']``.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
@@ -495,6 +499,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: Optional[list[str]] = None,
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+        pairwise_hard_attention_bias_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -543,6 +548,19 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
+        pairwise_hard_bias_attr_names = (
+            pairwise_hard_attention_bias_attr_names or []
+        )
+        unsupported_pairwise_hard_bias_attr_names = sorted(
+            set(pairwise_hard_bias_attr_names)
+            - {ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME}
+        )
+        if unsupported_pairwise_hard_bias_attr_names:
+            raise ValueError(
+                "Unsupported pairwise hard attention bias attr names "
+                f"{unsupported_pairwise_hard_bias_attr_names}. Supported values: "
+                f"['{ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME}']."
+            )
         if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
             raise ValueError(
                 f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and "
@@ -568,6 +586,9 @@ class GraphTransformerEncoder(nn.Module):
         self._anchor_based_input_attr_names = anchor_based_input_attr_names
         self._anchor_based_input_embedding_dict = anchor_based_input_embedding_dict
         self._pairwise_attention_bias_attr_names = pairwise_attention_bias_attr_names
+        self._pairwise_hard_attention_bias_attr_names = (
+            pairwise_hard_attention_bias_attr_names
+        )
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
@@ -801,6 +822,7 @@ class GraphTransformerEncoder(nn.Module):
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
+            pairwise_hard_attention_bias_attr_names=self._pairwise_hard_attention_bias_attr_names,
         )
 
         # Free memory after sequences are built
@@ -942,18 +964,23 @@ class GraphTransformerEncoder(nn.Module):
         """Build additive attention bias from padding mask and learned relative PE projections.
 
         This function constructs a combined attention bias tensor that is added to
-        attention scores before softmax. The bias has three components:
+        attention scores before softmax. The bias has four components:
 
         1. **Padding mask bias**: Sets padded positions to -inf so they receive zero
            attention weight after softmax. Shape: (batch, 1, 1, seq) broadcasts to
            (batch, num_heads, seq, seq) for key masking.
 
-        2. **Anchor-relative bias** (optional): For each sequence position, looks up
+        2. **Pairwise hard mask** (optional): For each valid query-key pair, blocks
+           structurally illegal edges with a large negative value. Input shape:
+           ``(batch, seq, seq)``. Only applied on valid query rows so padded rows
+           do not become all ``-inf``.
+
+        3. **Anchor-relative bias** (optional): For each sequence position, looks up
            the PE value relative to the anchor (e.g., hop distance from anchor).
            Input shape: (batch, seq, num_anchor_attrs)
            After projection: (batch, num_heads, 1, seq) - same bias for all query positions.
 
-        3. **Pairwise bias** (optional): For each (query, key) pair, looks up the PE
+        4. **Pairwise bias** (optional): For each (query, key) pair, looks up the PE
            value between those two nodes (e.g., random walk structural encoding).
            Input shape: (batch, seq, seq, num_pairwise_attrs)
            After projection: (batch, num_heads, seq, seq) - unique bias per query-key pair.
@@ -965,6 +992,7 @@ class GraphTransformerEncoder(nn.Module):
                 used only to infer dtype and device.
             attention_bias_data: Dictionary containing optional PE tensors:
                 - "anchor_bias": (batch, seq, num_anchor_attrs) or None
+                - "pairwise_hard_mask": (batch, seq, seq) or None
                 - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
 
         Returns:
@@ -977,6 +1005,7 @@ class GraphTransformerEncoder(nn.Module):
             #
             # Output attn_bias shape: (2, 8, 4, 4)
             # - Positions where valid_mask is False get -inf
+            # - Hard mask blocks structurally illegal pairs
             # - Anchor bias adds per-key bias (same for all queries)
             # - Pairwise bias adds unique bias for each (query, key) pair
         """
@@ -997,7 +1026,29 @@ class GraphTransformerEncoder(nn.Module):
             negative_inf,
         )
 
-        # Step 2: Add anchor-relative bias (optional)
+        # Step 2: Add pairwise hard mask (optional)
+        pairwise_hard_mask = attention_bias_data.get("pairwise_hard_mask")
+        if pairwise_hard_mask is not None:
+            if pairwise_hard_mask.shape != (batch_size, seq_len, seq_len):
+                raise ValueError(
+                    "Pairwise hard mask must have shape "
+                    f"({batch_size}, {seq_len}, {seq_len}), "
+                    f"got {tuple(pairwise_hard_mask.shape)}."
+                )
+            valid_query_rows = valid_mask.unsqueeze(1).unsqueeze(3)
+            pairwise_hard_mask_bias = torch.zeros(
+                (batch_size, 1, seq_len, seq_len),
+                dtype=dtype,
+                device=device,
+            )
+            illegal_pair_mask = valid_query_rows & ~pairwise_hard_mask.unsqueeze(1)
+            pairwise_hard_mask_bias = pairwise_hard_mask_bias.masked_fill(
+                illegal_pair_mask,
+                negative_inf,
+            )
+            attn_bias = attn_bias + pairwise_hard_mask_bias
+
+        # Step 3: Add anchor-relative bias (optional)
         # Projects (batch, seq, num_attrs) → (batch, seq, num_heads)
         # Then reshapes to (batch, num_heads, 1, seq) for key-side bias
         anchor_bias_features = attention_bias_data.get("anchor_bias")
@@ -1012,7 +1063,7 @@ class GraphTransformerEncoder(nn.Module):
             )  # (batch, num_heads, 1, seq)
             attn_bias = attn_bias + anchor_bias
 
-        # Step 3: Add pairwise bias (optional)
+        # Step 4: Add pairwise bias (optional)
         # Projects (batch, seq, seq, num_attrs) → (batch, seq, seq, num_heads)
         # Then reshapes to (batch, num_heads, seq, seq)
         pairwise_bias_features = attention_bias_data.get("pairwise_bias")

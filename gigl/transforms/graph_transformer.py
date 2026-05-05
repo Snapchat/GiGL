@@ -71,10 +71,12 @@ TokenInputData = dict[str, Tensor]
 class SequenceAuxiliaryData(TypedDict):
     anchor_bias: Optional[Tensor]
     pairwise_bias: Optional[Tensor]
+    pairwise_hard_mask: Optional[Tensor]
     token_input: Optional[TokenInputData]
 
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
+ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME = "one_hop_masked"
 
 
 def heterodata_to_graph_transformer_input(
@@ -90,6 +92,7 @@ def heterodata_to_graph_transformer_input(
     anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
     anchor_based_input_attr_names: Optional[list[str]] = None,
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+    pairwise_hard_attention_bias_attr_names: Optional[list[str]] = None,
 ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -131,6 +134,10 @@ def heterodata_to_graph_transformer_input(
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
+        pairwise_hard_attention_bias_attr_names: List of hard pairwise attention
+            constraint names. These are structural controls synthesized from the
+            sampled graph rather than graph-level sparse attributes on ``data``.
+            Supported values: ['one_hop_masked'].
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -143,6 +150,7 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
+                ``"pairwise_hard_mask"`` shaped ``(batch, seq, seq)`` or None
                 ``"token_input"`` as a dict mapping attribute name to a
                 ``(batch, seq, 1)`` tensor, or None
 
@@ -183,6 +191,17 @@ def heterodata_to_graph_transformer_input(
     anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
     anchor_input_attr_names = anchor_based_input_attr_names or []
     pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
+    pairwise_hard_bias_attr_names = pairwise_hard_attention_bias_attr_names or []
+    unsupported_pairwise_hard_bias_attr_names = sorted(
+        set(pairwise_hard_bias_attr_names)
+        - {ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME}
+    )
+    if unsupported_pairwise_hard_bias_attr_names:
+        raise ValueError(
+            "Unsupported pairwise hard attention bias attr names "
+            f"{unsupported_pairwise_hard_bias_attr_names}. Supported values: "
+            f"['{ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME}']."
+        )
 
     if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
         raise ValueError(
@@ -312,6 +331,18 @@ def heterodata_to_graph_transformer_input(
         csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
         device=device,
     )
+    pairwise_hard_mask = None
+    if ONE_HOP_MASKED_ATTENTION_BIAS_ATTR_NAME in pairwise_hard_bias_attr_names:
+        pairwise_hard_mask = _build_one_hop_pairwise_hard_mask(
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            adjacency_csr=_build_message_passing_adjacency_csr(
+                edge_index=homo_data.edge_index,
+                num_nodes=num_nodes,
+                device=device,
+            ),
+            device=device,
+        )
 
     anchor_bias_features = _compose_anchor_feature_tensor(
         anchor_relative_feature_sequences=anchor_relative_feature_sequences,
@@ -332,6 +363,7 @@ def heterodata_to_graph_transformer_input(
         {
             "anchor_bias": anchor_bias_features,
             "pairwise_bias": pairwise_feature_sequences,
+            "pairwise_hard_mask": pairwise_hard_mask,
             "token_input": token_input_features,
         },
     )
@@ -873,6 +905,69 @@ def _lookup_pairwise_relative_features(
         features[..., attr_idx][pair_valid_mask] = pe_values
 
     return features
+
+
+def _build_message_passing_adjacency_csr(
+    edge_index: Tensor,
+    num_nodes: int,
+    device: torch.device,
+) -> Tensor:
+    """Build a CSR adjacency where ``A[i, j] = 1`` means ``j`` may send to ``i``."""
+    self_loops = torch.arange(num_nodes, device=device, dtype=torch.long)
+    reversed_edge_index = torch.stack([edge_index[1], edge_index[0]], dim=0)
+    adjacency_indices = torch.cat(
+        [
+            reversed_edge_index,
+            torch.stack([self_loops, self_loops], dim=0),
+        ],
+        dim=1,
+    )
+    adjacency_values = torch.ones(
+        adjacency_indices.size(1),
+        device=device,
+        dtype=torch.float,
+    )
+    return (
+        torch.sparse_coo_tensor(
+            adjacency_indices,
+            adjacency_values,
+            size=(num_nodes, num_nodes),
+        )
+        .coalesce()
+        .to_sparse_csr()
+    )
+
+
+def _build_one_hop_pairwise_hard_mask(
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    adjacency_csr: Tensor,
+    device: torch.device,
+) -> Tensor:
+    """Return a token-token mask for strict one-hop attention plus self-loops."""
+    batch_size, max_seq_len = node_index_sequences.shape
+    pairwise_hard_mask = torch.zeros(
+        (batch_size, max_seq_len, max_seq_len),
+        dtype=torch.bool,
+        device=device,
+    )
+
+    pair_valid_mask = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
+    if not pair_valid_mask.any():
+        return pairwise_hard_mask
+
+    row_indices = node_index_sequences.unsqueeze(2).expand(-1, -1, max_seq_len)
+    col_indices = node_index_sequences.unsqueeze(1).expand(-1, max_seq_len, -1)
+    valid_row_indices = row_indices[pair_valid_mask]
+    valid_col_indices = col_indices[pair_valid_mask]
+
+    adjacency_values = _lookup_csr_values(
+        csr_matrix=adjacency_csr,
+        row_indices=valid_row_indices,
+        col_indices=valid_col_indices,
+    )
+    pairwise_hard_mask[pair_valid_mask] = adjacency_values > 0
+    return pairwise_hard_mask
 
 
 def _get_k_hop_neighbors_sparse(

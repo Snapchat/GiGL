@@ -122,6 +122,25 @@ def create_ppr_sequence_hetero_data() -> HeteroData:
     return data
 
 
+def create_bidirectional_chain_hetero_data() -> HeteroData:
+    """Create a 3-node chain 0 <-> 1 <-> 2 for one-hop mask tests."""
+    data = HeteroData()
+    data["user"].x = torch.tensor(
+        [
+            [10.0, 0.0],
+            [11.0, 0.0],
+            [12.0, 0.0],
+        ]
+    )
+    data["user", "connects", "user"].edge_index = torch.tensor(
+        [
+            [0, 1, 1, 2],
+            [1, 0, 2, 1],
+        ]
+    )
+    return data
+
+
 class TestGetKHopNeighborsSparse(TestCase):
     """Tests for _get_k_hop_neighbors_sparse helper function."""
 
@@ -490,6 +509,74 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertTrue(
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
+
+    def test_one_hop_hard_attention_bias_returns_mask_only(self) -> None:
+        data = create_bidirectional_chain_hetero_data()
+
+        _, valid_mask, sequence_auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            pairwise_hard_attention_bias_attr_names=["one_hop_masked"],
+        )
+
+        pairwise_hard_mask = sequence_auxiliary_data["pairwise_hard_mask"]
+        assert pairwise_hard_mask is not None
+
+        self.assertIsNone(sequence_auxiliary_data["pairwise_bias"])
+        self.assertEqual(pairwise_hard_mask.shape, (1, 4, 4))
+        expected_mask = torch.tensor(
+            [
+                [True, True, False, False],
+                [True, True, True, False],
+                [False, True, True, False],
+                [False, False, False, False],
+            ]
+        )
+        self.assertTrue(torch.equal(pairwise_hard_mask[0], expected_mask))
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+
+    def test_one_hop_hard_attention_bias_can_be_combined_with_soft_pairwise_bias(
+        self,
+    ) -> None:
+        data = _create_hetero_data_with_relative_pe()
+
+        _, _, sequence_auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
+            pairwise_hard_attention_bias_attr_names=["one_hop_masked"],
+        )
+
+        pairwise_bias = sequence_auxiliary_data["pairwise_bias"]
+        pairwise_hard_mask = sequence_auxiliary_data["pairwise_hard_mask"]
+        assert pairwise_bias is not None
+        assert pairwise_hard_mask is not None
+
+        self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
+        self.assertEqual(pairwise_hard_mask.shape, (1, 4, 4))
+
+    def test_invalid_pairwise_hard_attention_bias_attr_name_raises(self) -> None:
+        data = create_bidirectional_chain_hetero_data()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unsupported pairwise hard attention bias attr names",
+        ):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=4,
+                anchor_node_type="user",
+                pairwise_hard_attention_bias_attr_names=["not_supported"],
+            )
 
 
 class TestPyTorchTransformerIntegration(TestCase):

@@ -361,6 +361,24 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(embeddings.shape, (3, 6))
         self.assertFalse(torch.isnan(embeddings).any())
 
+    def test_forward_accepts_pairwise_hard_attention_bias(self) -> None:
+        data = _create_user_graph_with_pe()
+
+        encoder = self._create_encoder(
+            pairwise_hard_attention_bias_attr_names=["one_hop_masked"],
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(embeddings.shape, (3, 6))
+        self.assertFalse(torch.isnan(embeddings).any())
+
     def test_concat_mode_infers_sequence_width_without_explicit_pe_dim(self) -> None:
         data = _create_user_graph_with_pe()
 
@@ -420,6 +438,53 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 8.0)
         self.assertEqual(attn_bias[0, 0, 2, 2].item(), 27.0)
         self.assertEqual(attn_bias[0, 1, 2, 2].item(), 38.0)
+
+    def test_attention_bias_supports_pairwise_hard_mask(self) -> None:
+        encoder = self._create_encoder(
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
+            pairwise_hard_attention_bias_attr_names=["one_hop_masked"],
+        )
+
+        assert encoder._pairwise_pe_attention_bias_projection is not None
+
+        with torch.no_grad():
+            encoder._pairwise_pe_attention_bias_projection.weight.copy_(
+                torch.tensor([[1.0], [2.0]])
+            )
+            attn_bias = encoder._build_attention_bias(
+                valid_mask=torch.tensor([[True, True, True, False]]),
+                sequences=torch.zeros((1, 4, 8), dtype=torch.float),
+                attention_bias_data={
+                    "anchor_bias": None,
+                    "pairwise_bias": torch.tensor(
+                        [
+                            [
+                                [[0.0], [1.0], [2.0], [0.0]],
+                                [[3.0], [4.0], [5.0], [0.0]],
+                                [[6.0], [7.0], [8.0], [0.0]],
+                                [[0.0], [0.0], [0.0], [0.0]],
+                            ]
+                        ]
+                    ),
+                    "pairwise_hard_mask": torch.tensor(
+                        [
+                            [
+                                [True, True, False, False],
+                                [True, True, True, False],
+                                [False, True, True, False],
+                                [False, False, False, False],
+                            ]
+                        ]
+                    ),
+                    "token_input": None,
+                },
+            )
+
+        self.assertEqual(attn_bias.shape, (1, 2, 4, 4))
+        self.assertEqual(attn_bias[0, 0, 0, 1].item(), 1.0)
+        self.assertEqual(attn_bias[0, 1, 1, 2].item(), 10.0)
+        self.assertLess(attn_bias[0, 0, 0, 2].item(), -1e30)
+        self.assertEqual(attn_bias[0, 0, 3, 0].item(), 0.0)
 
     def test_attention_bias_supports_anchor_relative_attrs_and_ppr_weights(
         self,
