@@ -18,7 +18,7 @@ class TestTensorBoardWriter(TestCase):
         with patch.dict(
             os.environ,
             {"AIP_TENSORBOARD_LOG_DIR": "gs://vertex-managed/logs"},
-            clear=False,
+            clear=True,
         ):
             with patch(
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
@@ -29,11 +29,11 @@ class TestTensorBoardWriter(TestCase):
 
         mock_create_file_writer.assert_not_called()
 
-    def test_from_env_uses_vertex_env_var(self) -> None:
+    def test_from_env_uses_parent_log_dir_when_no_run_name(self) -> None:
         with patch.dict(
             os.environ,
             {"AIP_TENSORBOARD_LOG_DIR": "gs://vertex-managed/logs"},
-            clear=False,
+            clear=True,
         ):
             with patch(
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
@@ -41,6 +41,25 @@ class TestTensorBoardWriter(TestCase):
                 TensorBoardWriter.from_env()
 
         mock_create_file_writer.assert_called_once_with("gs://vertex-managed/logs")
+
+    def test_from_env_uses_run_name_subdir_when_set(self) -> None:
+        """Writer points TF at the subdir so the SDK uploader sees a distinct run."""
+        with patch.dict(
+            os.environ,
+            {
+                "AIP_TENSORBOARD_LOG_DIR": "gs://vertex-managed/logs",
+                "GIGL_TENSORBOARD_RUN_NAME": "my-run",
+            },
+            clear=True,
+        ):
+            with patch(
+                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
+            ) as mock_create_file_writer:
+                TensorBoardWriter.from_env()
+
+        mock_create_file_writer.assert_called_once_with(
+            "gs://vertex-managed/logs/my-run"
+        )
 
     def test_from_env_raises_when_env_var_missing(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -118,19 +137,21 @@ class TestTensorBoardWriterUploader(TestCase):
     _TB_RESOURCE = "projects/my-project/locations/us-central1/tensorboards/42"
     _EXPERIMENT = "my-comparison"
 
-    def test_uploader_starts_when_both_env_vars_present(self) -> None:
+    def test_uploader_starts_when_all_env_vars_present(self) -> None:
+        """Uploader watches the parent log dir; writer points at the run-name subdir."""
         with patch.dict(
             os.environ,
             {
                 "AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR,
                 "GIGL_TENSORBOARD_RESOURCE_NAME": self._TB_RESOURCE,
                 "GIGL_TENSORBOARD_EXPERIMENT_NAME": self._EXPERIMENT,
+                "GIGL_TENSORBOARD_RUN_NAME": "my-run",
             },
             clear=True,
         ):
             with patch(
                 "gigl.utils.tensorboard_writer.tf.summary.create_file_writer"
-            ):
+            ) as mock_create_file_writer:
                 with patch(
                     "google.cloud.aiplatform.start_upload_tb_log"
                 ) as mock_start, patch(
@@ -141,9 +162,14 @@ class TestTensorBoardWriterUploader(TestCase):
                     writer = TensorBoardWriter.from_env()
                     writer.close()
 
+        mock_create_file_writer.assert_called_once_with(
+            f"{self._LOG_DIR}/my-run"
+        )
         mock_init.assert_called_once_with(
             project="my-project", location="us-central1"
         )
+        # Uploader watches the PARENT log dir so the run-name subdir is
+        # discovered as a TensorboardRun via os.path.relpath.
         mock_start.assert_called_once_with(
             tensorboard_id="42",
             tensorboard_experiment_name=self._EXPERIMENT,
@@ -205,6 +231,34 @@ class TestTensorBoardWriterUploader(TestCase):
                 writer.close()
 
         mock_start.assert_not_called()
+
+    def test_uploader_failure_after_writer_construction_closes_writer(self) -> None:
+        """If start_upload_tb_log raises, the TF file writer is closed and
+        the exception propagates — no leaked uploader thread, no half-built
+        writer.
+        """
+        underlying_writer = Mock()
+        with patch.dict(
+            os.environ,
+            {
+                "AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR,
+                "GIGL_TENSORBOARD_RESOURCE_NAME": self._TB_RESOURCE,
+                "GIGL_TENSORBOARD_EXPERIMENT_NAME": self._EXPERIMENT,
+            },
+            clear=True,
+        ):
+            with patch(
+                "gigl.utils.tensorboard_writer.tf.summary.create_file_writer",
+                return_value=underlying_writer,
+            ):
+                with patch(
+                    "google.cloud.aiplatform.start_upload_tb_log",
+                    side_effect=RuntimeError("boom"),
+                ), patch("google.cloud.aiplatform.init"):
+                    with self.assertRaises(RuntimeError):
+                        TensorBoardWriter.from_env()
+
+        underlying_writer.close.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -20,15 +20,18 @@ _VERTEX_TENSORBOARD_LOG_DIR_ENV_KEY: Final[str] = "AIP_TENSORBOARD_LOG_DIR"
 
 # Set by GiGL's launcher (``gigl/src/common/vertex_ai_launcher.py``) when the
 # user requested a stable Vertex AI ``TensorboardExperiment`` for cross-job
-# comparison. When both env vars are set on the chief rank, the writer also
+# comparison. When all three are set on the chief rank, the writer also
 # starts a background uploader (``aiplatform.start_upload_tb_log``) that
-# streams events from the log dir to that experiment's backing TB. Without
-# these, the writer just writes files to ``AIP_TENSORBOARD_LOG_DIR`` and no
-# upload happens.
+# streams events from the parent log dir to that experiment under the
+# configured ``Tensorboard`` instance, with the run-name subdir surfacing
+# as a distinct ``TensorboardRun``. Without these, the writer just writes
+# files to ``AIP_TENSORBOARD_LOG_DIR`` and only Vertex's built-in
+# auto-uploader (gated on ``jobSpec.tensorboard``) ingests them.
 _GIGL_TENSORBOARD_RESOURCE_NAME_ENV_KEY: Final[str] = "GIGL_TENSORBOARD_RESOURCE_NAME"
 _GIGL_TENSORBOARD_EXPERIMENT_NAME_ENV_KEY: Final[str] = (
     "GIGL_TENSORBOARD_EXPERIMENT_NAME"
 )
+_GIGL_TENSORBOARD_RUN_NAME_ENV_KEY: Final[str] = "GIGL_TENSORBOARD_RUN_NAME"
 
 _TENSORBOARD_RESOURCE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^projects/(?P<project>[^/]+)"
@@ -86,10 +89,17 @@ class TensorBoardWriter:
           ``RuntimeError`` rather than silently no-op'ing. The env var is
           populated by Vertex AI from ``CustomJobSpec.baseOutputDirectory``
           (see the references in this module's header).
+        - If ``GIGL_TENSORBOARD_RUN_NAME`` is set, events are written to
+          ``<AIP_TENSORBOARD_LOG_DIR>/<run_name>/`` so the SDK uploader's
+          ``LogdirLoader`` discovers the subdir as a distinct
+          ``TensorboardRun`` (instead of merging into the SDK's hardcoded
+          ``DEFAULT_RUN_NAME = "default"``). The launcher injects this env
+          var when the user opts into ``tensorboard_experiment_name``.
         - If ``GIGL_TENSORBOARD_RESOURCE_NAME`` and
           ``GIGL_TENSORBOARD_EXPERIMENT_NAME`` are also set, this also starts
           a background ``aiplatform`` uploader that streams events from the
-          log dir to the named ``TensorboardExperiment`` under the configured
+          PARENT log dir (so the run-name subdir surfaces as a run) to the
+          named ``TensorboardExperiment`` under the configured
           ``Tensorboard`` instance. The uploader is shut down on
           :meth:`close`.
 
@@ -108,17 +118,30 @@ class TensorBoardWriter:
         """
         if not enabled:
             return cls(log_dir=None)
-        log_dir = os.environ.get(_VERTEX_TENSORBOARD_LOG_DIR_ENV_KEY)
-        if not log_dir:
+        parent_log_dir = os.environ.get(_VERTEX_TENSORBOARD_LOG_DIR_ENV_KEY)
+        if not parent_log_dir:
             raise RuntimeError(
                 f"{_VERTEX_TENSORBOARD_LOG_DIR_ENV_KEY} is not set. "
                 "TensorBoardWriter.from_env() requires the trainer to run as "
                 "a Vertex AI CustomJob with baseOutputDirectory configured. "
                 "See https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#FIELDS.base_output_directory."
             )
+        run_name = os.environ.get(_GIGL_TENSORBOARD_RUN_NAME_ENV_KEY)
+        effective_log_dir = (
+            os.path.join(parent_log_dir, run_name) if run_name else parent_log_dir
+        )
 
-        upload_started = _maybe_start_uploader(log_dir=log_dir)
-        return cls(log_dir=log_dir, upload_started=upload_started)
+        # Construct the file writer FIRST. If TF construction fails we don't
+        # want a leaked uploader thread keeping the (non-daemon) process
+        # alive. See codex review round 2, issue 6.
+        instance = cls(log_dir=effective_log_dir, upload_started=False)
+        try:
+            if _maybe_start_uploader(parent_log_dir=parent_log_dir):
+                instance._upload_started = True
+        except BaseException:
+            instance.close()
+            raise
+        return instance
 
     def log(self, metrics: dict[str, float], step: int) -> None:
         """Write each metric scalar at ``step`` and flush.
@@ -161,14 +184,19 @@ class TensorBoardWriter:
         self.close()
 
 
-def _maybe_start_uploader(*, log_dir: str) -> bool:
+def _maybe_start_uploader(*, parent_log_dir: str) -> bool:
     """Start the aiplatform TB uploader iff the GiGL env vars are present.
+
+    Watches ``parent_log_dir`` (not the run-name subdir under it), so the
+    SDK's ``LogdirLoader`` discovers each run via
+    ``os.path.relpath(subdir, parent_log_dir)``.
 
     Returns ``True`` if the uploader was started (caller must arrange for
     ``aiplatform.end_upload_tb_log`` on shutdown), ``False`` otherwise.
 
     Args:
-        log_dir: Directory the uploader watches for new event files.
+        parent_log_dir: The ``AIP_TENSORBOARD_LOG_DIR`` value — i.e. the
+            directory whose children are run-name subdirectories.
 
     Raises:
         ValueError: If ``GIGL_TENSORBOARD_RESOURCE_NAME`` is set but does not
@@ -198,6 +226,6 @@ def _maybe_start_uploader(*, log_dir: str) -> bool:
     aiplatform.start_upload_tb_log(
         tensorboard_id=match["tensorboard_id"],
         tensorboard_experiment_name=experiment_name,
-        logdir=log_dir,
+        logdir=parent_log_dir,
     )
     return True

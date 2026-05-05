@@ -1,5 +1,6 @@
 """Unit tests for vertex_ai_launcher module."""
 
+import time
 from unittest.mock import Mock, patch
 
 from absl.testing import absltest
@@ -501,7 +502,7 @@ class TestVertexAILauncher(TestCase):
             tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
         )
         cfg = _build_job_config(
-            job_name="job",
+            job_name="gigl_train_some_task",
             task_config_uri=Uri("gs://b/task.yaml"),
             resource_config_uri=Uri("gs://b/resource.yaml"),
             command_str="python -m gigl.src.training.v2.glt_trainer",
@@ -519,6 +520,48 @@ class TestVertexAILauncher(TestCase):
             "projects/p/locations/us/tensorboards/1",
         )
         self.assertEqual(env["GIGL_TENSORBOARD_EXPERIMENT_NAME"], "my-comparison")
+        # GIGL_TENSORBOARD_RUN_NAME must be sanitized (underscores in the
+        # job_name become hyphens) and carry a launch-unique timestamp suffix.
+        run_name = env["GIGL_TENSORBOARD_RUN_NAME"]
+        self.assertRegex(
+            run_name, r"^gigl-train-some-task-\d{8}-\d{6}$"
+        )
+
+    def test_build_job_config_run_name_is_unique_per_call(self) -> None:
+        """Two builds of the same job_name produce two distinct run names."""
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+        )
+        kwargs = dict(
+            job_name="gigl_train_same_name",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+            tensorboard_experiment_name="my-comparison",
+        )
+        first = _build_job_config(**kwargs)  # type: ignore[arg-type]
+        # Sleep one second so the timestamp suffix changes deterministically.
+        time.sleep(1)
+        second = _build_job_config(**kwargs)  # type: ignore[arg-type]
+
+        def _run_name(cfg) -> str:
+            return next(
+                ev.value
+                for ev in cfg.environment_variables or []
+                if ev.name == "GIGL_TENSORBOARD_RUN_NAME"
+            )
+
+        self.assertNotEqual(_run_name(first), _run_name(second))
 
     def test_build_job_config_no_gigl_env_vars_when_experiment_name_unset(
         self,
@@ -548,6 +591,7 @@ class TestVertexAILauncher(TestCase):
         env_names = {ev.name for ev in cfg.environment_variables or []}
         self.assertNotIn("GIGL_TENSORBOARD_RESOURCE_NAME", env_names)
         self.assertNotIn("GIGL_TENSORBOARD_EXPERIMENT_NAME", env_names)
+        self.assertNotIn("GIGL_TENSORBOARD_RUN_NAME", env_names)
 
 
 if __name__ == "__main__":

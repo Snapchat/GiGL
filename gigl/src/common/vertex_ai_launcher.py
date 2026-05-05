@@ -1,8 +1,11 @@
 """Shared functionality for launching Vertex AI jobs for training and inference."""
 
+import datetime
+import re
 from collections.abc import Mapping
 from typing import Final, Optional
 
+from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
     ReservationAffinity,
     Scheduling,
@@ -39,6 +42,37 @@ _VALID_RESERVATION_AFFINITY_TYPES: Final[frozenset[str]] = frozenset(
     {"NO_RESERVATION", "ANY_RESERVATION", "SPECIFIC_RESERVATION"}
 )
 
+# The SDK TensorBoard uploader rewrites run names by replacing every char
+# outside this character class with ``-``
+# (.venv/.../tensorboard/uploader_utils.py:46). We pre-sanitize the GCS
+# subdir name to match what the SDK will produce, so the directory and
+# the resulting TensorboardRun ID agree.
+_VERTEX_RUN_NAME_REPLACE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"[^a-zA-Z0-9\n-]"
+)
+
+
+def _sanitize_for_vertex_run(value: str) -> str:
+    """Coerce ``value`` into the SDK's TensorboardRun-name character class.
+
+    Mirrors ``google.cloud.aiplatform.tensorboard.uploader_utils.reformat_run_name``
+    so the GCS subdir we create and the SDK-derived run name match.
+    """
+    return _VERTEX_RUN_NAME_REPLACE_PATTERN.sub("-", value)
+
+
+def _build_unique_run_name(job_name: str) -> str:
+    """Return a launch-unique, sanitized run name for ``job_name``.
+
+    The display ``job_name`` is not guaranteed unique across reruns of the
+    same task identifier, and the SDK reuses an existing
+    ``TensorboardRun`` by name (silently merging events). We append a UTC
+    timestamp so two launches of the same task always produce two distinct
+    runs in a shared experiment.
+    """
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return _sanitize_for_vertex_run(f"{job_name}-{timestamp}")
+
 
 def launch_single_pool_job(
     vertex_ai_resource_config: VertexAiResourceConfig,
@@ -54,7 +88,7 @@ def launch_single_pool_job(
     vertex_ai_region: str,
     tensorboard_logs_uri: Optional[Uri] = None,
     tensorboard_experiment_name: Optional[str] = None,
-) -> None:
+) -> aiplatform.CustomJob:
     """Launch a single pool job on Vertex AI.
 
     Args:
@@ -74,6 +108,11 @@ def launch_single_pool_job(
             the trainer's CustomJob is submitted as a run of the named experiment so
             multiple jobs sharing the name can be compared on a single TensorBoard
             page. See ``VertexAiJobConfig.tensorboard_experiment_name``.
+
+    Returns:
+        The submitted ``aiplatform.CustomJob``. Useful for callers that need
+        the job's resource name to look up downstream artifacts (e.g. the
+        per-job ``TensorboardExperiment``).
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(
@@ -108,7 +147,7 @@ def launch_single_pool_job(
         service_account=resource_config_wrapper.service_account_email,
         staging_bucket=resource_config_wrapper.temp_assets_regional_bucket_path.uri,
     )
-    vertex_ai_service.launch_job(job_config=job_config)
+    return vertex_ai_service.launch_job(job_config=job_config)
 
 
 def launch_graph_store_enabled_job(
@@ -304,6 +343,13 @@ def _build_job_config(
     # still runs in parallel — see ``VertexAIService._submit_job`` — and
     # writes to a per-job auto-named experiment so the "Open TensorBoard"
     # link on the VAI job page resolves correctly.)
+    #
+    # ``GIGL_TENSORBOARD_RUN_NAME`` carries a launch-unique, sanitized run
+    # name. The writer creates a subdirectory of ``AIP_TENSORBOARD_LOG_DIR``
+    # with this name; the SDK ``LogdirLoader`` then surfaces it as a distinct
+    # ``TensorboardRun`` in the named experiment, so two jobs sharing
+    # ``tensorboard_experiment_name`` show up as two runs (instead of merging
+    # into one ``default`` run).
     container_env_vars = list(env_vars)
     if (
         tensorboard_experiment_name
@@ -318,6 +364,10 @@ def _build_job_config(
                 env_var.EnvVar(
                     name="GIGL_TENSORBOARD_EXPERIMENT_NAME",
                     value=tensorboard_experiment_name,
+                ),
+                env_var.EnvVar(
+                    name="GIGL_TENSORBOARD_RUN_NAME",
+                    value=_build_unique_run_name(job_name),
                 ),
             ]
         )
