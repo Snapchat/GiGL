@@ -127,7 +127,9 @@ def _build_resource_config(
         resource_labels={"cost_resource_group": "gigl_dev_smoke"},
     )
     trainer = gigl_resource_config_pb2.VertexAiResourceConfig(
-        machine_type="n1-standard-2",
+        # n1-standard-2 is rejected by Vertex AI training in this project;
+        # n1-standard-16 is the smallest spec we've confirmed accepted.
+        machine_type="n1-standard-16",
         gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
         gpu_limit=0,
         num_replicas=1,
