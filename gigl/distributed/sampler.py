@@ -8,6 +8,10 @@ from gigl.utils.share_memory import share_memory
 
 POSITIVE_LABEL_METADATA_KEY: Final[str] = "gigl_positive_labels."
 NEGATIVE_LABEL_METADATA_KEY: Final[str] = "gigl_negative_labels."
+# Used to pass the full multi-column node label tensor through sampler metadata so
+# that DistNeighborLoader._collate_fn can replace the single-column data.y that
+# GLT's sampler produces (GLT truncates to nlabels.T[0] for homogeneous graphs).
+NODE_LABELS_METADATA_KEY: Final[str] = "gigl_node_labels."
 
 
 class ABLPNodeSamplerInput(NodeSamplerInput):

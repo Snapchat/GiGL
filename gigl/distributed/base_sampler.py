@@ -1,9 +1,11 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
+from graphlearn_torch.distributed.dist_feature import DistFeature
+from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NodeSamplerInput,
@@ -13,6 +15,7 @@ from graphlearn_torch.typing import NodeType
 
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
+    NODE_LABELS_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
@@ -193,6 +196,70 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             nodes_to_sample=nodes_to_sample,
             metadata=metadata,
         )
+
+    async def _attach_full_node_labels_to_metadata(
+        self,
+        sampled_nodes: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        input_type: Optional[NodeType],
+        metadata: dict[str, torch.Tensor],
+    ) -> None:
+        """Fetch all node label columns and stash them in sampler metadata.
+
+        GLT's sampler truncates node labels to a single column (``nlabels.T[0]``)
+        before assembling the SampleMessage, so ``data.y`` only ever carries the
+        first label column.  This method fetches the full label tensor for all
+        sampled nodes and stores it in *metadata* so that
+        ``DistNeighborLoader._collate_fn`` can replace the truncated ``data.y``
+        with the complete multi-column tensor.
+
+        Only has an effect when:
+
+        - ``self.dist_node_labels`` is a ``DistFeature`` (i.e., the dataset has
+          node labels and they require distributed fetching), and
+        - the fetched label tensor has more than one column (multi-label case).
+
+        For single-label datasets the method is a no-op, and GLT's existing
+        label path is used unchanged.  The non-``DistFeature`` path (local-only
+        tensor) does not apply ``T[0]`` truncation and therefore also does not
+        need this fix.
+
+        Metadata key convention:
+
+        - Homogeneous: ``NODE_LABELS_METADATA_KEY`` (no suffix).
+        - Heterogeneous: ``NODE_LABELS_METADATA_KEY + input_type`` — only
+          the seed ``input_type`` receives labels, matching GLT's own convention.
+
+        ``async_get`` + ``wrap_torch_future`` is used instead of synchronous
+        indexing so that other coroutines on the same event loop (e.g. concurrent
+        PPR batches) can make progress while the fetch is in flight.
+
+        Args:
+            sampled_nodes: For homogeneous graphs, a 1-D tensor of all sampled
+                node IDs (``SamplerOutput.node``).  For heterogeneous graphs, a
+                dict mapping node type to sampled node IDs
+                (``HeteroSamplerOutput.node``).
+            input_type: ``None`` for homogeneous graphs; the seed node type for
+                heterogeneous graphs.
+            metadata: The metadata dict that will be attached to the
+                ``SamplerOutput``.  Modified in-place.
+        """
+        if not isinstance(self.dist_node_labels, DistFeature):
+            return
+
+        if isinstance(sampled_nodes, dict):
+            assert input_type is not None
+            nodes = sampled_nodes.get(input_type)
+            if nodes is None:
+                return
+            fut = self.dist_node_labels.async_get(nodes, input_type)
+            metadata_key = f"{NODE_LABELS_METADATA_KEY}{input_type}"
+        else:
+            fut = self.dist_node_labels.async_get(sampled_nodes)
+            metadata_key = NODE_LABELS_METADATA_KEY
+
+        full_labels: torch.Tensor = await wrap_torch_future(fut)
+        if full_labels.ndim == 2 and full_labels.shape[1] > 1:
+            metadata[metadata_key] = full_labels
 
     async def _sample_from_nodes(
         self,
