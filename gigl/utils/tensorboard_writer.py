@@ -5,6 +5,7 @@ import re
 from typing import Any, Final, Optional
 
 import tensorflow as tf
+from google.cloud import aiplatform
 
 # Vertex AI sets this env var to ``<baseOutputDirectory>/logs/`` (or
 # ``<baseOutputDirectory>/<trial_id>/logs/`` for HyperparameterTuningJob trials)
@@ -170,10 +171,6 @@ class TensorBoardWriter:
         if self._writer is not None:
             self._writer.close()
         if self._upload_started:
-            # Local import keeps the optional aiplatform dependency out of
-            # the no-op path.
-            from google.cloud import aiplatform
-
             aiplatform.end_upload_tb_log()
         self._closed = True
 
@@ -218,9 +215,6 @@ def _maybe_start_uploader(*, parent_log_dir: str) -> bool:
             "the GiGL launcher should set this to the same resource name "
             "configured on GiglResourceConfig."
         )
-
-    # Local import: aiplatform is only needed when the user opts in.
-    from google.cloud import aiplatform
 
     aiplatform.init(
         project=match["project"],
