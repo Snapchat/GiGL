@@ -140,7 +140,7 @@ install_gigl_lib_deps() {
 
     # gigl-core's CMake build requires torch to be present during the build, but
     # torch is a runtime dep of gigl, not a declared build dep of gigl-core.
-    # uv sync ignores no-build-isolation-package for workspace members and always
+    # uv sync may ignore no-build-isolation-package for workspace members and always
     # builds them in an isolated environment where torch is absent.
     # Workaround: phase 1 installs everything except gigl-core (so torch lands in
     # the venv); phase 2 uses `uv pip install --no-build-isolation` which explicitly
