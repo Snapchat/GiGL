@@ -259,6 +259,8 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
     SCHEDULING_STRATEGY_FIELD_NUMBER: builtins.int
     BOOT_DISK_SIZE_GB_FIELD_NUMBER: builtins.int
     RESERVATION_AFFINITY_FIELD_NUMBER: builtins.int
+    TENSORBOARD_RESOURCE_NAME_FIELD_NUMBER: builtins.int
+    TENSORBOARD_EXPERIMENT_NAME_FIELD_NUMBER: builtins.int
     machine_type: builtins.str
     """Machine type for job"""
     gpu_type: builtins.str
@@ -294,6 +296,22 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         """Compute Engine reservation affinity for the job.
         See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
         """
+    tensorboard_resource_name: builtins.str
+    """Existing Vertex AI TensorBoard resource the job's chief rank streams
+    TensorBoard events to.
+    Format: projects/{project}/locations/{region}/tensorboards/{tensorboard_id}
+    See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
+    for the Tensorboard data model.
+    Must be set together with tensorboard_experiment_name (or both unset).
+    """
+    tensorboard_experiment_name: builtins.str
+    """Optional. Stable Vertex AI TensorboardExperiment name. Multiple jobs
+    that share this value land in the same TensorboardExperiment, so they
+    appear as comparable runs on one TensorBoard page. Allowed characters:
+    lowercase letters, digits, hyphens (Vertex AI Experiment ID rules).
+    Must be set together with tensorboard_resource_name (or both unset).
+    See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview.
+    """
     def __init__(
         self,
         *,
@@ -306,9 +324,11 @@ class VertexAiResourceConfig(google.protobuf.message.Message):
         scheduling_strategy: builtins.str = ...,
         boot_disk_size_gb: builtins.int = ...,
         reservation_affinity: global___VertexAiReservationAffinity | None = ...,
+        tensorboard_resource_name: builtins.str = ...,
+        tensorboard_experiment_name: builtins.str = ...,
     ) -> None: ...
     def HasField(self, field_name: typing_extensions.Literal["reservation_affinity", b"reservation_affinity"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing_extensions.Literal["boot_disk_size_gb", b"boot_disk_size_gb", "gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "reservation_affinity", b"reservation_affinity", "scheduling_strategy", b"scheduling_strategy", "timeout", b"timeout"]) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["boot_disk_size_gb", b"boot_disk_size_gb", "gcp_region_override", b"gcp_region_override", "gpu_limit", b"gpu_limit", "gpu_type", b"gpu_type", "machine_type", b"machine_type", "num_replicas", b"num_replicas", "reservation_affinity", b"reservation_affinity", "scheduling_strategy", b"scheduling_strategy", "tensorboard_experiment_name", b"tensorboard_experiment_name", "tensorboard_resource_name", b"tensorboard_resource_name", "timeout", b"timeout"]) -> None: ...
 
 global___VertexAiResourceConfig = VertexAiResourceConfig
 

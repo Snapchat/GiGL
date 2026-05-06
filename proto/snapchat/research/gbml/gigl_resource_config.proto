@@ -130,6 +130,22 @@ message VertexAiResourceConfig {
   // Compute Engine reservation affinity for the job.
   // See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
   VertexAiReservationAffinity reservation_affinity = 9;
+
+  // Existing Vertex AI TensorBoard resource the job's chief rank streams
+  // TensorBoard events to.
+  // Format: projects/{project}/locations/{region}/tensorboards/{tensorboard_id}
+  // See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
+  // for the Tensorboard data model.
+  // Must be set together with tensorboard_experiment_name (or both unset).
+  string tensorboard_resource_name = 10;
+
+  // Optional. Stable Vertex AI TensorboardExperiment name. Multiple jobs
+  // that share this value land in the same TensorboardExperiment, so they
+  // appear as comparable runs on one TensorBoard page. Allowed characters:
+  // lowercase letters, digits, hyphens (Vertex AI Experiment ID rules).
+  // Must be set together with tensorboard_resource_name (or both unset).
+  // See https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview.
+  string tensorboard_experiment_name = 11;
  }
 
  // Configuration for KFP job resources
