@@ -7,6 +7,7 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
 from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
     check_inferencer_graph_store_compatibility,
     check_trainer_graph_store_compatibility,
+    check_vertex_ai_trainer_tensorboard_compatibility,
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
@@ -94,6 +95,18 @@ def _create_gbml_config_without_graph_stores() -> GbmlConfigPbWrapper:
     return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
 
 
+def _create_gbml_config_with_tensorboard_enabled() -> GbmlConfigPbWrapper:
+    """Create a GbmlConfig with trainer TensorBoard logging enabled."""
+    gbml_config = gbml_config_pb2.GbmlConfig()
+    gbml_config.trainer_config.should_log_to_tensorboard = True
+    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config)
+
+
+def _create_empty_gbml_config() -> GbmlConfigPbWrapper:
+    """Create a minimal GbmlConfig (no flags set)."""
+    return GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb2.GbmlConfig())
+
+
 def _create_resource_config_with_both_graph_stores() -> GiglResourceConfigWrapper:
     """Create a GiglResourceConfig with VertexAiGraphStoreConfig for both trainer and inferencer."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
@@ -123,6 +136,65 @@ def _create_resource_config_without_graph_stores() -> GiglResourceConfigWrapper:
     config.inferencer_resource_config.vertex_ai_inferencer_config.CopyFrom(
         _create_vertex_ai_resource_config()
     )
+    return GiglResourceConfigWrapper(resource_config=config)
+
+
+def _create_resource_config_with_trainer_tensorboard(
+    *,
+    tensorboard_resource_name: str,
+    tensorboard_experiment_name: str = "",
+    use_graph_store: bool = False,
+) -> GiglResourceConfigWrapper:
+    """Create a GiglResourceConfig with a trainer TensorBoard resource."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    _create_shared_resource_config(config)
+
+    if use_graph_store:
+        graph_store_config = _create_vertex_ai_graph_store_config()
+        graph_store_config.compute_pool.tensorboard_resource_name = (
+            tensorboard_resource_name
+        )
+        graph_store_config.compute_pool.tensorboard_experiment_name = (
+            tensorboard_experiment_name
+        )
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.CopyFrom(
+            graph_store_config
+        )
+    else:
+        vertex_ai_resource_config = _create_vertex_ai_resource_config()
+        vertex_ai_resource_config.tensorboard_resource_name = tensorboard_resource_name
+        vertex_ai_resource_config.tensorboard_experiment_name = (
+            tensorboard_experiment_name
+        )
+        config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
+            vertex_ai_resource_config
+        )
+
+    return GiglResourceConfigWrapper(resource_config=config)
+
+
+def _create_resource_config_with_experiment_name_only(
+    *,
+    experiment_name: str,
+    use_graph_store: bool = False,
+) -> GiglResourceConfigWrapper:
+    """Create a GiglResourceConfig with experiment_name set but NO TB resource."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    _create_shared_resource_config(config)
+
+    if use_graph_store:
+        graph_store_config = _create_vertex_ai_graph_store_config()
+        graph_store_config.compute_pool.tensorboard_experiment_name = experiment_name
+        config.trainer_resource_config.vertex_ai_graph_store_trainer_config.CopyFrom(
+            graph_store_config
+        )
+    else:
+        vertex_ai_resource_config = _create_vertex_ai_resource_config()
+        vertex_ai_resource_config.tensorboard_experiment_name = experiment_name
+        config.trainer_resource_config.vertex_ai_trainer_config.CopyFrom(
+            vertex_ai_resource_config
+        )
+
     return GiglResourceConfigWrapper(resource_config=config)
 
 
@@ -203,6 +275,82 @@ class TestInferencerGraphStoreCompatibility(TestCase):
                 resource_config_wrapper=resource_config,
             )
 
+
+class TestVertexAITrainerTensorboardCompatibility(TestCase):
+    """Test suite for Vertex AI trainer TensorBoard compatibility checks."""
+
+    def test_vertex_ai_trainer_tensorboard_config_present(self):
+        gbml_config = _create_gbml_config_with_tensorboard_enabled()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            ),
+            tensorboard_experiment_name="my-comparison",
+        )
+
+        check_vertex_ai_trainer_tensorboard_compatibility(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
+
+    def test_graph_store_trainer_tensorboard_config_present(self):
+        gbml_config = _create_gbml_config_with_tensorboard_enabled()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            ),
+            tensorboard_experiment_name="my-comparison",
+            use_graph_store=True,
+        )
+
+        check_vertex_ai_trainer_tensorboard_compatibility(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
+
+    def test_vertex_ai_trainer_tensorboard_missing_resource_name_raises(self):
+        gbml_config = _create_gbml_config_with_tensorboard_enabled()
+        resource_config = _create_resource_config_without_graph_stores()
+
+        with self.assertRaises(AssertionError):
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+
+    def test_resource_name_set_without_experiment_name_raises(self):
+        """tensorboard_resource_name set without tensorboard_experiment_name → AssertionError."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            )
+        )
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("must be set together", str(ctx.exception))
+
+    def test_invalid_experiment_name_format_raises(self):
+        """tensorboard_experiment_name that violates the Vertex resource-ID regex raises."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            ),
+            tensorboard_experiment_name="My_Invalid_Name",
+        )
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("not a valid Vertex AI Experiment ID", str(ctx.exception))
+
     def test_resource_has_inferencer_graph_store_template_does_not(self):
         """Test that resource having graph store but template not raises an assertion error."""
         gbml_config = _create_gbml_config_without_graph_stores()
@@ -212,6 +360,53 @@ class TestInferencerGraphStoreCompatibility(TestCase):
                 gbml_config_pb_wrapper=gbml_config,
                 resource_config_wrapper=resource_config,
             )
+
+    def test_experiment_name_set_without_tensorboard_resource_raises(self):
+        """tensorboard_experiment_name set without resource_name → AssertionError."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_experiment_name_only(
+            experiment_name="my-comparison"
+        )
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("must be set together", str(ctx.exception))
+
+    def test_experiment_name_set_with_tensorboard_resource_does_not_raise(self):
+        """tensorboard_experiment_name set and TB resource present → no exception."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            ),
+            tensorboard_experiment_name="my-comparison",
+        )
+
+        check_vertex_ai_trainer_tensorboard_compatibility(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
+
+    def test_experiment_name_set_with_graph_store_tensorboard_resource_does_not_raise(
+        self,
+    ):
+        """tensorboard_experiment_name set and graph-store TB resource present → no exception."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            ),
+            tensorboard_experiment_name="my-comparison",
+            use_graph_store=True,
+        )
+
+        check_vertex_ai_trainer_tensorboard_compatibility(
+            gbml_config_pb_wrapper=gbml_config,
+            resource_config_wrapper=resource_config,
+        )
 
 
 if __name__ == "__main__":
