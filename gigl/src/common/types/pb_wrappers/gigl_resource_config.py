@@ -8,6 +8,7 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.logger import Logger
 from gigl.src.common.constants.components import GiGLComponents
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
+    CustomResourceConfig,
     DataflowResourceConfig,
     DataPreprocessorConfig,
     DistributedTrainerConfig,
@@ -37,12 +38,14 @@ _VERTEX_AI_TRAINER_CONFIG = "vertex_ai_trainer_config"
 _KFP_TRAINER_CONFIG = "kfp_trainer_config"
 _LOCAL_TRAINER_CONFIG = "local_trainer_config"
 _VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG = "vertex_ai_graph_store_trainer_config"
+_CUSTOM_TRAINER_CONFIG = "custom_trainer_config"
 
 _INFERENCER_CONFIG_FIELD = "inferencer_config"
 _VERTEX_AI_INFERENCER_CONFIG = "vertex_ai_inferencer_config"
 _DATAFLOW_INFERENCER_CONFIG = "dataflow_inferencer_config"
 _LOCAL_INFERENCER_CONFIG = "local_inferencer_config"
 _VERTEX_AI_GRAPH_STORE_INFERENCER_CONFIG = "vertex_ai_graph_store_inferencer_config"
+_CUSTOM_INFERENCER_CONFIG = "custom_inferencer_config"
 
 
 @dataclass
@@ -55,6 +58,7 @@ class GiglResourceConfigWrapper:
             KFPResourceConfig,
             LocalResourceConfig,
             VertexAiGraphStoreConfig,
+            CustomResourceConfig,
         ]
     ] = None
     _inference_config: Optional[
@@ -63,6 +67,7 @@ class GiglResourceConfigWrapper:
             VertexAiResourceConfig,
             LocalResourceConfig,
             VertexAiGraphStoreConfig,
+            CustomResourceConfig,
         ]
     ] = None
 
@@ -283,9 +288,10 @@ class GiglResourceConfigWrapper:
         KFPResourceConfig,
         LocalResourceConfig,
         VertexAiGraphStoreConfig,
+        CustomResourceConfig,
     ]:
         """
-        Returns the trainer config specified in the resource config. (e.g. Vertex AI, KFP, Local)
+        Returns the trainer config specified in the resource config. (e.g. Vertex AI, KFP, Local, Custom)
         """
 
         if not self._trainer_config:
@@ -305,6 +311,7 @@ class GiglResourceConfigWrapper:
                     KFPResourceConfig,
                     LocalResourceConfig,
                     VertexAiGraphStoreConfig,
+                    CustomResourceConfig,
                 ]
                 if (
                     deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
@@ -365,6 +372,11 @@ class GiglResourceConfigWrapper:
                     == _VERTEX_AI_GRAPH_STORE_TRAINER_CONFIG
                 ):
                     _trainer_config = config.vertex_ai_graph_store_trainer_config
+                elif (
+                    config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _CUSTOM_TRAINER_CONFIG
+                ):
+                    _trainer_config = config.custom_trainer_config
                 else:
                     raise ValueError(f"Invalid trainer_config type: {config}")
             else:
@@ -383,9 +395,10 @@ class GiglResourceConfigWrapper:
         VertexAiResourceConfig,
         LocalResourceConfig,
         VertexAiGraphStoreConfig,
+        CustomResourceConfig,
     ]:
         """
-        Returns the inferencer config specified in the resource config. (Dataflow)
+        Returns the inferencer config specified in the resource config. (e.g. Dataflow, Vertex AI, Local, Custom)
         """
         if self._inference_config is None:
             # TODO: (svij) Marked for deprecation
@@ -421,6 +434,11 @@ class GiglResourceConfigWrapper:
                     self._inference_config = (
                         config.vertex_ai_graph_store_inferencer_config
                     )
+                elif (
+                    config.WhichOneof(_INFERENCER_CONFIG_FIELD)  # type: ignore[arg-type]
+                    == _CUSTOM_INFERENCER_CONFIG
+                ):
+                    self._inference_config = config.custom_inferencer_config
                 else:
                     raise ValueError("Invalid inferencer_config type")
             else:

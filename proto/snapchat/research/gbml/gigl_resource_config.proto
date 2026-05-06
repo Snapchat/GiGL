@@ -166,6 +166,24 @@ message VertexAiResourceConfig {
   // If unset, and no accelerators are available, will use 1.
   int32 compute_cluster_local_world_size = 3;
  }
+
+// Lets user-defined launchers be piped in.
+// The launcher dispatcher invokes `command` (interpreted by /bin/sh -c so
+// leading "KEY=VALUE" assignments parse as inline env vars) with `args`
+// appended as positional arguments. Both fields are taken verbatim by
+// the dispatcher; any templating or substitution is the caller's
+// responsibility (e.g. OmegaConf-resolved at YAML-load time).
+message CustomResourceConfig {
+  // Shell snippet invoked via /bin/sh -c. Leading "KEY=VALUE" assignments
+  // are honored by the shell, so callers can inline env vars (e.g.
+  // "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python -m my.cli").
+  string command = 1;
+  // Positional arguments appended after the command. Each element is
+  // shell-quoted by the dispatcher so values containing spaces/quotes
+  // survive the shell pass.
+  repeated string args = 2;
+}
+
 // (deprecated)
 // Configuration for distributed training resources
 message DistributedTrainerConfig {
@@ -183,6 +201,7 @@ message TrainerResourceConfig {
    KFPResourceConfig kfp_trainer_config = 2;
    LocalResourceConfig local_trainer_config = 3;
    VertexAiGraphStoreConfig vertex_ai_graph_store_trainer_config = 4;
+   CustomResourceConfig custom_trainer_config = 5;
  }
 }
 
@@ -193,6 +212,7 @@ message InferencerResourceConfig {
    DataflowResourceConfig dataflow_inferencer_config = 2;
    LocalResourceConfig local_inferencer_config = 3;
    VertexAiGraphStoreConfig vertex_ai_graph_store_inferencer_config = 4;
+   CustomResourceConfig custom_inferencer_config = 5;
  }
 }
 
