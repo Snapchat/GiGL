@@ -51,6 +51,44 @@ _VERTEX_RUN_NAME_REPLACE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"[^a-zA-Z0-9\n-]"
 )
 
+# Captures the project/location/tensorboard_id pieces of a fully-qualified
+# Vertex AI TensorBoard resource name. Used to build the TensorBoard UI URL.
+_TENSORBOARD_RESOURCE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^projects/(?P<project>[^/]+)"
+    r"/locations/(?P<location>[^/]+)"
+    r"/tensorboards/(?P<tensorboard_id>[^/]+)$"
+)
+
+
+def _maybe_log_tensorboard_url(
+    vertex_ai_resource_config: VertexAiResourceConfig,
+) -> None:
+    """Log the cross-job TensorBoard UI URL when the experiment is configured.
+
+    The chief-rank uploader inside the trainer container also logs this URL,
+    but that only surfaces in Vertex AI job logs (which take a minute to
+    materialize). Logging it here means the URL appears in the launcher's
+    local stdout immediately at submit time.
+    """
+    tb_resource = vertex_ai_resource_config.tensorboard_resource_name
+    experiment_name = vertex_ai_resource_config.tensorboard_experiment_name
+    if not tb_resource or not experiment_name:
+        return
+    match = _TENSORBOARD_RESOURCE_NAME_PATTERN.match(tb_resource)
+    if not match:
+        return
+    url = (
+        f"https://{match['location']}.tensorboard.googleusercontent.com/experiment/"
+        f"projects+{match['project']}"
+        f"+locations+{match['location']}"
+        f"+tensorboards+{match['tensorboard_id']}"
+        f"+experiments+{experiment_name}"
+    )
+    logger.info(
+        f"View TensorBoard (cross-job comparison, experiment={experiment_name!r}): "
+        f"{url}"
+    )
+
 
 def _sanitize_for_vertex_run(value: str) -> str:
     """Coerce ``value`` into the SDK's TensorboardRun-name character class.
@@ -138,6 +176,7 @@ def launch_single_pool_job(
         tensorboard_logs_uri=tensorboard_logs_uri,
     )
     logger.info(f"Launching {component.value} job with config: {job_config}")
+    _maybe_log_tensorboard_url(vertex_ai_resource_config)
 
     vertex_ai_service = VertexAIService(
         project=resource_config_wrapper.project,
@@ -258,6 +297,8 @@ def launch_graph_store_enabled_job(
         if compute_pool_config.gcp_region_override
         else resource_config_wrapper.region
     )
+
+    _maybe_log_tensorboard_url(compute_pool_config)
 
     vertex_ai_service = VertexAIService(
         project=resource_config_wrapper.project,
