@@ -138,11 +138,19 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
+    # gigl-core's CMake build requires torch to be present in the ambient venv
+    # (no-build-isolation-package = ["gigl-core"] in pyproject.toml), but torch is
+    # a runtime dep of gigl, not a declared build dep of gigl-core. On a fresh
+    # install uv has no signal to install torch before starting the gigl-core build.
+    # Phase 1 installs all packages except gigl-core (so torch lands in the venv);
+    # phase 2 builds gigl-core with torch already available.
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
+        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-package gigl-core
         uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
     else
+        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked ${flag_use_inexact_match} --no-install-package gigl-core
         uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked ${flag_use_inexact_match}
     fi
 
