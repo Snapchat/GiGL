@@ -1,5 +1,6 @@
 """Unit tests for vertex_ai_launcher module."""
 
+import time
 from unittest.mock import Mock, patch
 
 from absl.testing import absltest
@@ -10,6 +11,7 @@ from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
 from gigl.src.common.vertex_ai_launcher import (
+    _build_job_config,
     launch_graph_store_enabled_job,
     launch_single_pool_job,
 )
@@ -59,6 +61,7 @@ def _create_gigl_resource_config_with_graph_store(
         gcp_region_override="us-west1",
         timeout=10800,
         scheduling_strategy="STANDARD",
+        tensorboard_resource_name="projects/test-project/locations/us-west1/tensorboards/test-tensorboard",
     )
     storage_pool = gigl_resource_config_pb2.VertexAiResourceConfig(
         machine_type="n1-highmem-32",
@@ -92,6 +95,7 @@ def _create_gigl_resource_config_with_single_pool_inference(
         machine_type="n1-standard-8",
         num_replicas=1,
         timeout=7200,
+        tensorboard_resource_name="projects/test-project/locations/us-central1/tensorboards/should-not-attach",
     )
 
     # Create InferencerResourceConfig with single pool vertex AI config
@@ -152,6 +156,7 @@ class TestVertexAILauncher(TestCase):
             cpu_docker_uri=cpu_docker_uri,
             cuda_docker_uri=cuda_docker_uri,
             component=component,
+            tensorboard_logs_uri=Uri("gs://test-perm-bucket/job-name/trainer/logs/"),
         )
 
         # Assert - verify VertexAIService was instantiated correctly
@@ -192,18 +197,20 @@ class TestVertexAILauncher(TestCase):
         self.assertIn(
             f"--epochs={process_runtime_args['epochs']}", compute_job_config.args
         )
-        self.assertIn("--use_cuda", compute_job_config.args)
+        self.assertEqual(
+            compute_job_config.base_output_dir,
+            "gs://test-perm-bucket/job-name/trainer",
+        )
 
         # Verify storage pool config
         self.assertEqual(storage_job_config.machine_type, storage_pool.machine_type)
-        self.assertEqual(storage_job_config.container_uri, cpu_docker_uri)
         self.assertIn(
             "gigl.distributed.graph_store.storage_main",
             " ".join(storage_job_config.command),
         )
         self.assertIsNotNone(storage_job_config.args)
         assert storage_job_config.args is not None  # Type narrowing for mypy
-        self.assertNotIn("--use_cuda", storage_job_config.args)
+        self.assertIsNone(storage_job_config.base_output_dir)
 
         # Verify environment variables
         compute_env_vars = {
@@ -309,7 +316,7 @@ class TestVertexAILauncher(TestCase):
         self.assertIn(
             f"--output_path={process_runtime_args['output_path']}", job_config.args
         )
-        self.assertNotIn("--use_cuda", job_config.args)
+        self.assertIsNone(job_config.base_output_dir)
 
         # Verify resource labels
         expected_labels = {
@@ -318,6 +325,203 @@ class TestVertexAILauncher(TestCase):
             "cost_resource_group": "gigl_inference",
         }
         self.assertEqual(job_config.labels, expected_labels)
+
+    @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
+    def test_launch_single_pool_job_reads_experiment_name_from_resource_config(
+        self, mock_vertex_ai_service_class
+    ):
+        """tensorboard_experiment_name on the resource config flows to the VertexAiJobConfig."""
+        experiment_name = "my-single-pool-experiment"
+
+        gigl_resource_config_proto = (
+            _create_gigl_resource_config_with_single_pool_inference(
+                cost_resource_group="gigl_train"
+            )
+        )
+        resource_config_wrapper = GiglResourceConfigWrapper(
+            resource_config=gigl_resource_config_proto
+        )
+        vertex_ai_config = gigl_resource_config_proto.inferencer_resource_config.vertex_ai_inferencer_config
+        vertex_ai_config.tensorboard_experiment_name = experiment_name
+
+        mock_service_instance = Mock()
+        mock_vertex_ai_service_class.return_value = mock_service_instance
+
+        launch_single_pool_job(
+            vertex_ai_resource_config=vertex_ai_config,
+            job_name="test-single-pool-tb-exp",
+            task_config_uri=Uri("gs://bucket/task_config.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource_config.yaml"),
+            process_command="python -m gigl.src.training.v2.glt_trainer",
+            process_runtime_args={},
+            resource_config_wrapper=resource_config_wrapper,
+            cpu_docker_uri="gcr.io/project/cpu-image:tag",
+            cuda_docker_uri="gcr.io/project/cuda-image:tag",
+            component=GiGLComponents.Trainer,
+            vertex_ai_region="us-central1",
+            tensorboard_logs_uri=Uri("gs://bucket/job/trainer/logs/"),
+        )
+
+        mock_service_instance.launch_job.assert_called_once()
+        call_args = mock_service_instance.launch_job.call_args
+        job_config = call_args.kwargs["job_config"]
+        env = {ev.name: ev.value for ev in job_config.environment_variables or []}
+        self.assertEqual(env.get("GIGL_TENSORBOARD_EXPERIMENT_NAME"), experiment_name)
+
+    @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
+    def test_launch_graph_store_job_reads_experiment_name_from_compute_pool(
+        self, mock_vertex_ai_service_class
+    ):
+        """compute_pool.tensorboard_experiment_name flows to the compute pool's
+        VertexAiJobConfig; storage pool stays empty.
+        """
+        experiment_name = "my-graph-store-experiment"
+
+        gigl_resource_config_proto = _create_gigl_resource_config_with_graph_store(
+            cost_resource_group="gigl_train"
+        )
+        resource_config_wrapper = GiglResourceConfigWrapper(
+            resource_config=gigl_resource_config_proto
+        )
+        graph_store_config = gigl_resource_config_proto.trainer_resource_config.vertex_ai_graph_store_trainer_config
+        graph_store_config.compute_pool.tensorboard_experiment_name = experiment_name
+
+        mock_service_instance = Mock()
+        mock_vertex_ai_service_class.return_value = mock_service_instance
+
+        launch_graph_store_enabled_job(
+            vertex_ai_graph_store_config=graph_store_config,
+            job_name="test-graph-store-tb-exp",
+            task_config_uri=Uri("gs://bucket/task_config.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource_config.yaml"),
+            compute_commmand="python -m gigl.src.training.v2.glt_trainer",
+            compute_runtime_args={},
+            resource_config_wrapper=resource_config_wrapper,
+            storage_command="python -m gigl.distributed.graph_store.storage_main",
+            storage_args={},
+            cpu_docker_uri="gcr.io/project/cpu-image:tag",
+            cuda_docker_uri="gcr.io/project/cuda-image:tag",
+            component=GiGLComponents.Trainer,
+            tensorboard_logs_uri=Uri("gs://bucket/job/trainer/logs/"),
+        )
+
+        mock_service_instance.launch_graph_store_job.assert_called_once()
+        call_args = mock_service_instance.launch_graph_store_job.call_args
+        compute_job_config = call_args.kwargs["compute_pool_job_config"]
+        storage_job_config = call_args.kwargs["storage_pool_job_config"]
+
+        compute_env = {
+            ev.name: ev.value for ev in compute_job_config.environment_variables or []
+        }
+        storage_env_names = {
+            ev.name for ev in storage_job_config.environment_variables or []
+        }
+        self.assertEqual(
+            compute_env.get("GIGL_TENSORBOARD_EXPERIMENT_NAME"), experiment_name
+        )
+        self.assertNotIn("GIGL_TENSORBOARD_EXPERIMENT_NAME", storage_env_names)
+
+    def test_build_job_config_injects_gigl_tensorboard_env_vars(self) -> None:
+        """When tensorboard_experiment_name is set with a TB resource, the
+        launcher injects env vars so the trainer's chief-rank uploader can
+        find the destination experiment.
+        """
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+            tensorboard_experiment_name="my-comparison",
+        )
+        cfg = _build_job_config(
+            job_name="gigl_train_some_task",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+        )
+        env = {ev.name: ev.value for ev in cfg.environment_variables or []}
+        self.assertEqual(
+            env["GIGL_TENSORBOARD_RESOURCE_NAME"],
+            "projects/p/locations/us/tensorboards/1",
+        )
+        self.assertEqual(env["GIGL_TENSORBOARD_EXPERIMENT_NAME"], "my-comparison")
+        # GIGL_TENSORBOARD_RUN_NAME must be sanitized (underscores in the
+        # job_name become hyphens) and carry a launch-unique timestamp suffix.
+        run_name = env["GIGL_TENSORBOARD_RUN_NAME"]
+        self.assertRegex(run_name, r"^gigl-train-some-task-\d{8}-\d{6}$")
+
+    def test_build_job_config_run_name_is_unique_per_call(self) -> None:
+        """Two builds of the same job_name produce two distinct run names."""
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+            tensorboard_experiment_name="my-comparison",
+        )
+        kwargs = dict(
+            job_name="gigl_train_same_name",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+        )
+        first = _build_job_config(**kwargs)  # type: ignore[arg-type]
+        # Sleep one second so the timestamp suffix changes deterministically.
+        time.sleep(1)
+        second = _build_job_config(**kwargs)  # type: ignore[arg-type]
+
+        def _run_name(cfg) -> str:
+            return next(
+                ev.value
+                for ev in cfg.environment_variables or []
+                if ev.name == "GIGL_TENSORBOARD_RUN_NAME"
+            )
+
+        self.assertNotEqual(_run_name(first), _run_name(second))
+
+    def test_build_job_config_no_gigl_env_vars_when_experiment_name_unset(
+        self,
+    ) -> None:
+        """The GIGL_TENSORBOARD_* env vars are NOT injected on the legacy
+        ``submit(tensorboard=...)`` path.
+        """
+        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
+            machine_type="n1-standard-4",
+            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
+            gpu_limit=0,
+            num_replicas=1,
+            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
+        )
+        cfg = _build_job_config(
+            job_name="job",
+            task_config_uri=Uri("gs://b/task.yaml"),
+            resource_config_uri=Uri("gs://b/resource.yaml"),
+            command_str="python -m gigl.src.training.v2.glt_trainer",
+            args={},
+            use_cuda=False,
+            container_uri="gcr.io/p/img",
+            vertex_ai_resource_config=resource_config,
+            env_vars=[],
+            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
+        )
+        env_names = {ev.name for ev in cfg.environment_variables or []}
+        self.assertNotIn("GIGL_TENSORBOARD_RESOURCE_NAME", env_names)
+        self.assertNotIn("GIGL_TENSORBOARD_EXPERIMENT_NAME", env_names)
+        self.assertNotIn("GIGL_TENSORBOARD_RUN_NAME", env_names)
 
 
 if __name__ == "__main__":

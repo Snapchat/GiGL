@@ -979,7 +979,7 @@ def get_tensorboard_logs_gcs_path(
     """
     return GcsUri.join(
         get_trainer_asset_dir_gcs_path(applied_task_identifier=applied_task_identifier),
-        "tensorboard_logs/",
+        "logs/",
     )
 
 

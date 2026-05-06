@@ -135,6 +135,14 @@ class VertexAiJobConfig:
         reservation_affinity: Optional ``ReservationAffinity`` that maps to
             ``MachineSpec.reservation_affinity``. ``None`` uses the Vertex
             AI default (no reservation).
+        base_output_dir: Optional CustomJob base output directory. When set,
+            Vertex AI derives ``AIP_MODEL_DIR``, ``AIP_CHECKPOINT_DIR``, and
+            ``AIP_TENSORBOARD_LOG_DIR`` from this directory. Setting this is
+            how GiGL trainers learn where to write TensorBoard events; the
+            chief-rank uploader (started inside the trainer) is what streams
+            them to a Vertex AI ``TensorboardExperiment`` for cross-job
+            comparison. See
+            https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec.
     """
 
     job_name: str
@@ -153,6 +161,7 @@ class VertexAiJobConfig:
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
     reservation_affinity: Optional[ReservationAffinity] = None
+    base_output_dir: Optional[str] = None
 
 
 class VertexAIService:
@@ -347,6 +356,7 @@ class VertexAIService:
             location=self._location,
             labels=job_config.labels,
             staging_bucket=self._staging_bucket,
+            base_output_dir=job_config.base_output_dir,
         )
         job.submit(
             service_account=self._service_account,
