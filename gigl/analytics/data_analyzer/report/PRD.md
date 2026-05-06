@@ -108,11 +108,7 @@ industry-standard visualization; engineers already know how to read it.
 `<details>`/`<summary>` with sensible defaults (hard fails always open; advanced sections closed by default). Rationale:
 the report is comprehensive by design, but any one reading needs only the sections relevant to their question.
 
-**FR-9: Literature citations in footer.** The footer lists the 18 source papers used to set thresholds, with inline
-references wherever a threshold is color-coded. Rationale: "cite sources" is an explicit user preference, and traceable
-thresholds are more defensible than magic numbers.
-
-**FR-10: Raw artifact links.** The footer lists GCS paths to the raw outputs (TFDV stats `.tfrecord`, FACETS `.html` per
+**FR-9: Raw artifact links.** The footer lists GCS paths to the raw outputs (TFDV stats `.tfrecord`, FACETS `.html` per
 table, schema `.pbtxt`) so the reader can dig deeper with other tools.
 
 ## Non-Functional Requirements

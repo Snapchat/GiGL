@@ -36,22 +36,47 @@ disk.
    color-coded (NULL rate > 50% = yellow,
    > 90% = red). Duplicate node counts, duplicate edge counts, dangling edge counts, and referential integrity
    > violations. Any nonzero count in these four is rendered red.
-4. **Feature Statistics** (`<section id="feature-statistics">`) — Optional. One subsection per table with the
-   corresponding FACETS HTML embedded inside an `<iframe srcdoc="...">` to isolate styles. Entire section is hidden if
-   no profile data is provided.
+4. **Feature Statistics** (`<section id="feature-statistics">`) — Optional. One `<details>` block per table. Each block
+   embeds the corresponding FACETS HTML via `<iframe src="...">` using a **relative path** of the form
+   `feature_profiler/{kind}s/{type_name}/facets.html` (derived from the result_key like `node:user`). Above the iframe,
+   an "Open full-screen ↗" anchor opens the same relative path in a new tab. Relative paths mean the embed and
+   full-screen link both work as long as the report folder retains the layout produced by `FeatureProfiler` (i.e.
+   `report.html` and the `feature_profiler/` subdirectory live in the same directory). The absolute GCS URI from
+   `facets_html_paths` is shown as a label for traceability. When `profile.errors` is non-empty, a red warning box plus
+   a per-error table (table key, stage, BQ table, **Dataflow job**, message) is rendered at the top of the section so
+   users can diagnose schema-fetch failures, empty projections, Dataflow crashes, and embedding-diagnostics failures
+   without reading logs. For `stage == "dataflow"` errors the Dataflow job cell links to the Cloud Console URL when
+   `job_id` / project / region are all known; otherwise the cell shows the job name or `—`. Section is hidden only when
+   both `profile.facets_html_paths` and `profile.errors` are empty.
 5. **Graph Structure** (`<section id="graph-structure">`) — Node and edge count table. Per-edge-type degree distribution
    rendered as inline SVG histogram using the `buckets` dict from `DegreeStats` (buckets `0-1`, `2-10`, `11-100`,
    `101-1K`, `1K-10K`, `10K+`). Top-20 hub table per edge type. Super-hub int16 clamp warning box (red) shown if any
-   edge type reports a clamp count > 0.
-6. **Advanced** (`<section id="advanced">`) — Optional Tier 3 / Tier 4 data. Shown only if the relevant fields are
-   populated:
+   edge type reports a clamp count > 0. Each per-edge-type subsection header (`Degree distribution`, `Top-20 hubs`)
+   carries a `<details class="query-disclosure">Show SQL` button rendered next to the heading; expanding it shows the
+   rendered BigQuery SQL strings recorded under the matching `analysis.queries` block ID.
+6. **Supervision Overlap** (`<section id="supervision-overlap">`) — One card per `SupervisionCrossTableStats` entry
+   showing `{driver_edge_type} → {other_edge_type} ({other_role})`, anchored on `node_anchor`. Row labels reference the
+   actual `driver_edge_type` and `other_edge_type` names directly (e.g. "Distinct anchors in `viewed_pos`", "Avg edges
+   in `viewed_neg` per anchor in `viewed_pos`") rather than generic "driver" / "other" placeholders. Each card lists
+   distinct anchor / pair counts on each side, per-anchor count distribution (avg / p50 / p90 / p99 / max), the count of
+   anchors with zero edges on the other side, and the overlap pair count (label-leakage signal). Each card title is
+   accompanied by a `Show SQL` disclosure exposing the underlying cross-table query. Section is hidden when
+   `analysis.supervision_cross_table_stats` is empty.
+6a. **Node Classification Supervision** (`<section id="node-classification-supervision">`) — One card per labeled node
+    type. Subsections are: **Label hygiene** (sentinel / NULL / valid counts), **Per-class degree** (one row per class
+    with count, cold-start fraction, mean / median / p90 / p99 / max degree, and an inline SVG sparkline histogram in a
+    `Distribution` column rendered from the per-class `buckets` dict), **Homophily** (per-edge-type edge / adjusted
+    homophily and sample size), and **Train / val / test split** (cross-split id leakage and per-split row counts). Each
+    subsection's `<h4>` has a `Show SQL` disclosure next to it; for Homophily the disclosure aggregates queries across
+    all matching edge types.
+7. **Advanced** (`<section id="advanced">`) — Optional Tier 3 / Tier 4 data. Shown only if the relevant fields are
+   populated. Each subsection's `<h3>` carries a `Show SQL` disclosure when corresponding queries were recorded:
    - Class imbalance (bar chart and per-class counts)
    - Label coverage (percentage per node type)
    - Edge type distribution (bar chart)
    - Reciprocity per edge type
    - Power-law exponent per edge type
-7. **Footer** (`<footer id="report-footer">`) — GiGL version / commit, list of raw artifact GCS paths, and a condensed
-   list of literature references (the 18 papers from `docs/plans/20260415-bq-data-analyzer-references.md`).
+8. **Footer** (`<footer id="report-footer">`) — GiGL version / commit and a list of raw artifact GCS paths.
 
 ## Key Thresholds
 
@@ -68,6 +93,8 @@ exactly.
 | Node degree (int16 clamp)        | < 32,767      | n/a        | > 32,767   |
 | Cold-start fraction (degree 0-1) | < 5%          | 5 - 10%    | > 10%      |
 | Edge type dominance              | No type > 80% | Any > 90%  | Any < 0.1% |
+| Overlap pair fraction            | 0             | (0, 1%)    | ≥ 1%       |
+| Driver anchors with zero `other` | < 5%          | 5 - 50%    | > 50%      |
 
 ## Data Injection Contract
 
@@ -95,6 +122,32 @@ On page load the JS:
 4. Applies color coding (`status-green`, `status-yellow`, `status-red`) based on the thresholds above.
 5. Hides `#feature-statistics` if the profile data is empty / `{}`.
 6. Hides `#advanced` if no Tier 3 or Tier 4 data is present.
+7. Renders per-block `Show SQL` disclosures from the `analysis.queries` map (see contract below). The disclosure is
+   omitted when no queries were recorded for the matching block ID.
+
+### `analysis.queries` Contract
+
+`GraphAnalysisResult.queries` is a flat `dict[str, list[str]]` populated at execution time by the analyzer. Keys are
+block IDs that the report renderer uses to locate which `<details class="query-disclosure">` to attach near a header.
+Multiple SQL strings under one key are rendered as separate `<pre class="sql">` blocks. Block ID conventions:
+
+| Section              | Pattern                                          |
+| -------------------- | ------------------------------------------------ |
+| Data quality         | `data_quality:<metric>:<scope>`                  |
+| Graph structure      | `graph_structure:<metric>:<edge_or_node_type>`   |
+| NC supervision       | `nc_supervision:<metric>:<node_type>[:<edge>]`   |
+| Supervision overlap  | `supervision_overlap:<driver>:<other>:<roles>`   |
+| Advanced             | `advanced:<metric>:<scope>`                      |
+
+Renderer behavior:
+
+- **Per-block headers** (Degree distribution per edge type, Top hubs per edge type, NC supervision sub-blocks,
+  Supervision overlap card title, Advanced sub-blocks) render one `Show SQL` disclosure per block ID using
+  `renderBlockHeader` / `renderQueryDisclosure`.
+- **Aggregated section headers** (NULL rates, Integrity checks, Counts, Homophily within an NC supervision card)
+  render one disclosure that pulls every block ID matching a prefix using `renderQueryDisclosureByPrefix`.
+- Missing keys (or an empty `analysis.queries`) cause the disclosure to be skipped silently — old artifacts that
+  predate this field still render correctly without buttons.
 
 ### JS Element Contract
 
@@ -105,6 +158,7 @@ The JS queries these DOM IDs. The HTML template must provide them:
 - `#data-quality`
 - `#feature-statistics`
 - `#graph-structure`
+- `#supervision-overlap`
 - `#advanced`
 - `#report-footer`
 - `#analysis-data` (hidden JSON script tag)

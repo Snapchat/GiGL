@@ -49,6 +49,27 @@ class DataAnalyzerConfigTest(TestCase):
         self.assertIsNone(config.fan_out)
         self.assertFalse(config.compute_reciprocity)
         self.assertFalse(config.compute_homophily)
+        self.assertIsNone(config.job_name_prefix)
+
+    def test_job_name_prefix_round_trips(self) -> None:
+        """``job_name_prefix`` parses through OmegaConf when set."""
+        yaml_str = """
+        node_tables:
+          - bq_table: "p.d.t"
+            node_type: "user"
+            id_column: "uid"
+        edge_tables:
+          - bq_table: "p.d.e"
+            edge_type: "follows"
+            src_id_column: "src"
+            dst_id_column: "dst"
+        output_gcs_path: "gs://bucket/out/"
+        job_name_prefix: "cd-content"
+        """
+        raw = OmegaConf.create(yaml_str)
+        merged = OmegaConf.merge(OmegaConf.structured(DataAnalyzerConfig), raw)
+        config = cast(DataAnalyzerConfig, OmegaConf.to_object(merged))
+        self.assertEqual(config.job_name_prefix, "cd-content")
 
     def test_missing_required_field_raises(self) -> None:
         yaml_str = """
@@ -174,3 +195,96 @@ class DataAnalyzerConfigHeterogeneousTest(TestCase):
         with self.assertRaises(ValueError) as ctx:
             load_analyzer_config(path)
         self.assertIn("not a valid BigQuery column identifier", str(ctx.exception))
+
+
+SUPERVISION_HETERO_YAML = """
+node_tables:
+  - bq_table: "p.d.users"
+    node_type: "user"
+    id_column: "uid"
+  - bq_table: "p.d.content"
+    node_type: "content"
+    id_column: "cid"
+edge_tables:
+  - bq_table: "p.d.viewed"
+    edge_type: "viewed"
+    role: "message_passing"
+    src_id_column: "user_id"
+    dst_id_column: "content_id"
+    src_node_type: "user"
+    dst_node_type: "content"
+  - bq_table: "p.d.viewed_pos"
+    edge_type: "viewed_pos"
+    role: "supervision_pos"
+    node_anchor: "user"
+    src_id_column: "user_id"
+    dst_id_column: "content_id"
+    src_node_type: "user"
+    dst_node_type: "content"
+  - bq_table: "p.d.viewed_neg"
+    edge_type: "viewed_neg"
+    role: "supervision_neg"
+    src_id_column: "user_id"
+    dst_id_column: "content_id"
+    src_node_type: "user"
+    dst_node_type: "content"
+output_gcs_path: "gs://bucket/out/"
+"""
+
+
+class SupervisionRoleConfigTest(TestCase):
+    """Validation for the role / node_anchor fields on EdgeTableSpec."""
+
+    def _write_yaml(self, yaml_str: str) -> str:
+        import tempfile
+
+        fd = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+        )
+        fd.write(yaml_str)
+        fd.close()
+        return fd.name
+
+    def test_supervision_config_loads(self) -> None:
+        path = self._write_yaml(SUPERVISION_HETERO_YAML)
+        config = load_analyzer_config(path)
+        roles = {e.edge_type: e.role for e in config.edge_tables}
+        self.assertEqual(roles["viewed"], "message_passing")
+        self.assertEqual(roles["viewed_pos"], "supervision_pos")
+        self.assertEqual(roles["viewed_neg"], "supervision_neg")
+        anchors = {e.edge_type: e.node_anchor for e in config.edge_tables}
+        self.assertEqual(anchors["viewed_pos"], "user")
+        # Negatives without explicit anchor stay None — analyzer auto-inherits at runtime.
+        self.assertIsNone(anchors["viewed_neg"])
+
+    def test_role_defaults_to_message_passing(self) -> None:
+        """Edge tables without a role field default to message_passing."""
+        path = self._write_yaml(SAMPLE_HETERO_YAML)
+        config = load_analyzer_config(path)
+        self.assertEqual(config.edge_tables[0].role, "message_passing")
+
+    def test_unknown_role_raises(self) -> None:
+        yaml_str = SUPERVISION_HETERO_YAML.replace(
+            'role: "supervision_pos"', 'role: "bogus_role"'
+        )
+        path = self._write_yaml(yaml_str)
+        with self.assertRaises(ValueError) as ctx:
+            load_analyzer_config(path)
+        self.assertIn("role=", str(ctx.exception))
+        self.assertIn("bogus_role", str(ctx.exception))
+
+    def test_supervision_pos_without_node_anchor_raises(self) -> None:
+        yaml_str = SUPERVISION_HETERO_YAML.replace('    node_anchor: "user"\n', "")
+        path = self._write_yaml(yaml_str)
+        with self.assertRaises(ValueError) as ctx:
+            load_analyzer_config(path)
+        self.assertIn("node_anchor is required", str(ctx.exception))
+
+    def test_node_anchor_not_matching_src_or_dst_raises(self) -> None:
+        yaml_str = SUPERVISION_HETERO_YAML.replace(
+            'node_anchor: "user"', 'node_anchor: "movie"'
+        )
+        path = self._write_yaml(yaml_str)
+        with self.assertRaises(ValueError) as ctx:
+            load_analyzer_config(path)
+        self.assertIn("node_anchor=", str(ctx.exception))

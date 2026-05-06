@@ -56,7 +56,6 @@ class ReportGeneratorStructuralTest(TestCase):
         html = generate_report(
             analysis_result=_make_test_result(),
             profile_result=None,
-            config=None,
         )
         self.assertIsInstance(html, str)
         self.assertGreater(len(html), 1000)
@@ -67,7 +66,6 @@ class ReportGeneratorStructuralTest(TestCase):
         html = generate_report(
             analysis_result=_make_test_result(),
             profile_result=None,
-            config=None,
         )
         # None of the injection placeholders should remain in the output.
         self.assertNotIn("/* INJECT_STYLES */", html)
@@ -79,7 +77,6 @@ class ReportGeneratorStructuralTest(TestCase):
         html = generate_report(
             analysis_result=_make_test_result(),
             profile_result=None,
-            config=None,
         )
         # The JSON data lives inside a hidden script tag.
         self.assertIn('"node_counts"', html)
@@ -90,7 +87,6 @@ class ReportGeneratorStructuralTest(TestCase):
         html = generate_report(
             analysis_result=_make_test_result(),
             profile_result=None,
-            config=None,
         )
         # When profile_result is None, we inject an empty JSON object.
         self.assertIn('id="profile-data"', html)
@@ -103,7 +99,6 @@ class ReportGeneratorSnapshotTest(TestCase):
         html = generate_report(
             analysis_result=_make_test_result(),
             profile_result=None,
-            config=None,
         )
         if not GOLDEN_REPORT_PATH.exists():
             self.fail(

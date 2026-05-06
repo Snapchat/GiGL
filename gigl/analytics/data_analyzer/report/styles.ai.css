@@ -149,6 +149,14 @@ iframe.facets-embed {
     border: 0;
 }
 
+.facets-chunk-caption {
+    font-family: var(--font-sans);
+    font-size: 0.85em;
+    color: var(--color-muted, #666);
+    margin: 12px 0 4px 0;
+    font-weight: 600;
+}
+
 .warning-box {
     background: var(--color-crit);
     color: #ffffff;
@@ -165,9 +173,65 @@ iframe.facets-embed {
 
 .footer-list code { font-family: var(--font-mono); }
 
+.block-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 1.2em;
+    margin-bottom: 0.5em;
+}
+.block-header h3, .block-header h4 {
+    margin: 0;
+}
+
+details.query-disclosure {
+    padding: 2px 8px;
+    margin: 0;
+    font-size: 0.85rem;
+    background: var(--color-card-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+details.query-disclosure summary {
+    font-weight: 500;
+    color: var(--color-text-muted);
+    padding: 0;
+}
+details.query-disclosure p.sql-key {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin: 8px 0 2px 0;
+}
+details.query-disclosure pre.sql {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    background: #f1f3f5;
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 6px 0;
+}
+
+td.sparkline-cell {
+    padding: 2px 6px;
+}
+svg.histogram.sparkline {
+    width: 140px;
+    max-width: 140px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    display: block;
+}
+
 @media print {
     body { background: #ffffff; padding: 0; max-width: none; }
     details { break-inside: avoid; border: 1px solid #ccc; }
     iframe.facets-embed { min-height: 400px; }
     .card, table, svg.histogram { break-inside: avoid; }
+    details.query-disclosure { display: none; }
 }

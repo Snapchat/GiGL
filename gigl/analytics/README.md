@@ -26,7 +26,7 @@ node_tables:
   - bq_table: "your-project.your_dataset.user_nodes"
     node_type: "user"
     id_column: "user_id"
-    feature_columns: ["age", "country"]  # optional; [] or omit if the node has no features
+    feature_columns: ["age", "country"]  # optional; omit to auto-infer all non-ID, TFDV-compatible columns from the BQ schema
     # label_column: "label"              # optional; enables Tier 3 label checks
 
 edge_tables:
@@ -72,6 +72,46 @@ it; Tier 4 is opt-in.
 The thresholds below come from a review of production GNN papers (PinSage, BLADE, LiGNN, TwHIN, AliGraph, GraphSMOTE,
 Beyond Homophily, Feature Propagation, and others). See the inline citations in the threshold table for what each paper
 contributes.
+
+## Feature profiling
+
+In addition to the structural checks above, the analyzer runs
+[TensorFlow Data Validation](https://www.tensorflow.org/tfx/guide/tfdv) on every node and edge table and embeds the
+resulting Facets HTML report in the final output.
+
+- **Auto-inference.** By default, the profiler reads the BQ table schema and profiles every non-ID column whose type is
+  TFDV-compatible — scalars `STRING`, `INT64`, `FLOAT64`, `NUMERIC`, `BIGNUMERIC`, `BOOL`. Temporal types (`DATE`,
+  `DATETIME`, `TIMESTAMP`, `TIME`) and complex types (`RECORD`, `GEOGRAPHY`, `JSON`, `BYTES`) are not supported by TFDV
+  and are skipped with an info log.
+- **Embedding columns.** `REPEATED` `FLOAT64` / `FLOAT` / `NUMERIC` / `BIGNUMERIC` columns are treated as embedding
+  vectors. Each expands in the Beam `SELECT` into four scalar hygiene companions — `<col>_len`, `<col>_has_nan`,
+  `<col>_has_inf`, `<col>_is_all_zero` — which are profiled by TFDV like any other scalar. Other REPEATED types
+  (`STRING` / `INT64` arrays, etc.) are skipped.
+- **Embedding diagnostics.** After the TFDV pipelines finish, one BigQuery aggregate per embedding column computes
+  `total`, `unique_count`, `unique_ratio`, and top-K most-frequent hash clusters (via
+  `FARM_FINGERPRINT(TO_JSON_STRING(<col>))`). Results land in `FeatureProfileResult.embedding_diagnostics` and render as
+  a dedicated "Embedding Diagnostics" section in the report.
+- **Explicit override.** Setting `feature_columns` in the YAML narrows the projection to those columns (still honoring
+  embedding expansion for REPEATED FLOAT families). Use this to scope down to a handful of columns, or to exclude PII /
+  expensive fields.
+- **Join keys are excluded.** `id_column` on nodes and `src_id_column` / `dst_id_column` on edges are always dropped
+  from the auto-inferred list. `label_column` and `timestamp_column` are kept (profiling class balance / temporal
+  sparsity is useful).
+- **Cost.** One Dataflow job is launched per table, so a config with many tables translates to many concurrent Dataflow
+  runs. During iteration, pass `--only structure` to skip the profiler entirely. Run `--only feature` (or the default
+  `both`) once the config is stable.
+
+## Machine-readable outputs
+
+Alongside `report.html`, each analyzer run writes versioned Pydantic JSON sidecars under `output_gcs_path/`:
+
+- `graph_structure.json` — the `GraphAnalysisResult` payload from `GraphStructureAnalyzer`. Written on success and also
+  on a Tier 1 `DataQualityError` (partial result) so failures are still recoverable.
+- `feature_profile.json` — the `FeatureProfileResult` payload (facets URIs, TFDV stats URIs, embedding diagnostics).
+
+Each sidecar wraps its payload in an envelope: `{schema_version, component, generated_at, data}`. Load one with
+`gigl.analytics.data_analyzer.types.load_artifact(path, expected_component=...)`. Schema changes are additive-only at
+`schema_version="1"`; breaking changes bump the version.
 
 ## Interpreting the report
 
@@ -167,9 +207,6 @@ home for additional standalone validators in the future.
 
 Current implementation status:
 
-- **FeatureProfiler is a stub.** The class is wired in but the TFDV/Dataflow pipeline that would produce FACETS HTML per
-  table is deferred to a follow-up PR. Calling it today logs a warning and returns an empty `FeatureProfileResult`. The
-  main report is fully functional without it.
 - **Tier 4 checks are partial.** Power-law exponent is computed as a degree-stats approximation. Reciprocity, homophily,
   connected components, and clustering coefficient config flags are accepted but currently no-op. The `timestamp_column`
   edge field is accepted but no temporal-freshness query runs yet.

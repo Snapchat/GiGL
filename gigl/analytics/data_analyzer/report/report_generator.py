@@ -7,12 +7,10 @@ The template, styles, and chart logic are defined by SPEC.md in this
 directory. AI-owned files (*.ai.html, *.ai.js, *.ai.css) can be
 regenerated from the SPEC.
 """
-import dataclasses
 import json
 from importlib import resources
 from typing import Optional
 
-from gigl.analytics.data_analyzer.config import DataAnalyzerConfig
 from gigl.analytics.data_analyzer.types import FeatureProfileResult, GraphAnalysisResult
 from gigl.common.logger import Logger
 
@@ -20,9 +18,8 @@ logger = Logger()
 
 
 def generate_report(
-    analysis_result: GraphAnalysisResult,
-    profile_result: Optional[FeatureProfileResult],
-    config: Optional[DataAnalyzerConfig],
+    analysis_result: Optional[GraphAnalysisResult] = None,
+    profile_result: Optional[FeatureProfileResult] = None,
 ) -> str:
     """Generate a self-contained HTML report from analysis results.
 
@@ -47,10 +44,11 @@ def generate_report(
     css = template_dir.joinpath("styles.ai.css").read_text()
     js = template_dir.joinpath("charts.ai.js").read_text()
 
-    analysis_json = json.dumps(dataclasses.asdict(analysis_result), default=str)
+    analysis_json = json.dumps(
+        analysis_result.model_dump(mode="json") if analysis_result else {}
+    )
     profile_json = json.dumps(
-        dataclasses.asdict(profile_result) if profile_result else {},
-        default=str,
+        profile_result.model_dump(mode="json") if profile_result else {}
     )
 
     html = html_template

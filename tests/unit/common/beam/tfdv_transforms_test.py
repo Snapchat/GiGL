@@ -6,9 +6,11 @@ from unittest.mock import patch
 
 import apache_beam as beam
 import pyarrow as pa
+from apache_beam.io.gcp.bigquery import BigQueryQueryPriority
 from apache_beam.testing.util import assert_that, equal_to
 
 from gigl.common import LocalUri
+from gigl.common.beam.sharded_read import BigQueryShardedReadConfig
 from gigl.common.beam.tfdv_transforms import (
     BqTableToRecordBatch,
     GenerateAndVisualizeStats,
@@ -17,14 +19,14 @@ from tests.test_assets.test_case import TestCase
 
 
 class BqTableToRecordBatchTest(TestCase):
-    def test_raises_on_empty_feature_columns(self) -> None:
+    def test_raises_on_empty_projection(self) -> None:
         with self.assertRaises(ValueError):
-            BqTableToRecordBatch(bq_table="p.d.t", feature_columns=[])
+            BqTableToRecordBatch(bq_table="p.d.t", projection=[])
 
-    def test_query_uses_backtick_quoted_columns_and_table(self) -> None:
+    def test_query_renders_expr_as_name_for_each_entry(self) -> None:
         transform = BqTableToRecordBatch(
             bq_table="proj.ds.users",
-            feature_columns=["age", "country"],
+            projection=[("age", "`age`"), ("country", "`country`")],
         )
         captured_kwargs: dict = {}
 
@@ -41,15 +43,42 @@ class BqTableToRecordBatchTest(TestCase):
 
         self.assertEqual(
             captured_kwargs["query"],
-            "SELECT `age`, `country` FROM `proj.ds.users`",
+            "SELECT `age` AS `age`, `country` AS `country` FROM `proj.ds.users`",
         )
         self.assertTrue(captured_kwargs["use_standard_sql"])
         self.assertNotIn("project", captured_kwargs)
 
+    def test_query_supports_derived_expressions(self) -> None:
+        transform = BqTableToRecordBatch(
+            bq_table="proj.ds.users",
+            projection=[
+                ("emb_len", "ARRAY_LENGTH(`emb`)"),
+                ("country", "`country`"),
+            ],
+        )
+        captured_kwargs: dict = {}
+
+        def _fake_read(**kwargs):
+            captured_kwargs.update(kwargs)
+            return beam.Create([{"emb_len": 64, "country": "US"}])
+
+        with patch(
+            "gigl.common.beam.tfdv_transforms.beam.io.ReadFromBigQuery",
+            side_effect=_fake_read,
+        ):
+            with beam.Pipeline() as p:
+                _ = p | transform
+
+        self.assertEqual(
+            captured_kwargs["query"],
+            "SELECT ARRAY_LENGTH(`emb`) AS `emb_len`, `country` AS `country` "
+            "FROM `proj.ds.users`",
+        )
+
     def test_passes_bq_project_when_given(self) -> None:
         transform = BqTableToRecordBatch(
             bq_table="proj.ds.users",
-            feature_columns=["age"],
+            projection=[("age", "`age`")],
             bq_project="billing-project",
         )
         captured_kwargs: dict = {}
@@ -66,6 +95,69 @@ class BqTableToRecordBatchTest(TestCase):
                 _ = p | transform
 
         self.assertEqual(captured_kwargs["project"], "billing-project")
+
+    def test_raises_on_non_positive_num_shards(self) -> None:
+        with self.assertRaises(ValueError):
+            BqTableToRecordBatch(
+                bq_table="p.d.t",
+                projection=[("age", "`age`")],
+                sharded_read_config=BigQueryShardedReadConfig(
+                    shard_key="uid",
+                    project_id="proj",
+                    temp_dataset_name="temp",
+                    num_shards=0,
+                ),
+            )
+
+    def test_sharded_read_emits_one_query_per_shard(self) -> None:
+        """Each shard fans out into its own BQ read with a FARM_FINGERPRINT WHERE clause.
+
+        Mirrors :class:`gigl.common.beam.sharded_read.ShardedExportRead`'s
+        contract — same hashing scheme, ``method=EXPORT``,
+        ``query_priority=INTERACTIVE``, and ``temp_dataset``.
+        """
+        captured: list[dict] = []
+
+        def _fake_read(**kwargs):
+            captured.append(kwargs)
+            return beam.Create([{"age": 1, "country": "US"}])
+
+        config = BigQueryShardedReadConfig(
+            shard_key="uid",
+            project_id="proj",
+            temp_dataset_name="temp_ds",
+            num_shards=3,
+        )
+        transform = BqTableToRecordBatch(
+            bq_table="proj.ds.users",
+            projection=[("age", "`age`"), ("country", "`country`")],
+            sharded_read_config=config,
+        )
+
+        with patch(
+            "gigl.common.beam.tfdv_transforms.beam.io.ReadFromBigQuery",
+            side_effect=_fake_read,
+        ):
+            with beam.Pipeline() as p:
+                _ = p | transform
+
+        self.assertEqual(len(captured), 3)
+        for i, kwargs in enumerate(captured):
+            self.assertIn(
+                f"WHERE ABS(MOD(FARM_FINGERPRINT(CAST(uid AS STRING)), 3)) = {i}",
+                kwargs["query"],
+            )
+            self.assertIn(
+                "SELECT `age` AS `age`, `country` AS `country` FROM `proj.ds.users`",
+                kwargs["query"],
+            )
+            self.assertTrue(kwargs["use_standard_sql"])
+            self.assertEqual(kwargs["method"], "EXPORT")
+            self.assertEqual(
+                kwargs["query_priority"], BigQueryQueryPriority.INTERACTIVE
+            )
+            self.assertEqual(kwargs["temp_dataset"].projectId, "proj")
+            self.assertEqual(kwargs["temp_dataset"].datasetId, "temp_ds")
 
     def test_emits_record_batches_with_list_typed_columns(self) -> None:
         rows = [
@@ -96,7 +188,7 @@ class BqTableToRecordBatchTest(TestCase):
             with beam.Pipeline() as p:
                 batches = p | BqTableToRecordBatch(
                     bq_table="p.d.t",
-                    feature_columns=["age", "country"],
+                    projection=[("age", "`age`"), ("country", "`country`")],
                     batch_size=10,
                 )
                 summaries = batches | "Summarize batch" >> beam.Map(_extract)

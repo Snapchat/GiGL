@@ -7,8 +7,10 @@ from gigl.analytics.data_analyzer.queries import (
     EDGE_REFERENTIAL_INTEGRITY_QUERY,
     NODE_COUNT_QUERY,
     SUPER_HUB_INT16_CLAMP_QUERY,
+    SUPERVISION_CROSS_TABLE_QUERY,
     TOP_K_HUBS_QUERY,
     build_null_rates_query,
+    build_per_class_degree_query,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -142,3 +144,81 @@ class ColdStartNodeCountQueryTest(TestCase):
         self.assertIn("UNION ALL", sql)
         self.assertIn(f"`{NODE_TABLE}`", sql)
         self.assertIn(f"`{EDGE_TABLE}`", sql)
+
+
+class PerClassDegreeQueryTest(TestCase):
+    def test_emits_six_log_buckets_for_sparkline(self) -> None:
+        """Per-class query carries the same log-bucket counts as the overall
+        degree query so the report can render a per-class sparkline next to
+        each row using the existing histogram helper.
+        """
+        sql = build_per_class_degree_query(
+            node_table=NODE_TABLE,
+            node_id_column="user_id",
+            label_column="label",
+            edge_table=EDGE_TABLE,
+            edge_src_column="src_uid",
+            edge_dst_column="dst_uid",
+        )
+        for column in [
+            "bucket_0_1",
+            "bucket_2_10",
+            "bucket_11_100",
+            "bucket_101_1k",
+            "bucket_1k_10k",
+            "bucket_10k_plus",
+        ]:
+            self.assertIn(column, sql)
+        # And the existing summary projection is unchanged.
+        self.assertIn("class_value", sql)
+        self.assertIn("APPROX_QUANTILES(degree, 100)", sql)
+        self.assertIn("MAX(degree) AS max_degree", sql)
+        self.assertIn("GROUP BY class_value", sql)
+
+    def test_does_not_filter_sentinel_values(self) -> None:
+        """Sentinel-labeled rows must surface as their own ``class_value`` rows so
+        the caller can compute a degree distribution for them. The query no
+        longer filters by ``label_sentinel_values``; partitioning happens in
+        Python after the rows come back.
+        """
+        sql = build_per_class_degree_query(
+            node_table=NODE_TABLE,
+            node_id_column="user_id",
+            label_column="label",
+            edge_table=EDGE_TABLE,
+            edge_src_column="src_uid",
+            edge_dst_column="dst_uid",
+        )
+        self.assertNotIn("NOT IN", sql)
+        self.assertNotIn("'-1'", sql)
+
+
+class SupervisionCrossTableQueryTest(TestCase):
+    def test_query_substitutes_all_table_and_column_placeholders(self) -> None:
+        sql = SUPERVISION_CROSS_TABLE_QUERY.format(
+            driver_table="project.dataset.pos_edges",
+            other_table="project.dataset.neg_edges",
+            driver_anchor_column="user_id",
+            driver_other_column="content_id",
+            other_anchor_column="user_id",
+            other_other_column="content_id",
+        )
+        self.assertIn("`project.dataset.pos_edges`", sql)
+        self.assertIn("`project.dataset.neg_edges`", sql)
+        self.assertIn("user_id AS anchor", sql)
+        self.assertIn("content_id  AS neighbor", sql)
+        # All 10 returned columns must appear in the projection.
+        for column in [
+            "driver_anchor_count",
+            "driver_pair_count",
+            "other_pair_count",
+            "overlap_pair_count",
+            "driver_anchors_with_zero_other",
+            "avg_other_per_driver_anchor",
+            "p50_other_per_driver_anchor",
+            "p90_other_per_driver_anchor",
+            "p99_other_per_driver_anchor",
+            "max_other_per_driver_anchor",
+        ]:
+            self.assertIn(column, sql)
+        self.assertIn("INNER JOIN", sql)
