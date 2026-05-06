@@ -44,6 +44,7 @@ trainer_resource_config:
     gpu_limit: 2
     num_replicas: 2
     tensorboard_resource_name: "projects/USER_PROVIDED_PROJECT/locations/us-central1/tensorboards/USER_PROVIDED_TENSORBOARD_ID"
+    tensorboard_experiment_name: "USER_PROVIDED_EXPERIMENT_NAME"
 inferencer_resource_config:
   vertex_ai_inferencer_config:
     machine_type: n1-standard-16

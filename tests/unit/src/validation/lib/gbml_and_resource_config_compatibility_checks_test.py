@@ -284,7 +284,8 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
         resource_config = _create_resource_config_with_trainer_tensorboard(
             tensorboard_resource_name=(
                 "projects/test-project/locations/us-central1/tensorboards/test"
-            )
+            ),
+            tensorboard_experiment_name="my-comparison",
         )
 
         check_vertex_ai_trainer_tensorboard_compatibility(
@@ -298,6 +299,7 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
             tensorboard_resource_name=(
                 "projects/test-project/locations/us-central1/tensorboards/test"
             ),
+            tensorboard_experiment_name="my-comparison",
             use_graph_store=True,
         )
 
@@ -316,6 +318,39 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
                 resource_config_wrapper=resource_config,
             )
 
+    def test_resource_name_set_without_experiment_name_raises(self):
+        """tensorboard_resource_name set without tensorboard_experiment_name → AssertionError."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            )
+        )
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("must be set together", str(ctx.exception))
+
+    def test_invalid_experiment_name_format_raises(self):
+        """tensorboard_experiment_name that violates the Vertex resource-ID regex raises."""
+        gbml_config = _create_empty_gbml_config()
+        resource_config = _create_resource_config_with_trainer_tensorboard(
+            tensorboard_resource_name=(
+                "projects/test-project/locations/us-central1/tensorboards/test"
+            ),
+            tensorboard_experiment_name="My_Invalid_Name",
+        )
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_vertex_ai_trainer_tensorboard_compatibility(
+                gbml_config_pb_wrapper=gbml_config,
+                resource_config_wrapper=resource_config,
+            )
+        self.assertIn("not a valid Vertex AI Experiment ID", str(ctx.exception))
+
     def test_resource_has_inferencer_graph_store_template_does_not(self):
         """Test that resource having graph store but template not raises an assertion error."""
         gbml_config = _create_gbml_config_without_graph_stores()
@@ -327,7 +362,7 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
             )
 
     def test_experiment_name_set_without_tensorboard_resource_raises(self):
-        """tensorboard_experiment_name set but no TB resource → AssertionError mentioning the field."""
+        """tensorboard_experiment_name set without resource_name → AssertionError."""
         gbml_config = _create_empty_gbml_config()
         resource_config = _create_resource_config_with_experiment_name_only(
             experiment_name="my-comparison"
@@ -338,7 +373,7 @@ class TestVertexAITrainerTensorboardCompatibility(TestCase):
                 gbml_config_pb_wrapper=gbml_config,
                 resource_config_wrapper=resource_config,
             )
-        self.assertIn("tensorboard_experiment_name", str(ctx.exception))
+        self.assertIn("must be set together", str(ctx.exception))
 
     def test_experiment_name_set_with_tensorboard_resource_does_not_raise(self):
         """tensorboard_experiment_name set and TB resource present → no exception."""
