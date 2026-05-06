@@ -629,6 +629,7 @@ def build_dataset_from_task_config_uri(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         distributed_context=distributed_context,
+        should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         partitioner_class=partitioner_class,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
