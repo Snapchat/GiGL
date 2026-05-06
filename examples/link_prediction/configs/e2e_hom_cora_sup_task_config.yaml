@@ -18,6 +18,10 @@ trainerConfig:
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
   command: python -m examples.link_prediction.homogeneous_training
+  # To enable cross-job TensorBoard comparison, set
+  # ``GiglResourceConfig.trainerResourceConfig...tensorboardExperimentName``
+  # alongside the ``tensorboardResourceName`` on the same resource config.
+  # See ``proto/snapchat/research/gbml/gigl_resource_config.proto`` for details.
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer

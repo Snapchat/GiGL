@@ -115,6 +115,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
 from gigl.utils.sampling import parse_fanout
+from gigl.utils.tensorboard_writer import TensorBoardWriter
 
 logger = Logger()
 
@@ -459,12 +460,15 @@ def _training_process(
     if torch.cuda.is_available():
         torch.cuda.set_device(device)
     print(f"---Rank {rank} training process set device {device}")
+    is_chief_process = rank == 0
+    tensorboard_writer = TensorBoardWriter.from_env(enabled=is_chief_process)
 
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
     )
+    batch_idx = 0
 
     if not args.should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
@@ -525,7 +529,6 @@ def _training_process(
 
         # Entering the training loop
         training_start_time = time.time()
-        batch_idx = 0
         avg_train_loss = 0.0
         last_n_batch_avg_loss: list[float] = []
         last_n_batch_time: list[float] = []
@@ -567,17 +570,27 @@ def _training_process(
             if (
                 batch_idx % args.log_every_n_batch == 0 or batch_idx < 10
             ):  # Log the first 10 batches to ensure the model is initialized correctly
+                mean_batch_time = statistics.mean(last_n_batch_time)
+                mean_train_loss = statistics.mean(last_n_batch_avg_loss)
                 print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 print(
-                    f"rank={rank}, batch={batch_idx}, mean(batch_time)={statistics.mean(last_n_batch_time):.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                    f"rank={rank}, batch={batch_idx}, mean(batch_time)={mean_batch_time:.3f} sec, max(batch_time)={max(last_n_batch_time):.3f} sec, min(batch_time)={min(last_n_batch_time):.3f} sec"
+                )
+                tensorboard_writer.log(
+                    {
+                        "Time/batch_mean_sec": mean_batch_time,
+                        "Loss/train": mean_train_loss,
+                    },
+                    step=batch_idx,
                 )
                 last_n_batch_time.clear()
+                # log the global average training loss
                 print(
-                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={mean_train_loss:.6f}"
                 )
                 last_n_batch_avg_loss.clear()
                 flush()
@@ -585,7 +598,7 @@ def _training_process(
             if batch_idx % args.val_every_n_batch == 0:
                 print(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
-                _run_validation_loops(
+                global_avg_val_loss = _run_validation_loops(
                     model=model,
                     main_loader=val_main_loader_iter,
                     random_negative_loader=val_random_negative_loader_iter,
@@ -595,6 +608,9 @@ def _training_process(
                     device=device,
                     log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
+                )
+                tensorboard_writer.log(
+                    {"Loss/val": global_avg_val_loss}, step=batch_idx
                 )
                 model.train()
         else:
@@ -674,6 +690,7 @@ def _training_process(
         device=device,
         log_every_n_batch=args.log_every_n_batch,
     )
+    tensorboard_writer.log({"Loss/test": global_avg_test_loss}, step=batch_idx)
 
     # Memory cleanup and waiting for all processes to finish
     if torch.cuda.is_available():
@@ -701,6 +718,7 @@ def _training_process(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
     )
     flush()
+    tensorboard_writer.close()
 
     # Graph store mode cleanup: shutdown the compute process connection to the storage cluster.
     shutdown_compute_process()
