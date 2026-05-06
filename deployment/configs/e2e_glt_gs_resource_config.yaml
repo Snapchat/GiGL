@@ -38,6 +38,8 @@ trainer_resource_config:
       gpu_type: NVIDIA_TESLA_T4
       gpu_limit: 2
       num_replicas: 2
+      tensorboard_resource_name: "projects/87123883529/locations/us-central1/tensorboards/2426122984222621696"
+      tensorboard_experiment_name: "gigl-oss-examples"
 inferencer_resource_config:
   vertex_ai_graph_store_inferencer_config:
     graph_store_pool:
@@ -50,3 +52,5 @@ inferencer_resource_config:
       gpu_type: NVIDIA_TESLA_T4
       gpu_limit: 2
       num_replicas: 2
+      tensorboard_resource_name: "projects/87123883529/locations/us-central1/tensorboards/2426122984222621696"
+      tensorboard_experiment_name: "gigl-oss-examples"
