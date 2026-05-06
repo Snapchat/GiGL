@@ -6,7 +6,10 @@ import yaml
 from absl.testing import absltest
 from omegaconf import OmegaConf
 
-from gigl.common.omegaconf_resolvers import register_resolvers
+from gigl.common.omegaconf_resolvers import (
+    register_resolvers,
+    set_gigl_resolver_values,
+)
 from tests.test_assets.test_case import TestCase
 
 
@@ -124,6 +127,60 @@ class TestNowResolver(TestCase):
         """
 
         self.assertEqual(OmegaConf.create(yaml_config).experiment.commit, "")
+
+
+class TestGiglResolver(TestCase):
+    """Tests for the ``gigl`` OmegaConf resolver.
+
+    The resolver pulls values from a module-level dict populated by
+    ``set_gigl_resolver_values(...)``. When a key is unset it falls
+    back to the literal placeholder ``"${gigl:<key>}"`` so a first-pass
+    YAML load is lossless and a caller can re-resolve later once
+    runtime context is known.
+    """
+
+    def setUp(self):
+        register_resolvers()
+        # Reset the resolver dict between tests so values from prior cases
+        # do not leak — set_gigl_resolver_values clears before populating.
+        set_gigl_resolver_values({})
+
+    def test_gigl_resolver_returns_value_when_set(self):
+        set_gigl_resolver_values({"foo": "bar"})
+        cfg = OmegaConf.create({"v": "${gigl:foo}"})
+        self.assertEqual(cfg.v, "bar")
+
+    def test_gigl_resolver_returns_placeholder_when_unset(self):
+        cfg = OmegaConf.create({"v": "${gigl:foo}"})
+        self.assertEqual(cfg.v, "${gigl:foo}")
+
+    def test_gigl_resolver_round_trips_unset_keys_through_yaml(self):
+        # Models the first-pass YAML load that ProtoUtils does — the
+        # placeholder must survive a YAML→OmegaConf round trip so a
+        # caller can re-resolve it later with values set.
+        yaml_config = """
+        custom:
+            command: "${gigl:task_config_uri}"
+            args:
+              - "--component=${gigl:component}"
+              - "--applied_task_identifier=${gigl:applied_task_identifier}"
+        """
+        cfg = OmegaConf.create(yaml.safe_load(yaml_config))
+        self.assertEqual(cfg.custom.command, "${gigl:task_config_uri}")
+        self.assertEqual(cfg.custom.args[0], "--component=${gigl:component}")
+        self.assertEqual(
+            cfg.custom.args[1],
+            "--applied_task_identifier=${gigl:applied_task_identifier}",
+        )
+
+    def test_set_gigl_resolver_values_overwrites_prior_values(self):
+        set_gigl_resolver_values({"a": "1", "b": "2"})
+        set_gigl_resolver_values({"a": "10"})
+        cfg = OmegaConf.create({"a": "${gigl:a}", "b": "${gigl:b}"})
+        self.assertEqual(cfg.a, "10")
+        # ``b`` was not in the second call, so it must fall back to the
+        # placeholder rather than retaining the prior call's "2" value.
+        self.assertEqual(cfg.b, "${gigl:b}")
 
 
 if __name__ == "__main__":

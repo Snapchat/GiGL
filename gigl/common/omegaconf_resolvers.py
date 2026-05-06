@@ -5,6 +5,7 @@ files to provide dynamic values during configuration loading.
 """
 
 import subprocess
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 
 from omegaconf import OmegaConf
@@ -15,6 +16,12 @@ logger = Logger()
 
 
 _SUPPORTED_UNITS = ("weeks", "days", "seconds", "minutes", "hours")
+
+# Module-level value dict consumed by the ``gigl`` resolver. Callers
+# populate it via ``set_gigl_resolver_values(...)`` before loading a
+# YAML that contains ``${gigl:<key>}`` placeholders (or before
+# re-resolving an already-loaded config).
+_GIGL_RESOLVER_VALUES: dict[str, str] = {}
 
 
 def now_resolver(*args: str) -> str:
@@ -157,6 +164,53 @@ def git_hash_resolver() -> str:
         return ""
 
 
+def gigl_resolver(key: str) -> str:
+    """Resolve ``${gigl:<key>}`` from a module-level value dict.
+
+    Registered resolvers are invoked with colon syntax in OmegaConf
+    (``${gigl:foo}``), not dotted (``${gigl.foo}``). The fallback string
+    therefore mirrors that form so the placeholder can round-trip through
+    a first-pass YAML load and be re-resolved later once runtime values
+    are populated via ``set_gigl_resolver_values``.
+
+    Args:
+        key: The runtime-value key being looked up
+            (e.g. ``cuda_docker_image``).
+
+    Returns:
+        The runtime value if ``set_gigl_resolver_values`` has populated
+        ``key``; otherwise the literal placeholder string
+        ``"${gigl:<key>}"`` so the early YAML pass
+        (``ProtoUtils.read_proto_from_yaml``) is lossless.
+
+    Example:
+        In a YAML loaded by ``ProtoUtils.read_proto_from_yaml``:
+
+        ```yaml
+        custom_trainer_config:
+          command: "${gigl:task_config_uri}"
+        ```
+
+        A consumer sets ``task_config_uri`` via
+        ``set_gigl_resolver_values(...)`` before parsing (or
+        re-resolves the field afterwards).
+    """
+    return _GIGL_RESOLVER_VALUES.get(key, f"${{gigl:{key}}}")
+
+
+def set_gigl_resolver_values(values: Mapping[str, str]) -> None:
+    """Replace the module-level dict the ``gigl`` resolver reads from.
+
+    The dict is cleared before the new values are written so stale
+    values from a prior call cannot leak into a subsequent invocation.
+
+    Args:
+        values: New key→value mapping.
+    """
+    _GIGL_RESOLVER_VALUES.clear()
+    _GIGL_RESOLVER_VALUES.update(values)
+
+
 def register_resolvers() -> None:
     """Register all custom OmegaConf resolvers.
 
@@ -177,4 +231,12 @@ def register_resolvers() -> None:
     else:
         logger.debug(
             "OmegaConf resolver 'git_hash' already registered, skipping registration"
+        )
+
+    if not OmegaConf.has_resolver("gigl"):
+        logger.info("Registering OmegaConf resolver 'gigl'")
+        OmegaConf.register_new_resolver("gigl", gigl_resolver)
+    else:
+        logger.debug(
+            "OmegaConf resolver 'gigl' already registered, skipping registration"
         )
