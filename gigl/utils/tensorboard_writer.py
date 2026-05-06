@@ -7,6 +7,10 @@ from typing import Any, Final, Optional
 import tensorflow as tf
 from google.cloud import aiplatform
 
+from gigl.common.logger import Logger
+
+logger = Logger()
+
 # Vertex AI sets this env var to ``<baseOutputDirectory>/logs/`` (or
 # ``<baseOutputDirectory>/<trial_id>/logs/`` for HyperparameterTuningJob trials)
 # when ``CustomJobSpec.baseOutputDirectory`` is configured. GiGL's launcher
@@ -224,5 +228,19 @@ def _maybe_start_uploader(*, parent_log_dir: str) -> bool:
         tensorboard_id=match["tensorboard_id"],
         tensorboard_experiment_name=experiment_name,
         logdir=parent_log_dir,
+    )
+    # Log the TB UI URL so engineers can find the named experiment without
+    # the Vertex AI job page's "Open TensorBoard" button (which is no longer
+    # rendered now that GiGL doesn't pass ``submit(tensorboard=...)``).
+    experiment_url = (
+        f"https://{match['location']}.tensorboard.googleusercontent.com/experiment/"
+        f"projects+{match['project']}"
+        f"+locations+{match['location']}"
+        f"+tensorboards+{match['tensorboard_id']}"
+        f"+experiments+{experiment_name}"
+    )
+    logger.info(
+        f"View TensorBoard (cross-job comparison, experiment={experiment_name!r}): "
+        f"{experiment_url}"
     )
     return True

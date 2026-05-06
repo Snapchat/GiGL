@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from absl.testing import absltest
 
+from gigl.utils import tensorboard_writer as tensorboard_writer_module
 from gigl.utils.tensorboard_writer import TensorBoardWriter
 from tests.test_assets.test_case import TestCase
 
@@ -220,6 +221,40 @@ class TestTensorBoardWriterUploader(TestCase):
                 writer.close()
 
         mock_start.assert_not_called()
+
+    def test_uploader_logs_named_experiment_url_on_start(self) -> None:
+        """The named-experiment URL is logged so engineers can find the TB
+        page without the (now-absent) Vertex AI job-page button.
+        """
+        with patch.dict(
+            os.environ,
+            {
+                "AIP_TENSORBOARD_LOG_DIR": self._LOG_DIR,
+                "GIGL_TENSORBOARD_RESOURCE_NAME": self._TB_RESOURCE,
+                "GIGL_TENSORBOARD_EXPERIMENT_NAME": self._EXPERIMENT,
+            },
+            clear=True,
+        ):
+            with patch("gigl.utils.tensorboard_writer.tf.summary.create_file_writer"):
+                with (
+                    patch("google.cloud.aiplatform.start_upload_tb_log"),
+                    patch("google.cloud.aiplatform.init"),
+                    patch("google.cloud.aiplatform.end_upload_tb_log"),
+                    patch.object(
+                        tensorboard_writer_module.logger, "info"
+                    ) as mock_info,
+                ):
+                    writer = TensorBoardWriter.from_env()
+                    writer.close()
+
+        info_calls = [call.args[0] for call in mock_info.call_args_list]
+        url_log = next(
+            (msg for msg in info_calls if "View TensorBoard" in msg), None
+        )
+        self.assertIsNotNone(url_log)
+        self.assertIn(self._EXPERIMENT, url_log)
+        self.assertIn("tensorboards+42", url_log)
+        self.assertIn("us-central1", url_log)
 
     def test_uploader_failure_after_writer_construction_closes_writer(self) -> None:
         """If start_upload_tb_log raises, the TF file writer is closed and
