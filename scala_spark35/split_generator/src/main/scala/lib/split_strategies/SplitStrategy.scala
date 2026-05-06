@@ -32,7 +32,7 @@ abstract class SplitStrategy[A](splitStrategyArgs: Map[String, String]) extends 
   val graphMetadataPbWrapper: GraphMetadataPbWrapper
 
   /**
-    * Takes in a single "un-split" training sample instance output by SubgraphSampler, 
+    * Takes in a single "un-split" training sample instance output by SubgraphSampler,
     * and a DatasetSplit(TRAIN, TEST, VAL) and outputs the the "split" samples for that dataset split
     *
     * @param sample : Input Sample from SGS

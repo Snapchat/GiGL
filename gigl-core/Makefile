@@ -2,7 +2,7 @@
 # Invoked from the GiGL repo root via: $(MAKE) -C gigl-core <target>
 # All paths below are relative to gigl-core/.
 
-CPP_SOURCES := $(shell find csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
+CPP_SOURCES := $(shell find core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
@@ -12,10 +12,12 @@ CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
 # pyproject.toml, make skips the reinstall unless something actually changed.
 # We cd to the repo root so that no-build-isolation-package in the root pyproject.toml
 # is respected by uv pip install.
-.cache/cmake_build/CMakeInit.txt: $(shell find csrc \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
+.cache/cmake_build/CMakeInit.txt: $(shell find core \( -name '*.cpp' -o -name '*.cu' -o -name '*.h' -o -name '*.cuh' \) 2>/dev/null) CMakeLists.txt pyproject.toml
 	cd $(abspath $(CURDIR)/..) && uv pip install -e gigl-core/
 
-build_cpp_extensions: .cache/cmake_build/CMakeInit.txt
+# Also depend on the test cmake configure so that .cache/cpp_tests/compile_commands.json
+# is generated automatically, giving clangd visibility into test files and gtest headers.
+build_cpp_extensions: .cache/cmake_build/CMakeInit.txt .cache/cpp_tests/.configured
 
 .cache/cpp_tests/.configured: CMakeLists.txt tests/CMakeLists.txt .cache/cmake_build/CMakeInit.txt
 	cmake -C .cache/cmake_build/CMakeInit.txt -S . -B .cache/cpp_tests -DGIGL_CORE_BUILD_TESTS=ON
@@ -25,13 +27,26 @@ unit_test_cpp: .cache/cpp_tests/.configured
 	cmake --build .cache/cpp_tests --parallel
 	ctest --test-dir .cache/cpp_tests --output-on-failure
 
-# TODO: Remove the $(if ...) guards once C++ source files are permanently present in the
-# repo. The guards exist to silently no-op on branches that have no python_*.cpp files yet.
 check_format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES))
+	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
 
 format_cpp:
-	$(if $(CPP_SOURCES),clang-format-15 -i --style=file $(CPP_SOURCES))
+	clang-format-15 -i --style=file $(CPP_SOURCES)
+
+# Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
+# changes expressions, adds/removes keywords), not just style. Run manually and
+# review the diff before committing. Note: --fix cannot auto-repair every check;
+# some violations require manual edits.
+# --extra-arg=-Wno-ignored-optimization-argument suppresses GCC-specific LTO flags
+# (-fno-fat-lto-objects, -flto=auto) that cmake writes into compile_commands.json.
+# clang-tidy forwards compiler warnings via clang-diagnostic-*, and .clang-tidy sets
+# WarningsAsErrors: '*', so the warning must be silenced at the compiler level before
+# clang-tidy ever sees it.
+check_lint_cpp: build_cpp_extensions
+	cd $(abspath $(CURDIR)/..) && uv run python gigl-core/scripts/run_cpp_lint.py $(addprefix gigl-core/,$(CPP_SOURCES_NO_CUDA))
+
+fix_lint_cpp: build_cpp_extensions
+	clang-tidy-15 --fix --extra-arg=-Wno-ignored-optimization-argument -p .cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA)
 
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.
@@ -43,4 +58,4 @@ clean_build_files_cpp:
 
 # Declare targets as phony so make always runs their recipes, even if a file or
 # directory with the same name happens to exist on disk.
-.PHONY: build_cpp_extensions unit_test_cpp check_format_cpp format_cpp clean_cpp clean_build_files_cpp
+.PHONY: build_cpp_extensions unit_test_cpp check_format_cpp format_cpp check_lint_cpp fix_lint_cpp clean_cpp clean_build_files_cpp

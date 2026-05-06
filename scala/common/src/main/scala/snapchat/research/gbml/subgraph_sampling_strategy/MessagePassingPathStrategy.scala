@@ -34,7 +34,7 @@ final case class MessagePassingPathStrategy(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       paths.foreach { __v =>

@@ -50,7 +50,7 @@ Key Implementation Differences
 | **Inter-process sharing** | N/A (each process loads own partition)        | Each process fetches its own shard from      |
 |                           |                                               | the storage cluster                          |
 +---------------------------+----------------------------------------------+----------------------------------------------+
-| **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_proccess()`` disconnects  |
+| **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_process()`` disconnects   |
 |                           |                                               | from storage cluster                         |
 +---------------------------+----------------------------------------------+----------------------------------------------+
 
@@ -140,7 +140,7 @@ from gigl.distributed import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
-    shutdown_compute_proccess,
+    shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_available_device, get_graph_store_info
@@ -686,7 +686,7 @@ def _training_process(
     flush()
 
     # Graph store mode cleanup: shutdown the compute process connection to the storage cluster.
-    shutdown_compute_proccess()
+    shutdown_compute_process()
     gc.collect()
 
     logger.info(

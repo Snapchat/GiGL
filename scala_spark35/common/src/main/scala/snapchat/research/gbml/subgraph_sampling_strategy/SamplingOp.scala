@@ -28,7 +28,7 @@ final case class SamplingOp(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = opName
         if (!__value.isEmpty) {
@@ -59,7 +59,7 @@ final case class SamplingOp(
         val __value = samplingMethod.userDefined.get
         __size += 2 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
       };
-      
+
       {
         val __value = samplingDirection.value
         if (__value != 0) {
@@ -76,7 +76,7 @@ final case class SamplingOp(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {
@@ -293,7 +293,7 @@ object SamplingOp extends scalapb.GeneratedMessageCompanion[snapchat.research.gb
       override def number: _root_.scala.Int = 0
       override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
     }
-  
+
     @SerialVersionUID(0L)
     final case class RandomUniform(value: snapchat.research.gbml.subgraph_sampling_strategy.RandomUniform) extends snapchat.research.gbml.subgraph_sampling_strategy.SamplingOp.SamplingMethod {
       type ValueType = snapchat.research.gbml.subgraph_sampling_strategy.RandomUniform

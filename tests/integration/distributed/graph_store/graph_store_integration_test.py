@@ -20,7 +20,7 @@ from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
-    shutdown_compute_proccess,
+    shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.sharding import compute_server_assignments
@@ -326,7 +326,7 @@ def _run_compute_train_tests(
 
     ablp_loader.shutdown()
     random_negative_loader.shutdown()
-    shutdown_compute_proccess()
+    shutdown_compute_process()
 
 
 def _run_compute_multiple_loaders_test(
@@ -546,7 +546,7 @@ def _run_compute_multiple_loaders_test(
     neighbor_loader_3.shutdown()
     torch.distributed.barrier()
 
-    shutdown_compute_proccess()
+    shutdown_compute_process()
 
 
 def _run_compute_tests(
@@ -645,7 +645,7 @@ def _run_compute_tests(
         ),
     )
     loader.shutdown()
-    shutdown_compute_proccess()
+    shutdown_compute_process()
 
 
 # ---------------------------------------------------------------------------

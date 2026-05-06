@@ -22,7 +22,7 @@ DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
-CPP_SOURCES:=$(shell find gigl-core/csrc \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
+CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
@@ -35,8 +35,8 @@ GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yam
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-# Find all markdown files in the repo except for those in .venv or tools directories.
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*")
+# Find all markdown files in the repo except for those in .venv, tools, or cmake cache directories.
+MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -165,20 +165,11 @@ type_check:
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
 
-check_lint_cpp: build_cpp_extensions
-	$(if $(CPP_SOURCES_NO_CUDA),uv run python -m scripts.run_cpp_lint $(CPP_SOURCES_NO_CUDA))
+check_lint_cpp:
+	$(MAKE) -C gigl-core check_lint_cpp
 
-# Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
-# changes expressions, adds/removes keywords), not just style. Run manually and
-# review the diff before committing. Note: --fix cannot auto-repair every check;
-# some violations require manual edits.
-# --extra-arg=-Wno-ignored-optimization-argument suppresses GCC-specific LTO flags
-# (-fno-fat-lto-objects, -flto=auto) that cmake writes into compile_commands.json.
-# clang-tidy forwards compiler warnings via clang-diagnostic-*, and .clang-tidy sets
-# WarningsAsErrors: '*', so the warning must be silenced at the compiler level before
-# clang-tidy ever sees it.
-fix_lint_cpp: build_cpp_extensions
-	$(if $(CPP_SOURCES_NO_CUDA),clang-tidy-15 --fix --extra-arg=-Wno-ignored-optimization-argument -p gigl-core/.cache/cmake_build/compile_commands.json $(CPP_SOURCES_NO_CUDA))
+fix_lint_cpp:
+	$(MAKE) -C gigl-core fix_lint_cpp
 
 lint_test: check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"

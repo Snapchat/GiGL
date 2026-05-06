@@ -76,7 +76,7 @@ def init_compute_process(
     )
 
 
-def shutdown_compute_proccess() -> None:
+def shutdown_compute_process() -> None:
     """Shut down the compute side of a Graph Store cluster.
 
     Step 2 of the three-phase teardown described in
@@ -86,9 +86,7 @@ def shutdown_compute_proccess() -> None:
 
     Calls ``glt.distributed.shutdown_client`` and
     ``torch.distributed.destroy_process_group`` exactly once per
-    compute process. (Function name is misspelled and kept for
-    back-compat with downstream training scripts.)
-    # TODO(kmonte): fix typo.
+    compute process.
 
     Should be called *once* per compute process (e.g. one per process
     per compute node, once per
