@@ -223,14 +223,6 @@ class DistServer:
         a backend is destroyed; this method only drops residual
         tombstone/stats bookkeeping and warns if any sampling state is
         still registered.
-
-        We previously raised ``RuntimeError`` here on leftover state, but
-        that turned the documented optimization of skipping
-        ``destroy_sampling_input`` for inactive servers (see
-        ``BaseDistLoader.shutdown`` and
-        ``docs/plans/20260506-graph-store-shutdown-fix.md``) into a
-        guaranteed non-zero exit. The process is about to terminate
-        anyway, so a warning suffices.
         """
         with self._lock:
             if (
@@ -863,8 +855,7 @@ class DistServer:
             # channel, ``runtime.shutdown()`` (workers joined with a 5 s
             # timeout each, then terminated). >1 s on the non-last
             # destroy or >30 s on the last destroy is the smoking-gun
-            # signal we are missing today; see
-            # ``docs/plans/20260506-graph-store-shutdown-fix.md``.
+            # signal we are missing today.
             elapsed = time.monotonic() - request_start_time
             slow_threshold = 30.0 if triggered_backend_shutdown else 1.0
             if elapsed > slow_threshold:

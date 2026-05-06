@@ -815,10 +815,8 @@ class BaseDistLoader(DistLoader):
             # (`RemoteReceivingChannel` initializes `_server_end_of_epoch=True`
             # for them). Sending destroy RPCs to those servers turns shutdown
             # into a 120-fan-out wait_all that suffers long-tail latency at
-            # large cluster sizes — the symptom is the 300 s shutdown
-            # timeout signature documented in
-            # `docs/plans/20260506-graph-store-shutdown-fix.md`.
-            #
+            # large cluster sizes.
+
             # Per-future resolution (instead of one aggregate
             # `torch.futures.wait_all`) lets us name the slow server in the
             # log if a hang ever does occur.
