@@ -240,17 +240,13 @@ class TestTensorBoardWriterUploader(TestCase):
                     patch("google.cloud.aiplatform.start_upload_tb_log"),
                     patch("google.cloud.aiplatform.init"),
                     patch("google.cloud.aiplatform.end_upload_tb_log"),
-                    patch.object(
-                        tensorboard_writer_module.logger, "info"
-                    ) as mock_info,
+                    patch.object(tensorboard_writer_module.logger, "info") as mock_info,
                 ):
                     writer = TensorBoardWriter.from_env()
                     writer.close()
 
         info_calls = [call.args[0] for call in mock_info.call_args_list]
-        url_log = next(
-            (msg for msg in info_calls if "View TensorBoard" in msg), None
-        )
+        url_log = next((msg for msg in info_calls if "View TensorBoard" in msg), None)
         self.assertIsNotNone(url_log)
         self.assertIn(self._EXPERIMENT, url_log)
         self.assertIn("tensorboards+42", url_log)

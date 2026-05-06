@@ -411,8 +411,7 @@ class TestVertexAILauncher(TestCase):
         storage_job_config = call_args.kwargs["storage_pool_job_config"]
 
         compute_env = {
-            ev.name: ev.value
-            for ev in compute_job_config.environment_variables or []
+            ev.name: ev.value for ev in compute_job_config.environment_variables or []
         }
         storage_env_names = {
             ev.name for ev in storage_job_config.environment_variables or []
