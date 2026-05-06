@@ -1221,13 +1221,6 @@ class TestDistServerSampling(TestCase):
         runtime.shutdown.assert_called_once()
 
     def test_shutdown_warns_and_clears_with_live_backends(self) -> None:
-        # ``DistServer.shutdown`` used to raise on live state to enforce a
-        # strict caller contract. We relaxed that to a logged warning so
-        # the documented optimization of skipping ``destroy_sampling_input``
-        # for inactive servers (see ``BaseDistLoader.shutdown`` and
-        # ``docs/plans/20260506-graph-store-shutdown-fix.md``) does not
-        # turn into a guaranteed non-zero process exit. The process is
-        # already terminating; logging the residual state is enough.
         runtime_1 = MagicMock()
         runtime_2 = MagicMock()
         self.server._backend_state_by_backend_id = {
@@ -1340,17 +1333,6 @@ class TestWaitAndShutdownServer(TestCase):
         dist_server._dist_server = None
 
     def test_wait_and_shutdown_server_runs_barrier_when_state_remains(self) -> None:
-        """barrier+shutdown_rpc must run even when state remains.
-
-        ``DistServer.shutdown()`` used to raise on residual state; we
-        relaxed it to a logged warning (see
-        ``docs/plans/20260506-graph-store-shutdown-fix.md``). The
-        important contract preserved here is that
-        ``wait_and_shutdown_server`` still runs ``barrier()`` and
-        ``shutdown_rpc()`` so healthy storage peers do not hang on the
-        barrier forever, and that residual state is cleared so the
-        process can exit cleanly.
-        """
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
         server = dist_server.DistServer(dataset)
         # Inject leftover channel state. Used to make DistServer.shutdown()
