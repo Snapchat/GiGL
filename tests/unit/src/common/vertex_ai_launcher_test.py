@@ -201,10 +201,6 @@ class TestVertexAILauncher(TestCase):
             compute_job_config.base_output_dir,
             "gs://test-perm-bucket/job-name/trainer",
         )
-        self.assertEqual(
-            compute_job_config.tensorboard_resource_name,
-            compute_pool.tensorboard_resource_name,
-        )
 
         # Verify storage pool config
         self.assertEqual(storage_job_config.machine_type, storage_pool.machine_type)
@@ -215,7 +211,6 @@ class TestVertexAILauncher(TestCase):
         self.assertIsNotNone(storage_job_config.args)
         assert storage_job_config.args is not None  # Type narrowing for mypy
         self.assertIsNone(storage_job_config.base_output_dir)
-        self.assertIsNone(storage_job_config.tensorboard_resource_name)
 
         # Verify environment variables
         compute_env_vars = {
@@ -322,7 +317,6 @@ class TestVertexAILauncher(TestCase):
             f"--output_path={process_runtime_args['output_path']}", job_config.args
         )
         self.assertIsNone(job_config.base_output_dir)
-        self.assertIsNone(job_config.tensorboard_resource_name)
 
         # Verify resource labels
         expected_labels = {
@@ -371,7 +365,8 @@ class TestVertexAILauncher(TestCase):
         mock_service_instance.launch_job.assert_called_once()
         call_args = mock_service_instance.launch_job.call_args
         job_config = call_args.kwargs["job_config"]
-        self.assertEqual(job_config.tensorboard_experiment_name, experiment_name)
+        env = {ev.name: ev.value for ev in job_config.environment_variables or []}
+        self.assertEqual(env.get("GIGL_TENSORBOARD_EXPERIMENT_NAME"), experiment_name)
 
     @patch("gigl.src.common.vertex_ai_launcher.VertexAIService")
     def test_launch_graph_store_job_reads_experiment_name_from_compute_pool(
@@ -415,55 +410,17 @@ class TestVertexAILauncher(TestCase):
         compute_job_config = call_args.kwargs["compute_pool_job_config"]
         storage_job_config = call_args.kwargs["storage_pool_job_config"]
 
+        compute_env = {
+            ev.name: ev.value
+            for ev in compute_job_config.environment_variables or []
+        }
+        storage_env_names = {
+            ev.name for ev in storage_job_config.environment_variables or []
+        }
         self.assertEqual(
-            compute_job_config.tensorboard_experiment_name, experiment_name
+            compute_env.get("GIGL_TENSORBOARD_EXPERIMENT_NAME"), experiment_name
         )
-        self.assertIsNone(storage_job_config.tensorboard_experiment_name)
-
-    def test_build_job_config_threads_experiment_name(self) -> None:
-        """tensorboard_experiment_name on the resource config flows to VertexAiJobConfig."""
-        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
-            machine_type="n1-standard-4",
-            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
-            gpu_limit=0,
-            num_replicas=1,
-            tensorboard_resource_name="projects/p/locations/us/tensorboards/1",
-            tensorboard_experiment_name="my-comparison",
-        )
-        cfg = _build_job_config(
-            job_name="job",
-            task_config_uri=Uri("gs://b/task.yaml"),
-            resource_config_uri=Uri("gs://b/resource.yaml"),
-            command_str="python -m gigl.src.training.v2.glt_trainer",
-            args={},
-            use_cuda=False,
-            container_uri="gcr.io/p/img",
-            vertex_ai_resource_config=resource_config,
-            env_vars=[],
-            tensorboard_logs_uri=Uri("gs://b/run/logs/"),
-        )
-        self.assertEqual(cfg.tensorboard_experiment_name, "my-comparison")
-
-    def test_build_job_config_experiment_name_default(self) -> None:
-        """Test that tensorboard_experiment_name defaults to None/empty when not provided."""
-        resource_config = gigl_resource_config_pb2.VertexAiResourceConfig(
-            machine_type="n1-standard-4",
-            gpu_type="ACCELERATOR_TYPE_UNSPECIFIED",
-            gpu_limit=0,
-            num_replicas=1,
-        )
-        cfg = _build_job_config(
-            job_name="job",
-            task_config_uri=Uri("gs://b/task.yaml"),
-            resource_config_uri=Uri("gs://b/resource.yaml"),
-            command_str="python -m gigl.src.training.v2.glt_trainer",
-            args={},
-            use_cuda=False,
-            container_uri="gcr.io/p/img",
-            vertex_ai_resource_config=resource_config,
-            env_vars=[],
-        )
-        self.assertIsNone(cfg.tensorboard_experiment_name)
+        self.assertNotIn("GIGL_TENSORBOARD_EXPERIMENT_NAME", storage_env_names)
 
     def test_build_job_config_injects_gigl_tensorboard_env_vars(self) -> None:
         """When tensorboard_experiment_name is set with a TB resource, the

@@ -88,12 +88,6 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 
-# Vertex AI Experiment IDs are MetadataStore Context IDs and must satisfy
-# this regex.
-_VERTEX_RESOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^[a-z0-9][a-z0-9-]{0,127}$"
-)
-
 # Captures the trailing tensorboard ID from a fully-qualified resource name.
 # Used only for building the human-readable TB UI URL.
 _VERTEX_TENSORBOARD_ID_FROM_RESOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -179,18 +173,11 @@ class VertexAiJobConfig:
             AI default (no reservation).
         base_output_dir: Optional CustomJob base output directory. When set,
             Vertex AI derives ``AIP_MODEL_DIR``, ``AIP_CHECKPOINT_DIR``, and
-            ``AIP_TENSORBOARD_LOG_DIR`` from this directory.
-        tensorboard_resource_name: Optional existing Vertex AI TensorBoard
-            resource to attach to the job.
-        tensorboard_experiment_name: Optional Vertex AI ``TensorboardExperiment``
-            name for cross-job comparison. When set, the launcher injects
-            ``GIGL_TENSORBOARD_*`` env vars into the worker container; the
-            trainer's chief rank then streams events to this experiment via
-            ``aiplatform.start_upload_tb_log`` *in addition to* Vertex's
-            built-in per-job auto-upload (which is gated on
-            ``tensorboard_resource_name`` and is what the "Open TensorBoard"
-            link on the VAI job page resolves to). Multiple jobs sharing this
-            name appear as comparable runs on a single TensorBoard page.
+            ``AIP_TENSORBOARD_LOG_DIR`` from this directory. Setting this is
+            how GiGL trainers learn where to write TensorBoard events; the
+            chief-rank uploader (started inside the trainer) is what streams
+            them to a Vertex AI ``TensorboardExperiment`` for cross-job
+            comparison.
     """
 
     job_name: str
@@ -210,8 +197,6 @@ class VertexAiJobConfig:
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
     reservation_affinity: Optional[ReservationAffinity] = None
     base_output_dir: Optional[str] = None
-    tensorboard_resource_name: Optional[str] = None
-    tensorboard_experiment_name: Optional[str] = None
 
 
 class VertexAIService:
@@ -408,36 +393,11 @@ class VertexAIService:
             staging_bucket=self._staging_bucket,
             base_output_dir=job_config.base_output_dir,
         )
-        if job_config.tensorboard_experiment_name:
-            if not job_config.tensorboard_resource_name:
-                raise ValueError(
-                    "tensorboard_experiment_name is set but tensorboard_resource_name "
-                    "is not; the experiment needs a backing TB resource."
-                )
-            if not _VERTEX_RESOURCE_ID_PATTERN.match(
-                job_config.tensorboard_experiment_name
-            ):
-                raise ValueError(
-                    f"tensorboard_experiment_name {job_config.tensorboard_experiment_name!r} "
-                    f"is not a valid Vertex AI Experiment ID; it must match "
-                    f"{_VERTEX_RESOURCE_ID_PATTERN.pattern}."
-                )
-
-        # Always pass ``tensorboard=<resource>`` when a TB resource is
-        # configured so the Vertex AI job page shows an "Open TensorBoard"
-        # link to the auto-named per-job experiment. When
-        # ``tensorboard_experiment_name`` is also set, the launcher injects
-        # ``GIGL_TENSORBOARD_*`` env vars and the trainer's chief rank
-        # additionally streams events to the user-named experiment via
-        # ``aiplatform.start_upload_tb_log``. See
-        # https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-training
-        # for Vertex's auto-uploader contract.
         job.submit(
             service_account=self._service_account,
             timeout=job_config.timeout_s,
             enable_web_access=job_config.enable_web_access,
             scheduling_strategy=job_config.scheduling_strategy,
-            tensorboard=job_config.tensorboard_resource_name or None,
         )
         job.wait_for_resource_creation()
         logger.info(f"Created job: {job.resource_name}")
@@ -447,27 +407,6 @@ class VertexAIService:
         logger.info(
             f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
-        if job_config.tensorboard_resource_name:
-            # Per-job TensorboardExperiment: name == job's numeric ID, set by
-            # Vertex's auto-uploader. This is what the "Open TensorBoard" link
-            # on the VAI job page resolves to.
-            per_job_url = _build_tensorboard_experiment_url(
-                tensorboard_resource_name=job_config.tensorboard_resource_name,
-                experiment_id=job.name,
-            )
-            if per_job_url:
-                logger.info(f"View TensorBoard (per-job): {per_job_url}")
-            if job_config.tensorboard_experiment_name:
-                comparison_url = _build_tensorboard_experiment_url(
-                    tensorboard_resource_name=job_config.tensorboard_resource_name,
-                    experiment_id=job_config.tensorboard_experiment_name,
-                )
-                if comparison_url:
-                    logger.info(
-                        "View TensorBoard (cross-job comparison, "
-                        f"experiment={job_config.tensorboard_experiment_name!r}): "
-                        f"{comparison_url}"
-                    )
         job.wait_for_completion()
         return job
 

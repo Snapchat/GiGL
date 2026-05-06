@@ -313,9 +313,6 @@ def _build_job_config(
     Returns:
         VertexAiJobConfig: A configuration object ready to be used with VertexAIService.launch_job().
     """
-    tensorboard_experiment_name = (
-        vertex_ai_resource_config.tensorboard_experiment_name or None
-    )
     job_args = (
         [
             f"--job_name={job_name}",
@@ -335,29 +332,24 @@ def _build_job_config(
         else None
     )
 
-    # When the user opted into a stable Vertex AI TensorboardExperiment via
-    # ``tensorboard_experiment_name``, inject env vars into the worker so the
-    # chief-rank trainer can stream events directly to that experiment via
-    # ``aiplatform.start_upload_tb_log``. (Vertex's built-in auto-uploader
-    # still runs in parallel — see ``VertexAIService._submit_job`` — and
-    # writes to a per-job auto-named experiment so the "Open TensorBoard"
-    # link on the VAI job page resolves correctly.)
+    # When the user opted into a stable Vertex AI TensorboardExperiment, inject
+    # env vars into the worker so the chief-rank trainer can stream events
+    # directly to that experiment via ``aiplatform.start_upload_tb_log``.
+    # Validation guarantees ``tensorboard_resource_name`` and
+    # ``tensorboard_experiment_name`` are set together.
     #
     # ``GIGL_TENSORBOARD_RUN_NAME`` carries a launch-unique, sanitized run
     # name. The writer creates a subdirectory of ``AIP_TENSORBOARD_LOG_DIR``
     # with this name; the SDK ``LogdirLoader`` then surfaces it as a distinct
-    # ``TensorboardRun`` in the named experiment, so two jobs sharing
-    # ``tensorboard_experiment_name`` show up as two runs (instead of merging
-    # into one ``default`` run).
+    # ``TensorboardRun`` in the named experiment, so two jobs sharing the
+    # experiment name show up as two runs (instead of merging into one
+    # ``default`` run).
     #
     # References:
     #   https://cloud.google.com/vertex-ai/docs/experiments/tensorboard-overview
     #   https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec
     container_env_vars = list(env_vars)
-    if (
-        tensorboard_experiment_name
-        and vertex_ai_resource_config.tensorboard_resource_name
-    ):
+    if vertex_ai_resource_config.tensorboard_experiment_name:
         container_env_vars.extend(
             [
                 env_var.EnvVar(
@@ -366,7 +358,7 @@ def _build_job_config(
                 ),
                 env_var.EnvVar(
                     name="GIGL_TENSORBOARD_EXPERIMENT_NAME",
-                    value=tensorboard_experiment_name,
+                    value=vertex_ai_resource_config.tensorboard_experiment_name,
                 ),
                 env_var.EnvVar(
                     name="GIGL_TENSORBOARD_RUN_NAME",
@@ -404,12 +396,6 @@ def _build_job_config(
             vertex_ai_resource_config.reservation_affinity
         ),
         base_output_dir=base_output_dir,
-        tensorboard_resource_name=(
-            vertex_ai_resource_config.tensorboard_resource_name or None
-            if base_output_dir is not None
-            else None
-        ),
-        tensorboard_experiment_name=tensorboard_experiment_name,
     )
     return job_config
 
