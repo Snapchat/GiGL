@@ -54,6 +54,12 @@ class GLTTrainer:
         training_process_runtime_args = (
             gbml_config_pb_wrapper.trainer_config.trainer_args
         )
+        raw_tensorboard_logs_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
+        tensorboard_logs_uri = (
+            UriFactory.create_uri(raw_tensorboard_logs_uri)
+            if raw_tensorboard_logs_uri
+            else None
+        )
 
         job_name = f"gigl_train_{applied_task_identifier}"
 
@@ -70,6 +76,7 @@ class GLTTrainer:
                 cuda_docker_uri=cuda_docker_uri,
                 component=GiGLComponents.Trainer,
                 vertex_ai_region=resource_config.vertex_ai_trainer_region,
+                tensorboard_logs_uri=tensorboard_logs_uri,
             )
         elif isinstance(resource_config.trainer_config, VertexAiGraphStoreConfig):
             launch_graph_store_enabled_job(
@@ -85,6 +92,7 @@ class GLTTrainer:
                 cpu_docker_uri=cpu_docker_uri,
                 cuda_docker_uri=cuda_docker_uri,
                 component=GiGLComponents.Trainer,
+                tensorboard_logs_uri=tensorboard_logs_uri,
             )
         else:
             raise NotImplementedError(

@@ -54,6 +54,12 @@ class GLTInferencer:
         inference_process_runtime_args = (
             gbml_config_pb_wrapper.inferencer_config.inferencer_args
         )
+        raw_tensorboard_logs_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.tensorboard_logs_uri
+        tensorboard_logs_uri = (
+            UriFactory.create_uri(raw_tensorboard_logs_uri)
+            if raw_tensorboard_logs_uri
+            else None
+        )
 
         job_name = f"gigl_infer_{applied_task_identifier}"
 
@@ -72,6 +78,7 @@ class GLTInferencer:
                 cuda_docker_uri=cuda_docker_uri,
                 component=GiGLComponents.Inferencer,
                 vertex_ai_region=resource_config_wrapper.vertex_ai_inferencer_region,
+                tensorboard_logs_uri=tensorboard_logs_uri,
             )
         elif isinstance(
             resource_config_wrapper.inferencer_config, VertexAiGraphStoreConfig
@@ -89,6 +96,7 @@ class GLTInferencer:
                 cpu_docker_uri=cpu_docker_uri,
                 cuda_docker_uri=cuda_docker_uri,
                 component=GiGLComponents.Inferencer,
+                tensorboard_logs_uri=tensorboard_logs_uri,
             )
         else:
             raise NotImplementedError(
