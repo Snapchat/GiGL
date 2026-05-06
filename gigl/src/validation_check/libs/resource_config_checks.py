@@ -3,6 +3,7 @@ from typing import Final, Union
 from google.cloud.aiplatform_v1.types.accelerator_type import AcceleratorType
 
 from gigl.common.logger import Logger
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
@@ -309,6 +310,57 @@ def _validate_machine_config(
             or {gigl_resource_config_pb2.KFPResourceConfig.__name__}.
             or {gigl_resource_config_pb2.VertexAiGraphStoreConfig.__name__}.
             Got {type(config)}"""
+        )
+
+
+def check_custom_resource_config_shape(
+    resource_config_pb: gigl_resource_config_pb2.GiglResourceConfig,
+    component: GiGLComponents,
+) -> None:
+    """Assert the trainer / inferencer's ``CustomResourceConfig`` is well-shaped.
+
+    Resolves the component's resource config through the wrapper; if it is not
+    a ``CustomResourceConfig`` this helper is a no-op. Otherwise it asserts
+    ``command`` is non-empty so the launcher's runtime guard does not fail
+    on a typo in the YAML.
+
+    Args:
+        resource_config_pb: The resource config to inspect. The trainer or
+            inferencer oneof (depending on ``component``) is pulled out of the
+            wrapper.
+        component: Which GiGL component to check. Must be Trainer or
+            Inferencer; other components never carry a ``CustomResourceConfig``.
+
+    Raises:
+        ValueError: If ``component`` is not Trainer or Inferencer, or if a
+            populated ``CustomResourceConfig`` has an empty ``command``.
+    """
+    if component not in {GiGLComponents.Trainer, GiGLComponents.Inferencer}:
+        raise ValueError(
+            f"check_custom_resource_config_shape only supports "
+            f"Trainer and Inferencer components; got {component}."
+        )
+
+    wrapper = GiglResourceConfigWrapper(resource_config=resource_config_pb)
+    component_config: Union[
+        gigl_resource_config_pb2.LocalResourceConfig,
+        gigl_resource_config_pb2.VertexAiResourceConfig,
+        gigl_resource_config_pb2.KFPResourceConfig,
+        gigl_resource_config_pb2.VertexAiGraphStoreConfig,
+        gigl_resource_config_pb2.DataflowResourceConfig,
+        gigl_resource_config_pb2.CustomResourceConfig,
+    ]
+    if component == GiGLComponents.Trainer:
+        component_config = wrapper.trainer_config
+    else:
+        component_config = wrapper.inferencer_config
+
+    if not isinstance(component_config, gigl_resource_config_pb2.CustomResourceConfig):
+        return
+
+    if not component_config.command:
+        raise ValueError(
+            f"CustomResourceConfig.command must be set for {component.value}."
         )
 
 

@@ -1,11 +1,15 @@
+from unittest.mock import patch
+
 from absl.testing import absltest
 
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.validation_check.libs.resource_config_checks import (
     _check_if_dataflow_resource_config_valid,
     _check_if_spark_resource_config_valid,
     _validate_accelerator_type,
     _validate_machine_config,
+    check_custom_resource_config_shape,
     check_if_inferencer_graph_store_storage_command_valid,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
@@ -17,6 +21,9 @@ from gigl.src.validation_check.libs.resource_config_checks import (
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
+
+# Placeholder shell snippet used by CustomResourceConfig fixtures.
+_FAKE_COMMAND = "echo fake"
 
 # Helper functions for creating valid configurations
 
@@ -201,6 +208,28 @@ def _create_valid_local_inferencer_config() -> (
     """Create a valid GiglResourceConfig with local inferencer config."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
     config.inferencer_resource_config.local_inferencer_config.num_workers = 4
+    return config
+
+
+def _create_valid_custom_trainer_config(
+    command: str = _FAKE_COMMAND,
+    args: list[str] | None = None,
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    """Create a GiglResourceConfig with a CustomResourceConfig trainer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    config.trainer_resource_config.custom_trainer_config.command = command
+    config.trainer_resource_config.custom_trainer_config.args.extend(args or [])
+    return config
+
+
+def _create_valid_custom_inferencer_config(
+    command: str = _FAKE_COMMAND,
+    args: list[str] | None = None,
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    """Create a GiglResourceConfig with a CustomResourceConfig inferencer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    config.inferencer_resource_config.custom_inferencer_config.command = command
+    config.inferencer_resource_config.custom_inferencer_config.args.extend(args or [])
     return config
 
 
@@ -789,6 +818,110 @@ class TestInferencerGraphStoreStorageCommand(TestCase):
         gbml_config = _create_gbml_config_without_graph_stores()
         # Should not raise any exception - no graph store means nothing to validate
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
+
+
+class TestCustomResourceConfigBypass(TestCase):
+    """Test suite for CustomResourceConfig caller-level bypass.
+
+    ``CustomResourceConfig`` is launcher-pluggable: it has no concrete machine
+    shape to validate. The callers (``check_if_trainer_resource_config_valid``
+    and ``check_if_inferencer_resource_config_valid``) short-circuit before
+    reaching ``_validate_machine_config``, which keeps that helper's contract
+    ("validate a concrete machine spec") intact.
+    """
+
+    def test_trainer_custom_config_bypasses_machine_validation(self):
+        """CustomResourceConfig trainer bypasses _validate_machine_config entirely."""
+        config = _create_valid_custom_trainer_config(
+            args=["--cluster_size=4"]
+        )
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_trainer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_not_called()
+
+    def test_inferencer_custom_config_bypasses_machine_validation(self):
+        """CustomResourceConfig inferencer bypasses _validate_machine_config entirely."""
+        config = _create_valid_custom_inferencer_config(
+            args=["--cluster_size=4"]
+        )
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_inferencer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_not_called()
+
+    def test_vertex_ai_trainer_still_calls_machine_validation(self):
+        """Sanity: non-custom trainer still dispatches to _validate_machine_config."""
+        config = _create_valid_vertex_ai_trainer_config()
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_trainer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_called_once()
+
+    def test_vertex_ai_inferencer_still_calls_machine_validation(self):
+        """Sanity: non-custom inferencer still dispatches to _validate_machine_config."""
+        config = _create_valid_vertex_ai_inferencer_config()
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_inferencer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_called_once()
+
+
+class TestCustomResourceConfigShape(TestCase):
+    """Test suite for ``check_custom_resource_config_shape``.
+
+    Shape-only check: a populated ``CustomResourceConfig`` must have a
+    non-empty ``command``. Non-custom configs are no-ops.
+    """
+
+    def test_populated_command_passes(self):
+        config = _create_valid_custom_trainer_config(command="python -m my.cli")
+        check_custom_resource_config_shape(
+            resource_config_pb=config,
+            component=GiGLComponents.Trainer,
+        )
+
+    def test_empty_trainer_command_raises(self):
+        config = _create_valid_custom_trainer_config(command="")
+        with self.assertRaises(ValueError):
+            check_custom_resource_config_shape(
+                resource_config_pb=config,
+                component=GiGLComponents.Trainer,
+            )
+
+    def test_empty_inferencer_command_raises(self):
+        config = _create_valid_custom_inferencer_config(command="")
+        with self.assertRaises(ValueError):
+            check_custom_resource_config_shape(
+                resource_config_pb=config,
+                component=GiGLComponents.Inferencer,
+            )
+
+    def test_non_custom_trainer_is_no_op(self):
+        config = _create_valid_vertex_ai_trainer_config()
+        check_custom_resource_config_shape(
+            resource_config_pb=config,
+            component=GiGLComponents.Trainer,
+        )
+
+    def test_non_custom_inferencer_is_no_op(self):
+        config = _create_valid_vertex_ai_inferencer_config()
+        check_custom_resource_config_shape(
+            resource_config_pb=config,
+            component=GiGLComponents.Inferencer,
+        )
+
+    def test_unsupported_component_raises(self):
+        config = _create_valid_custom_trainer_config()
+        with self.assertRaises(ValueError):
+            check_custom_resource_config_shape(
+                resource_config_pb=config,
+                component=GiGLComponents.DataPreprocessor,
+            )
 
 
 class TestReservationAffinityValidation(TestCase):

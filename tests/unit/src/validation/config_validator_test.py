@@ -352,5 +352,61 @@ class TestConfigValidationPerSGSBackends(TestCase):
             )
 
 
+class TestCustomResourceConfigInValidationChain(TestCase):
+    """Confirm the new CustomResourceConfig gates are wired into the chain.
+
+    The shape check (``check_custom_resource_config_shape``) runs
+    unconditionally inside ``kfp_validation_checks``. A resource config
+    with a ``CustomResourceConfig`` trainer that has an empty ``command``
+    must surface a ``ValueError`` from the chain, not a launcher-side
+    runtime failure.
+    """
+
+    def setUp(self):
+        gigl.env.pipelines_config._resource_config = None
+        self._temp_dir = tempfile.mkdtemp()
+        self._proto_utils = ProtoUtils()
+
+    def tearDown(self):
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+        gigl.env.pipelines_config._resource_config = None
+
+    def _write_proto_to_file(
+        self, proto: google.protobuf.message.Message, filename: str
+    ) -> Uri:
+        filepath = os.path.join(self._temp_dir, filename)
+        uri = UriFactory.create_uri(filepath)
+        self._proto_utils.write_proto_to_yaml(proto, uri)
+        return uri
+
+    def test_empty_custom_trainer_command_raises_via_chain(self) -> None:
+        # Build a live-SGS task config (so the chain runs through
+        # CustomResourceConfig-aware paths).
+        task_config_uri = self._write_proto_to_file(
+            _create_valid_live_subgraph_sampling_task_config(),
+            "live_task_config.yaml",
+        )
+
+        # Resource config with a CustomResourceConfig trainer whose
+        # command is empty — the new shape check must catch it.
+        resource_config = _create_valid_live_subgraph_sampling_resource_config()
+        resource_config.trainer_resource_config.ClearField("trainer_config")
+        resource_config.trainer_resource_config.custom_trainer_config.command = ""
+        resource_config_uri = self._write_proto_to_file(
+            resource_config, "live_custom_empty_resource_config.yaml"
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            kfp_validation_checks(
+                job_name="custom_resource_config_chain_test",
+                task_config_uri=task_config_uri,
+                start_at="config_populator",
+                resource_config_uri=resource_config_uri,
+            )
+        # Error message must come from check_custom_resource_config_shape,
+        # not from a generic shape check elsewhere.
+        self.assertIn("CustomResourceConfig.command", str(ctx.exception))
+
+
 if __name__ == "__main__":
     absltest.main()
