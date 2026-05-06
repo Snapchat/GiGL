@@ -238,6 +238,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         re-fetch approach would require.  The non-``DistFeature`` path (plain
         ``torch.Tensor`` labels) is unchanged — it never applied ``.T[0]``.
 
+        # TODO (mkolodner-sc): Now that GiGL owns this method, investigate whether
+        # post-processing steps in DistNeighborLoader._collate_fn can be folded in
+        # here and simplified — e.g. set_missing_features (populating empty tensors
+        # for node/edge features not fanned out to) and extract_metadata (stripping
+        # #META. keys before to_hetero_data to work around a GLT bug where those
+        # keys are misinterpreted as edge types).
+
         Args:
             output: The ``SamplerOutput`` or ``HeteroSamplerOutput`` returned by
                 ``_sample_from_nodes``.
@@ -281,9 +288,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             output.node[input_type], input_type
                         )
                         nlabels = await wrap_torch_future(fut)
-                        # GLT writes nlabels.T[0], which truncates multi-column labels
-                        # to a single column. Preserve 1-D shape for single-label but
-                        # keep the full matrix for multi-label.
+                        # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+                        # [N] to match GLT's convention and what downstream code
+                        # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
+                        # (K>1) keeps the full 2-D matrix.
+                        # TODO (mkolodner-sc): Consider investigating always returning
+                        # 2-D — this may be a breaking change for single-label
+                        # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
                         result_map[f"{as_str(input_type)}.nlabels"] = (
                             nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
                         )
@@ -353,9 +364,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 if isinstance(self.dist_node_labels, DistFeature):
                     fut = self.dist_node_labels.async_get(output.node)
                     nlabels = await wrap_torch_future(fut)
-                    # GLT writes nlabels.T[0], which truncates multi-column labels
-                    # to a single column. Preserve 1-D shape for single-label but
-                    # keep the full matrix for multi-label.
+                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+                    # [N] to match GLT's convention and what downstream code
+                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
+                    # (K>1) keeps the full 2-D matrix.
+                    # TODO (mkolodner-sc): Consider investigating always returning
+                    # 2-D — this may be a breaking change for single-label
+                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
                     result_map["nlabels"] = (
                         nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
                     )
