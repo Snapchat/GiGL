@@ -45,6 +45,7 @@ from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
+from gigl.utils.tensorboard_writer import TensorBoardWriter
 
 logger = Logger()
 
@@ -133,6 +134,8 @@ def _inference_process(
         local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
     rank = args.machine_rank * args.local_world_size + local_rank
+    is_chief_process = args.machine_rank == 0 and local_rank == 0
+    tensorboard_writer = TensorBoardWriter.from_env(enabled=is_chief_process)
     world_size = args.machine_world_size * args.local_world_size
     if torch.cuda.is_available():
         torch.cuda.set_device(
@@ -257,6 +260,10 @@ def _inference_process(
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds."
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
+            batches_per_sec = args.log_every_n_batch / max(time.time() - t, 1e-9)
+            tensorboard_writer.log(
+                {"Inference/throughput_batches_per_sec": batches_per_sec}, step=batch_idx
+            )
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
@@ -283,6 +290,7 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
+    tensorboard_writer.close()
     gc.collect()
 
     logger.info(

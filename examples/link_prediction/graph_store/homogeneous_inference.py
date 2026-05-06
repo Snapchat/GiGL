@@ -111,6 +111,7 @@ from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
+from gigl.utils.tensorboard_writer import TensorBoardWriter
 
 logger = Logger()
 
@@ -212,6 +213,8 @@ def _inference_process(
         local_rank,
     )
     rank = torch.distributed.get_rank()
+    is_chief_process = args.cluster_info.compute_node_rank == 0 and local_rank == 0
+    tensorboard_writer = TensorBoardWriter.from_env(enabled=is_chief_process)
     world_size = torch.distributed.get_world_size()
     logger.info(
         f"Local rank {local_rank} in machine {args.cluster_info.compute_node_rank} has rank {rank}/{world_size} and using device {device} for inference"
@@ -332,6 +335,10 @@ def _inference_process(
             # We don't see logs for graph store mode for whatever reason.
             # TOOD(#442): Revert this once the GCP issues are resolved.
             sys.stdout.flush()
+            batches_per_sec = args.log_every_n_batch / max(time.time() - t, 1e-9)
+            tensorboard_writer.log(
+                {"Inference/throughput_batches_per_sec": batches_per_sec}, step=batch_idx
+            )
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
@@ -361,6 +368,7 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
+    tensorboard_writer.close()
     gc.collect()
 
     logger.info(
