@@ -840,25 +840,39 @@ class BaseDistLoader(DistLoader):
                 f"shutdown destroy_start worker_key={worker_key} "
                 f"firing={len(rpc_futures)} skipped={skipped}"
             )
+            destroy_exceptions: list[Exception] = []
+            succeeded = 0
             for server_rank, fut in rpc_futures:
                 try:
                     fut.wait()
+                    succeeded += 1
                     logger.info(
                         f"shutdown destroy_ok worker_key={worker_key} "
                         f"server_rank={server_rank} "
                         f"elapsed={time.monotonic() - shutdown_start:.2f}s"
                     )
                 except Exception as e:
+                    destroy_exceptions.append(e)
                     logger.error(
                         f"shutdown destroy_fail worker_key={worker_key} "
                         f"server_rank={server_rank} "
                         f"elapsed={time.monotonic() - shutdown_start:.2f}s "
                         f"error={type(e).__name__}: {e}"
                     )
-                    raise
+            total_elapsed = time.monotonic() - shutdown_start
+            if destroy_exceptions:
+                logger.error(
+                    f"shutdown destroy_summary worker_key={worker_key} "
+                    f"succeeded={succeeded} failed={len(destroy_exceptions)} "
+                    f"total_elapsed={total_elapsed:.2f}s"
+                )
+                raise ExceptionGroup(
+                    "shutdown destroy_sampling_input had one or more failures",
+                    destroy_exceptions,
+                )
             logger.info(
                 f"shutdown destroy_done worker_key={worker_key} "
-                f"total_elapsed={time.monotonic() - shutdown_start:.2f}s"
+                f"total_elapsed={total_elapsed:.2f}s"
             )
         self._shutdowned = True
 
