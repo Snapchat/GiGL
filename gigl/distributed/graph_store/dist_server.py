@@ -214,27 +214,23 @@ class DistServer:
         self._log_every_n = log_every_n
 
     def shutdown(self) -> None:
-        """Final post-teardown validator — does not perform any shutdown.
+        """Final post-teardown bookkeeping cleanup — does not perform any shutdown.
 
-        Strict-fail contract: callers must have torn down every channel
-        and backend via ``destroy_sampling_input`` *before* invoking
-        this method. The actual ``runtime.shutdown()`` work happens in
-        ``destroy_sampling_input`` when the last channel on a backend
-        is destroyed; this method only verifies that work happened,
-        then drops residual tombstone/stats bookkeeping.
+        Lenient contract: callers are expected to have torn down every
+        channel and backend via ``destroy_sampling_input`` before
+        invoking this method. The actual ``runtime.shutdown()`` work
+        happens in ``destroy_sampling_input`` when the last channel on
+        a backend is destroyed; this method only drops residual
+        tombstone/stats bookkeeping and warns if any sampling state is
+        still registered.
 
-        Raises ``RuntimeError`` if any sampling channel or backend is
-        still registered, on the assumption that leftover state means
-        the caller skipped a teardown step.
-
-        Cluster teardown (``wait_and_shutdown_server``) catches this
-        exception and logs it before continuing to ``barrier()`` /
-        ``shutdown_rpc()``, so a buggy/crashed client does not wedge
-        healthy storage peers on the barrier.
-
-        Raises:
-            RuntimeError: If any sampling channel or backend is still
-                registered when ``shutdown`` is called.
+        We previously raised ``RuntimeError`` here on leftover state, but
+        that turned the documented optimization of skipping
+        ``destroy_sampling_input`` for inactive servers (see
+        ``BaseDistLoader.shutdown`` and
+        ``docs/plans/20260506-graph-store-shutdown-fix.md``) into a
+        guaranteed non-zero exit. The process is about to terminate
+        anyway, so a warning suffices.
         """
         with self._lock:
             if (
@@ -242,16 +238,19 @@ class DistServer:
                 or self._backend_state_by_backend_id
                 or self._backend_id_by_backend_key
             ):
-                raise RuntimeError(
-                    "DistServer.shutdown() requires all channels and backends to be "
-                    "torn down first. "
+                logger.warning(
+                    "DistServer.shutdown() called with live channels/backends; "
+                    "leaving residual state for process exit. "
                     f"live_channels={sorted(self._channel_state_by_channel_id)} "
                     f"live_backends={sorted(self._backend_state_by_backend_id)} "
                     f"live_backend_keys={sorted(self._backend_id_by_backend_key)}"
                 )
-            # The three registry dicts above are guaranteed empty by
-            # the strict-fail check; only tombstone/stats dicts can
-            # carry over.
+            # Always drop bookkeeping. Registry dicts (channels/backends)
+            # are also dropped so a subsequent shutdown call is a clean
+            # no-op rather than re-warning on the same residual state.
+            self._channel_state_by_channel_id.clear()
+            self._backend_state_by_backend_id.clear()
+            self._backend_id_by_backend_key.clear()
             self._tombstoned_channel_ids.clear()
             self._fetch_stats_by_channel_id.clear()
 
@@ -753,103 +752,128 @@ class DistServer:
         Args:
             channel_id: The ID of the channel to destroy.
         """
-        with self._lock:
-            channel_state = self._channel_state_by_channel_id.get(channel_id)
-            if channel_state is None:
-                # Idempotent re-destroy: the channel was already torn
-                # down by a prior destroy_sampling_input call, which
-                # popped the channel, popped its fetch stats, and set
-                # ``tombstoned=True``. Just make sure the tombstone is
-                # present so a concurrent start_new_epoch_sampling
-                # silent-no-ops rather than raising "unknown
-                # channel_id". No re-pop here — the prior destroy
-                # already did the work, and this branch must not
-                # duplicate the backend-still-registered cleanup
-                # below.
-                self._tombstoned_channel_ids.add(channel_id)
-                return
-            backend_state = self._backend_state_by_backend_id.get(
-                channel_state.backend_id
-            )
-            if backend_state is None:
-                # Defensive: in current code this is unreachable. The
-                # invariant is that a channel's backend outlives the
-                # channel — the backend registry entry is popped only
-                # inside the ``should_shutdown_backend`` branch below,
-                # which fires only when
-                # ``backend_state.active_channels`` is empty. Reaching
-                # this branch would mean a future code path popped the
-                # backend without popping its channels, or test code
-                # set up the state by hand. Treat it as a partial
-                # teardown: tombstone the channel, drop bookkeeping,
-                # and bail.
-                self._tombstoned_channel_ids.add(channel_id)
-                self._channel_state_by_channel_id.pop(channel_id, None)
-                self._fetch_stats_by_channel_id.pop(channel_id, None)
-                channel_state.tombstoned = True
-                return
-
-        # Two-lock dance:
-        #
-        # * ``backend_state.lock`` serializes this destroy against
-        #   ``init_sampling_backend`` (second-caller),
-        #   ``register_sampling_input``, and
-        #   ``start_new_epoch_sampling`` for the same backend. We hold
-        #   it across the runtime work
-        #   (``unregister_input``, ``shutdown``) so a concurrent init
-        #   for the same backend_key blocks until we have either
-        #   finished or set ``tearing_down=True``.
-        # * ``self._lock`` protects registry-dict mutations only. We
-        #   acquire it under ``backend_state.lock`` for short
-        #   re-validation windows and release it before the runtime
-        #   calls so other RPCs (fetches, inits for *other* backends)
-        #   are not blocked behind a worker join.
-        #
-        # Re-validate channel/backend state under ``self._lock``
-        # because another call could have raced between the first
-        # lock-drop and our acquire of ``backend_state.lock``.
-        should_shutdown_backend = False
-        with backend_state.lock:
+        request_start_time = time.monotonic()
+        backend_id_for_log: Optional[int] = None
+        triggered_backend_shutdown = False
+        try:
             with self._lock:
-                current_channel_state = self._channel_state_by_channel_id.get(
-                    channel_id
+                channel_state = self._channel_state_by_channel_id.get(channel_id)
+                if channel_state is None:
+                    # Idempotent re-destroy: the channel was already torn
+                    # down by a prior destroy_sampling_input call, which
+                    # popped the channel, popped its fetch stats, and set
+                    # ``tombstoned=True``. Just make sure the tombstone is
+                    # present so a concurrent start_new_epoch_sampling
+                    # silent-no-ops rather than raising "unknown
+                    # channel_id". No re-pop here — the prior destroy
+                    # already did the work, and this branch must not
+                    # duplicate the backend-still-registered cleanup
+                    # below.
+                    self._tombstoned_channel_ids.add(channel_id)
+                    return
+                backend_state = self._backend_state_by_backend_id.get(
+                    channel_state.backend_id
                 )
-                if current_channel_state is None:
+                backend_id_for_log = channel_state.backend_id
+                if backend_state is None:
+                    # Defensive: in current code this is unreachable. The
+                    # invariant is that a channel's backend outlives the
+                    # channel — the backend registry entry is popped only
+                    # inside the ``should_shutdown_backend`` branch below,
+                    # which fires only when
+                    # ``backend_state.active_channels`` is empty. Reaching
+                    # this branch would mean a future code path popped the
+                    # backend without popping its channels, or test code
+                    # set up the state by hand. Treat it as a partial
+                    # teardown: tombstone the channel, drop bookkeeping,
+                    # and bail.
+                    self._tombstoned_channel_ids.add(channel_id)
+                    self._channel_state_by_channel_id.pop(channel_id, None)
+                    self._fetch_stats_by_channel_id.pop(channel_id, None)
+                    channel_state.tombstoned = True
                     return
-                if current_channel_state.backend_id != backend_state.backend_id:
-                    return
-                current_channel_state.tombstoned = True
-                self._tombstoned_channel_ids.add(channel_id)
-                self._channel_state_by_channel_id.pop(channel_id, None)
-                self._fetch_stats_by_channel_id.pop(channel_id, None)
-            # ``runtime.unregister_input`` joins the per-channel
-            # worker. We release ``self._lock`` first (above) so
-            # unrelated RPCs (fetches on other channels, inits for
-            # other backends) are not blocked behind the worker join.
-            # ``backend_state.lock`` is still held, so any concurrent
-            # operation on *this* backend is serialized against us.
-            # The channel is already popped from the registry and
-            # tombstoned, so other callers see it as gone.
-            backend_state.runtime.unregister_input(channel_id)
-            with self._lock:
-                backend_state.active_channels.discard(channel_id)
-                if not backend_state.active_channels:
-                    should_shutdown_backend = True
-            # Shut the runtime down BEFORE popping the registry entries,
-            # while still holding backend_state.lock. A concurrent
-            # init_sampling_backend for the same backend_key will find
-            # this still-registered backend, fall through to the
-            # second-caller path, block on backend_state.lock, and see
-            # tearing_down=True so it raises rather than reusing a
-            # half-shutdown runtime.
-            if should_shutdown_backend:
-                backend_state.tearing_down = True
-                backend_state.runtime.shutdown()
+
+            # Two-lock dance:
+            #
+            # * ``backend_state.lock`` serializes this destroy against
+            #   ``init_sampling_backend`` (second-caller),
+            #   ``register_sampling_input``, and
+            #   ``start_new_epoch_sampling`` for the same backend. We hold
+            #   it across the runtime work
+            #   (``unregister_input``, ``shutdown``) so a concurrent init
+            #   for the same backend_key blocks until we have either
+            #   finished or set ``tearing_down=True``.
+            # * ``self._lock`` protects registry-dict mutations only. We
+            #   acquire it under ``backend_state.lock`` for short
+            #   re-validation windows and release it before the runtime
+            #   calls so other RPCs (fetches, inits for *other* backends)
+            #   are not blocked behind a worker join.
+            #
+            # Re-validate channel/backend state under ``self._lock``
+            # because another call could have raced between the first
+            # lock-drop and our acquire of ``backend_state.lock``.
+            should_shutdown_backend = False
+            with backend_state.lock:
                 with self._lock:
-                    self._backend_state_by_backend_id.pop(
-                        backend_state.backend_id, None
+                    current_channel_state = self._channel_state_by_channel_id.get(
+                        channel_id
                     )
-                    self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
+                    if current_channel_state is None:
+                        return
+                    if current_channel_state.backend_id != backend_state.backend_id:
+                        return
+                    current_channel_state.tombstoned = True
+                    self._tombstoned_channel_ids.add(channel_id)
+                    self._channel_state_by_channel_id.pop(channel_id, None)
+                    self._fetch_stats_by_channel_id.pop(channel_id, None)
+                # ``runtime.unregister_input`` joins the per-channel
+                # worker. We release ``self._lock`` first (above) so
+                # unrelated RPCs (fetches on other channels, inits for
+                # other backends) are not blocked behind the worker join.
+                # ``backend_state.lock`` is still held, so any concurrent
+                # operation on *this* backend is serialized against us.
+                # The channel is already popped from the registry and
+                # tombstoned, so other callers see it as gone.
+                backend_state.runtime.unregister_input(channel_id)
+                with self._lock:
+                    backend_state.active_channels.discard(channel_id)
+                    if not backend_state.active_channels:
+                        should_shutdown_backend = True
+                # Shut the runtime down BEFORE popping the registry entries,
+                # while still holding backend_state.lock. A concurrent
+                # init_sampling_backend for the same backend_key will find
+                # this still-registered backend, fall through to the
+                # second-caller path, block on backend_state.lock, and see
+                # tearing_down=True so it raises rather than reusing a
+                # half-shutdown runtime.
+                if should_shutdown_backend:
+                    triggered_backend_shutdown = True
+                    backend_state.tearing_down = True
+                    backend_state.runtime.shutdown()
+                    with self._lock:
+                        self._backend_state_by_backend_id.pop(
+                            backend_state.backend_id, None
+                        )
+                        self._backend_id_by_backend_key.pop(
+                            backend_state.backend_key, None
+                        )
+        finally:
+            # Slow-path warning: a healthy destroy is dominated by
+            # ``runtime.unregister_input`` (an enqueue) and, on the last
+            # channel, ``runtime.shutdown()`` (workers joined with a 5 s
+            # timeout each, then terminated). >1 s on the non-last
+            # destroy or >30 s on the last destroy is the smoking-gun
+            # signal we are missing today; see
+            # ``docs/plans/20260506-graph-store-shutdown-fix.md``.
+            elapsed = time.monotonic() - request_start_time
+            slow_threshold = 30.0 if triggered_backend_shutdown else 1.0
+            if elapsed > slow_threshold:
+                logger.warning(
+                    f"destroy_sampling_input slow channel_id={channel_id} "
+                    f"backend_id={backend_id_for_log} "
+                    f"triggered_backend_shutdown={triggered_backend_shutdown} "
+                    f"elapsed={elapsed:.3f}s"
+                )
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
