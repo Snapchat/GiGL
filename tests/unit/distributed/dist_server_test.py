@@ -1220,7 +1220,7 @@ class TestDistServerSampling(TestCase):
         self.assertFalse(destroy_thread.is_alive())
         runtime.shutdown.assert_called_once()
 
-    def test_shutdown_fails_fast_with_live_backends(self) -> None:
+    def test_shutdown_warns_and_clears_with_live_backends(self) -> None:
         runtime_1 = MagicMock()
         runtime_2 = MagicMock()
         self.server._backend_state_by_backend_id = {
@@ -1240,17 +1240,19 @@ class TestDistServerSampling(TestCase):
             "neighbor_loader_1": 1,
         }
 
-        with self.assertRaises(RuntimeError) as ctx:
-            self.server.shutdown()
+        # Should not raise.
+        self.server.shutdown()
 
-        # Error message must surface every dimension of leftover state
-        # so an operator reading the storage log can pinpoint the
-        # bookkeeping that wasn't torn down.
-        error_message = str(ctx.exception)
-        self.assertIn("live_channels=", error_message)
-        self.assertIn("live_backends=", error_message)
-        self.assertIn("live_backend_keys=", error_message)
+        # Bookkeeping is dropped so a follow-up shutdown is a clean
+        # no-op rather than re-warning on the same residual state.
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
+        self.assertEqual(self.server._backend_id_by_backend_key, {})
+        self.assertEqual(self.server._channel_state_by_channel_id, {})
 
+        # Residual runtimes are *not* shut down by this method — the
+        # docstring is explicit that ``runtime.shutdown()`` is owned by
+        # ``destroy_sampling_input``. We are intentionally letting the
+        # process exit GC them.
         runtime_1.shutdown.assert_not_called()
         runtime_2.shutdown.assert_not_called()
 
@@ -1331,19 +1333,10 @@ class TestWaitAndShutdownServer(TestCase):
         dist_server._dist_server = None
 
     def test_wait_and_shutdown_server_runs_barrier_when_state_remains(self) -> None:
-        """barrier+shutdown_rpc must run even when DistServer.shutdown raises;
-        the underlying RuntimeError must be re-raised after the barrier.
-
-        If a compute client crashes and leaves channels registered,
-        DistServer.shutdown() raises RuntimeError. The contract is:
-        wait_and_shutdown_server captures that exception, runs barrier()
-        and shutdown_rpc() so healthy storage peers do not hang on the
-        barrier forever, and then re-raises so the orchestrator sees a
-        non-zero exit on the failing storage process.
-        """
         dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
         server = dist_server.DistServer(dataset)
-        # Inject leftover channel state to make DistServer.shutdown() raise.
+        # Inject leftover channel state. Used to make DistServer.shutdown()
+        # raise; now expected to surface as a warning + cleared registry.
         server._channel_state_by_channel_id[0] = MagicMock()
         # Set exit flag so wait_for_exit() returns immediately.
         server._exit = True
@@ -1369,12 +1362,14 @@ class TestWaitAndShutdownServer(TestCase):
                 mock_shutdown_rpc,
             ),
         ):
-            with self.assertRaises(RuntimeError):
-                dist_server.wait_and_shutdown_server()
+            # Should not raise.
+            dist_server.wait_and_shutdown_server()
 
-        # Barrier and shutdown_rpc must have run before the re-raise.
+        # Barrier and shutdown_rpc must have run.
         mock_barrier.assert_called_once()
         mock_shutdown_rpc.assert_called_once()
+        # Residual state must be cleared so the process can exit cleanly.
+        self.assertEqual(server._channel_state_by_channel_id, {})
 
 
 if __name__ == "__main__":
