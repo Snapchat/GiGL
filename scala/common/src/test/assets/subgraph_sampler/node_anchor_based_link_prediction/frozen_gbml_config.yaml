@@ -38,3 +38,5 @@ graphMetadata:
       srcNodeType: user
   nodeTypes:
     - user
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed
