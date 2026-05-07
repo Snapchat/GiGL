@@ -453,14 +453,15 @@ class GbmlConfigPbWrapper:
         Returns:
             bool: Whether to use GLT as a backend for current run
         """
-
-        return bool(
-            strtobool(
-                dict(self.gbml_config_pb.feature_flags).get(
-                    "should_run_glt_backend", "False"
-                )
-            )
+        flag_value = dict(self.gbml_config_pb.feature_flags).get(
+            "should_run_glt_backend"
         )
+        if flag_value is not None:
+            logger.warning(
+                f"The should_run_glt_backend feature flag is deprecated (recieved {flag_value}). In the future, it may be removed without notice."
+            )
+            return strtobool(flag_value)
+        return True
 
     @property
     def should_populate_predictions_path(self) -> bool:
