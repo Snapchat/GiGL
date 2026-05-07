@@ -1,5 +1,6 @@
 """Unit tests for ``gigl.src.common.custom_launcher``."""
 
+import os
 from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest
@@ -17,7 +18,8 @@ class TestLaunchCustom(TestCase):
     The launcher takes ``command`` and ``args[]`` from the proto
     verbatim (no template substitution) and shells out via
     ``subprocess.run``. Tests patch ``subprocess.run`` to capture the
-    composed shell line without actually spawning processes.
+    composed shell line and the per-call ``env`` dict without actually
+    spawning processes.
     """
 
     def _build_config(
@@ -95,9 +97,7 @@ class TestLaunchCustom(TestCase):
 
     @patch("gigl.src.common.custom_launcher.subprocess.run")
     def test_args_with_spaces_are_shell_quoted(self, mock_run: MagicMock) -> None:
-        config = self._build_config(
-            command="echo", args=["a b c", "--name=with space"]
-        )
+        config = self._build_config(command="echo", args=["a b c", "--name=with space"])
         launch_custom(
             custom_resource_config=config,
             applied_task_identifier="job",
@@ -116,13 +116,13 @@ class TestLaunchCustom(TestCase):
         self.assertIn("'--name=with space'", shell_line)
 
     @patch("gigl.src.common.custom_launcher.subprocess.run")
-    def test_unsubstituted_gigl_placeholder_passes_through_verbatim(
+    def test_unsubstituted_placeholder_passes_through_verbatim(
         self, mock_run: MagicMock
     ) -> None:
         # The launcher performs no template substitution: any
-        # ``${gigl:*}`` placeholder in command/args reaches subprocess
-        # unchanged. Consumers that want substitution must resolve at
-        # YAML-load time before the proto reaches this module.
+        # placeholder in command/args reaches subprocess unchanged.
+        # Consumers that want runtime context should read the GIGL_*
+        # env vars the launcher injects (see module docstring).
         config = self._build_config(
             command="python -m my.cli",
             args=["--foo=${gigl:bar}"],
@@ -142,6 +142,117 @@ class TestLaunchCustom(TestCase):
         # The placeholder is preserved verbatim inside the shell-quoted
         # arg.
         self.assertIn("${gigl:bar}", shell_line)
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_env_dict_carries_gigl_keys(self, mock_run: MagicMock) -> None:
+        # All six GIGL_* keys land on the subprocess env dict, sourced
+        # from the corresponding kwargs.
+        config = self._build_config(command="echo")
+        launch_custom(
+            custom_resource_config=config,
+            applied_task_identifier="job-99",
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="",
+            process_runtime_args={},
+            cpu_docker_uri="gcr.io/p/cpu:tag",
+            cuda_docker_uri="gcr.io/p/cuda:tag",
+            component=GiGLComponents.Inferencer,
+        )
+        env = mock_run.call_args.kwargs["env"]
+        self.assertEqual(env["GIGL_TASK_CONFIG_URI"], "gs://bucket/task.yaml")
+        self.assertEqual(env["GIGL_RESOURCE_CONFIG_URI"], "gs://bucket/resource.yaml")
+        self.assertEqual(env["GIGL_COMPONENT"], "Inferencer")
+        self.assertEqual(env["GIGL_APPLIED_TASK_IDENTIFIER"], "job-99")
+        self.assertEqual(env["GIGL_CUDA_DOCKER_IMAGE"], "gcr.io/p/cuda:tag")
+        self.assertEqual(env["GIGL_CPU_DOCKER_IMAGE"], "gcr.io/p/cpu:tag")
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_env_dict_inherits_parent_env(self, mock_run: MagicMock) -> None:
+        # The parent process's env (PATH, GCP creds, etc.) is forwarded
+        # via os.environ.copy(); the launcher only overlays GIGL_*.
+        sentinel_key = "CUSTOM_LAUNCHER_TEST_SENTINEL"
+        with patch.dict(os.environ, {sentinel_key: "outer-value"}, clear=False):
+            launch_custom(
+                custom_resource_config=self._build_config(command="echo"),
+                applied_task_identifier="job",
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                process_command="",
+                process_runtime_args={},
+                cpu_docker_uri=None,
+                cuda_docker_uri=None,
+                component=GiGLComponents.Trainer,
+            )
+        env = mock_run.call_args.kwargs["env"]
+        self.assertEqual(env[sentinel_key], "outer-value")
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_parent_environ_not_mutated(self, mock_run: MagicMock) -> None:
+        # Critical invariant: the launcher must not mutate the parent
+        # process's os.environ. Ensures concurrent launch_custom calls
+        # don't race or leak GIGL_* values into the parent process
+        # (and into any sibling subprocess that started later but
+        # inherited os.environ before the next launch_custom call).
+        for key in (
+            "GIGL_TASK_CONFIG_URI",
+            "GIGL_RESOURCE_CONFIG_URI",
+            "GIGL_COMPONENT",
+            "GIGL_APPLIED_TASK_IDENTIFIER",
+            "GIGL_CUDA_DOCKER_IMAGE",
+            "GIGL_CPU_DOCKER_IMAGE",
+        ):
+            self.assertNotIn(
+                key,
+                os.environ,
+                f"test prerequisite: {key!r} must be unset on os.environ before the call",
+            )
+
+        launch_custom(
+            custom_resource_config=self._build_config(command="echo"),
+            applied_task_identifier="job",
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="",
+            process_runtime_args={},
+            cpu_docker_uri="gcr.io/p/cpu:tag",
+            cuda_docker_uri="gcr.io/p/cuda:tag",
+            component=GiGLComponents.Trainer,
+        )
+
+        for key in (
+            "GIGL_TASK_CONFIG_URI",
+            "GIGL_RESOURCE_CONFIG_URI",
+            "GIGL_COMPONENT",
+            "GIGL_APPLIED_TASK_IDENTIFIER",
+            "GIGL_CUDA_DOCKER_IMAGE",
+            "GIGL_CPU_DOCKER_IMAGE",
+        ):
+            self.assertNotIn(
+                key,
+                os.environ,
+                f"{key!r} leaked into parent os.environ after launch_custom",
+            )
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_none_image_uris_become_empty_strings(self, mock_run: MagicMock) -> None:
+        # Optional cuda/cpu docker URIs collapse to "" rather than the
+        # literal "None" string. Subprocess CLIs reading these env vars
+        # treat empty as "not provided".
+        launch_custom(
+            custom_resource_config=self._build_config(command="echo"),
+            applied_task_identifier="job",
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            process_command="",
+            process_runtime_args={},
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Trainer,
+        )
+        env = mock_run.call_args.kwargs["env"]
+        self.assertEqual(env["GIGL_CUDA_DOCKER_IMAGE"], "")
+        self.assertEqual(env["GIGL_CPU_DOCKER_IMAGE"], "")
 
 
 if __name__ == "__main__":

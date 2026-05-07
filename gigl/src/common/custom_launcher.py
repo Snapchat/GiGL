@@ -6,14 +6,34 @@ The shell-style invocation honors leading ``KEY=VALUE`` env-var
 assignments in ``command`` so callers can self-document required env
 without forcing the dispatcher to parse env separately.
 
-The receiving subprocess has no special protocol — it is expected to be
-a plain CLI that argparses whatever flags the YAML wires up via
-``args[]``. The dispatcher performs no template substitution; any
-dynamic content (runtime URIs, image refs, etc.) is the caller's
-responsibility — typically resolved at YAML-load time before the
-proto reaches this module.
+Before invoking the subprocess, the dispatcher composes a per-call
+``env`` dict from ``os.environ.copy()`` plus the launcher-managed
+``GIGL_*`` keys below, and passes it via ``subprocess.run(..., env=...)``.
+The parent process's ``os.environ`` is **not** mutated, so concurrent
+``launch_custom`` calls in the same process do not race or leak
+context across launches.
+
+Env-var contract (set on every call):
+
+- ``GIGL_TASK_CONFIG_URI``         — ``str(task_config_uri)``
+- ``GIGL_RESOURCE_CONFIG_URI``     — ``str(resource_config_uri)``
+- ``GIGL_COMPONENT``               — ``component.name`` (``"Trainer"`` / ``"Inferencer"``)
+- ``GIGL_APPLIED_TASK_IDENTIFIER`` — ``str(applied_task_identifier)``
+- ``GIGL_CUDA_DOCKER_IMAGE``       — ``cuda_docker_uri or ""``
+- ``GIGL_CPU_DOCKER_IMAGE``        — ``cpu_docker_uri or ""``
+
+``GIGL_*`` is a reserved prefix for launcher-managed context. Custom-
+launcher YAML authors must not collide with these names: a leading
+``KEY=VALUE python ...`` shell prefix on ``command`` overrides the
+inherited env *for that command*, so a stray ``GIGL_FOO=...`` prefix
+would silently shadow what the dispatcher set.
+
+The receiving subprocess is otherwise a plain CLI that argparses
+whatever flags the YAML wires up via ``args[]``, plus reads any
+``GIGL_*`` keys it cares about from ``os.environ``.
 """
 
+import os
 import shlex
 import subprocess
 from collections.abc import Mapping
@@ -46,36 +66,37 @@ def launch_custom(
 
     Composes a shell line as ``command`` followed by each ``args[]``
     element passed through ``shlex.quote``, then invokes
-    ``subprocess.run(shell_line, shell=True, check=True)``.
+    ``subprocess.run(shell_line, shell=True, check=True, env=...)``.
 
     The dispatcher takes ``command`` and ``args[]`` verbatim — no
     template substitution of any kind. Any placeholder text in those
     fields reaches ``subprocess.run`` literally; consumers that want
-    substitution should resolve it at YAML-load time before the proto
-    reaches this module.
+    runtime context should read it from the ``GIGL_*`` env vars the
+    dispatcher injects on the subprocess (see module docstring).
 
-    ``applied_task_identifier``, ``task_config_uri``,
-    ``resource_config_uri``, ``process_command``,
-    ``process_runtime_args``, ``cpu_docker_uri``, and ``cuda_docker_uri``
-    are accepted for API symmetry with the GLT-side Vertex AI launchers
-    but are intentionally not plumbed into the subprocess — the
-    receiving CLI is expected to source whatever context it needs from
-    the resource config it gets handed (or from env vars inherited from
-    the parent process).
+    The subprocess's env is built as ``os.environ.copy()`` plus the
+    six launcher-managed ``GIGL_*`` keys; the parent process's
+    ``os.environ`` is not mutated.
 
     Args:
         custom_resource_config: Proto whose ``command`` is the shell
             snippet to execute and whose ``args`` are positional
             arguments appended verbatim.
-        applied_task_identifier: Accepted for back-compat; ignored.
-        task_config_uri: Accepted for back-compat; ignored.
-        resource_config_uri: Accepted for back-compat; ignored.
-        process_command: Accepted for back-compat; ignored.
-        process_runtime_args: Accepted for back-compat; ignored.
-        cpu_docker_uri: Accepted for back-compat; ignored.
-        cuda_docker_uri: Accepted for back-compat; ignored.
+        applied_task_identifier: Stable job identifier; exposed to the
+            subprocess as ``GIGL_APPLIED_TASK_IDENTIFIER``.
+        task_config_uri: Frozen GbmlConfig URI; exposed as
+            ``GIGL_TASK_CONFIG_URI``.
+        resource_config_uri: GiglResourceConfig URI; exposed as
+            ``GIGL_RESOURCE_CONFIG_URI``.
+        process_command: Accepted for API symmetry with the GLT-side
+            Vertex AI launchers; not plumbed to the subprocess.
+        process_runtime_args: Accepted for API symmetry; not plumbed.
+        cpu_docker_uri: CPU image URI; exposed as
+            ``GIGL_CPU_DOCKER_IMAGE`` (empty string when ``None``).
+        cuda_docker_uri: CUDA image URI; exposed as
+            ``GIGL_CUDA_DOCKER_IMAGE`` (empty string when ``None``).
         component: Which GiGL component is being launched. Must be in
-            ``_LAUNCHABLE_COMPONENTS``.
+            ``_LAUNCHABLE_COMPONENTS``. Exposed as ``GIGL_COMPONENT``.
 
     Raises:
         ValueError: If ``component`` is not Trainer or Inferencer, or if
@@ -92,5 +113,21 @@ def launch_custom(
     args: list[str] = list(custom_resource_config.args)
 
     shell_line = " ".join([command, *(shlex.quote(a) for a in args)])
+
+    # Per-call env dict: copy the parent env so the subprocess inherits
+    # PATH / GCP creds / etc., then overlay the launcher-managed
+    # GIGL_* keys. Parent ``os.environ`` is not mutated.
+    env = os.environ.copy()
+    env.update(
+        {
+            "GIGL_TASK_CONFIG_URI": str(task_config_uri),
+            "GIGL_RESOURCE_CONFIG_URI": str(resource_config_uri),
+            "GIGL_COMPONENT": component.name,
+            "GIGL_APPLIED_TASK_IDENTIFIER": str(applied_task_identifier),
+            "GIGL_CUDA_DOCKER_IMAGE": cuda_docker_uri or "",
+            "GIGL_CPU_DOCKER_IMAGE": cpu_docker_uri or "",
+        }
+    )
+
     logger.info(f"Launching {component.name} via subprocess: {shell_line!r}")
-    subprocess.run(shell_line, shell=True, check=True)
+    subprocess.run(shell_line, shell=True, check=True, env=env)
