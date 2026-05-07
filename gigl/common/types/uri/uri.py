@@ -29,13 +29,25 @@ class Uri(object):
             return str(token)
         return ""
 
-    # TODO(kmonte): You should not be able to join a Uri with a Uri of a different type.
-    # *or* join HTTP on HTTP or GCS on GCS.
-    # This is not backwards compatible, so come around to this later.
+    @classmethod
+    def _is_absolute_path(cls, token: _URI_LIKE) -> bool:
+        token_str = cls._token_to_string(token)
+
+        # Note: "://" is used to detect GcsUri and HttpUri prefixes, but will incorrectly
+        # classify relative LocalUri path's containing "://" as absolute
+        return Path(token_str).is_absolute() or "://" in token_str
+
     @classmethod
     def join(cls, token: _URI_LIKE, *tokens: _URI_LIKE) -> Self:
         """
         Join multiple tokens to create a new Uri instance.
+        The first token may be an absolute or relative path. Every additional token must be relative.
+
+        Note:
+            - Rejecting suffix strings containing "://" may break callers that
+              intentionally store URI-looking strings inside paths.
+            - Rejecting absolute LocalUri suffix tokens is stricter than os.path.join,
+              which implicitly discards earlier tokens on the join path.
 
         Args:
             token: The first token to join.
@@ -45,6 +57,12 @@ class Uri(object):
             A new Uri instance representing the joined URI.
 
         """
+        for suffix in tokens:
+            if cls._is_absolute_path(suffix):
+                raise TypeError(
+                    f"URI join suffixes must be relative; got absolute path: {suffix}"
+                )
+
         token = cls._token_to_string(token)
         token_strs: list[str] = [cls._token_to_string(token) for token in tokens]
         joined_tmp_path = os.path.join(token, *token_strs)
@@ -88,10 +106,6 @@ class Uri(object):
         return False
 
     def __truediv__(self, other: _URI_LIKE) -> Self:
-        if isinstance(other, Uri) and not isinstance(other, type(self)):
-            raise TypeError(
-                f"Cannot use '/' operator to join {type(self).__name__} with {type(other).__name__}"
-            )
         return self.join(self, other)
 
 
