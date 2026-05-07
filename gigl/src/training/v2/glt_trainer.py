@@ -5,6 +5,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.custom_launcher import launch_custom
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -16,6 +17,7 @@ from gigl.src.common.vertex_ai_launcher import (
     launch_single_pool_job,
 )
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
+    CustomResourceConfig,
     LocalResourceConfig,
     VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
@@ -86,6 +88,19 @@ class GLTTrainer:
                 cuda_docker_uri=cuda_docker_uri,
                 component=GiGLComponents.Trainer,
             )
+        elif isinstance(resource_config.trainer_config, CustomResourceConfig):
+            launch_custom(
+                custom_resource_config=resource_config.trainer_config,
+                applied_task_identifier=applied_task_identifier,
+                task_config_uri=task_config_uri,
+                resource_config_uri=resource_config_uri,
+                process_command=training_process_command,
+                process_runtime_args=training_process_runtime_args,
+                cpu_docker_uri=cpu_docker_uri,
+                cuda_docker_uri=cuda_docker_uri,
+                component=GiGLComponents.Trainer,
+                is_dry_run=False,
+            )
         else:
             raise NotImplementedError(
                 f"Unsupported resource config for glt training: {type(resource_config.trainer_config).__name__}"
@@ -110,8 +125,10 @@ class GLTTrainer:
             raise NotImplementedError(
                 f"Local GLT Trainer is not yet supported, please specify a {VertexAiResourceConfig.__name__} or {VertexAiGraphStoreConfig.__name__} resource config field."
             )
-        elif isinstance(trainer_config, VertexAiResourceConfig) or isinstance(
-            trainer_config, VertexAiGraphStoreConfig
+        elif (
+            isinstance(trainer_config, VertexAiResourceConfig)
+            or isinstance(trainer_config, VertexAiGraphStoreConfig)
+            or isinstance(trainer_config, CustomResourceConfig)
         ):
             self.__execute_VAI_training(
                 applied_task_identifier=applied_task_identifier,

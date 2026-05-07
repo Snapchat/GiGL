@@ -247,6 +247,10 @@ class Enumerator:
     ) -> list[EnumeratorNodeTypeMetadata]:
         results: list[EnumeratorNodeTypeMetadata] = []
 
+        if not node_data_references:
+            logger.info("No node references to enumerate; skipping.")
+            return results
+
         logger.info(
             f"Launch {len(node_data_references)} node enumeration jobs in parallel."
         )
@@ -273,6 +277,10 @@ class Enumerator:
         map_enumerator_node_type_metadata: dict[NodeType, EnumeratorNodeTypeMetadata],
     ) -> list[EnumeratorEdgeTypeMetadata]:
         results: list[EnumeratorEdgeTypeMetadata] = []
+
+        if not edge_data_references:
+            logger.info("No edge references to enumerate; skipping.")
+            return results
 
         logger.info(
             f"Launch {len(edge_data_references)} edge enumeration jobs in parallel."

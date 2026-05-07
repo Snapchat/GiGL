@@ -1,11 +1,16 @@
+from unittest.mock import patch
+
 from absl.testing import absltest
 
+from gigl.common import Uri
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.validation_check.libs.resource_config_checks import (
     _check_if_dataflow_resource_config_valid,
     _check_if_spark_resource_config_valid,
     _validate_accelerator_type,
     _validate_machine_config,
+    check_if_custom_resource_config_dry_run_valid,
     check_if_inferencer_graph_store_storage_command_valid,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
@@ -17,6 +22,11 @@ from gigl.src.validation_check.libs.resource_config_checks import (
 )
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
+
+# Placeholder shell snippet used by CustomResourceConfig fixtures —
+# subprocess invocation is patched in the dry-run tests below, so the
+# command never actually executes.
+_FAKE_COMMAND = "echo fake"
 
 # Helper functions for creating valid configurations
 
@@ -201,6 +211,28 @@ def _create_valid_local_inferencer_config() -> (
     """Create a valid GiglResourceConfig with local inferencer config."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
     config.inferencer_resource_config.local_inferencer_config.num_workers = 4
+    return config
+
+
+def _create_valid_custom_trainer_config(
+    command: str = _FAKE_COMMAND,
+    args: list[str] | None = None,
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    """Create a GiglResourceConfig with a CustomResourceConfig trainer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    config.trainer_resource_config.custom_trainer_config.command = command
+    config.trainer_resource_config.custom_trainer_config.args.extend(args or [])
+    return config
+
+
+def _create_valid_custom_inferencer_config(
+    command: str = _FAKE_COMMAND,
+    args: list[str] | None = None,
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    """Create a GiglResourceConfig with a CustomResourceConfig inferencer."""
+    config = gigl_resource_config_pb2.GiglResourceConfig()
+    config.inferencer_resource_config.custom_inferencer_config.command = command
+    config.inferencer_resource_config.custom_inferencer_config.args.extend(args or [])
     return config
 
 
@@ -789,6 +821,155 @@ class TestInferencerGraphStoreStorageCommand(TestCase):
         gbml_config = _create_gbml_config_without_graph_stores()
         # Should not raise any exception - no graph store means nothing to validate
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
+
+
+class TestCustomResourceConfigBypass(TestCase):
+    """Test suite for CustomResourceConfig caller-level bypass.
+
+    ``CustomResourceConfig`` is launcher-pluggable: it has no concrete machine
+    shape to validate. The callers (``check_if_trainer_resource_config_valid``
+    and ``check_if_inferencer_resource_config_valid``) short-circuit before
+    reaching ``_validate_machine_config``, which keeps that helper's contract
+    ("validate a concrete machine spec") intact.
+    """
+
+    def test_trainer_custom_config_bypasses_machine_validation(self):
+        """CustomResourceConfig trainer bypasses _validate_machine_config entirely."""
+        config = _create_valid_custom_trainer_config(
+            args=["--cluster_size=4"]
+        )
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_trainer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_not_called()
+
+    def test_inferencer_custom_config_bypasses_machine_validation(self):
+        """CustomResourceConfig inferencer bypasses _validate_machine_config entirely."""
+        config = _create_valid_custom_inferencer_config(
+            args=["--cluster_size=4"]
+        )
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_inferencer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_not_called()
+
+    def test_vertex_ai_trainer_still_calls_machine_validation(self):
+        """Sanity: non-custom trainer still dispatches to _validate_machine_config."""
+        config = _create_valid_vertex_ai_trainer_config()
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_trainer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_called_once()
+
+    def test_vertex_ai_inferencer_still_calls_machine_validation(self):
+        """Sanity: non-custom inferencer still dispatches to _validate_machine_config."""
+        config = _create_valid_vertex_ai_inferencer_config()
+        with patch(
+            "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
+        ) as mock_validate:
+            check_if_inferencer_resource_config_valid(resource_config_pb=config)
+        mock_validate.assert_called_once()
+
+    def test_empty_command_raises_via_dry_run(self):
+        """Empty command is caught by launch_custom's guard at dry-run time."""
+        config = _create_valid_custom_trainer_config(command="")
+        with self.assertRaises(ValueError):
+            check_if_custom_resource_config_dry_run_valid(
+                resource_config_pb=config,
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                applied_task_identifier="job-empty-command",
+                cpu_docker_uri=None,
+                cuda_docker_uri=None,
+                component=GiGLComponents.Trainer,
+            )
+
+
+class TestCustomResourceConfigDryRun(TestCase):
+    """Test suite for ``check_if_custom_resource_config_dry_run_valid``.
+
+    Dry-run dispatch flows through ``launch_custom``, which logs the
+    resolved shell line and returns *before* spawning a subprocess. Tests
+    patch ``subprocess.run`` to assert it is never invoked on the dry-run
+    path.
+    """
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_trainer_dry_run_does_not_spawn_subprocess(self, mock_run):
+        """Dry-run logs the resolved shell line; subprocess.run is not called."""
+        config = _create_valid_custom_trainer_config(args=["--cluster_size=4"])
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-trainer-dry-run",
+            cpu_docker_uri="gcr.io/p/cpu:tag",
+            cuda_docker_uri="gcr.io/p/cuda:tag",
+            component=GiGLComponents.Trainer,
+        )
+        mock_run.assert_not_called()
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_inferencer_dry_run_does_not_spawn_subprocess(self, mock_run):
+        """Symmetric to the trainer case."""
+        config = _create_valid_custom_inferencer_config(args=["--cluster_size=8"])
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-inferencer-dry-run",
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Inferencer,
+        )
+        mock_run.assert_not_called()
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_non_custom_trainer_is_no_op(self, mock_run):
+        """Non-custom trainer config is a no-op (subprocess never invoked)."""
+        config = _create_valid_vertex_ai_trainer_config()
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-noop",
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Trainer,
+        )
+        mock_run.assert_not_called()
+
+    @patch("gigl.src.common.custom_launcher.subprocess.run")
+    def test_non_custom_inferencer_is_no_op(self, mock_run):
+        """Non-custom inferencer config is a no-op (subprocess never invoked)."""
+        config = _create_valid_vertex_ai_inferencer_config()
+        check_if_custom_resource_config_dry_run_valid(
+            resource_config_pb=config,
+            task_config_uri=Uri("gs://bucket/task.yaml"),
+            resource_config_uri=Uri("gs://bucket/resource.yaml"),
+            applied_task_identifier="job-noop",
+            cpu_docker_uri=None,
+            cuda_docker_uri=None,
+            component=GiGLComponents.Inferencer,
+        )
+        mock_run.assert_not_called()
+
+    def test_unsupported_component_raises(self):
+        """Only Trainer and Inferencer are supported; other components raise ValueError."""
+        config = _create_valid_custom_trainer_config()
+        with self.assertRaises(ValueError):
+            check_if_custom_resource_config_dry_run_valid(
+                resource_config_pb=config,
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                applied_task_identifier="job-bad-component",
+                cpu_docker_uri=None,
+                cuda_docker_uri=None,
+                component=GiGLComponents.DataPreprocessor,
+            )
 
 
 class TestReservationAffinityValidation(TestCase):
