@@ -26,19 +26,19 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Extension modules — auto-discovered.
-# Files named python_*.cpp under csrc/ are compiled as pybind11 extension
+# Files named python_*.cpp under core/ are compiled as pybind11 extension
 # modules. The companion <name>.cpp (without the "python_" prefix) is included
 # automatically when present. Add a new extension by dropping source files
 # here; no changes to this CMakeLists.txt are needed.
 # ---------------------------------------------------------------------------
 if(CMAKE_CUDA_COMPILER)
     file(GLOB_RECURSE _PYTHON_SRCS CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/csrc/python_*.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/csrc/python_*.cu"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/python_*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/python_*.cu"
     )
 else()
     file(GLOB_RECURSE _PYTHON_SRCS CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/csrc/python_*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/python_*.cpp"
     )
 endif()
 

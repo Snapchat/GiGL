@@ -20,14 +20,14 @@ final case class SupervisedNodeClassificationOutput(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = labeledTfrecordUriPrefix
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
         }
       };
-      
+
       {
         val __value = unlabeledTfrecordUriPrefix
         if (!__value.isEmpty) {
@@ -44,7 +44,7 @@ final case class SupervisedNodeClassificationOutput(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {

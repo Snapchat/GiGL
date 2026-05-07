@@ -275,6 +275,99 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
     shutdown_rpc()
 
 
+def _run_distributed_neighbor_loader_with_multi_label_nodes_homogeneous(
+    _,
+    dataset: DistDataset,
+    batch_size: int,
+):
+    create_test_process_group()
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
+    )
+
+    for datum in loader:
+        assert isinstance(datum, Data), (
+            f"Subgraph should be a Data for homogeneous datasets, got {type(datum)}"
+        )
+        assert hasattr(datum, "y"), "Subgraph is missing the `y` attribute for labels"
+        assert datum.y.ndim == 2, (
+            f"Expected 2-D label tensor for multi-label, got shape {datum.y.shape}"
+        )
+        assert datum.y.shape[1] == 2, (
+            f"Expected 2 label columns, got {datum.y.shape[1]}"
+        )
+        # Label column 0 equals the node ID; column 1 equals node ID * 10.
+        assert_tensor_equality(datum.y[:, 0], datum.node)
+        assert_tensor_equality(datum.y[:, 1], datum.node * 10)
+
+    shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
+    _,
+    dataset: DistDataset,
+    batch_size: int,
+):
+    create_test_process_group()
+
+    assert isinstance(dataset.node_ids, Mapping)
+
+    user_loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, dataset.node_ids[_USER]),
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
+    )
+
+    story_loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_STORY, dataset.node_ids[_STORY]),
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        batch_size=batch_size,
+    )
+
+    for user_datum, story_datum in zip(user_loader, story_loader):
+        assert isinstance(user_datum, HeteroData), (
+            f"User subgraph should be a HeteroData for heterogeneous datasets, got {type(user_datum)}"
+        )
+        assert hasattr(user_datum[_USER], "y"), (
+            "User subgraph is missing the 'y' attribute for labels"
+        )
+        assert user_datum[_USER].y.ndim == 2, (
+            f"Expected 2-D label tensor for multi-label user, got shape {user_datum[_USER].y.shape}"
+        )
+        assert user_datum[_USER].y.shape[1] == 2, (
+            f"Expected 2 label columns for user, got {user_datum[_USER].y.shape[1]}"
+        )
+        assert_tensor_equality(user_datum[_USER].y[:, 0], user_datum[_USER].node)
+        assert_tensor_equality(user_datum[_USER].y[:, 1], user_datum[_USER].node * 10)
+
+        assert isinstance(story_datum, HeteroData), (
+            f"Story subgraph should be a HeteroData for heterogeneous datasets, got {type(story_datum)}"
+        )
+        assert hasattr(story_datum[_STORY], "y"), (
+            "Story subgraph is missing the 'y' attribute for labels"
+        )
+        assert story_datum[_STORY].y.ndim == 2, (
+            f"Expected 2-D label tensor for multi-label story, got shape {story_datum[_STORY].y.shape}"
+        )
+        assert story_datum[_STORY].y.shape[1] == 2, (
+            f"Expected 2 label columns for story, got {story_datum[_STORY].y.shape[1]}"
+        )
+        assert_tensor_equality(story_datum[_STORY].y[:, 0], story_datum[_STORY].node)
+        assert_tensor_equality(
+            story_datum[_STORY].y[:, 1], story_datum[_STORY].node * 10
+        )
+
+    shutdown_rpc()
+
+
 def _run_cora_supervised_node_classification(
     _,
     dataset: DistDataset,
@@ -490,6 +583,85 @@ class DistributedNeighborLoaderTest(TestCase):
         mp.spawn(
             fn=_run_distributed_neighbor_loader_with_node_labels_heterogeneous,
             args=(dataset, 1),  # dataset  # batch_size
+        )
+
+    def test_distributed_neighbor_loader_with_multi_label_nodes_homogeneous(self):
+        # Labels: shape (10, 2) where col 0 = node_id, col 1 = node_id * 10.
+        # This verifies that the full multi-column tensor survives GLT's T[0] truncation.
+        n = 10
+        labels = torch.stack([torch.arange(n), torch.arange(n) * 10], dim=1)
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(n),
+            edge_partition_book=torch.zeros(n),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(n, 2), ids=torch.arange(n)
+            ),
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=FeaturePartitionData(
+                feats=labels, ids=torch.arange(n)
+            ),
+        )
+
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="in")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader_with_multi_label_nodes_homogeneous,
+            args=(dataset, 1),
+        )
+
+    def test_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(self):
+        # Labels: shape (5, 2) where col 0 = node_id, col 1 = node_id * 10.
+        n = 5
+        labels = torch.stack([torch.arange(n), torch.arange(n) * 10], dim=1)
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(n),
+                _STORY: torch.zeros(n),
+            },
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(n),
+                _STORY_TO_USER: torch.zeros(n),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                    edge_ids=None,
+                ),
+                _STORY_TO_USER: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                    edge_ids=None,
+                ),
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+            },
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels={
+                _USER: FeaturePartitionData(feats=labels, ids=torch.arange(n)),
+                _STORY: FeaturePartitionData(feats=labels, ids=torch.arange(n)),
+            },
+        )
+
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous,
+            args=(dataset, 1),
         )
 
     def test_cora_supervised_node_classification(self):
