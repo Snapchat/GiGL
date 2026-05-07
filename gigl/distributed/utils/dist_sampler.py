@@ -82,6 +82,7 @@ def create_dist_sampler(
             alpha=sampler_options.alpha,
             eps=sampler_options.eps,
             max_ppr_nodes=sampler_options.max_ppr_nodes,
+            max_fetch_iterations=sampler_options.max_fetch_iterations,
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
             total_degree_dtype=sampler_options.total_degree_dtype,
             degree_tensors=degree_tensors,

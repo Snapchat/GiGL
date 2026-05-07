@@ -33,9 +33,9 @@ class RandomUniformPbWrapper:
     random_uniform_pb: RandomUniform
 
     def __post_init__(self):
-        assert (
-            self.random_uniform_pb.num_nodes_to_sample > 0
-        ), f"Found invalid {RandomUniformPbWrapper.__name__} num_nodes_to_sample: {self.num_nodes_to_sample}. Must be > 0."
+        assert self.random_uniform_pb.num_nodes_to_sample > 0, (
+            f"Found invalid {RandomUniformPbWrapper.__name__} num_nodes_to_sample: {self.num_nodes_to_sample}. Must be > 0."
+        )
 
     @property
     def num_nodes_to_sample(self) -> int:
@@ -47,12 +47,12 @@ class RandomWeightedPbWrapper:
     random_weighted_pb: RandomWeighted
 
     def __post_init__(self):
-        assert (
-            self.random_weighted_pb.num_nodes_to_sample > 0
-        ), f"Found invalid {RandomWeightedPbWrapper.__name__} num_nodes_to_sample: {self.num_nodes_to_sample}. Must be > 0."
-        assert (
-            self.random_weighted_pb.edge_feat_name
-        ), f"Found invalid {RandomWeightedPbWrapper.__name__} edge_feat_name: {self.edge_feat_name}. Must be non-empty."
+        assert self.random_weighted_pb.num_nodes_to_sample > 0, (
+            f"Found invalid {RandomWeightedPbWrapper.__name__} num_nodes_to_sample: {self.num_nodes_to_sample}. Must be > 0."
+        )
+        assert self.random_weighted_pb.edge_feat_name, (
+            f"Found invalid {RandomWeightedPbWrapper.__name__} edge_feat_name: {self.edge_feat_name}. Must be non-empty."
+        )
 
     @property
     def num_nodes_to_sample(self) -> int:
@@ -68,12 +68,12 @@ class TopKPbWrapper:
     top_k_pb: TopK
 
     def __post_init__(self):
-        assert (
-            self.top_k_pb.num_nodes_to_sample > 0
-        ), f"Found invalid {TopKPbWrapper.__name__} num_nodes_to_sample: {self.num_nodes_to_sample}. Must be > 0."
-        assert (
-            self.top_k_pb.edge_feat_name
-        ), f"Found invalid {TopKPbWrapper.__name__} edge_feat_name: {self.edge_feat_name}. Must be non-empty."
+        assert self.top_k_pb.num_nodes_to_sample > 0, (
+            f"Found invalid {TopKPbWrapper.__name__} num_nodes_to_sample: {self.num_nodes_to_sample}. Must be > 0."
+        )
+        assert self.top_k_pb.edge_feat_name, (
+            f"Found invalid {TopKPbWrapper.__name__} edge_feat_name: {self.edge_feat_name}. Must be non-empty."
+        )
 
     @property
     def num_nodes_to_sample(self) -> int:
@@ -90,9 +90,9 @@ class UserDefinedPbWrapper:
 
     def __post_init__(self):
         # TODO (mkolodner): Update check to validate import once this interface is defined
-        assert (
-            self.path_to_udf
-        ), f"Found invalid {UserDefinedPbWrapper.__name__} path_to_udf: {self.path_to_udf}. Must be non-empty."
+        assert self.path_to_udf, (
+            f"Found invalid {UserDefinedPbWrapper.__name__} path_to_udf: {self.path_to_udf}. Must be non-empty."
+        )
 
     @property
     def path_to_udf(self) -> str:

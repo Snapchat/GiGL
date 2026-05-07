@@ -57,7 +57,7 @@ def get_mocked_dataset_artifact_metadata() -> dict[str, MockedDatasetArtifactMet
 
 
 def update_mocked_dataset_artifact_metadata(
-    task_name_to_artifact_metadata: dict[str, MockedDatasetArtifactMetadata]
+    task_name_to_artifact_metadata: dict[str, MockedDatasetArtifactMetadata],
 ) -> None:
     """
     Update the mocked dataset artifact metadata with the given task names and metadata.

@@ -163,9 +163,9 @@ class BqUtils:
 
         bq_path = bq_path.replace(":", ".")
         count_bq_path_parts = bq_path.count(".")
-        assert (
-            count_bq_path_parts > 0 and count_bq_path_parts < 3
-        ), "BQ path expected to contain project + dataset and/or table."
+        assert count_bq_path_parts > 0 and count_bq_path_parts < 3, (
+            "BQ path expected to contain project + dataset and/or table."
+        )
         split_path = bq_path.split(".")
         project = split_path[0]
         dataset_and_table_name = ".".join(split_path[1:])
@@ -193,9 +193,9 @@ class BqUtils:
             bq_table_name (str): Parsed Table Name
         """
         split_bq_table_path = BqUtils.format_bq_path(bq_table_path).split(".")
-        assert (
-            len(split_bq_table_path) == 3
-        ), "bqtable_path should be in the format project.dataset.table"
+        assert len(split_bq_table_path) == 3, (
+            "bqtable_path should be in the format project.dataset.table"
+        )
         bq_project_id, bq_dataset_id, bq_table_name = split_bq_table_path
 
         return bq_project_id, bq_dataset_id, bq_table_name

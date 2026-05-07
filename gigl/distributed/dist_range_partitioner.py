@@ -51,9 +51,9 @@ class DistRangePartitioner(DistPartitioner):
             input_edge_entity=edge_index
         )
 
-        assert (
-            input_edge_index
-        ), "Edge Index is an empty dictionary. Please provide edge indices to register."
+        assert input_edge_index, (
+            "Edge Index is an empty dictionary. Please provide edge indices to register."
+        )
 
         self._edge_types = sorted(input_edge_index.keys())
 
@@ -104,9 +104,9 @@ class DistRangePartitioner(DistPartitioner):
 
         start_time = time.time()
 
-        assert (
-            self._num_nodes is not None
-        ), "Must have registered nodes prior to partitioning them"
+        assert self._num_nodes is not None, (
+            "Must have registered nodes prior to partitioning them"
+        )
 
         num_nodes = self._num_nodes[node_type]
 
@@ -212,9 +212,9 @@ class DistRangePartitioner(DistPartitioner):
 
         start_time = time.time()
 
-        assert (
-            self._edge_index is not None
-        ), "Must have registered edges prior to partitioning them"
+        assert self._edge_index is not None, (
+            "Must have registered edges prior to partitioning them"
+        )
 
         edge_index = self._edge_index[edge_type]
 
@@ -358,9 +358,9 @@ class DistRangePartitioner(DistPartitioner):
 
         self._assert_and_get_rpc_setup()
 
-        assert (
-            self._edge_index is not None and self._num_edges is not None
-        ), "Must have registered edges prior to partitioning them"
+        assert self._edge_index is not None and self._num_edges is not None, (
+            "Must have registered edges prior to partitioning them"
+        )
 
         logger.info("Partitioning Edges ...")
         start_time = time.time()
@@ -401,9 +401,9 @@ class DistRangePartitioner(DistPartitioner):
             if partitioned_edge_features_per_edge_type is not None:
                 assert edge_partition_book_per_edge_type is not None
                 edge_partition_book[edge_type] = edge_partition_book_per_edge_type
-                partitioned_edge_features[
-                    edge_type
-                ] = partitioned_edge_features_per_edge_type
+                partitioned_edge_features[edge_type] = (
+                    partitioned_edge_features_per_edge_type
+                )
 
         elapsed_time = time.time() - start_time
         logger.info(f"Edge Partitioning finished, took {elapsed_time:.3f}s")

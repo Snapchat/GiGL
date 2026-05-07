@@ -20,7 +20,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 def __safely_flush_metrics(
     get_metrics_service_instance_fn: Optional[
         Callable[[], Optional[OpsMetricPublisher]]
-    ]
+    ],
 ) -> None:
     if get_metrics_service_instance_fn is not None:
         metrics_instance = get_metrics_service_instance_fn()
@@ -31,7 +31,7 @@ def __safely_flush_metrics(
 def flushes_metrics(
     get_metrics_service_instance_fn: Optional[
         Callable[[], Optional[OpsMetricPublisher]]
-    ]
+    ],
 ) -> Callable[[F], F]:
     """
     Decorator for flushing metrics after function execution.

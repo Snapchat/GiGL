@@ -167,9 +167,9 @@ class TaskInfo:
 
     type: str  # The type of worker pool this task is running in (e.g., "workerpool0")
     index: int  # The zero-based index of the task
-    trial: Optional[
-        str
-    ] = None  # Hyperparameter tuning trial identifier (if applicable)
+    trial: Optional[str] = (
+        None  # Hyperparameter tuning trial identifier (if applicable)
+    )
 
 
 @dataclass(frozen=True)

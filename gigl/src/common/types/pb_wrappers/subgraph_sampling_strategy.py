@@ -42,9 +42,9 @@ class MessagePassingPathPbWrapper:
                     error_type=SubgraphSamplingValidationErrorType.REPEATED_OP_NAME,
                 )
 
-            op_name_to_sampling_op_pb_wrapper[
-                sampling_op_pb.op_name
-            ] = cur_sampling_op_pb_wrapper
+            op_name_to_sampling_op_pb_wrapper[sampling_op_pb.op_name] = (
+                cur_sampling_op_pb_wrapper
+            )
 
             is_root_sampling_op_node = (
                 len(cur_sampling_op_pb_wrapper.input_op_names) == 0
@@ -116,9 +116,9 @@ class MessagePassingPathStrategyPbWrapper:
                     message=f"Found repeated root node type {root_node_type} when constructing message passing paths, please ensure each MessagePassingPath root node type is unique.",
                     error_type=SubgraphSamplingValidationErrorType.REPEATED_ROOT_NODE_TYPE,
                 )
-            root_node_type_to_message_passing_path_pb_wrapper[
-                root_node_type
-            ] = message_passing_path_pb_wrapper
+            root_node_type_to_message_passing_path_pb_wrapper[root_node_type] = (
+                message_passing_path_pb_wrapper
+            )
 
         self.__root_node_type_to_message_passing_path_pb_wrapper = (
             root_node_type_to_message_passing_path_pb_wrapper
@@ -195,9 +195,9 @@ class SubgraphSamplingStrategyPbWrapper:
         task_metadata_pb_wrapper = TaskMetadataPbWrapper(
             task_metadata_pb=task_metadata_pb
         )
-        expected_root_node_types: Set[
-            NodeType
-        ] = task_metadata_pb_wrapper.get_task_root_node_types()
+        expected_root_node_types: Set[NodeType] = (
+            task_metadata_pb_wrapper.get_task_root_node_types()
+        )
         graph_edge_types = graph_metadata_pb_wrapper.edge_types
         graph_node_types = graph_metadata_pb_wrapper.node_types
 
@@ -238,9 +238,7 @@ class SubgraphSamplingStrategyPbWrapper:
             for (
                 op_name,
                 sampling_op_pb_wrapper,
-            ) in (
-                message_passing_path_pb_wrapper.op_name_to_sampling_op_pb_wrapper.items()
-            ):
+            ) in message_passing_path_pb_wrapper.op_name_to_sampling_op_pb_wrapper.items():
                 # Check sampling op edge type is defined in graph metadata
                 if sampling_op_pb_wrapper.edge_type not in graph_edge_types:
                     raise SubgraphSamplingValidationError(
@@ -268,7 +266,7 @@ class SubgraphSamplingStrategyPbWrapper:
                     cycle_sampling_op_names=cycle_sampling_op_names,
                 ):
                     formatted_cycle_path = (
-                        f'[LEAF] {"->".join(cycle_sampling_op_names)} [ROOT]'
+                        f"[LEAF] {'->'.join(cycle_sampling_op_names)} [ROOT]"
                     )
                     raise SubgraphSamplingValidationError(
                         message=f"Detected a cycle in provided dag in message passing traversal path {formatted_cycle_path}",

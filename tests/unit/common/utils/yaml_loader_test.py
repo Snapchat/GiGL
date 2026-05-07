@@ -70,11 +70,12 @@ class YamlLoaderTest(TestCase):
             ),
             description="This is a test description",
         )
-        with patch(
-            "gigl.common.omegaconf_resolvers.subprocess.run"
-        ) as mock_subprocess_run, patch(
-            "gigl.common.omegaconf_resolvers.datetime"
-        ) as mock_datetime:
+        with (
+            patch(
+                "gigl.common.omegaconf_resolvers.subprocess.run"
+            ) as mock_subprocess_run,
+            patch("gigl.common.omegaconf_resolvers.datetime") as mock_datetime,
+        ):
             mock_result = MagicMock()
             mock_result.stdout = patch_commit_hash
             mock_subprocess_run.return_value = mock_result

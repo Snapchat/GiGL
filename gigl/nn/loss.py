@@ -152,9 +152,7 @@ class RetrievalLoss(nn.Module):
         positive_indices = torch.arange(num_queries).to(device=device)  # [num_queries]
         positive_candidate_ids = torch.gather(
             candidate_ids, 0, positive_indices
-        ).unsqueeze(
-            1
-        )  # [num_queries, 1]
+        ).unsqueeze(1)  # [num_queries, 1]
         all_candidate_ids = torch.unsqueeze(candidate_ids, 1)  # [num_candidates, 1]
         return torch.eq(positive_candidate_ids, all_candidate_ids.T).type(
             dtype

@@ -66,9 +66,9 @@ class DataprocService:
         does_cluster_exist = False
         try:
             response = self.cluster_client.get_cluster(request=request)
-            assert (
-                response.cluster_name == cluster_name
-            ), f"Tried fetching {cluster_name}, got {response}"
+            assert response.cluster_name == cluster_name, (
+                f"Tried fetching {cluster_name}, got {response}"
+            )
             does_cluster_exist = True
         except google.api_core.exceptions.NotFound as e:
             logger.info(e)
@@ -170,9 +170,9 @@ class DataprocService:
                 cluster_name=cluster_name
             )
             num_running_jobs = len(running_job_ids)
-            assert (
-                num_running_jobs == 0
-            ), f"Found '{num_running_jobs}' running jobs for cluster '{cluster_name}'. Cannot submit a new job."
+            assert num_running_jobs == 0, (
+                f"Found '{num_running_jobs}' running jobs for cluster '{cluster_name}'. Cannot submit a new job."
+            )
 
         operation = self.job_client.submit_job_as_operation(
             request={"project_id": self.project_id, "region": self.region, "job": job}

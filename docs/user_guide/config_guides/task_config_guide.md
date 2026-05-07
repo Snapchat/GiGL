@@ -75,17 +75,16 @@ SubgraphSampler, etc.
 
 ### DatasetConfig
 
-We create the dataset that we will be using. In this example we will be using the class `dataPreprocessorConfigClsPath`
-to read and preprocess the data. See [Preprocessor Guide](../overview/components/data_preprocessor.md).
+We create the dataset that we will be using. In this example we use `dataPreprocessorConfigClsPath` to read and
+preprocess the data. See the [Preprocessor Guide](../overview/components/data_preprocessor.md).
 
-Once we have the data preprocessed, we will be tabularizing the data with the use of
-[Subgraph Sampler](../overview/components/data_preprocessor.md)Specifically, for each node we will be sampling their
-`numHops` neighborhood, where each hop will sample `numNeighborsToSample` neighbors. As well, we will be sampling
-`numUserDefinedPositiveSamples` positive samples and their respective neighborhood using `numHops` and
-`numNeighborsToSample`.
+For current in-memory subgraph sampling pipelines, the Data Preprocessor output is consumed directly by Trainer and
+Inferencer, which sample neighborhoods online when the in-memory sampling flag (`featureFlags.should_run_glt_backend`)
+is enabled.
 
-Subsequently, we will be creating test/train/val splits based on the %'s specified, using
-[Split Generator](../overview/components/split_generator.md)
+If you are maintaining the older tabularized pipeline, the next stages are the legacy
+[Subgraph Sampler](../overview/deprecated_tabularized/subgraph_sampler.md) and
+[Split Generator](../overview/deprecated_tabularized/split_generator.md).
 
 ```{literalinclude} ../../../examples/MAG240M/task_config.yaml
 :language: yaml

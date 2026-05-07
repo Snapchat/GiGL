@@ -24,9 +24,7 @@ class GiglResourceConfigTest(TestCase):
         resource_config.shared_resource_config.common_compute_config.region = (
             "us-central1"
         )
-        resource_config.trainer_resource_config.vertex_ai_trainer_config.gcp_region_override = (
-            "us-east1"
-        )
+        resource_config.trainer_resource_config.vertex_ai_trainer_config.gcp_region_override = "us-east1"
         resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
         self.assertEqual(resource_config_wrapper.vertex_ai_trainer_region, "us-east1")
 
@@ -46,9 +44,7 @@ class GiglResourceConfigTest(TestCase):
         resource_config.shared_resource_config.common_compute_config.region = (
             "us-central1"
         )
-        resource_config.inferencer_resource_config.vertex_ai_inferencer_config.gcp_region_override = (
-            "us-east1"
-        )
+        resource_config.inferencer_resource_config.vertex_ai_inferencer_config.gcp_region_override = "us-east1"
         resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
         self.assertEqual(
             resource_config_wrapper.vertex_ai_inferencer_region, "us-east1"

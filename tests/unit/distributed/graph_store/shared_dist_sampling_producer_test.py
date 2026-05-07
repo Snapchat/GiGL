@@ -1,0 +1,419 @@
+import queue
+import threading
+from collections.abc import Callable
+from typing import cast
+from unittest.mock import MagicMock, patch
+
+import torch
+import torch.multiprocessing as mp
+from graphlearn_torch.channel import QueueTimeoutError
+from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
+
+from gigl.distributed.graph_store.shared_dist_sampling_producer import (
+    EPOCH_DONE_EVENT,
+    ActiveEpochState,
+    RegisterInputCmd,
+    SharedDistSamplingBackend,
+    SharedMpCommand,
+    StartEpochCmd,
+    _compute_num_batches,
+    _compute_worker_seeds_ranges,
+    _epoch_batch_indices,
+    _shared_sampling_worker_loop,
+)
+from gigl.distributed.sampler_options import KHopNeighborSamplerOptions
+from tests.test_assets.test_case import TestCase
+
+
+def _make_sampling_config(*, shuffle: bool = False) -> SamplingConfig:
+    return SamplingConfig(
+        sampling_type=SamplingType.NODE,
+        num_neighbors=[2],
+        batch_size=2,
+        shuffle=shuffle,
+        drop_last=False,
+        with_edge=True,
+        collect_features=True,
+        with_neg=False,
+        with_weight=False,
+        edge_dir="out",
+        seed=1234,
+    )
+
+
+class _FakeProcess:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.daemon = False
+
+    def start(self) -> None:
+        return None
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
+
+    def is_alive(self) -> bool:
+        return False
+
+    def terminate(self) -> None:
+        return None
+
+
+class _FakeMpContext:
+    def Barrier(self, parties: int) -> MagicMock:
+        return MagicMock(wait=MagicMock())
+
+    def Queue(self, maxsize: int = 0) -> MagicMock:
+        return MagicMock()
+
+    def Process(self, *args: object, **kwargs: object) -> _FakeProcess:
+        return _FakeProcess(*args, **kwargs)
+
+
+class _FakeOutputChannel:
+    def __init__(self) -> None:
+        self._messages: list[object] = []
+        self.drained_event = threading.Event()
+
+    def send(self, msg: object) -> None:
+        self._messages.append(msg)
+
+    def recv(self, timeout_ms: int | None = None, **_: object) -> object:
+        # Match graphlearn_torch.channel.shm_channel.ShmChannel semantics:
+        # timeout_ms=0 (or None) blocks indefinitely; positive timeout_ms
+        # raises QueueTimeoutError when the queue is empty.
+        if not self._messages:
+            if timeout_ms is None or timeout_ms <= 0:
+                raise AssertionError(
+                    "_FakeOutputChannel.recv called with blocking timeout on "
+                    "empty channel — production code is about to deadlock."
+                )
+            raise QueueTimeoutError("Timeout: Queue is empty.")
+        self.drained_event.set()
+        return self._messages.pop(0)
+
+
+class _DeferredFakeSampler:
+    def __init__(self, channel: _FakeOutputChannel) -> None:
+        self.channel = channel
+        self.sample_called = threading.Event()
+        self.wait_all_called = threading.Event()
+        self.callback_returned = threading.Event()
+        self.callbacks: list[Callable[[object], None]] = []
+
+    def start_loop(self) -> None:
+        return None
+
+    def wait_all(self) -> None:
+        self.wait_all_called.set()
+        if self.callbacks and not self.callback_returned.wait(timeout=0.2):
+            raise TimeoutError("wait_all called before sampler callback returned")
+
+    def shutdown_loop(self) -> None:
+        return None
+
+    def sample_from_nodes(
+        self, _sampler_input: object, callback: Callable[[object], None]
+    ) -> None:
+        self.channel.send({"seed": torch.tensor([1], dtype=torch.long)})
+        self.callbacks.append(callback)
+        self.sample_called.set()
+
+
+class DistSamplingProducerTest(TestCase):
+    def test_compute_num_batches(self) -> None:
+        self.assertEqual(_compute_num_batches(0, 2, False), 0)
+        self.assertEqual(_compute_num_batches(1, 2, True), 0)
+        self.assertEqual(_compute_num_batches(1, 2, False), 1)
+        self.assertEqual(_compute_num_batches(5, 2, False), 3)
+        self.assertEqual(_compute_num_batches(5, 2, True), 2)
+
+    def test_epoch_batch_indices(self) -> None:
+        active_state = ActiveEpochState(
+            channel_id=0,
+            epoch=0,
+            input_len=6,
+            batch_size=2,
+            drop_last=False,
+            seeds_index=torch.arange(6),
+            total_batches=3,
+            submitted_batches=1,
+            cancelled=False,
+        )
+        result = _epoch_batch_indices(active_state)
+        assert result is not None
+        self.assert_tensor_equality(result, torch.tensor([2, 3]))
+
+    def test_compute_worker_seeds_ranges(self) -> None:
+        self.assertEqual(
+            _compute_worker_seeds_ranges(input_len=7, batch_size=2, num_workers=3),
+            [(0, 2), (2, 4), (4, 7)],
+        )
+
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.get_context")
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.mp.get_context")
+    def test_init_backend_prepares_worker_options(
+        self,
+        mock_get_mp_context: MagicMock,
+        mock_get_context: MagicMock,
+    ) -> None:
+        worker_options = MagicMock()
+        worker_options.num_workers = 2
+        worker_options.worker_concurrency = 1
+        mock_get_context.return_value = MagicMock(
+            is_server=MagicMock(return_value=True)
+        )
+        mock_get_mp_context.return_value = _FakeMpContext()
+        backend = SharedDistSamplingBackend(
+            data=MagicMock(),
+            worker_options=worker_options,
+            sampling_config=_make_sampling_config(),
+            sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
+        )
+
+        backend.init_backend()
+
+        worker_options._assign_worker_devices.assert_called_once()
+        worker_options._set_worker_ranks.assert_called_once_with(
+            mock_get_context.return_value
+        )
+        self.assertEqual(len(backend._task_queues), 2)
+        self.assertEqual(len(backend._workers), 2)
+        self.assertTrue(backend._initialized)
+
+    def test_start_new_epoch_sampling_shuffle_refreshes_per_epoch(self) -> None:
+        worker_options = MagicMock()
+        worker_options.num_workers = 2
+        worker_options.worker_concurrency = 1
+        backend = SharedDistSamplingBackend(
+            data=MagicMock(),
+            worker_options=worker_options,
+            sampling_config=_make_sampling_config(shuffle=True),
+            sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
+        )
+        backend._initialized = True
+        recorded: list[tuple[int, SharedMpCommand, object]] = []
+        backend._enqueue_worker_command = lambda worker_rank, command, payload: (  # type: ignore[method-assign]
+            recorded.append((worker_rank, command, payload))
+        )
+
+        channel = MagicMock()
+        input_tensor = torch.arange(6, dtype=torch.long)
+        backend.register_input(
+            channel_id=1,
+            worker_key="loader_a_compute_rank_0",
+            sampler_input=NodeSamplerInput(node=input_tensor.clone()),
+            sampling_config=_make_sampling_config(shuffle=True),
+            channel=channel,
+        )
+        backend.register_input(
+            channel_id=2,
+            worker_key="loader_b_compute_rank_0",
+            sampler_input=NodeSamplerInput(node=input_tensor.clone()),
+            sampling_config=_make_sampling_config(shuffle=True),
+            channel=channel,
+        )
+
+        def _collect_epoch_indices(channel_id: int, epoch: int) -> torch.Tensor:
+            recorded.clear()
+            backend.start_new_epoch_sampling(channel_id, epoch)
+            worker_payloads = {
+                worker_rank: cast(StartEpochCmd, payload).seeds_index
+                for worker_rank, command, payload in recorded
+                if command == SharedMpCommand.START_EPOCH
+            }
+            assert all(
+                seed_index is not None for seed_index in worker_payloads.values()
+            )
+            return torch.cat(
+                [
+                    cast(torch.Tensor, worker_payloads[worker_rank])
+                    for worker_rank in sorted(worker_payloads)
+                ]
+            )
+
+        channel_1_epoch_0 = _collect_epoch_indices(1, 0)
+        channel_2_epoch_0 = _collect_epoch_indices(2, 0)
+        channel_1_epoch_1 = _collect_epoch_indices(1, 1)
+
+        self.assert_tensor_equality(channel_1_epoch_0, channel_2_epoch_0)
+        self.assertNotEqual(
+            channel_1_epoch_0.tolist(),
+            channel_1_epoch_1.tolist(),
+        )
+
+    def test_describe_channel_reports_completed_workers(self) -> None:
+        worker_options = MagicMock()
+        worker_options.num_workers = 2
+        worker_options.worker_concurrency = 1
+        backend = SharedDistSamplingBackend(
+            data=MagicMock(),
+            worker_options=worker_options,
+            sampling_config=_make_sampling_config(),
+            sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
+        )
+        backend._initialized = True
+        backend._event_queue = cast(mp.Queue, queue.Queue())
+        backend._channel_input_sizes[1] = [4, 2]
+        backend._channel_epoch[1] = 3
+        cast(queue.Queue, backend._event_queue).put((EPOCH_DONE_EVENT, 1, 3, 0))
+
+        description = backend.describe_channel(1)
+
+        self.assertEqual(description["epoch"], 3)
+        self.assertEqual(description["input_sizes"], [4, 2])
+        self.assertEqual(description["completed_workers"], 1)
+
+    def test_unregister_input_is_fire_and_forget(self) -> None:
+        worker_options = MagicMock()
+        worker_options.num_workers = 2
+        worker_options.worker_concurrency = 1
+        backend = SharedDistSamplingBackend(
+            data=MagicMock(),
+            worker_options=worker_options,
+            sampling_config=_make_sampling_config(),
+            sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
+        )
+        backend._initialized = True
+        backend._event_queue = cast(mp.Queue, queue.Queue())
+        backend._channel_sampling_config[1] = _make_sampling_config()
+        backend._channel_input_sizes[1] = [2, 2]
+        backend._channel_worker_seeds_ranges[1] = [(0, 2), (2, 4)]
+        backend._channel_shuffle_generators[1] = None
+        backend._channel_epoch[1] = 0
+
+        commands: list[tuple[int, SharedMpCommand, object]] = []
+
+        def enqueue_worker_command(
+            worker_rank: int,
+            command: SharedMpCommand,
+            payload: object,
+        ) -> None:
+            commands.append((worker_rank, command, payload))
+
+        backend._enqueue_worker_command = enqueue_worker_command  # type: ignore[method-assign]
+
+        # Returns without any worker acknowledgement: there is no sync wait.
+        backend.unregister_input(1)
+
+        self.assertEqual(
+            commands,
+            [
+                (0, SharedMpCommand.UNREGISTER_INPUT, 1),
+                (1, SharedMpCommand.UNREGISTER_INPUT, 1),
+            ],
+        )
+        self.assertNotIn(1, backend._channel_sampling_config)
+
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer._set_worker_signal_handlers"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.torch.set_num_threads"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.create_dist_sampler"
+    )
+    def test_worker_unregister_drains_buffered_output_and_waits_for_completion(
+        self,
+        mock_create_dist_sampler: MagicMock,
+        _mock_set_num_threads: MagicMock,
+        _mock_signal_handlers: MagicMock,
+        _mock_init_worker_group: MagicMock,
+        _mock_init_rpc: MagicMock,
+        _mock_shutdown_rpc: MagicMock,
+    ) -> None:
+        worker_options = MagicMock()
+        worker_options.worker_world_size = 1
+        worker_options.worker_ranks = [0]
+        worker_options.use_all2all = False
+        worker_options.num_rpc_threads = 1
+        worker_options.worker_devices = [torch.device("cpu")]
+        worker_options.master_addr = "127.0.0.1"
+        worker_options.master_port = 12345
+        worker_options.rpc_timeout = 30
+        output_channel = _FakeOutputChannel()
+        fake_sampler = _DeferredFakeSampler(output_channel)
+        mock_create_dist_sampler.return_value = fake_sampler
+        task_queue: queue.Queue[tuple[SharedMpCommand, object]] = queue.Queue()
+        event_queue: queue.Queue[tuple[object, ...]] = queue.Queue()
+        barrier = MagicMock(wait=MagicMock())
+        data = MagicMock(num_partitions=1)
+        sampling_config = _make_sampling_config()
+        channel_id = 7
+
+        worker_thread = threading.Thread(
+            target=_shared_sampling_worker_loop,
+            args=(
+                0,
+                data,
+                worker_options,
+                task_queue,
+                event_queue,
+                barrier,
+                KHopNeighborSamplerOptions(num_neighbors=[2]),
+                None,
+            ),
+        )
+        worker_thread.start()
+        task_queue.put(
+            (
+                SharedMpCommand.REGISTER_INPUT,
+                RegisterInputCmd(
+                    channel_id=channel_id,
+                    worker_key="loader_a_compute_rank_0",
+                    sampler_input=NodeSamplerInput(node=torch.arange(2)),
+                    sampling_config=sampling_config,
+                    channel=output_channel,
+                ),
+            )
+        )
+        task_queue.put(
+            (
+                SharedMpCommand.START_EPOCH,
+                StartEpochCmd(
+                    channel_id=channel_id,
+                    epoch=0,
+                    seeds_index=torch.arange(2),
+                ),
+            )
+        )
+        self.assertTrue(fake_sampler.sample_called.wait(timeout=5.0))
+
+        task_queue.put((SharedMpCommand.UNREGISTER_INPUT, channel_id))
+        self.assertTrue(output_channel.drained_event.wait(timeout=5.0))
+        self.assertTrue(event_queue.empty())
+
+        callback = fake_sampler.callbacks[0]
+        callback_errors: list[BaseException] = []
+
+        def run_callback() -> None:
+            try:
+                callback(None)
+            except BaseException as exc:
+                callback_errors.append(exc)
+            finally:
+                fake_sampler.callback_returned.set()
+
+        callback_thread = threading.Thread(target=run_callback)
+        callback_thread.start()
+        callback_thread.join(timeout=5.0)
+        self.assertFalse(callback_thread.is_alive())
+        self.assertEqual(callback_errors, [])
+        self.assertTrue(fake_sampler.wait_all_called.wait(timeout=5.0))
+
+        epoch_done_event = event_queue.get(timeout=5.0)
+        self.assertEqual(epoch_done_event[0], EPOCH_DONE_EVENT)
+        self.assertTrue(event_queue.empty())
+
+        task_queue.put((SharedMpCommand.STOP, None))
+        worker_thread.join(timeout=5.0)
+        self.assertFalse(worker_thread.is_alive())

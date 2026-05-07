@@ -25,9 +25,9 @@ from tests.test_assets.test_case import TestCase
 
 class TranslatorTestCase(TestCase):
     def setUp(self):
-        self._name_to_mocked_dataset_map: dict[
-            str, MockedDatasetArtifactMetadata
-        ] = get_mocked_dataset_artifact_metadata()
+        self._name_to_mocked_dataset_map: dict[str, MockedDatasetArtifactMetadata] = (
+            get_mocked_dataset_artifact_metadata()
+        )
 
     def _assert_data_type_correctness(
         self,
@@ -250,9 +250,7 @@ class TranslatorTestCase(TestCase):
             [
                 preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                     condensed_edge_type
-                ].HasField(
-                    "positive_edge_info"
-                )
+                ].HasField("positive_edge_info")
                 for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types
             ]
         )
@@ -292,9 +290,7 @@ class TranslatorTestCase(TestCase):
             ):
                 if preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                     condensed_edge_type
-                ].HasField(
-                    "positive_edge_info"
-                ):
+                ].HasField("positive_edge_info"):
                     assert (
                         seralized_positive_label_info is not None
                     )  # We use assert instead of self.assertIsNotNone since this allows type narrowing with mypy
@@ -344,9 +340,7 @@ class TranslatorTestCase(TestCase):
             [
                 preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                     condensed_edge_type
-                ].HasField(
-                    "negative_edge_info"
-                )
+                ].HasField("negative_edge_info")
                 for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types
             ]
         )
@@ -386,9 +380,7 @@ class TranslatorTestCase(TestCase):
             ):
                 if preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
                     condensed_edge_type
-                ].HasField(
-                    "negative_edge_info"
-                ):
+                ].HasField("negative_edge_info"):
                     assert (
                         serialized_negative_label_info is not None
                     )  # We use assert instead of self.assertIsNotNone since this allows type narrowing with mypy

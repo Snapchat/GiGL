@@ -1,10 +1,16 @@
+import threading
+from unittest.mock import MagicMock, patch
+
 import torch
 from absl.testing import absltest
+from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
 from gigl.distributed.graph_store import dist_server
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
+    InitSamplingBackendRequest,
+    RegisterBackendRequest,
 )
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import Relation
@@ -587,6 +593,783 @@ class TestRemoteDataset(TestCase):
         self.assert_tensor_equality(pos_labels, torch.tensor([[2, 3], [3, 4]]), dim=1)
         assert neg_labels is not None
         self.assert_tensor_equality(neg_labels, torch.tensor([[4], [0]]))
+
+
+def _make_sampling_config() -> SamplingConfig:
+    return SamplingConfig(
+        sampling_type=SamplingType.NODE,
+        num_neighbors=[2],
+        batch_size=2,
+        shuffle=False,
+        drop_last=False,
+        with_edge=True,
+        collect_features=True,
+        with_neg=False,
+        with_weight=False,
+        edge_dir="out",
+        seed=None,
+    )
+
+
+class TestDistServerSampling(TestCase):
+    def setUp(self) -> None:
+        dist_server._dist_server = None
+        self.dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        self.server = dist_server.DistServer(self.dataset)
+        self.worker_options = MagicMock()
+        self.worker_options.buffer_capacity = 2
+        self.worker_options.buffer_size = "1MB"
+        self.sampling_config = _make_sampling_config()
+        self.sampler_options = MagicMock()
+
+    def tearDown(self) -> None:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_init_sampling_backend_idempotent(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+
+        backend_id_1 = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        backend_id_2 = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+
+        self.assertEqual(backend_id_1, backend_id_2)
+        mock_backend_cls.assert_called_once()
+        runtime.init_backend.assert_called_once()
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_register_creates_channel(
+        self,
+        mock_backend_cls: MagicMock,
+        mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=NodeSamplerInput(torch.arange(10)),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="2MB",
+            )
+        )
+
+        self.assertEqual(channel_id, 0)
+        runtime.register_input.assert_called_once()
+        mock_channel_cls.assert_called_once_with(2, "2MB")
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_register_empty_channel(
+        self,
+        mock_backend_cls: MagicMock,
+        mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=NodeSamplerInput(torch.tensor([])),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,  # Should be overridden to 1 for empty channels
+                buffer_size="2MB",  # Should be overridden to 1MB for empty channels
+            )
+        )
+
+        self.assertEqual(channel_id, 0)
+        runtime.register_input.assert_called_once()
+        mock_channel_cls.assert_called_once_with(1, "1MB")
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_destroy_last_channel_shuts_down_backend(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        self.server.destroy_sampling_input(channel_id)
+
+        runtime.unregister_input.assert_called_once_with(channel_id)
+        runtime.shutdown.assert_called_once()
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_fetch_returns_done_for_new_lookup_after_destroy(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        self.server.destroy_sampling_input(channel_id)
+
+        msg, is_done = self.server.fetch_one_sampled_message(channel_id)
+
+        self.assertIsNone(msg)
+        self.assertTrue(is_done)
+        runtime.unregister_input.assert_called_once_with(channel_id)
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_fetch_returns_done_when_destroyed_observed_after_timeout(
+        self,
+        mock_backend_cls: MagicMock,
+        mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        channel = mock_channel_cls.return_value
+        channel.recv.side_effect = dist_server.QueueTimeoutError()
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+        self.server._channel_state_by_channel_id[channel_id].tombstoned = True
+
+        msg, is_done = self.server.fetch_one_sampled_message(channel_id)
+
+        self.assertIsNone(msg)
+        self.assertTrue(is_done)
+        runtime.is_channel_epoch_done.assert_not_called()
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_inflight_fetch_can_return_buffered_message_after_destroy(
+        self,
+        mock_backend_cls: MagicMock,
+        mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        channel = mock_channel_cls.return_value
+        fetch_entered = threading.Event()
+        allow_buffered_delivery = threading.Event()
+        buffered_message = {"seed": torch.tensor([1], dtype=torch.long)}
+
+        def blocking_recv(*_args, **_kwargs):
+            fetch_entered.set()
+            allow_buffered_delivery.wait(timeout=5.0)
+            return buffered_message
+
+        channel.recv.side_effect = blocking_recv
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        fetch_result: dict[str, tuple[object, bool]] = {}
+
+        def run_fetch() -> None:
+            fetch_result["value"] = self.server.fetch_one_sampled_message(channel_id)
+
+        fetch_thread = threading.Thread(target=run_fetch)
+        fetch_thread.start()
+        self.assertTrue(fetch_entered.wait(timeout=5.0))
+
+        self.server.destroy_sampling_input(channel_id)
+        allow_buffered_delivery.set()
+        fetch_thread.join(timeout=5.0)
+        self.assertFalse(fetch_thread.is_alive())
+
+        msg, is_done = fetch_result["value"]
+        self.assertIs(msg, buffered_message)
+        self.assertFalse(is_done)
+
+        next_msg, next_is_done = self.server.fetch_one_sampled_message(channel_id)
+        self.assertIsNone(next_msg)
+        self.assertTrue(next_is_done)
+
+    def test_destroy_unknown_channel_noop(self) -> None:
+        self.server.destroy_sampling_input(999)
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_start_epoch_idempotent(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        self.server.start_new_epoch_sampling(channel_id, 0)
+        self.server.start_new_epoch_sampling(channel_id, 0)
+
+        runtime.start_new_epoch_sampling.assert_called_once_with(channel_id, 0)
+
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_init_same_key_reuses_backend(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        """Regression test for PR #578 Comment 3 (race in init_sampling_backend).
+
+        Two concurrent callers with the same ``backend_key`` must return the
+        same ``backend_id`` and ``init_backend`` must run exactly once. The
+        second caller must block until the first caller completes init.
+        """
+        runtime = mock_backend_cls.return_value
+        init_entered = threading.Event()
+        release_init = threading.Event()
+
+        def blocking_init_backend() -> None:
+            init_entered.set()
+            release_init.wait(timeout=5.0)
+
+        runtime.init_backend.side_effect = blocking_init_backend
+
+        def call_init() -> int:
+            return self.server.init_sampling_backend(
+                InitSamplingBackendRequest(
+                    backend_key="neighbor_loader_0",
+                    worker_options=self.worker_options,
+                    sampler_options=self.sampler_options,
+                    sampling_config=self.sampling_config,
+                )
+            )
+
+        results: dict[str, int] = {}
+
+        def run_first() -> None:
+            results["first"] = call_init()
+
+        def run_second() -> None:
+            results["second"] = call_init()
+
+        thread_a = threading.Thread(target=run_first)
+        thread_a.start()
+        # Wait until A is inside init_backend so A already holds
+        # backend_state.lock (acquired under self._lock before releasing).
+        self.assertTrue(init_entered.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_second)
+        thread_b.start()
+        # B should be blocked on backend_state.lock until A finishes.
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_init.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+        self.assertFalse(thread_a.is_alive())
+        self.assertFalse(thread_b.is_alive())
+
+        self.assertEqual(results["first"], results["second"])
+        mock_backend_cls.assert_called_once()
+        runtime.init_backend.assert_called_once()
+
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_init_failure_propagates_to_second_caller(
+        self, mock_backend_cls: MagicMock
+    ) -> None:
+        """Regression test for PR #578 Comment 3 failure-path bug.
+
+        If the first initializer raises, the second caller must observe a
+        meaningful ``RuntimeError`` chained to the original exception
+        (via ``__cause__``), not a ``KeyError`` from a rolled-back map.
+        """
+        runtime = mock_backend_cls.return_value
+        init_entered = threading.Event()
+        release_init = threading.Event()
+        original_error = ValueError("init failed")
+
+        def failing_init_backend() -> None:
+            init_entered.set()
+            release_init.wait(timeout=5.0)
+            raise original_error
+
+        runtime.init_backend.side_effect = failing_init_backend
+
+        def call_init() -> int:
+            return self.server.init_sampling_backend(
+                InitSamplingBackendRequest(
+                    backend_key="neighbor_loader_0",
+                    worker_options=self.worker_options,
+                    sampler_options=self.sampler_options,
+                    sampling_config=self.sampling_config,
+                )
+            )
+
+        first_error: dict[str, BaseException] = {}
+        second_error: dict[str, BaseException] = {}
+
+        def run_first() -> None:
+            try:
+                call_init()
+            except BaseException as e:
+                first_error["e"] = e
+
+        def run_second() -> None:
+            try:
+                call_init()
+            except BaseException as e:
+                second_error["e"] = e
+
+        thread_a = threading.Thread(target=run_first)
+        thread_a.start()
+        self.assertTrue(init_entered.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_second)
+        thread_b.start()
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_init.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+
+        self.assertIs(first_error["e"], original_error)
+        self.assertIsInstance(second_error["e"], RuntimeError)
+        self.assertIs(second_error["e"].__cause__, original_error)
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_concurrent_start_epoch_dispatches_monotonically(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        """Regression test for PR #578 Comment 7 (race in start_new_epoch_sampling).
+
+        Two concurrent callers with different ``epoch`` values must not
+        dispatch to ``runtime.start_new_epoch_sampling`` in decreasing
+        order. The check/update/dispatch must be serialized under
+        the backend lifecycle lock.
+        """
+        runtime = mock_backend_cls.return_value
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        first_started = threading.Event()
+        release_first = threading.Event()
+
+        def blocking_start(ch_id: int, epoch: int) -> None:
+            # Only the first dispatch (epoch=0) blocks; the second
+            # dispatch (epoch=1) returns immediately once it reaches
+            # the runtime.
+            if epoch == 0:
+                first_started.set()
+                release_first.wait(timeout=5.0)
+
+        runtime.start_new_epoch_sampling.side_effect = blocking_start
+
+        def run_epoch_0() -> None:
+            self.server.start_new_epoch_sampling(channel_id, 0)
+
+        def run_epoch_1() -> None:
+            self.server.start_new_epoch_sampling(channel_id, 1)
+
+        thread_a = threading.Thread(target=run_epoch_0)
+        thread_a.start()
+        self.assertTrue(first_started.wait(timeout=5.0))
+
+        thread_b = threading.Thread(target=run_epoch_1)
+        thread_b.start()
+        # B is blocked on backend_state.lock until A finishes dispatch.
+        thread_b.join(timeout=0.1)
+        self.assertTrue(thread_b.is_alive())
+
+        release_first.set()
+        thread_a.join(timeout=5.0)
+        thread_b.join(timeout=5.0)
+
+        dispatched_epochs = [
+            call.args[1] for call in runtime.start_new_epoch_sampling.call_args_list
+        ]
+        # Monotonic non-decreasing dispatch.
+        self.assertEqual(dispatched_epochs, sorted(dispatched_epochs))
+        # Final epoch must be 1 (the max requested).
+        channel_state = self.server._channel_state_by_channel_id[channel_id]
+        self.assertEqual(channel_state.epoch, 1)
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_destroy_start_overlap_prefers_destroyed_state(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        destroy_entered = threading.Event()
+        release_destroy = threading.Event()
+
+        def blocking_unregister(_channel_id: int) -> None:
+            destroy_entered.set()
+            release_destroy.wait(timeout=5.0)
+
+        runtime.unregister_input.side_effect = blocking_unregister
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        destroy_thread = threading.Thread(
+            target=self.server.destroy_sampling_input, args=(channel_id,)
+        )
+        destroy_thread.start()
+        self.assertTrue(destroy_entered.wait(timeout=5.0))
+
+        start_thread = threading.Thread(
+            target=self.server.start_new_epoch_sampling, args=(channel_id, 0)
+        )
+        start_thread.start()
+
+        release_destroy.set()
+        destroy_thread.join(timeout=5.0)
+        start_thread.join(timeout=5.0)
+        self.assertFalse(destroy_thread.is_alive())
+        self.assertFalse(start_thread.is_alive())
+
+        runtime.start_new_epoch_sampling.assert_not_called()
+
+    @patch("gigl.distributed.graph_store.dist_server.ShmChannel")
+    @patch("gigl.distributed.graph_store.dist_server.SharedDistSamplingBackend")
+    def test_destroy_last_channel_waits_for_unregister_before_shutdown(
+        self,
+        mock_backend_cls: MagicMock,
+        _mock_channel_cls: MagicMock,
+    ) -> None:
+        runtime = mock_backend_cls.return_value
+        unregister_entered = threading.Event()
+        release_unregister = threading.Event()
+
+        def blocking_unregister(_channel_id: int) -> None:
+            unregister_entered.set()
+            release_unregister.wait(timeout=5.0)
+
+        runtime.unregister_input.side_effect = blocking_unregister
+        backend_id = self.server.init_sampling_backend(
+            InitSamplingBackendRequest(
+                backend_key="neighbor_loader_0",
+                worker_options=self.worker_options,
+                sampler_options=self.sampler_options,
+                sampling_config=self.sampling_config,
+            )
+        )
+        channel_id = self.server.register_sampling_input(
+            RegisterBackendRequest(
+                backend_id=backend_id,
+                worker_key="neighbor_loader_0_compute_rank_0",
+                sampler_input=MagicMock(),
+                sampling_config=self.sampling_config,
+                buffer_capacity=2,
+                buffer_size="1MB",
+            )
+        )
+
+        destroy_thread = threading.Thread(
+            target=self.server.destroy_sampling_input, args=(channel_id,)
+        )
+        destroy_thread.start()
+        self.assertTrue(unregister_entered.wait(timeout=5.0))
+        self.assertFalse(runtime.shutdown.called)
+
+        release_unregister.set()
+        destroy_thread.join(timeout=5.0)
+        self.assertFalse(destroy_thread.is_alive())
+        runtime.shutdown.assert_called_once()
+
+    def test_shutdown_warns_and_clears_with_live_backends(self) -> None:
+        runtime_1 = MagicMock()
+        runtime_2 = MagicMock()
+        self.server._backend_state_by_backend_id = {
+            0: dist_server.SamplingBackendState(
+                backend_id=0,
+                backend_key="neighbor_loader_0",
+                runtime=runtime_1,
+            ),
+            1: dist_server.SamplingBackendState(
+                backend_id=1,
+                backend_key="neighbor_loader_1",
+                runtime=runtime_2,
+            ),
+        }
+        self.server._backend_id_by_backend_key = {
+            "neighbor_loader_0": 0,
+            "neighbor_loader_1": 1,
+        }
+
+        # Should not raise.
+        self.server.shutdown()
+
+        # Bookkeeping is dropped so a follow-up shutdown is a clean
+        # no-op rather than re-warning on the same residual state.
+        self.assertEqual(self.server._backend_state_by_backend_id, {})
+        self.assertEqual(self.server._backend_id_by_backend_key, {})
+        self.assertEqual(self.server._channel_state_by_channel_id, {})
+
+        # Residual runtimes are *not* shut down by this method — the
+        # docstring is explicit that ``runtime.shutdown()`` is owned by
+        # ``destroy_sampling_input``. We are intentionally letting the
+        # process exit GC them.
+        runtime_1.shutdown.assert_not_called()
+        runtime_2.shutdown.assert_not_called()
+
+
+class TestStartNewEpochSamplingChannelLookup(TestCase):
+    """Tests for the fail-fast / tombstone behaviour in start_new_epoch_sampling."""
+
+    def setUp(self) -> None:
+        dist_server._dist_server = None
+        self.dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+
+    def tearDown(self) -> None:
+        dist_server._dist_server = None
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+
+    def test_start_new_epoch_sampling_raises_on_unknown_channel(self) -> None:
+        """start_new_epoch_sampling must raise RuntimeError for a channel_id that was
+        never registered on this server.
+
+        The error message must contain both the word "unknown" and the channel_id
+        so callers can diagnose the bug.
+        """
+        server = dist_server.DistServer(self.dataset)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            server.start_new_epoch_sampling(channel_id=999, epoch=1)
+
+        error_message = str(ctx.exception)
+        self.assertIn("unknown", error_message)
+        self.assertIn("999", error_message)
+
+    def test_start_new_epoch_sampling_silent_on_destroyed_channel(self) -> None:
+        """start_new_epoch_sampling must silently no-op for a channel_id that was
+        previously registered and then destroyed (tombstoned).
+
+        This handles the legitimate destroy/start race where a compute peer's
+        start RPC arrives after destroy has already landed on the server.
+        """
+        server = dist_server.DistServer(self.dataset)
+        # Simulate: channel 5 was registered and then destroyed.
+        server._tombstoned_channel_ids.add(5)
+
+        # Must NOT raise — silent no-op for tombstoned channel.
+        server.start_new_epoch_sampling(channel_id=5, epoch=1)
+
+    def test_start_new_epoch_sampling_silent_after_double_destroy(self) -> None:
+        """Idempotent double-destroy must still tombstone the channel id
+        so a subsequent start_new_epoch_sampling silent-no-ops instead
+        of raising 'unknown channel_id'."""
+        dataset = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+        )
+        server = dist_server.DistServer(dataset)
+
+        # First destroy on an unregistered id is a legitimate idempotent
+        # call; it must seed the tombstone so subsequent destroys also
+        # see it as already-destroyed.
+        server.destroy_sampling_input(channel_id=42)
+        # Second destroy hits the channel_state is None early-return.
+        # Before the fix, this branch did not tombstone, so the next
+        # start_new_epoch_sampling would raise.
+        server.destroy_sampling_input(channel_id=42)
+
+        # No raise expected — channel_id is tombstoned.
+        server.start_new_epoch_sampling(channel_id=42, epoch=1)
+
+
+class TestWaitAndShutdownServer(TestCase):
+    def setUp(self) -> None:
+        """Reset the global dataset before each test."""
+        dist_server._dist_server = None
+
+    def tearDown(self) -> None:
+        """Clean up after each test."""
+        dist_server._dist_server = None
+
+    def test_wait_and_shutdown_server_runs_barrier_when_state_remains(self) -> None:
+        dataset = create_homogeneous_dataset(edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX)
+        server = dist_server.DistServer(dataset)
+        # Inject leftover channel state. Used to make DistServer.shutdown()
+        # raise; now expected to surface as a warning + cleared registry.
+        server._channel_state_by_channel_id[0] = MagicMock()
+        # Set exit flag so wait_for_exit() returns immediately.
+        server._exit = True
+
+        mock_barrier = MagicMock()
+        mock_shutdown_rpc = MagicMock()
+
+        with (
+            patch(
+                "gigl.distributed.graph_store.dist_server._dist_server",
+                new=server,
+            ),
+            patch(
+                "gigl.distributed.graph_store.dist_server.glt_dist_server.get_context",
+                return_value=MagicMock(is_server=lambda: True),
+            ),
+            patch(
+                "gigl.distributed.graph_store.dist_server.barrier",
+                mock_barrier,
+            ),
+            patch(
+                "gigl.distributed.graph_store.dist_server.shutdown_rpc",
+                mock_shutdown_rpc,
+            ),
+        ):
+            # Should not raise.
+            dist_server.wait_and_shutdown_server()
+
+        # Barrier and shutdown_rpc must have run.
+        mock_barrier.assert_called_once()
+        mock_shutdown_rpc.assert_called_once()
+        # Residual state must be cleared so the process can exit cleanly.
+        self.assertEqual(server._channel_state_by_channel_id, {})
 
 
 if __name__ == "__main__":

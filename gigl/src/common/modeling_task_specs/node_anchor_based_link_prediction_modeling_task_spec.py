@@ -237,28 +237,24 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper = (
             gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
         )
-        condensed_node_type_to_feat_dim_map: dict[
-            CondensedNodeType, int
-        ] = preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map
-        condensed_edge_type_to_feat_dim_map: dict[
-            CondensedEdgeType, int
-        ] = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map
+        condensed_node_type_to_feat_dim_map: dict[CondensedNodeType, int] = (
+            preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map
+        )
+        condensed_edge_type_to_feat_dim_map: dict[CondensedEdgeType, int] = (
+            preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map
+        )
         encoder_model: nn.Module
         if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous:
             node_type_to_feat_dim_map: dict[NodeType, int] = {
                 gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
                     condensed_node_type
-                ]: condensed_node_type_to_feat_dim_map[
-                    condensed_node_type
-                ]
+                ]: condensed_node_type_to_feat_dim_map[condensed_node_type]
                 for condensed_node_type in condensed_node_type_to_feat_dim_map
             }
             edge_type_to_feat_dim_map: dict[EdgeType, int] = {
                 gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
                     condensed_edge_type
-                ]: condensed_edge_type_to_feat_dim_map[
-                    condensed_edge_type
-                ]
+                ]: condensed_edge_type_to_feat_dim_map[condensed_edge_type]
                 for condensed_edge_type in condensed_edge_type_to_feat_dim_map
             }
 
@@ -379,7 +375,8 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             self.model.train()
 
             for batch_index, (main_batch, random_negative_batch) in enumerate(
-                zip(main_data_loader, random_negative_data_loader), start=1  # type: ignore
+                zip(main_data_loader, random_negative_data_loader),  # type: ignore[arg-type]
+                start=1,
             ):
                 batch_st = time()
                 self._optimizer.zero_grad()
@@ -649,9 +646,9 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             ]
             for condensed_node_type in batch_root_condensed_node_types
         ]
-        assert (
-            len(batch_root_node_types) == 1
-        ), f"{RootedNodeNeighborhoodBatch.__name__} for inference must have only one root node type. Found root node types: {batch_root_node_types}"
+        assert len(batch_root_node_types) == 1, (
+            f"{RootedNodeNeighborhoodBatch.__name__} for inference must have only one root node type. Found root node types: {batch_root_node_types}"
+        )
         output_node_type, output_condensed_node_type = (
             batch_root_node_types[0],
             batch_root_condensed_node_types[0],

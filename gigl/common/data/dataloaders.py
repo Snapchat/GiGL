@@ -278,7 +278,7 @@ class TFRecordDataLoader:
         else:
             logger.info(
                 f"Current partition start file uri: {uris[start_index]}\n"
-                f"Current partition end file uri: {uris[end_index-1]}"
+                f"Current partition end file uri: {uris[end_index - 1]}"
             )
 
         # Return the subset of file Uris for the current partition
@@ -317,17 +317,19 @@ class TFRecordDataLoader:
             dataset = (
                 tf.data.Dataset.from_tensor_slices([uri.uri for uri in uris])
                 .interleave(
-                    lambda uri: tf.data.TFRecordDataset(
-                        uri,
-                        compression_type=compression_type,
-                        buffer_size=opts.file_buffer_size,
-                    )
-                    .batch(
-                        opts.batch_size,
-                        num_parallel_calls=tf.data.AUTOTUNE,
-                        deterministic=opts.deterministic,
-                    )
-                    .prefetch(tf.data.AUTOTUNE),
+                    lambda uri: (
+                        tf.data.TFRecordDataset(
+                            uri,
+                            compression_type=compression_type,
+                            buffer_size=opts.file_buffer_size,
+                        )
+                        .batch(
+                            opts.batch_size,
+                            num_parallel_calls=tf.data.AUTOTUNE,
+                            deterministic=opts.deterministic,
+                        )
+                        .prefetch(tf.data.AUTOTUNE)
+                    ),
                     cycle_length=tf.data.AUTOTUNE,
                     deterministic=opts.deterministic,
                     num_parallel_calls=tf.data.AUTOTUNE,
@@ -492,9 +494,9 @@ class TFRecordDataLoader:
             )
 
         if output_feature_tensor is not None and output_label_tensor is not None:
-            assert output_feature_tensor.size(0) == output_label_tensor.size(
-                0
-            ), f"Loaded {output_feature_tensor.size(0)} features and {output_label_tensor.size(0)} labels, but they must be the same."
+            assert output_feature_tensor.size(0) == output_label_tensor.size(0), (
+                f"Loaded {output_feature_tensor.size(0)} features and {output_label_tensor.size(0)} labels, but they must be the same."
+            )
 
         end = time.perf_counter()
         logger.info(

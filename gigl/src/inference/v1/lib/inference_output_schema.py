@@ -52,9 +52,9 @@ class InferenceOutputBigqueryTableSchemaBuilder:
         return table_schema
 
     def build(self) -> InferenceOutputBigqueryTableSchema:
-        assert (
-            self._node_field is not None
-        ), "Node field must be defined before building."
+        assert self._node_field is not None, (
+            "Node field must be defined before building."
+        )
         assert self._fields is not None, "_fields must be defined before building."
 
         schema = InferenceOutputBigqueryTableSchema(

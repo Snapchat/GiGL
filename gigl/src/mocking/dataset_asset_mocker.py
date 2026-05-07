@@ -48,9 +48,9 @@ class DatasetAssetMocker:
             "NodeClassificationModelingTaskSpec"
         )
 
-        assert (
-            root_node_type in self._mocked_dataset_info.num_node_distinct_labels
-        ), f"Need labels for node type {root_node_type} to mock for supervised tasks."
+        assert root_node_type in self._mocked_dataset_info.num_node_distinct_labels, (
+            f"Need labels for node type {root_node_type} to mock for supervised tasks."
+        )
         kwargs = {
             "batch_size": "16",
             "out_dim": str(
@@ -64,9 +64,7 @@ class DatasetAssetMocker:
         pb.inferencer_config.inferencer_cls_path = modeling_task_spec_path
         pb.inferencer_config.inferencer_args.update(kwargs)
 
-        task_output = (
-            pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
-        )
+        task_output = pb.shared_config.flattened_graph_metadata.supervised_node_classification_output
         task_output.labeled_tfrecord_uri_prefix = (
             mocking_constants.update_gcs_uri_with_test_assets_and_version(
                 uri_str=task_output.labeled_tfrecord_uri_prefix, version=self._version
@@ -103,19 +101,23 @@ class DatasetAssetMocker:
         for node_type in node_type_to_inferencer_output_info_map:
             node_type_to_inferencer_output_info_map[
                 node_type
-            ].predictions_path = mocking_constants.update_bq_table_with_test_assets_and_version(
-                bq_table=node_type_to_inferencer_output_info_map[
-                    node_type
-                ].predictions_path,
-                version=self._version,
+            ].predictions_path = (
+                mocking_constants.update_bq_table_with_test_assets_and_version(
+                    bq_table=node_type_to_inferencer_output_info_map[
+                        node_type
+                    ].predictions_path,
+                    version=self._version,
+                )
             )
             node_type_to_inferencer_output_info_map[
                 node_type
-            ].embeddings_path = mocking_constants.update_bq_table_with_test_assets_and_version(
-                bq_table=node_type_to_inferencer_output_info_map[
-                    node_type
-                ].embeddings_path,
-                version=self._version,
+            ].embeddings_path = (
+                mocking_constants.update_bq_table_with_test_assets_and_version(
+                    bq_table=node_type_to_inferencer_output_info_map[
+                        node_type
+                    ].embeddings_path,
+                    version=self._version,
+                )
             )
 
     def _update_node_anchor_based_link_prediction_config_paths(
@@ -152,9 +154,7 @@ class DatasetAssetMocker:
         pb.inferencer_config.inferencer_cls_path = modeling_task_spec_path
         pb.inferencer_config.inferencer_args.update(kwargs)
 
-        task_output = (
-            pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
-        )
+        task_output = pb.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output
         task_output.tfrecord_uri_prefix = (
             mocking_constants.update_gcs_uri_with_test_assets_and_version(
                 uri_str=task_output.tfrecord_uri_prefix, version=self._version
@@ -164,10 +164,10 @@ class DatasetAssetMocker:
             node_type,
             random_negative_tfrecord_uri_prefix,
         ) in task_output.node_type_to_random_negative_tfrecord_uri_prefix.items():
-            task_output.node_type_to_random_negative_tfrecord_uri_prefix[
-                node_type
-            ] = mocking_constants.update_gcs_uri_with_test_assets_and_version(
-                uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+            task_output.node_type_to_random_negative_tfrecord_uri_prefix[node_type] = (
+                mocking_constants.update_gcs_uri_with_test_assets_and_version(
+                    uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+                )
             )
         task_dataset = (
             pb.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
@@ -191,41 +191,43 @@ class DatasetAssetMocker:
             node_type,
             random_negative_tfrecord_uri_prefix,
         ) in task_dataset.train_node_type_to_random_negative_data_uri.items():
-            task_dataset.train_node_type_to_random_negative_data_uri[
-                node_type
-            ] = mocking_constants.update_gcs_uri_with_test_assets_and_version(
-                uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+            task_dataset.train_node_type_to_random_negative_data_uri[node_type] = (
+                mocking_constants.update_gcs_uri_with_test_assets_and_version(
+                    uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+                )
             )
 
         for (
             node_type,
             random_negative_tfrecord_uri_prefix,
         ) in task_dataset.val_node_type_to_random_negative_data_uri.items():
-            task_dataset.val_node_type_to_random_negative_data_uri[
-                node_type
-            ] = mocking_constants.update_gcs_uri_with_test_assets_and_version(
-                uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+            task_dataset.val_node_type_to_random_negative_data_uri[node_type] = (
+                mocking_constants.update_gcs_uri_with_test_assets_and_version(
+                    uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+                )
             )
 
         for (
             node_type,
             random_negative_tfrecord_uri_prefix,
         ) in task_dataset.test_node_type_to_random_negative_data_uri.items():
-            task_dataset.test_node_type_to_random_negative_data_uri[
-                node_type
-            ] = mocking_constants.update_gcs_uri_with_test_assets_and_version(
-                uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+            task_dataset.test_node_type_to_random_negative_data_uri[node_type] = (
+                mocking_constants.update_gcs_uri_with_test_assets_and_version(
+                    uri_str=random_negative_tfrecord_uri_prefix, version=self._version
+                )
             )
 
         inference_metadata = pb.shared_config.inference_metadata
         for node_type in inference_metadata.node_type_to_inferencer_output_info_map:
             inference_metadata.node_type_to_inferencer_output_info_map[
                 node_type
-            ].embeddings_path = mocking_constants.update_bq_table_with_test_assets_and_version(
-                bq_table=inference_metadata.node_type_to_inferencer_output_info_map[
-                    node_type
-                ].embeddings_path,
-                version=self._version,
+            ].embeddings_path = (
+                mocking_constants.update_bq_table_with_test_assets_and_version(
+                    bq_table=inference_metadata.node_type_to_inferencer_output_info_map[
+                        node_type
+                    ].embeddings_path,
+                    version=self._version,
+                )
             )
 
     def _prepare_frozen_gbml_config_shared(
@@ -338,9 +340,9 @@ class DatasetAssetMocker:
         self._prepare_env()
 
         # Prepare frozen GbmlConfig.
-        assert (
-            self._mocked_dataset_info.sample_node_type is not None
-        ), f"Need defined sample_node_type to mock for {TaskMetadataType.NODE_BASED_TASK} task."
+        assert self._mocked_dataset_info.sample_node_type is not None, (
+            f"Need defined sample_node_type to mock for {TaskMetadataType.NODE_BASED_TASK} task."
+        )
         self._prepare_supervised_node_classification_frozen_gbml_config(
             sample_node_type=self._mocked_dataset_info.sample_node_type
         )
@@ -387,9 +389,9 @@ class DatasetAssetMocker:
         self._prepare_env()
 
         # Prepare frozen GbmlConfig.
-        assert (
-            self._mocked_dataset_info.sample_edge_type is not None
-        ), f"Need defined sample_edge_type to mock for {TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK} task."
+        assert self._mocked_dataset_info.sample_edge_type is not None, (
+            f"Need defined sample_edge_type to mock for {TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK} task."
+        )
 
         self._prepare_node_anchor_based_link_prediction_frozen_gbml_config(
             sample_edge_type=self._mocked_dataset_info.sample_edge_type
@@ -446,23 +448,23 @@ class DatasetAssetMocker:
 
     def mock_assets(self, mocked_dataset_info: MockedDatasetInfo) -> GcsUri:
         self._mocked_dataset_info = mocked_dataset_info
-        assert (
-            mocked_dataset_info.version is not None
-        ), "Need defined version to mock assets."
+        assert mocked_dataset_info.version is not None, (
+            "Need defined version to mock assets."
+        )
         self._version = mocked_dataset_info.version
 
         if mocked_dataset_info.task_metadata_type == TaskMetadataType.NODE_BASED_TASK:
-            assert (
-                mocked_dataset_info.sample_node_type is not None
-            ), f"Need defined sample_node_type to mock for {TaskMetadataType.NODE_BASED_TASK} task."
+            assert mocked_dataset_info.sample_node_type is not None, (
+                f"Need defined sample_node_type to mock for {TaskMetadataType.NODE_BASED_TASK} task."
+            )
             self._mock_supervised_node_classification_assets()
         elif (
             mocked_dataset_info.task_metadata_type
             == TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
         ):
-            assert (
-                mocked_dataset_info.sample_edge_type is not None
-            ), f"Need defined sample_edge_type to mock for {TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK} task."
+            assert mocked_dataset_info.sample_edge_type is not None, (
+                f"Need defined sample_edge_type to mock for {TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK} task."
+            )
             self._mock_node_anchor_based_link_prediction_assets()
         else:
             raise NotImplementedError

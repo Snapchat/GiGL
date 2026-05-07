@@ -230,9 +230,9 @@ def build_supervised_node_classification_samples_from_pyg_heterodata(
     root_node_type: NodeType,
     graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
 ) -> list[training_samples_schema_pb2.SupervisedNodeClassificationSample]:
-    samples: list[
-        training_samples_schema_pb2.SupervisedNodeClassificationSample
-    ] = list()
+    samples: list[training_samples_schema_pb2.SupervisedNodeClassificationSample] = (
+        list()
+    )
 
     assert (
         hetero_data[str(root_node_type)].get("y") is not None

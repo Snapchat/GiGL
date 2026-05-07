@@ -51,9 +51,7 @@ class TfRecordsIterableDatasetTest(TestCase):
         ) -> PygGraphData:
             sample = training_samples_schema_pb2.SupervisedNodeClassificationSample()
             sample.ParseFromString(raw_data)
-            neighborhood = (
-                sample.neighborhood
-            )  # TODO (svij-sc) : Refactor to use `preprocess_node_classification_raw_sample_fn` from future PRs
+            neighborhood = sample.neighborhood  # TODO (svij-sc) : Refactor to use `preprocess_node_classification_raw_sample_fn` from future PRs
             pyg_data: PygGraphData = cast(
                 PygGraphData,
                 proto_translator.graph_data_from_GraphPb(

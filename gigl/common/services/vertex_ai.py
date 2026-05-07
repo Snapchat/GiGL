@@ -46,7 +46,7 @@ PipelineJob created. Resource name: projects/my-project-id/locations/us-central1
 To use this PipelineJob in another session:
 pipeline_job = aiplatform.PipelineJob.get('projects/my-project-id/locations/us-central1/pipelineJobs/get-pipeline-20250226170755')
 View Pipeline Job:
-https://console.cloud.google.com/vertex-ai/locations/us-central1/pipelines/runs/get-pipeline-20250226170755?project=my-project-id
+https://console.cloud.google.com/agent-platform/locations/us-central1/pipelines/runs/get-pipeline-20250226170755?project=my-project-id
 Associating projects/my-project-id/locations/us-central1/pipelineJobs/get-pipeline-20250226170755 to Experiment: example-experiment
 
 
@@ -69,6 +69,7 @@ from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
     DiskSpec,
     MachineSpec,
+    ReservationAffinity,
     WorkerPoolSpec,
     env_var,
 )
@@ -78,9 +79,9 @@ from gigl.common.logger import Logger
 
 logger = Logger()
 
-LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[
-    str
-] = "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
+    "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+)
 
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
@@ -89,6 +90,53 @@ DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
 
 @dataclass
 class VertexAiJobConfig:
+    """Configuration for a Vertex AI CustomJob worker pool.
+
+    Each field maps to a property on the ``WorkerPoolSpec`` /
+    ``MachineSpec`` / ``DiskSpec`` / ``ContainerSpec`` protos that Vertex AI
+    uses to describe a CustomJob.
+
+    Example:
+        >>> from google.cloud.aiplatform_v1.types import ReservationAffinity
+        >>> reservation = ReservationAffinity(
+        ...     reservation_affinity_type=ReservationAffinity.Type.SPECIFIC_RESERVATION,
+        ...     key="compute.googleapis.com/reservation-name",
+        ...     values=["projects/p/zones/us-central1-a/reservations/r"],
+        ... )
+
+    See https://docs.cloud.google.com/vertex-ai/docs/training/use-reservations
+    for reservation prerequisites.
+
+    Args:
+        job_name: Display name and base ID used for the Vertex AI CustomJob.
+        container_uri: Docker image URI containing the job binary.
+        command: Entrypoint command executed inside the container.
+        args: Optional command-line arguments appended after ``command``.
+        environment_variables: Optional env vars injected into each worker
+            replica.
+        machine_type: Compute Engine machine type (e.g. ``n1-standard-4``).
+        accelerator_type: Accelerator type string (e.g.
+            ``NVIDIA_TESLA_A100``). ``ACCELERATOR_TYPE_UNSPECIFIED`` — the
+            default — means CPU-only.
+        accelerator_count: Number of accelerators per replica. Set to 0 for
+            CPU-only jobs.
+        replica_count: Number of worker replicas in the pool.
+        boot_disk_type: Boot disk type for each replica (e.g. ``pd-ssd``).
+        boot_disk_size_gb: Boot disk size in GB for each replica.
+        labels: Optional key/value labels attached to the job (e.g. for
+            billing / cost attribution).
+        timeout_s: Optional job timeout in seconds. Falls back to
+            ``DEFAULT_CUSTOM_JOB_TIMEOUT_S`` when ``None``.
+        enable_web_access: Enables interactive shell access to workers via
+            the Vertex AI web console.
+        scheduling_strategy: Optional
+            ``aiplatform.gapic.Scheduling.Strategy`` (e.g. spot,
+            flex-start). ``None`` uses the Vertex AI default.
+        reservation_affinity: Optional ``ReservationAffinity`` that maps to
+            ``MachineSpec.reservation_affinity``. ``None`` uses the Vertex
+            AI default (no reservation).
+    """
+
     job_name: str
     container_uri: str
     command: list[str]
@@ -98,14 +146,13 @@ class VertexAiJobConfig:
     accelerator_type: str = "ACCELERATOR_TYPE_UNSPECIFIED"
     accelerator_count: int = 0
     replica_count: int = 1
-    boot_disk_type: str = "pd-ssd"  # Persistent Disk SSD
-    boot_disk_size_gb: int = 100  # Default disk size in GB
+    boot_disk_type: str = "pd-ssd"
+    boot_disk_size_gb: int = 100
     labels: Optional[dict[str, str]] = None
-    timeout_s: Optional[
-        int
-    ] = None  # Will default to DEFAULT_CUSTOM_JOB_TIMEOUT_S if not provided
+    timeout_s: Optional[int] = None
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
+    reservation_affinity: Optional[ReservationAffinity] = None
 
 
 class VertexAIService:
@@ -181,9 +228,9 @@ class VertexAIService:
 
         disk_spec = _create_disk_spec(job_config)
 
-        assert (
-            job_config.replica_count >= 1
-        ), "Replica count can be at minumum 1, i.e. leader worker"
+        assert job_config.replica_count >= 1, (
+            "Replica count can be at minumum 1, i.e. leader worker"
+        )
 
         leader_worker_spec = WorkerPoolSpec(
             machine_spec=machine_spec,
@@ -209,7 +256,7 @@ class VertexAIService:
 
         if not job_config.timeout_s:
             logger.info(
-                f"No timeout set for Vertex AI job, setting default timeout to {DEFAULT_CUSTOM_JOB_TIMEOUT_S/60/60} hours"
+                f"No timeout set for Vertex AI job, setting default timeout to {DEFAULT_CUSTOM_JOB_TIMEOUT_S / 60 / 60} hours"
             )
             job_config.timeout_s = DEFAULT_CUSTOM_JOB_TIMEOUT_S
         else:
@@ -313,7 +360,7 @@ class VertexAIService:
         # Since for some reason upgrading from VertexAI v1.27.1 to v1.48.0
         # caused the logs to occasionally not be printed.
         logger.info(
-            f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
+            f"See job logs at: https://console.cloud.google.com/agent-platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
         job.wait_for_completion()
         return job
@@ -379,7 +426,7 @@ class VertexAIService:
     @staticmethod
     def get_pipeline_run_url(project: str, location: str, job_name: str) -> str:
         """Returns the URL for the pipeline run."""
-        return f"https://console.cloud.google.com/vertex-ai/locations/{location}/pipelines/runs/{job_name}?project={project}"
+        return f"https://console.cloud.google.com/agent-platform/locations/{location}/pipelines/runs/{job_name}?project={project}"
 
     @staticmethod
     def wait_for_run_completion(
@@ -443,6 +490,7 @@ def _create_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:
         machine_type=job_config.machine_type,
         accelerator_type=job_config.accelerator_type,
         accelerator_count=job_config.accelerator_count,
+        reservation_affinity=job_config.reservation_affinity,
     )
     return machine_spec
 

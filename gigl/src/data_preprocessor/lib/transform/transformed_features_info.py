@@ -25,9 +25,9 @@ class TransformedFeaturesInfo:
     transformed_features_schema_path: GcsUri
     transform_directory_path: GcsUri
     dataflow_console_uri: Optional[HttpUri] = None
-    identifier_output: Optional[
-        Union[NodeOutputIdentifier, EdgeOutputIdentifier]
-    ] = None
+    identifier_output: Optional[Union[NodeOutputIdentifier, EdgeOutputIdentifier]] = (
+        None
+    )
     features_outputs: Optional[list[str]] = None
     label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None

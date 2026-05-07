@@ -49,9 +49,7 @@ def infer_training_batch(
     ):
         training_batch = training_batch.graph
 
-    node_type_to_condensed_node_type_map = (
-        gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map
-    )
+    node_type_to_condensed_node_type_map = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map
     supervision_node_types = (
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_node_types(
             should_include_src_nodes=True,
@@ -119,9 +117,9 @@ def infer_task_inputs(
     _pos_embeddings: dict[CondensedEdgeType, list[torch.FloatTensor]] = defaultdict(
         list
     )
-    _hard_neg_embeddings: dict[
-        CondensedEdgeType, list[torch.FloatTensor]
-    ] = defaultdict(list)
+    _hard_neg_embeddings: dict[CondensedEdgeType, list[torch.FloatTensor]] = (
+        defaultdict(list)
+    )
 
     _positive_ids: dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
     _hard_neg_ids: dict[CondensedEdgeType, list[torch.LongTensor]] = defaultdict(list)
@@ -174,9 +172,9 @@ def infer_task_inputs(
         device=device,
     )
 
-    main_batch_node_id_mapping: dict[
-        CondensedNodeType, dict[NodeId, NodeId]
-    ] = main_batch.condensed_node_type_to_subgraph_id_to_global_node_id
+    main_batch_node_id_mapping: dict[CondensedNodeType, dict[NodeId, NodeId]] = (
+        main_batch.condensed_node_type_to_subgraph_id_to_global_node_id
+    )
     random_negative_batch_node_id_mapping: dict[
         CondensedNodeType, dict[NodeId, NodeId]
     ] = random_neg_batch.condensed_node_type_to_subgraph_id_to_global_node_id
@@ -235,9 +233,7 @@ def infer_task_inputs(
     for root_node_idx, root_node in enumerate(main_batch_root_node_indices):
         root_node = torch.unsqueeze(root_node, 0)  # shape=[1]
         _batch_scores: dict[CondensedEdgeType, BatchScores] = {}
-        for (
-            supervision_edge_type
-        ) in (
+        for supervision_edge_type in (
             gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_supervision_edge_types()
         ):
             condensed_supervision_edge_type = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map[
@@ -251,28 +247,30 @@ def infer_task_inputs(
             ]
             pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[
                 condensed_supervision_edge_type
-            ].root_node_to_target_node_id[
-                root_node.item()
-            ]  # shape=[num_pos_nodes]
+            ].root_node_to_target_node_id[root_node.item()]  # shape=[num_pos_nodes]
 
-            hard_neg_nodes: (
-                torch.LongTensor
-            ) = main_batch.hard_neg_supervision_edge_data[
-                condensed_supervision_edge_type
-            ].root_node_to_target_node_id[
-                root_node.item()
-            ]  # shape=[num_hard_neg_nodes]
+            hard_neg_nodes: torch.LongTensor = (
+                main_batch.hard_neg_supervision_edge_data[
+                    condensed_supervision_edge_type
+                ].root_node_to_target_node_id[root_node.item()]
+            )  # shape=[num_hard_neg_nodes]
 
             repeated_anchor_count[condensed_supervision_edge_type].append(
                 pos_nodes.numel()
             )
 
             if pos_nodes.numel():
-                _pos_embeddings[condensed_supervision_edge_type].append(main_embeddings[condensed_supervision_target_node_type][pos_nodes])  # type: ignore
+                _pos_embeddings[condensed_supervision_edge_type].append(
+                    main_embeddings[condensed_supervision_target_node_type][pos_nodes]  # type: ignore[arg-type]
+                )
                 _positive_ids[condensed_supervision_edge_type].append(pos_nodes)
 
             if hard_neg_nodes.numel():
-                _hard_neg_embeddings[condensed_supervision_edge_type].append(main_embeddings[condensed_supervision_target_node_type][hard_neg_nodes])  # type: ignore
+                _hard_neg_embeddings[condensed_supervision_edge_type].append(
+                    main_embeddings[condensed_supervision_target_node_type][
+                        hard_neg_nodes
+                    ]  # type: ignore[arg-type]
+                )
                 _hard_neg_ids[condensed_supervision_edge_type].append(hard_neg_nodes)
 
             # If any tasks need batch score information, decode embeddings into scores
@@ -333,10 +331,13 @@ def infer_task_inputs(
             else torch.tensor([])
         )
 
-        repeated_anchor_embeddings[
-            condensed_supervision_edge_type
-        ] = query_embeddings.repeat_interleave(
-            torch.tensor(repeated_anchor_count[condensed_supervision_edge_type]).to(device=device), dim=0  # type: ignore
+        repeated_anchor_embeddings[condensed_supervision_edge_type] = (
+            query_embeddings.repeat_interleave(
+                torch.tensor(repeated_anchor_count[condensed_supervision_edge_type]).to(
+                    device=device
+                ),
+                dim=0,  # type: ignore
+            )
         )
 
         # If needed, calculate task inputs for retrieval loss per condensed edge type
@@ -430,15 +431,15 @@ def infer_task_inputs(
                 else torch.tensor([])
             )
 
-            batch_combined_scores[
-                condensed_supervision_edge_type
-            ] = BatchCombinedScores(
-                repeated_candidate_scores=repeated_candidate_scores,
-                positive_ids=global_positive_ids,  # type: ignore
-                hard_neg_ids=global_hard_neg_ids,  # type: ignore
-                random_neg_ids=global_random_neg_ids,  # type: ignore
-                repeated_query_ids=repeated_global_query_ids,  # type: ignore
-                num_unique_query_ids=main_batch_root_node_indices.shape[0],
+            batch_combined_scores[condensed_supervision_edge_type] = (
+                BatchCombinedScores(
+                    repeated_candidate_scores=repeated_candidate_scores,
+                    positive_ids=global_positive_ids,  # type: ignore
+                    hard_neg_ids=global_hard_neg_ids,  # type: ignore
+                    random_neg_ids=global_random_neg_ids,  # type: ignore
+                    repeated_query_ids=repeated_global_query_ids,  # type: ignore
+                    num_unique_query_ids=main_batch_root_node_indices.shape[0],
+                )
             )
 
     # Populate all computed embeddings for task input

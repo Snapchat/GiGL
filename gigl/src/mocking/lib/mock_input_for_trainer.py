@@ -28,12 +28,12 @@ def split_and_write_supervised_node_classification_subgraph_samples_from_mocked_
     split_data: HeteroData = transductive_split_cls(hetero_data)
 
     # Build all SNC samples from dataset.
-    samples: list[
-        training_samples_schema_pb2.SupervisedNodeClassificationSample
-    ] = pyg_to_training_samples.build_supervised_node_classification_samples_from_pyg_heterodata(
-        hetero_data=split_data,
-        root_node_type=root_node_type,
-        graph_metadata_pb_wrapper=mocked_dataset_info.graph_metadata_pb_wrapper,
+    samples: list[training_samples_schema_pb2.SupervisedNodeClassificationSample] = (
+        pyg_to_training_samples.build_supervised_node_classification_samples_from_pyg_heterodata(
+            hetero_data=split_data,
+            root_node_type=root_node_type,
+            graph_metadata_pb_wrapper=mocked_dataset_info.graph_metadata_pb_wrapper,
+        )
     )
 
     # Separate into train / val / test sets according to mask.
@@ -66,9 +66,7 @@ def split_and_write_supervised_node_classification_subgraph_samples_from_mocked_
             )
 
     # Write out to GbmlConfig-specified paths
-    output_paths = (
-        gbml_config_pb.shared_config.dataset_metadata.supervised_node_classification_dataset
-    )
+    output_paths = gbml_config_pb.shared_config.dataset_metadata.supervised_node_classification_dataset
 
     tfrecord_io.write_pb_tfrecord_shards_to_uri(
         pb_samples=train_samples,
@@ -147,9 +145,7 @@ def split_and_write_node_anchor_link_prediction_subgraph_samples_from_mocked_dat
     )
 
     # Write out to GbmlConfig-specified paths
-    output_paths = (
-        gbml_config_pb.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
-    )
+    output_paths = gbml_config_pb.shared_config.dataset_metadata.node_anchor_based_link_prediction_dataset
 
     tfrecord_io.write_pb_tfrecord_shards_to_uri(
         pb_samples=train_na_samples,

@@ -17,6 +17,7 @@ Args:
     --batch_size: Batch size for inference.
     --use_local_saved_model: Use a local saved model instead of a remote URI.
 """
+
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
@@ -32,8 +33,8 @@ import fastavro
 import pandas as pd
 import torch
 import torch.multiprocessing.spawn
-from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 
+from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter
 from gigl.common.logger import Logger
@@ -158,9 +159,7 @@ if __name__ == "__main__":
     if strtobool(args.use_local_saved_model):
         saved_model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = (
-            gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
-        )
+        saved_model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
     logger.info(f"Using saved model URI: {saved_model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()

@@ -26,9 +26,9 @@ def log_stats_for_pyg_planetoid_dataset(dataset: Planetoid):
     logger.info(f"Number of testing nodes: {data.test_mask.sum()}")
 
     logger.info(
-        f"""Training node label rate: {int(
-            data.train_mask.sum() + data.test_mask.sum() + data.val_mask.sum()
-        ) / data.num_nodes:.2f}"""
+        f"""Training node label rate: {
+            int(data.train_mask.sum() + data.test_mask.sum() + data.val_mask.sum())
+            / data.num_nodes:.2f}"""
     )
     logger.info(f"Has isolated nodes: {data.has_isolated_nodes()}")
     logger.info(f"Has self-loops: {data.has_self_loops()}")

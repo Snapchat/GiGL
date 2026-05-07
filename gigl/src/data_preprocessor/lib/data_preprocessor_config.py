@@ -152,9 +152,9 @@ def build_ingestion_feature_spec_fn(
     return get_ingestion_feature_spec
 
 
-def build_passthrough_transform_preprocessing_fn() -> (
-    Callable[[TFTensorDict], TFTensorDict]
-):
+def build_passthrough_transform_preprocessing_fn() -> Callable[
+    [TFTensorDict], TFTensorDict
+]:
     """
     Produces a callable which acts as a pass-through preprocessing_fn for TFT to use.  In other words, it simply
     passes all keys available in the input onwards to the output.

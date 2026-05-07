@@ -66,9 +66,7 @@ class TaskMetadataPbWrapper:
             self.task_metadata_type
             == TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
         ):
-            supervision_edge_types_pb = (
-                self.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
-            )
+            supervision_edge_types_pb = self.task_metadata_pb.node_anchor_based_link_prediction_task_metadata.supervision_edge_types
         elif self.task_metadata_type == TaskMetadataType.LINK_BASED_TASK:
             supervision_edge_types_pb = (
                 self.task_metadata_pb.link_based_task_metadata.supervision_edge_types

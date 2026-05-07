@@ -177,7 +177,7 @@ class LightGCN(nn.Module):
         else:
             if len(layer_weights) != (num_layers + 1):
                 raise ValueError(
-                    f"layer_weights must have length K+1={num_layers+1}, got {len(layer_weights)}"
+                    f"layer_weights must have length K+1={num_layers + 1}, got {len(layer_weights)}"
                 )
 
         # Register layer weights as a buffer so it moves with the model to different devices
@@ -283,9 +283,9 @@ class LightGCN(nn.Module):
             device
         )  # shape [2, E], where E is the number of edges
 
-        assert hasattr(
-            data, "node"
-        ), "Subgraph must include .node to map local→global IDs."
+        assert hasattr(data, "node"), (
+            "Subgraph must include .node to map local→global IDs."
+        )
         global_ids = data.node.to(
             device
         ).long()  # shape [N_sub], maps local 0..N_sub-1 → global ids

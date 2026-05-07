@@ -123,9 +123,7 @@ class SubgraphSampler:
         )
 
         if should_ingest_into_graph_db:
-            graph_db_config = (
-                gbml_config_pb_wrapper.dataset_config.subgraph_sampler_config.graph_db_config
-            )
+            graph_db_config = gbml_config_pb_wrapper.dataset_config.subgraph_sampler_config.graph_db_config
 
             graph_db_ingestion_config_cls_str: str = (
                 graph_db_config.graph_db_ingestion_cls_path

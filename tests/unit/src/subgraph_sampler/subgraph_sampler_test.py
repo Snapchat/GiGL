@@ -94,15 +94,9 @@ class SubgraphSamplerTest(TestCase):
         self.resource_config.shared_resource_config.common_compute_config.region = (
             "test_region"
         )
-        self.resource_config.shared_resource_config.common_compute_config.gcp_service_account_email = (
-            "test@mail.com"
-        )
-        self.resource_config.shared_resource_config.common_compute_config.temp_assets_bucket = (
-            "gs://test_bucket/foo"
-        )
-        self.resource_config.shared_resource_config.common_compute_config.temp_regional_assets_bucket = (
-            "gs://test_bucket/bar"
-        )
+        self.resource_config.shared_resource_config.common_compute_config.gcp_service_account_email = "test@mail.com"
+        self.resource_config.shared_resource_config.common_compute_config.temp_assets_bucket = "gs://test_bucket/foo"
+        self.resource_config.shared_resource_config.common_compute_config.temp_regional_assets_bucket = "gs://test_bucket/bar"
         self.resource_config.subgraph_sampler_config.num_replicas = 1
         self.resource_config.subgraph_sampler_config.num_local_ssds = 2
 
@@ -113,9 +107,7 @@ class SubgraphSamplerTest(TestCase):
             f.write(yaml.dump(MessageToDict(self.resource_config)))
 
         self.gbml_config = gbml_config_pb2.GbmlConfig()
-        self.gbml_config.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix = (
-            "gs://test_tfrecord"
-        )
+        self.gbml_config.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output.tfrecord_uri_prefix = "gs://test_tfrecord"
         self.gbml_config.shared_config.flattened_graph_metadata.node_anchor_based_link_prediction_output.node_type_to_random_negative_tfrecord_uri_prefix[
             "foo_node"
         ] = "gs://test_tfrecord/foo_node"
@@ -237,9 +229,7 @@ class SubgraphSamplerTest(TestCase):
         self.gbml_config.dataset_config.subgraph_sampler_config.graph_db_config.graph_db_ingestion_args[
             "bar_graph_arg"
         ] = "bar"
-        self.gbml_config.dataset_config.subgraph_sampler_config.graph_db_config.graph_db_ingestion_cls_path = (
-            _INGESTOR_FQN
-        )
+        self.gbml_config.dataset_config.subgraph_sampler_config.graph_db_config.graph_db_ingestion_cls_path = _INGESTOR_FQN
         # Overwrite with the new config
         with open(self.gbml_config_path_local_path, "w") as f:
             f.write(yaml.dump(MessageToDict(self.gbml_config)))

@@ -79,9 +79,7 @@ def cast_graph_for_training(
         for (
             condensed_node_type,
             node_feature_dim,
-        ) in (
-            preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
-        ):
+        ) in preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items():
             node_type = graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
                 condensed_node_type
             ]
@@ -100,9 +98,7 @@ def cast_graph_for_training(
         for (
             condensed_edge_type,
             edge_feature_dim,
-        ) in (
-            preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
-        ):
+        ) in preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items():
             edge_type = graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
                 condensed_edge_type
             ]

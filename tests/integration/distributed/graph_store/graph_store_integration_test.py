@@ -20,7 +20,7 @@ from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
-    shutdown_compute_proccess,
+    shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.sharding import compute_server_assignments
@@ -88,9 +88,9 @@ def _get_batch_seed_tensor(
     else:
         assert isinstance(datum, Data)
         batch = datum.batch
-    assert isinstance(
-        batch, torch.Tensor
-    ), f"Expected tensor batch field, got {type(batch)}"
+    assert isinstance(batch, torch.Tensor), (
+        f"Expected tensor batch field, got {type(batch)}"
+    )
     return _to_long_cpu(batch)
 
 
@@ -193,48 +193,48 @@ def _assert_ablp_input(
 ) -> None:
     """Assert the structure of the fetched ABLP input for the current rank."""
     assert isinstance(ablp_result, dict), f"Expected dict, got {type(ablp_result)}"
-    assert (
-        len(ablp_result) == cluster_info.num_storage_nodes
-    ), f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
+    assert len(ablp_result) == cluster_info.num_storage_nodes, (
+        f"Expected {cluster_info.num_storage_nodes} storage nodes in result, got {len(ablp_result)}"
+    )
 
     for server_rank, ablp_input in ablp_result.items():
-        assert isinstance(
-            ablp_input, ABLPInputNodes
-        ), f"Expected ABLPInputNodes, got {type(ablp_input)}"
+        assert isinstance(ablp_input, ABLPInputNodes), (
+            f"Expected ABLPInputNodes, got {type(ablp_input)}"
+        )
 
         anchors = ablp_input.anchor_nodes
-        assert isinstance(
-            anchors, torch.Tensor
-        ), f"Anchors should be a tensor, got {type(anchors)}"
+        assert isinstance(anchors, torch.Tensor), (
+            f"Anchors should be a tensor, got {type(anchors)}"
+        )
         assert anchors.dim() == 1, f"Anchors should be 1D, got {anchors.dim()}D"
 
-        assert isinstance(
-            ablp_input.labels, dict
-        ), f"Labels should be a dict, got {type(ablp_input.labels)}"
+        assert isinstance(ablp_input.labels, dict), (
+            f"Labels should be a dict, got {type(ablp_input.labels)}"
+        )
         for edge_type, (
             positive_labels,
             negative_labels,
         ) in ablp_input.labels.items():
-            assert isinstance(
-                positive_labels, torch.Tensor
-            ), f"Positive labels should be a tensor, got {type(positive_labels)}"
-            assert (
-                positive_labels.dim() == 2
-            ), f"Positive labels should be 2D, got {positive_labels.dim()}D"
-            assert positive_labels.shape[0] == len(
-                anchors
-            ), f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
+            assert isinstance(positive_labels, torch.Tensor), (
+                f"Positive labels should be a tensor, got {type(positive_labels)}"
+            )
+            assert positive_labels.dim() == 2, (
+                f"Positive labels should be 2D, got {positive_labels.dim()}D"
+            )
+            assert positive_labels.shape[0] == len(anchors), (
+                f"Positive labels first dim should match anchors length, got {positive_labels.shape[0]} vs {len(anchors)}"
+            )
 
             if negative_labels is not None:
-                assert isinstance(
-                    negative_labels, torch.Tensor
-                ), f"Negative labels should be a tensor, got {type(negative_labels)}"
-                assert (
-                    negative_labels.dim() == 2
-                ), f"Negative labels should be 2D, got {negative_labels.dim()}D"
-                assert negative_labels.shape[0] == len(
-                    anchors
-                ), f"Negative labels first dim should match anchors length"
+                assert isinstance(negative_labels, torch.Tensor), (
+                    f"Negative labels should be a tensor, got {type(negative_labels)}"
+                )
+                assert negative_labels.dim() == 2, (
+                    f"Negative labels should be 2D, got {negative_labels.dim()}D"
+                )
+                assert negative_labels.shape[0] == len(anchors), (
+                    f"Negative labels first dim should match anchors length"
+                )
 
         has_negatives = any(neg is not None for _, neg in ablp_input.labels.values())
         logger.info(
@@ -284,16 +284,16 @@ def _run_compute_train_tests(
     for ablp_batch, random_negative_batch in zip_longest(
         ablp_loader, random_negative_loader
     ):
-        assert (
-            ablp_batch is not None
-        ), "ABLP loader exhausted before random negative loader"
-        assert (
-            random_negative_batch is not None
-        ), "Random negative loader exhausted before ABLP loader"
+        assert ablp_batch is not None, (
+            "ABLP loader exhausted before random negative loader"
+        )
+        assert random_negative_batch is not None, (
+            "Random negative loader exhausted before ABLP loader"
+        )
         assert hasattr(ablp_batch, "y_positive"), "Batch should have y_positive labels"
-        assert isinstance(
-            ablp_batch.y_positive, dict
-        ), f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        assert isinstance(ablp_batch.y_positive, dict), (
+            f"y_positive should be dict, got {type(ablp_batch.y_positive)}"
+        )
         if node_type is not None:
             assert isinstance(ablp_batch, HeteroData)
             assert isinstance(random_negative_batch, HeteroData)
@@ -324,7 +324,9 @@ def _run_compute_train_tests(
         local_expected=local_expected_negative_seeds,
     )
 
-    shutdown_compute_proccess()
+    ablp_loader.shutdown()
+    random_negative_loader.shutdown()
+    shutdown_compute_process()
 
 
 def _run_compute_multiple_loaders_test(
@@ -376,25 +378,54 @@ def _run_compute_multiple_loaders_test(
         remote_dist_dataset, ablp_result, prefetch_size=2
     )
     logger.info(
-        f"Rank {rank} / {world_size} ablp_loader_1 producers: ({ablp_loader_1._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_1 backends/channels: "
+        f"({ablp_loader_1._backend_id_list}, {ablp_loader_1._channel_id_list})"
     )
     ablp_loader_2 = _build_ablp_loader(
         remote_dist_dataset, ablp_result, prefetch_size=2
     )
     logger.info(
-        f"Rank {rank} / {world_size} ablp_loader_2 producers: ({ablp_loader_2._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_2 backends/channels: "
+        f"({ablp_loader_2._backend_id_list}, {ablp_loader_2._channel_id_list})"
     )
     neighbor_loader_1 = _build_neighbor_loader(
         remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {rank} / {world_size} neighbor_loader_1 producers: ({neighbor_loader_1._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_1 backends/channels: "
+        f"({neighbor_loader_1._backend_id_list}, {neighbor_loader_1._channel_id_list})"
     )
     neighbor_loader_2 = _build_neighbor_loader(
         remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {rank} / {world_size} neighbor_loader_2 producers: ({neighbor_loader_2._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_2 backends/channels: "
+        f"({neighbor_loader_2._backend_id_list}, {neighbor_loader_2._channel_id_list})"
+    )
+    gathered_ablp_loader_1_backends = [None] * world_size
+    torch.distributed.all_gather_object(
+        gathered_ablp_loader_1_backends, tuple(ablp_loader_1._backend_id_list)
+    )
+    assert all(
+        backend_ids == gathered_ablp_loader_1_backends[0]
+        for backend_ids in gathered_ablp_loader_1_backends
+    ), "All ranks should share the same backend ids for one logical loader."
+    gathered_neighbor_loader_1_backends = [None] * world_size
+    torch.distributed.all_gather_object(
+        gathered_neighbor_loader_1_backends, tuple(neighbor_loader_1._backend_id_list)
+    )
+    assert all(
+        backend_ids == gathered_neighbor_loader_1_backends[0]
+        for backend_ids in gathered_neighbor_loader_1_backends
+    ), "All ranks should share the same backend ids for one logical loader."
+    assert ablp_loader_1._backend_id_list != ablp_loader_2._backend_id_list, (
+        "Concurrent ABLP loaders must use distinct backends."
+    )
+    assert neighbor_loader_1._backend_id_list != neighbor_loader_2._backend_id_list, (
+        "Concurrent neighbor loaders must use distinct backends."
+    )
+    assert ablp_loader_1._backend_id_list != neighbor_loader_1._backend_id_list, (
+        "ABLP and neighbor loaders must not share a backend."
     )
     logger.info(
         f"Rank {rank} / {world_size} phase 1: loading batches from 4 parallel loaders"
@@ -410,12 +441,12 @@ def _run_compute_multiple_loaders_test(
         assert ablp_batch_2 is not None, "ABLP loader 2 exhausted early in phase 1"
         assert neg_batch_1 is not None, "Neighbor loader 1 exhausted early in phase 1"
         assert neg_batch_2 is not None, "Neighbor loader 2 exhausted early in phase 1"
-        assert hasattr(
-            ablp_batch_1, "y_positive"
-        ), "ABLP batch 1 should have y_positive"
-        assert hasattr(
-            ablp_batch_2, "y_positive"
-        ), "ABLP batch 2 should have y_positive"
+        assert hasattr(ablp_batch_1, "y_positive"), (
+            "ABLP batch 1 should have y_positive"
+        )
+        assert hasattr(ablp_batch_2, "y_positive"), (
+            "ABLP batch 2 should have y_positive"
+        )
         phase1_ablp_loader_1_batches.append(
             _get_batch_seed_tensor(ablp_batch_1, node_type)
         )
@@ -454,9 +485,8 @@ def _run_compute_multiple_loaders_test(
         local_expected=local_expected_negative_seeds,
     )
 
-    # Shut down phase 1 loaders to free server-side producers and RPC resources
-    # before creating new loaders. This mirrors GLT's DistLoader.shutdown() which
-    # calls DistServer.destroy_sampling_producer for each remote producer.
+    # Shut down phase 1 loaders to free server-side channels and backend resources
+    # before creating new loaders.
     ablp_loader_1.shutdown()
     ablp_loader_2.shutdown()
     neighbor_loader_1.shutdown()
@@ -469,13 +499,15 @@ def _run_compute_multiple_loaders_test(
     # ------------------------------------------------------------------
     ablp_loader_3 = _build_ablp_loader(remote_dist_dataset, ablp_result)
     logger.info(
-        f"Rank {rank} / {world_size} ablp_loader_3 producers: ({ablp_loader_3._producer_id_list})"
+        f"Rank {rank} / {world_size} ablp_loader_3 backends/channels: "
+        f"({ablp_loader_3._backend_id_list}, {ablp_loader_3._channel_id_list})"
     )
     neighbor_loader_3 = _build_neighbor_loader(
         remote_dist_dataset, random_negative_input
     )
     logger.info(
-        f"Rank {rank} / {world_size} neighbor_loader_3 producers: ({neighbor_loader_3._producer_id_list})"
+        f"Rank {rank} / {world_size} neighbor_loader_3 backends/channels: "
+        f"({neighbor_loader_3._backend_id_list}, {neighbor_loader_3._channel_id_list})"
     )
     logger.info(
         f"Rank {rank} / {world_size} phase 2: loading batches from 2 sequential loaders"
@@ -485,9 +517,9 @@ def _run_compute_multiple_loaders_test(
     for ablp_batch_3, neg_batch_3 in zip_longest(ablp_loader_3, neighbor_loader_3):
         assert ablp_batch_3 is not None, "ABLP loader 3 exhausted early in phase 2"
         assert neg_batch_3 is not None, "Neighbor loader 3 exhausted early in phase 2"
-        assert hasattr(
-            ablp_batch_3, "y_positive"
-        ), "ABLP batch 3 should have y_positive"
+        assert hasattr(ablp_batch_3, "y_positive"), (
+            "ABLP batch 3 should have y_positive"
+        )
         phase2_ablp_loader_3_batches.append(
             _get_batch_seed_tensor(ablp_batch_3, node_type)
         )
@@ -514,7 +546,7 @@ def _run_compute_multiple_loaders_test(
     neighbor_loader_3.shutdown()
     torch.distributed.barrier()
 
-    shutdown_compute_proccess()
+    shutdown_compute_process()
 
 
 def _run_compute_tests(
@@ -537,15 +569,15 @@ def _run_compute_tests(
     )
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    assert (
-        remote_dist_dataset.fetch_edge_dir() == "in"
-    ), f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.fetch_edge_dir()}"
-    assert (
-        remote_dist_dataset.fetch_edge_feature_info() is not None
-    ), "Edge feature info must not be None for the test dataset"
-    assert (
-        remote_dist_dataset.fetch_node_feature_info() is not None
-    ), "Node feature info must not be None for the test dataset"
+    assert remote_dist_dataset.fetch_edge_dir() == "in", (
+        f"Edge direction must be 'in' for the test dataset. Got {remote_dist_dataset.fetch_edge_dir()}"
+    )
+    assert remote_dist_dataset.fetch_edge_feature_info() is not None, (
+        "Edge feature info must not be None for the test dataset"
+    )
+    assert remote_dist_dataset.fetch_node_feature_info() is not None, (
+        "Node feature info must not be None for the test dataset"
+    )
     ports = remote_dist_dataset.fetch_free_ports_on_storage_cluster(num_ports=2)
     assert len(ports) == 2, "Expected 2 free ports"
     if rank == 0:
@@ -558,9 +590,9 @@ def _run_compute_tests(
     if rank == 0:
         assert isinstance(all_ports, list)
         for i, received_ports in enumerate(all_ports):
-            assert (
-                received_ports == ports
-            ), f"Expected {ports} free ports, got {received_ports}"
+            assert received_ports == ports, (
+                f"Expected {ports} free ports, got {received_ports}"
+            )
 
     torch.distributed.barrier()
     logger.info("Verified that all ranks received the same free ports")
@@ -572,9 +604,9 @@ def _run_compute_tests(
     )
     _assert_sampler_input(cluster_info, sampler_input, expected_sampler_input)
 
-    assert (
-        remote_dist_dataset.fetch_edge_types() == expected_edge_types
-    ), f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.fetch_edge_types()}"
+    assert remote_dist_dataset.fetch_edge_types() == expected_edge_types, (
+        f"Expected edge types {expected_edge_types}, got {remote_dist_dataset.fetch_edge_types()}"
+    )
 
     torch.distributed.barrier()
     if node_type is not None:
@@ -613,7 +645,7 @@ def _run_compute_tests(
         ),
     )
     loader.shutdown()
-    shutdown_compute_proccess()
+    shutdown_compute_process()
 
 
 # ---------------------------------------------------------------------------
@@ -976,7 +1008,7 @@ class GraphStoreIntegrationTest(TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ]
         cluster_info = self._create_cluster_info(
-            num_storage_nodes=1, num_compute_nodes=1, num_processes_per_compute=1
+            num_storage_nodes=1, num_compute_nodes=2, num_processes_per_compute=1
         )
         self._launch_graph_store_test(
             cluster_info=cluster_info,

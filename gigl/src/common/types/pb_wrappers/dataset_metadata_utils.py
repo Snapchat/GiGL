@@ -133,12 +133,12 @@ class SupervisedNodeClassificationDatasetDataloaders:
             if data_loader_type in self.dataloaders:
                 dataloaders[data_loader_type] = self.dataloaders[data_loader_type]
                 continue
-            self.dataloaders[
-                data_loader_type
-            ] = SupervisedNodeClassificationBatch.get_default_data_loader(
-                gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-                graph_builder=graph_builder,
-                config=config,
+            self.dataloaders[data_loader_type] = (
+                SupervisedNodeClassificationBatch.get_default_data_loader(
+                    gbml_config_pb_wrapper=gbml_config_pb_wrapper,
+                    graph_builder=graph_builder,
+                    config=config,
+                )
             )
             dataloaders[data_loader_type] = self.dataloaders[data_loader_type]
         return dataloaders
@@ -148,9 +148,7 @@ class SupervisedNodeClassificationDatasetDataloaders:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         data_loader_types: list[DataloaderTypes],
     ) -> dict[DataloaderTypes, str]:
-        dataset_pb: dataset_metadata_pb2.SupervisedNodeClassificationDataset = (
-            gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.supervised_node_classification_dataset
-        )
+        dataset_pb: dataset_metadata_pb2.SupervisedNodeClassificationDataset = gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.supervised_node_classification_dataset
         uri_map: dict[DataloaderTypes, str] = {
             DataloaderTypes.train_main: dataset_pb.train_data_uri,
             DataloaderTypes.val_main: dataset_pb.val_data_uri,
@@ -316,21 +314,21 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
                 continue
             # If we hae a list of uris, we are getting a main batch dataloader
             if isinstance(config.uris, list):
-                self.dataloaders[
-                    data_loader_type
-                ] = NodeAnchorBasedLinkPredictionBatch.get_default_data_loader(
-                    gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-                    graph_builder=graph_builder,
-                    config=config,
+                self.dataloaders[data_loader_type] = (
+                    NodeAnchorBasedLinkPredictionBatch.get_default_data_loader(
+                        gbml_config_pb_wrapper=gbml_config_pb_wrapper,
+                        graph_builder=graph_builder,
+                        config=config,
+                    )
                 )
             # If we have a dictionary of uris, we are getting a rooted node neighborhood dataloader
             else:
-                self.dataloaders[
-                    data_loader_type
-                ] = RootedNodeNeighborhoodBatch.get_default_data_loader(
-                    gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-                    graph_builder=graph_builder,
-                    config=config,
+                self.dataloaders[data_loader_type] = (
+                    RootedNodeNeighborhoodBatch.get_default_data_loader(
+                        gbml_config_pb_wrapper=gbml_config_pb_wrapper,
+                        graph_builder=graph_builder,
+                        config=config,
+                    )
                 )
             dataloaders[data_loader_type] = self.dataloaders[data_loader_type]
         return dataloaders
@@ -340,9 +338,7 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         data_loader_types: list[DataloaderTypes],
     ) -> dict[DataloaderTypes, Union[str, dict[str, str]]]:
-        dataset_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset = (
-            gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.node_anchor_based_link_prediction_dataset
-        )
+        dataset_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset = gbml_config_pb_wrapper.dataset_metadata_pb_wrapper.dataset_metadata_pb.node_anchor_based_link_prediction_dataset
         uri_map: dict[DataloaderTypes, Union[str, dict[str, str]]] = {
             DataloaderTypes.train_main: dataset_pb.train_main_data_uri,
             DataloaderTypes.val_main: dataset_pb.val_main_data_uri,

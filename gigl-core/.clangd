@@ -1,0 +1,5 @@
+# Point clangd at the test compilation database rather than the default cmake_build one.
+# The test database includes both the extension modules and the test binaries, so clangd
+# can resolve gtest headers for test files alongside production headers.
+CompileFlags:
+  CompilationDatabase: .cache/cpp_tests

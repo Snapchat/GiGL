@@ -17,7 +17,7 @@ object Main {
     val resourceConfigYamlGcsUri   = args(2)
 
     println(f"""
-      Starting Split Generator with the following arguments: 
+      Starting Split Generator with the following arguments:
         sparkAppName=${sparkAppName},
         frozenGbmlConfigYamlGcsUri=${frozenGbmlConfigYamlGcsUri},
         resourceConfigYamlGcsUri=${resourceConfigYamlGcsUri}

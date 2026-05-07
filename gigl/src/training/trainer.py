@@ -29,14 +29,11 @@ class Trainer:
         """
 
         logger.info("Preparing staging paths for Trainer...")
-        paths_to_delete = (
-            [
-                gcs_constants.get_trainer_asset_dir_gcs_path(
-                    applied_task_identifier=applied_task_identifier
-                )
-            ]
-            + gbml_config_pb_wrapper.trained_model_metadata_pb_wrapper.get_output_paths()
-        )
+        paths_to_delete = [
+            gcs_constants.get_trainer_asset_dir_gcs_path(
+                applied_task_identifier=applied_task_identifier
+            )
+        ] + gbml_config_pb_wrapper.trained_model_metadata_pb_wrapper.get_output_paths()
         file_loader = FileLoader()
         logger.info(f"Will delete files @ the following paths: {paths_to_delete}")
         file_loader.delete_files(uris=paths_to_delete)

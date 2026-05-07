@@ -346,13 +346,11 @@ class GraphSageTemplateTrainerSpec(
                     main_embeddings[root_node], main_embeddings[pos_nodes].T
                 )
 
-            hard_neg_nodes: (
-                torch.LongTensor
-            ) = main_batch.hard_neg_supervision_edge_data[
-                CondensedEdgeType(0)
-            ].root_node_to_target_node_id[
-                root_node.item()
-            ]  # shape=[num_hard_neg_nodes]
+            hard_neg_nodes: torch.LongTensor = (
+                main_batch.hard_neg_supervision_edge_data[
+                    CondensedEdgeType(0)
+                ].root_node_to_target_node_id[root_node.item()]
+            )  # shape=[num_hard_neg_nodes]
 
             if hard_neg_nodes.numel():
                 hard_neg_scores = torch.mm(

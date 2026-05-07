@@ -72,7 +72,7 @@ install_uv_if_needed() {
 
         sh uv_installer.sh
         rm -f uv_installer.sh
-        source $HOME/.local/bin/env
+        export PATH="$HOME/.local/bin:$PATH"
     fi
 }
 
@@ -138,13 +138,21 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
+    # gigl-core's CMake build requires torch to be present during the build, but
+    # torch is a runtime dep of gigl, not a declared build dep of gigl-core.
+    # uv sync may ignore no-build-isolation-package for workspace members and always
+    # builds them in an isolated environment where torch is absent.
+    # Workaround: phase 1 installs everything except gigl-core (so torch lands in
+    # the venv); phase 2 uses `uv pip install --no-build-isolation` which explicitly
+    # skips isolation and lets CMake find torch from the ambient venv.
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
-        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match}
+        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-package gigl-core
     else
-        uv sync ${extra_deps_clause[@]} --locked ${flag_use_inexact_match}
+        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked ${flag_use_inexact_match} --no-install-package gigl-core
     fi
+    uv pip install --no-build-isolation ./gigl-core/
 
     # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
     # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.

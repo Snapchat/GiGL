@@ -36,9 +36,9 @@ class SupervisedNodeClassificationBatch:
     ]  # batch-coalesced graph data used for message passing
     root_node_indices: torch.LongTensor  # dtype: int64, shape: [num_root_nodes, ]
     root_nodes: list[Node]  # len(root_nodes) == number of graphs in Batch
-    root_node_labels: Optional[
-        torch.LongTensor
-    ] = None  # dtype: int64, shape: [num_root_nodes, ]
+    root_node_labels: Optional[torch.LongTensor] = (
+        None  # dtype: int64, shape: [num_root_nodes, ]
+    )
 
     @staticmethod
     def preprocess_node_classification_sample_fn(

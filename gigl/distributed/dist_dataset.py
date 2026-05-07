@@ -26,7 +26,10 @@ from gigl.types.graph import (
     GraphPartitionData,
     PartitionOutput,
 )
-from gigl.utils.data_splitters import NodeAnchorLinkSplitter, NodeSplitter
+from gigl.utils.data_splitters import (
+    NodeAnchorLinkSplitter,
+    NodeSplitter,
+)
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
@@ -80,6 +83,7 @@ class DistDataset(glt.distributed.DistDataset):
         degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
+        max_labels_per_anchor_node: Optional[int] = None,
     ) -> None:
         """
         Initializes the fields of the DistDataset class. This function is called upon each serialization of the DistDataset instance.
@@ -105,6 +109,8 @@ class DistDataset(glt.distributed.DistDataset):
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
             degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
+            max_labels_per_anchor_node (Optional[int]): Optional cap for how many
+                labels to materialize per anchor node for ABLP label fetching.
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -128,9 +134,9 @@ class DistDataset(glt.distributed.DistDataset):
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = negative_edge_label
 
-        self._node_ids: Optional[
-            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-        ] = node_ids
+        self._node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = (
+            node_ids
+        )
 
         self._num_train = num_train
         self._num_val = num_val
@@ -143,6 +149,7 @@ class DistDataset(glt.distributed.DistDataset):
         self._degree_tensor: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = degree_tensor
+        self._max_labels_per_anchor_node = max_labels_per_anchor_node
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -328,6 +335,16 @@ class DistDataset(glt.distributed.DistDataset):
 
             self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
         return self._degree_tensor
+
+    @property
+    def max_labels_per_anchor_node(self) -> Optional[int]:
+        return self._max_labels_per_anchor_node
+
+    @max_labels_per_anchor_node.setter
+    def max_labels_per_anchor_node(
+        self, new_max_labels_per_anchor_node: Optional[int]
+    ) -> None:
+        self._max_labels_per_anchor_node = new_max_labels_per_anchor_node
 
     @property
     def train_node_ids(
@@ -552,9 +569,9 @@ class DistDataset(glt.distributed.DistDataset):
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
         if isinstance(partitioned_edge_index, GraphPartitionData):
-            edge_index: Union[
-                torch.Tensor, dict[EdgeType, torch.Tensor]
-            ] = partitioned_edge_index.edge_index
+            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+                partitioned_edge_index.edge_index
+            )
             edge_ids: Union[
                 Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
             ] = partitioned_edge_index.edge_ids
@@ -741,9 +758,9 @@ class DistDataset(glt.distributed.DistDataset):
 
         start_time = time.time()
 
-        assert (
-            partition_output.partitioned_edge_index is not None
-        ), "Edge index must be present in the partition output"
+        assert partition_output.partitioned_edge_index is not None, (
+            "Edge index must be present in the partition output"
+        )
 
         # We compute the node ids on the current machine, which will be used as input to the neighbor loaders.
         node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]] = (
@@ -858,6 +875,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+        Optional[int],
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -880,6 +898,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
+            Optional[int]: Optional per-anchor label cap for ABLP label fetching
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 
@@ -908,6 +927,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._node_feature_info,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
             self._degree_tensor,  # Additional field unique to DistDataset class
+            self._max_labels_per_anchor_node,  # Additional field unique to DistDataset class
         )
         return ipc_handle
 
@@ -1007,24 +1027,24 @@ def _append_non_split_node_ids(
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: None,
-) -> Tuple[None, None]:
-    ...
+) -> Tuple[None, None]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: FeaturePartitionData,
-) -> Tuple[torch.Tensor, TensorDataType]:
-    ...
+) -> Tuple[torch.Tensor, TensorDataType]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: dict[_EntityType, PartitionBook],
     partitioned_data: dict[_EntityType, FeaturePartitionData],
-) -> Tuple[dict[_EntityType, torch.Tensor], dict[_EntityType, TensorDataType],]:
-    ...
+) -> Tuple[
+    dict[_EntityType, torch.Tensor],
+    dict[_EntityType, TensorDataType],
+]: ...
 
 
 def _prepare_feature_data(
@@ -1081,19 +1101,19 @@ def _prepare_feature_data(
         return features, id_to_index
 
     elif isinstance(partitioned_data, Mapping):
-        assert (
-            len(partitioned_data) > 0
-        ), f"Expected at least one entity type in partitioned data, but got no entities. In heterogeneous settings, \
+        assert len(partitioned_data) > 0, (
+            f"Expected at least one entity type in partitioned data, but got no entities. In heterogeneous settings, \
             please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
+        )
         # Heterogeneous case
-        assert isinstance(
-            partition_book, Mapping
-        ), f"Found heterogeneous partitioned data, but no corresponding heterogeneous partition book. \
+        assert isinstance(partition_book, Mapping), (
+            f"Found heterogeneous partitioned data, but no corresponding heterogeneous partition book. \
             Got partition book of type {type(partition_book)}."
-        assert (
-            len(partition_book) > 0
-        ), f"Expected at least one entity type in partition book, but got no entities. In heterogeneous settings, \
+        )
+        assert len(partition_book) > 0, (
+            f"Expected at least one entity type in partition book, but got no entities. In heterogeneous settings, \
             please make sure you are registering entities with non-empty fields i.e. not an empty dictionary."
+        )
 
         # Extract features and IDs by type
         features_per_entity_type: dict[_EntityType, torch.Tensor] = {}
@@ -1104,9 +1124,9 @@ def _prepare_feature_data(
                     entity_key
                 ].feats
                 if isinstance(partition_book_instance, RangePartitionBook):
-                    id_to_index_per_entity_type[
-                        entity_key
-                    ] = partition_book_instance.id2index
+                    id_to_index_per_entity_type[entity_key] = (
+                        partition_book_instance.id2index
+                    )
                 else:
                     id_to_index_per_entity_type[entity_key] = id2idx(
                         partitioned_data[entity_key].ids
@@ -1164,7 +1184,8 @@ def _rebuild_distributed_dataset(
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
-    ]
+        Optional[int],  # Optional per-anchor label cap for ABLP label fetching
+    ],
 ):
     dataset = DistDataset.from_ipc_handle(ipc_handle)
     return dataset

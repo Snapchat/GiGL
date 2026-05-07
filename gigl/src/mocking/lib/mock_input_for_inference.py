@@ -30,7 +30,9 @@ def train_model(
         assert isinstance(
             dataset_metadata_pb_wrapper.output_metadata,
             dataset_metadata_pb2.SupervisedNodeClassificationDataset,
-        ), f"Did not find {dataset_metadata_pb2.SupervisedNodeClassificationDataset.__name__} instance"
+        ), (
+            f"Did not find {dataset_metadata_pb2.SupervisedNodeClassificationDataset.__name__} instance"
+        )
     elif (
         task_metadata_pb_wrapper.task_metadata_type
         == TaskMetadataType.NODE_ANCHOR_BASED_LINK_PREDICTION_TASK
@@ -38,7 +40,9 @@ def train_model(
         assert isinstance(
             dataset_metadata_pb_wrapper.output_metadata,
             dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset,
-        ), f"Did not find {dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset.__name__} instance"
+        ), (
+            f"Did not find {dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset.__name__} instance"
+        )
     else:
         raise NotImplementedError
 

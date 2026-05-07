@@ -187,9 +187,7 @@ class TFRecordDataLoaderTest(TestCase):
                 * 10,  # feature_0
                 expected_label_tensor=torch.tensor(
                     [i % 2 for i in range(100)], dtype=torch.float32
-                ).reshape(
-                    100, 1
-                ),  # label_0
+                ).reshape(100, 1),  # label_0
             ),
             param(
                 "Only labels, no features",
@@ -223,14 +221,10 @@ class TFRecordDataLoaderTest(TestCase):
                     (
                         torch.tensor(
                             [i % 2 for i in range(100)], dtype=torch.float32
-                        ).reshape(
-                            100, 1
-                        ),  # label_0
+                        ).reshape(100, 1),  # label_0
                         torch.tensor(
                             [i % 3 for i in range(100)], dtype=torch.float32
-                        ).reshape(
-                            100, 1
-                        ),  # label_1
+                        ).reshape(100, 1),  # label_1
                     ),
                     dim=1,
                 ),
@@ -250,14 +244,10 @@ class TFRecordDataLoaderTest(TestCase):
                     (
                         torch.tensor(
                             [i % 2 for i in range(100)], dtype=torch.float32
-                        ).reshape(
-                            100, 1
-                        ),  # label_0
+                        ).reshape(100, 1),  # label_0
                         torch.tensor(
                             [i % 3 for i in range(100)], dtype=torch.float32
-                        ).reshape(
-                            100, 1
-                        ),  # label_1
+                        ).reshape(100, 1),  # label_1
                     ),
                     dim=1,
                 ),
@@ -274,14 +264,10 @@ class TFRecordDataLoaderTest(TestCase):
                     (
                         torch.tensor(
                             [i % 2 for i in range(100)], dtype=torch.float32
-                        ).reshape(
-                            100, 1
-                        ),  # label_0
+                        ).reshape(100, 1),  # label_0
                         torch.tensor(
                             [i % 3 for i in range(100)], dtype=torch.float32
-                        ).reshape(
-                            100, 1
-                        ),  # label_1
+                        ).reshape(100, 1),  # label_1
                     ),
                     dim=1,
                 ),
@@ -475,9 +461,7 @@ class TFRecordDataLoaderTest(TestCase):
         preprocessed_metadata_pb_wrapper = (
             gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
         )
-        condensed_node_type = (
-            gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_node_type
-        )
+        condensed_node_type = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_node_type
         node_metadata = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
             condensed_node_type
         ]

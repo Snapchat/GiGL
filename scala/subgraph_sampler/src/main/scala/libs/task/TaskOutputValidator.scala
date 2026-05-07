@@ -17,7 +17,7 @@ object TaskOutputValidator {
     * is present in the neighborhood nodes.
     * This method does a dataset.map() on the final output produced by SGS and returns the same dataset
     * if there is no validation failure. Raises and excpetion if there is some error
-    * @spark: dataset.map() is not an action (unlike foreach) and does not lead to any 
+    * @spark: dataset.map() is not an action (unlike foreach) and does not lead to any
     * duplication of computation due to this validation code.
     *
     * @param mainSampleDS
@@ -50,7 +50,7 @@ object TaskOutputValidator {
     * is present in the neighborhood nodes.
     * This method does a dataset.map() on the final output produced by SGS and returns the same dataset
     * if there is no validation failure. Raises and excpetion if there is some error
-    * @spark: dataset.map() is not an action (unlike foreach) and does not lead to any 
+    * @spark: dataset.map() is not an action (unlike foreach) and does not lead to any
     * duplication of computation due to this validation code.
     *
     * @param mainSampleDS

@@ -16,7 +16,7 @@ class GnnTrainerTest(TestCase):
 
         trainer_config = gbml_config_pb2.GbmlConfig.TrainerConfig(
             trainer_cls_path=(
-                "tests." "test_assets." "test_modeling_spec." "TestModelingTaskSpec"
+                "tests.test_assets.test_modeling_spec.TestModelingTaskSpec"
             ),
             trainer_args={
                 "optim_lr": str(optim_lr),
@@ -30,9 +30,9 @@ class GnnTrainerTest(TestCase):
             gbml_config_pb_wrapper=GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb),
         )
 
-        assert isinstance(
-            trainer_instance, TestModelingTaskSpec
-        ), "trainer_instance must be an instance of TestModelingTaskSpec"
+        assert isinstance(trainer_instance, TestModelingTaskSpec), (
+            "trainer_instance must be an instance of TestModelingTaskSpec"
+        )
         self.assertEqual(trainer_instance._optim_lr, optim_lr)
         self.assertEqual(trainer_instance._optim_weight_decay, optim_weight_decay)
         self.assertEqual(trainer_instance._num_epochs, num_epochs)

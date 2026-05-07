@@ -76,9 +76,7 @@ class InferencerTest(TestCase):
         task_metadata_pb_wrapper = TaskMetadataPbWrapper(
             task_metadata_pb=gbml_config_pb.task_metadata
         )
-        node_type_to_inferencer_output_info_map = (
-            gbml_config_pb.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
-        )
+        node_type_to_inferencer_output_info_map = gbml_config_pb.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
         if (
             task_metadata_pb_wrapper.task_metadata_type
             == TaskMetadataType.NODE_BASED_TASK
@@ -86,9 +84,9 @@ class InferencerTest(TestCase):
             node_types = list(
                 task_metadata_pb_wrapper.task_metadata_pb.node_based_task_metadata.supervision_node_types
             )
-            assert (
-                len(node_types) == 1
-            ), "Node classification only supports single node types for inference output"
+            assert len(node_types) == 1, (
+                "Node classification only supports single node types for inference output"
+            )
             for node_type in node_types:
                 node_type_to_inferencer_output_info_map[
                     node_type
@@ -191,9 +189,9 @@ class InferencerTest(TestCase):
             )
 
         for node_type in mocked_dataset_inference_node_types:
-            assert (
-                node_type in mocked_dataset.node_types
-            ), f"Task metadata node type {node_type} not found in mocked dataset node types: {mocked_dataset.node_types}"
+            assert node_type in mocked_dataset.node_types, (
+                f"Task metadata node type {node_type} not found in mocked dataset node types: {mocked_dataset.node_types}"
+            )
             should_assert_predictions = bool(
                 node_type_to_inferencer_output_info_map[node_type].predictions_path
             )

@@ -51,9 +51,9 @@ class GbmlConfigPbWrapper:
     )
     _graph_metadata_pb_wrapper: GraphMetadataPbWrapper = field(init=False)
     _preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper = field(init=False)
-    _flattened_graph_metadata_pb_wrapper: Optional[
-        FlattenedGraphMetadataPbWrapper
-    ] = field(default=None, init=False)
+    _flattened_graph_metadata_pb_wrapper: Optional[FlattenedGraphMetadataPbWrapper] = (
+        field(default=None, init=False)
+    )
     _task_metadata_pb_wrapper: TaskMetadataPbWrapper = field(init=False)
     _trained_model_metadata_pb_wrapper: TrainedModelMetadataPbWrapper = field(
         init=False
@@ -100,9 +100,7 @@ class GbmlConfigPbWrapper:
             trained_model_metadata_pb=self.gbml_config_pb.shared_config.trained_model_metadata
         )
         # Populate the _subgraph_sampling_strategy_pb_wrapper field
-        subgraph_sampling_strategy_pb = (
-            self.gbml_config_pb.dataset_config.subgraph_sampler_config.subgraph_sampling_strategy
-        )
+        subgraph_sampling_strategy_pb = self.gbml_config_pb.dataset_config.subgraph_sampler_config.subgraph_sampling_strategy
         if subgraph_sampling_strategy_pb.WhichOneof("strategy") is not None:
             self.__load_subgraph_sampling_strategy_pb_wrapper(
                 subgraph_sampling_strategy_pb=self.gbml_config_pb.dataset_config.subgraph_sampler_config.subgraph_sampling_strategy

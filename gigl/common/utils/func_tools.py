@@ -7,20 +7,17 @@ RT = TypeVar("RT", bound=Callable[..., Any])
 
 
 @overload
-def lru_cache(maxsize: Callable[..., RT], typed: bool = False) -> Callable[..., RT]:
-    ...
+def lru_cache(maxsize: Callable[..., RT], typed: bool = False) -> Callable[..., RT]: ...
 
 
 @overload
-def lru_cache(maxsize: Optional[int], typed: bool = False) -> Callable[[RT], RT]:
-    ...
+def lru_cache(maxsize: Optional[int], typed: bool = False) -> Callable[[RT], RT]: ...
 
 
 @overload
 def lru_cache(
     maxsize: Union[Callable[..., RT], Optional[int]], typed: bool = False
-) -> Union[Callable[..., RT], Callable[[RT], RT]]:
-    ...
+) -> Union[Callable[..., RT], Callable[[RT], RT]]: ...
 
 
 @no_type_check

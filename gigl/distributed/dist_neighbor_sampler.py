@@ -76,10 +76,10 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                     if self.edge_dir == "in":
                         srcs = src_dict.get(etype[-1], None)
                         if srcs is not None and srcs.numel() > 0:
-                            task_dict[
-                                reverse_edge_type(etype)
-                            ] = self._loop.create_task(
-                                self._sample_one_hop(srcs, req_num, etype)
+                            task_dict[reverse_edge_type(etype)] = (
+                                self._loop.create_task(
+                                    self._sample_one_hop(srcs, req_num, etype)
+                                )
                             )
                     elif self.edge_dir == "out":
                         srcs = src_dict.get(etype[0], None)
@@ -125,9 +125,9 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                 metadata=metadata,
             )
         else:
-            assert (
-                input_type is None
-            ), f"Expected input_type to be None for homogeneous graph, got {input_type}"
+            assert input_type is None, (
+                f"Expected input_type to be None for homogeneous graph, got {input_type}"
+            )
             assert isinstance(nodes_to_sample, torch.Tensor)
 
             srcs = inducer.init_node(nodes_to_sample)

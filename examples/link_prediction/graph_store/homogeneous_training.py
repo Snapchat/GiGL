@@ -50,7 +50,7 @@ Key Implementation Differences
 | **Inter-process sharing** | N/A (each process loads own partition)        | Each process fetches its own shard from      |
 |                           |                                               | the storage cluster                          |
 +---------------------------+----------------------------------------------+----------------------------------------------+
-| **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_proccess()`` disconnects  |
+| **Cleanup**               | ``torch.distributed.destroy_process_group()`` | ``shutdown_compute_process()`` disconnects   |
 |                           |                                               | from storage cluster                         |
 +---------------------------+----------------------------------------------+----------------------------------------------+
 
@@ -130,9 +130,9 @@ from typing import Literal, Optional
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from torch_geometric.data import Data
 
+from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
@@ -140,7 +140,7 @@ from gigl.distributed import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
-    shutdown_compute_proccess,
+    shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_available_device, get_graph_store_info
@@ -686,7 +686,7 @@ def _training_process(
     flush()
 
     # Graph store mode cleanup: shutdown the compute process connection to the storage cluster.
-    shutdown_compute_proccess()
+    shutdown_compute_process()
     gc.collect()
 
     logger.info(
@@ -909,9 +909,7 @@ def _run_example_training(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
-    raw_eval_metrics_uri = (
-        gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.eval_metrics_uri
-    )
+    raw_eval_metrics_uri = gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.eval_metrics_uri
     eval_metrics_uri: Optional[Uri] = (
         UriFactory.create_uri(raw_eval_metrics_uri) if raw_eval_metrics_uri else None
     )

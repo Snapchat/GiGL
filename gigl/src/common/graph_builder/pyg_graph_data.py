@@ -21,9 +21,9 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
         super().__init__(
             **kwargs,
         )
-        self.__global_node_to_subgraph_node_mapping: FrozenDict[
-            Node, Node
-        ] = FrozenDict({})
+        self.__global_node_to_subgraph_node_mapping: FrozenDict[Node, Node] = (
+            FrozenDict({})
+        )
         self.__subgraph_node_to_global_node_mapping: Optional[
             FrozenDict[Node, Node]
         ] = None

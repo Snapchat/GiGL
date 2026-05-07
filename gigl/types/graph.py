@@ -394,19 +394,17 @@ _GraphEntity = TypeVar(
 
 
 @overload
-def to_heterogeneous_node(x: None) -> None:
-    ...
+def to_heterogeneous_node(x: None) -> None: ...
 
 
 @overload
 def to_heterogeneous_node(
-    x: Union[_GraphEntity, dict[NodeType, _GraphEntity]]
-) -> dict[NodeType, _GraphEntity]:
-    ...
+    x: Union[_GraphEntity, dict[NodeType, _GraphEntity]],
+) -> dict[NodeType, _GraphEntity]: ...
 
 
 def to_heterogeneous_node(
-    x: Optional[Union[_GraphEntity, dict[NodeType, _GraphEntity]]]
+    x: Optional[Union[_GraphEntity, dict[NodeType, _GraphEntity]]],
 ) -> Optional[dict[NodeType, _GraphEntity]]:
     """Convert a value to a heterogeneous node representation.
 
@@ -428,19 +426,17 @@ def to_heterogeneous_node(
 
 
 @overload
-def to_heterogeneous_edge(x: None) -> None:
-    ...
+def to_heterogeneous_edge(x: None) -> None: ...
 
 
 @overload
 def to_heterogeneous_edge(
-    x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]]
-) -> dict[EdgeType, _GraphEntity]:
-    ...
+    x: Union[_GraphEntity, dict[EdgeType, _GraphEntity]],
+) -> dict[EdgeType, _GraphEntity]: ...
 
 
 def to_heterogeneous_edge(
-    x: Optional[Union[_GraphEntity, dict[EdgeType, _GraphEntity]]]
+    x: Optional[Union[_GraphEntity, dict[EdgeType, _GraphEntity]]],
 ) -> Optional[dict[EdgeType, _GraphEntity]]:
     """Convert a value to a heterogeneous edge representation.
 
@@ -462,23 +458,19 @@ def to_heterogeneous_edge(
 
 
 @overload
-def to_homogeneous(x: None) -> None:
-    ...
+def to_homogeneous(x: None) -> None: ...
 
 
 @overload
-def to_homogeneous(x: abc.Mapping[NodeType, _GraphEntity]) -> _GraphEntity:
-    ...
+def to_homogeneous(x: abc.Mapping[NodeType, _GraphEntity]) -> _GraphEntity: ...
 
 
 @overload
-def to_homogeneous(x: abc.Mapping[EdgeType, _GraphEntity]) -> _GraphEntity:
-    ...
+def to_homogeneous(x: abc.Mapping[EdgeType, _GraphEntity]) -> _GraphEntity: ...
 
 
 @overload
-def to_homogeneous(x: _GraphEntity) -> _GraphEntity:
-    ...
+def to_homogeneous(x: _GraphEntity) -> _GraphEntity: ...
 
 
 def to_homogeneous(
@@ -488,7 +480,7 @@ def to_homogeneous(
             abc.Mapping[NodeType, _GraphEntity],
             abc.Mapping[EdgeType, _GraphEntity],
         ]
-    ]
+    ],
 ) -> Optional[_GraphEntity]:
     """Convert a value to a homogeneous representation.
 

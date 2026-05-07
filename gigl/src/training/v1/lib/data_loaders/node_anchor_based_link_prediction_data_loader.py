@@ -128,9 +128,9 @@ class NodeAnchorBasedLinkPredictionBatch:
         condensed_node_type_to_subgraph_id_to_global_node_id: dict[
             CondensedNodeType, dict[NodeId, NodeId]
         ] = defaultdict(dict)
-        node_mapping: dict[
-            Node, Node
-        ] = batch_graph_data.global_node_to_subgraph_node_mapping
+        node_mapping: dict[Node, Node] = (
+            batch_graph_data.global_node_to_subgraph_node_mapping
+        )
         for node_with_global_id, node_with_subgraph_id in node_mapping.items():
             condensed_node_type: CondensedNodeType = (
                 graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map[
@@ -185,7 +185,9 @@ class NodeAnchorBasedLinkPredictionBatch:
                 if preprocessed_metadata_pb_wrapper.has_pos_edge_features(
                     condensed_edge_type=condensed_edge_type
                 ):
-                    pos_supervision_edge_data[condensed_edge_type].label_edge_features[subgraph_root_node] = condensed_edge_type_to_supervision_edge_data.pos_edge_features  # type: ignore
+                    pos_supervision_edge_data[condensed_edge_type].label_edge_features[
+                        subgraph_root_node
+                    ] = condensed_edge_type_to_supervision_edge_data.pos_edge_features  # type: ignore
                 else:
                     pos_supervision_edge_data[
                         condensed_edge_type
@@ -195,7 +197,11 @@ class NodeAnchorBasedLinkPredictionBatch:
                 if preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
                     condensed_edge_type=condensed_edge_type
                 ):
-                    hard_neg_supervision_edge_data[condensed_edge_type].label_edge_features[subgraph_root_node] = condensed_edge_type_to_supervision_edge_data.hard_neg_edge_features  # type: ignore
+                    hard_neg_supervision_edge_data[
+                        condensed_edge_type
+                    ].label_edge_features[
+                        subgraph_root_node
+                    ] = condensed_edge_type_to_supervision_edge_data.hard_neg_edge_features  # type: ignore
                 else:
                     hard_neg_supervision_edge_data[
                         condensed_edge_type

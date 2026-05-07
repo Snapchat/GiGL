@@ -102,5 +102,5 @@ def run_tests(
 
     logger.info(f"Ran {total_num_test_cases}/{suite.countTestCases()} test cases")
     finish = time.perf_counter()
-    logger.info(f"It took {finish-start: .2f} second(s) to run tests")
+    logger.info(f"It took {finish - start: .2f} second(s) to run tests")
     return was_successful

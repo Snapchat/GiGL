@@ -91,17 +91,17 @@ from typing import Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
+from examples.link_prediction.models import init_example_gigl_heterogeneous_model
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
-    shutdown_compute_proccess,
+    shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_graph_store_info
@@ -359,7 +359,7 @@ def _inference_process(
     exporter.flush_records()
 
     logger.info(
-        f"--- Rank {rank} finished writing embeddings to GCS for node type {args.inference_node_type}, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Rank {rank} finished writing embeddings to GCS for node type {args.inference_node_type}, which took {time.time() - write_embedding_start_time:.2f} seconds"
     )
 
     # We first call barrier to ensure that all machines and processes have finished inference.
@@ -370,7 +370,7 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
-    shutdown_compute_proccess()
+    shutdown_compute_process()
     gc.collect()
 
     logger.info(
@@ -560,7 +560,7 @@ def _run_example_inference(
         )
 
         logger.info(
-            f"--- Inference finished on rank {cluster_info.compute_node_rank} for node type {inference_node_type}, which took {time.time()-inference_start_time:.2f} seconds"
+            f"--- Inference finished on rank {cluster_info.compute_node_rank} for node type {inference_node_type}, which took {time.time() - inference_start_time:.2f} seconds"
         )
         flush()
 
@@ -585,7 +585,7 @@ def _run_example_inference(
             )
             flush()
     logger.info(
-        f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
+        f"--- Program finished, which took {time.time() - program_start_time:.2f} seconds"
     )
 
 

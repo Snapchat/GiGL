@@ -140,11 +140,7 @@ class InferenceAssets:
         gcs_utils = GcsUtils(project=project)
 
         active_bq_table_paths = []
-        for (
-            node_type
-        ) in (
-            gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map.keys()
-        ):
+        for node_type in gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map.keys():
             bq_table_path_unenumerated_predictions = (
                 InferenceAssets.get_unenumerated_prediction_table_path(
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper, node_type=node_type
@@ -187,11 +183,7 @@ class InferenceAssets:
         logger.info("Deleting BigQuery output tables...")
         bq_utils = BqUtils(project=project)
         active_bq_table_paths = []
-        for (
-            node_type
-        ) in (
-            gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map.keys()
-        ):
+        for node_type in gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map.keys():
             bq_table_path_unenumerated_predictions = (
                 InferenceAssets.get_unenumerated_prediction_table_path(
                     gbml_config_pb_wrapper=gbml_config_pb_wrapper, node_type=node_type
@@ -227,8 +219,8 @@ class InferenceAssets:
         bq_table_path: str: The path to the enumerated embeddings table. Format should be project-id.dataset-id.table-id
         """
         bq_table_path_list: list[str] = unenumerated_bq_table_path.split(".")
-        assert (
-            len(bq_table_path_list) == 3
-        ), f"Invalid bq_table_path: {unenumerated_bq_table_path}, expected format: project-id.dataset-id.table-id; got"
+        assert len(bq_table_path_list) == 3, (
+            f"Invalid bq_table_path: {unenumerated_bq_table_path}, expected format: project-id.dataset-id.table-id; got"
+        )
         project_id, dataset_id, table_id = bq_table_path_list
         return f"{project_id}.{dataset_id}.enumerated_{table_id}"

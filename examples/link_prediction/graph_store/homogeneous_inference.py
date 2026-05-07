@@ -91,10 +91,10 @@ from typing import Union
 
 import torch
 import torch.multiprocessing as mp
-from examples.link_prediction.models import init_example_gigl_homogeneous_model
 
 import gigl.distributed
 import gigl.distributed.utils
+from examples.link_prediction.models import init_example_gigl_homogeneous_model
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
@@ -345,7 +345,7 @@ def _inference_process(
     exporter.flush_records()
 
     logger.info(
-        f"--- Rank {rank} finished writing embeddings to GCS, which took {time.time()-write_embedding_start_time:.2f} seconds"
+        f"--- Rank {rank} finished writing embeddings to GCS, which took {time.time() - write_embedding_start_time:.2f} seconds"
     )
     logger.info(
         f"--- Rank {rank} wrote embeddings to GCS at {gcs_base_uri} over batches"
@@ -542,11 +542,11 @@ def _run_example_inference(
     )
 
     logger.info(
-        f"--- Inference finished, which took {time.time()-inference_start_time:.2f} seconds"
+        f"--- Inference finished, which took {time.time() - inference_start_time:.2f} seconds"
     )
 
     logger.info(
-        f"--- Program finished, which took {time.time()-program_start_time:.2f} seconds"
+        f"--- Program finished, which took {time.time() - program_start_time:.2f} seconds"
     )
 
 

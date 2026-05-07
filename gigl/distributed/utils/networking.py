@@ -92,9 +92,9 @@ def get_free_ports_from_node(
         list[int]: A list of free port numbers on the node.
     """
     # Ensure that the distributed environment is initialized
-    assert (
-        torch.distributed.is_initialized()
-    ), "Distributed environment must be initialized to communicate free ports on a node"
+    assert torch.distributed.is_initialized(), (
+        "Distributed environment must be initialized to communicate free ports on a node"
+    )
     assert num_ports >= 1, "num_ports must be >= 1"
 
     rank = (
@@ -155,9 +155,9 @@ def get_internal_ip_from_node(
     Returns:
         str: The internal IP address of the node.
     """
-    assert (
-        torch.distributed.is_initialized()
-    ), "Distributed environment must be initialized"
+    assert torch.distributed.is_initialized(), (
+        "Distributed environment must be initialized"
+    )
 
     rank = (
         torch.distributed.get_rank()
@@ -197,9 +197,9 @@ def get_internal_ip_from_all_ranks() -> list[str]:
     Returns:
         list[str]: A list of internal IP addresses of all ranks.
     """
-    assert (
-        torch.distributed.is_initialized()
-    ), "Distributed environment must be initialized"
+    assert torch.distributed.is_initialized(), (
+        "Distributed environment must be initialized"
+    )
 
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()

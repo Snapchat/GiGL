@@ -19,7 +19,7 @@ from gigl.src.common.utils.file_loader import FileLoader
 
 
 def build_modeling_and_resource_config_from_args(
-    mode: Literal["enumerating", "training"]
+    mode: Literal["enumerating", "training"],
 ) -> Tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]:
     """
     Build the modeling and resource config from command line arguments.

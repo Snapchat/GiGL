@@ -160,9 +160,7 @@ class InferencerV1:
         Returns:
             (InferencerOutputPaths): Dataclass with path fields for writing from gcs to bigquery for given node type
         """
-        node_type_to_inferencer_output_info_map = (
-            self.gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
-        )
+        node_type_to_inferencer_output_info_map = self.gbml_config_pb_wrapper.shared_config.inference_metadata.node_type_to_inferencer_output_info_map
         # Sanity check that we have some paths defined for intended inferred assets.
         if not (
             node_type_to_inferencer_output_info_map[node_type].embeddings_path
@@ -294,9 +292,9 @@ class InferencerV1:
                 node_type = futures[future]
                 try:
                     inferencer_output_paths: InferencerOutputPaths = future.result()
-                    node_type_to_inferencer_output_paths_map[
-                        node_type
-                    ] = inferencer_output_paths
+                    node_type_to_inferencer_output_paths_map[node_type] = (
+                        inferencer_output_paths
+                    )
                 except Exception as e:
                     logger.exception(
                         f"{node_type} inferencer job failed due to a raised exception: {e}"
@@ -325,13 +323,17 @@ class InferencerV1:
             )
             if temp_predictions_gcs_path is not None:
                 self.write_from_gcs_to_bq(
-                    schema=inference_blueprint.get_pred_table_schema(should_run_unenumeration=should_run_unenumeration).schema,  # type: ignore
+                    schema=inference_blueprint.get_pred_table_schema(
+                        should_run_unenumeration=should_run_unenumeration
+                    ).schema,  # type: ignore
                     gcs_uri=temp_predictions_gcs_path,
                     bq_table_uri=bq_inferencer_output_paths.predictions_path,
                 )
             if temp_embeddings_gcs_path is not None:
                 self.write_from_gcs_to_bq(
-                    schema=inference_blueprint.get_emb_table_schema(should_run_unenumeration=should_run_unenumeration).schema,  # type: ignore
+                    schema=inference_blueprint.get_emb_table_schema(
+                        should_run_unenumeration=should_run_unenumeration
+                    ).schema,  # type: ignore
                     gcs_uri=temp_embeddings_gcs_path,
                     bq_table_uri=bq_inferencer_output_paths.embeddings_path,
                 )

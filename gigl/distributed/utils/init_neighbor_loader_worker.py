@@ -61,14 +61,14 @@ def init_neighbor_loader_worker(
 
     logger.info(f"---Machine {rank} local process number {local_process_rank} started")
     if not should_use_cpu_workers:
-        assert (
-            torch.cuda.device_count() > 0
-        ), f"Must have at least 1 GPU available for GPU Training or inference, got {torch.cuda.device_count()}"
+        assert torch.cuda.device_count() > 0, (
+            f"Must have at least 1 GPU available for GPU Training or inference, got {torch.cuda.device_count()}"
+        )
 
     if should_use_cpu_workers:
-        assert (
-            num_cpu_threads is not None
-        ), "Must provide number of cpu threads when using cpu workers"
+        assert num_cpu_threads is not None, (
+            "Must provide number of cpu threads when using cpu workers"
+        )
         # Assign processes to disjoint physical cores. Since training or inference is computation
         # bound instead of I/O bound, logical core segmentation is not enough, as two
         # hyperthreads on the same physical core could still compete for resources.

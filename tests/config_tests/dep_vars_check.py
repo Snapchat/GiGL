@@ -6,9 +6,9 @@ DEP_VARS_FILE_PATH = Path.joinpath(
 )
 
 if __name__ == "__main__":
-    assert (
-        DEP_VARS_FILE_PATH.exists()
-    ), f"File `gigl/dep_vars.env` not found at: {DEP_VARS_FILE_PATH}"
+    assert DEP_VARS_FILE_PATH.exists(), (
+        f"File `gigl/dep_vars.env` not found at: {DEP_VARS_FILE_PATH}"
+    )
     with open(file=DEP_VARS_FILE_PATH, mode="r") as f:
         # Ensure we only have comments, empty lines, or lines with variable definitions
         for line in f.readlines():

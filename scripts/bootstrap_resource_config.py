@@ -267,9 +267,9 @@ if __name__ == "__main__":
     assert_gcp_project_exists(values["project"])
     assert values["region"], "Region cannot be empty"
     assert values["gcp_service_account_email"], "GCP Service account cannot be empty"
-    assert values[
-        "docker_artifact_registry_path"
-    ], "Docker Artifact Registry path cannot be empty"
+    assert values["docker_artifact_registry_path"], (
+        "Docker Artifact Registry path cannot be empty"
+    )
     assert_bq_dataset_exists(
         dataset_name=values["temp_assets_bq_dataset_name"], project=values["project"]
     )
