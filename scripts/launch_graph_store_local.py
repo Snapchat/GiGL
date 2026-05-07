@@ -7,6 +7,15 @@ would provide in a real multi-pool training job. Storage and compute entry-point
 are read from the task config YAML from either ``trainerConfig`` or ``inferencerConfig``,
 depending on ``--mode``.
 
+To generate task configs, you should have a GiGL pre-processor run that generates a
+preprocessed metadata URI, then use that frozen config for these local runs.
+NOTE: Since this is "local" you may need to downsample your dataset so that it fits on a single machine.
+
+
+To generate resource configs, you can use the scripts/bootstrap_resource_config.py script.
+NOTE: The machine specs are not used here, but the SharedConfig is often used to get output paths for trained models, etc.
+
+
 Example - training with 3 storage nodes and 2 compute nodes::
 
     python scripts/launch_graph_store_local.py \\
@@ -327,16 +336,30 @@ def _build_cluster_spec(
     compute_nodes: int,
     storage_nodes: int,
     rank: int,
+    ports: list[int],
 ) -> dict[str, Any]:
-    """Build a Vertex AI-style ``CLUSTER_SPEC`` JSON object for one process."""
+    """Build a Vertex AI-style ``CLUSTER_SPEC`` JSON object for one process.
+
+    Args:
+        compute_nodes: Number of compute nodes in the cluster.
+        storage_nodes: Number of storage nodes in the cluster.
+        rank: Global rank of the process this spec is being built for.
+        ports: One free port per global rank, with the same ordering used by
+            :func:`build_node_processes` (compute ranks ``0..compute_nodes-1``
+            followed by storage ranks ``compute_nodes..world_size-1``).
+    """
 
     cluster: dict[str, list[str]] = {
-        "workerpool0": ["workerpool0-0:2222"],
-        "workerpool2": [f"workerpool2-{index}:2222" for index in range(storage_nodes)],
+        "workerpool0": [f"workerpool0-0:{ports[0]}"],
+        "workerpool2": [
+            f"workerpool2-{index}:{ports[compute_nodes + index]}"
+            for index in range(storage_nodes)
+        ],
     }
     if compute_nodes > 1:
         cluster["workerpool1"] = [
-            f"workerpool1-{index}:2222" for index in range(compute_nodes - 1)
+            f"workerpool1-{index}:{ports[index + 1]}"
+            for index in range(compute_nodes - 1)
         ]
 
     if rank == 0:
@@ -377,6 +400,7 @@ def build_node_processes(
     job_dir: Path,
     base_env: dict[str, str],
     gpu_assignments: list[list[int]],
+    cluster_spec_ports: list[int],
 ) -> list[NodeProcess]:
     """Build the storage and compute processes for one launcher run.
 
@@ -391,6 +415,9 @@ def build_node_processes(
         job_dir: Output directory for per-process logs.
         base_env: Environment variables shared by every child.
         gpu_assignments: One GPU-id list per compute node.
+        cluster_spec_ports: One free port per global rank, used to populate the
+            per-entry ports inside each child's ``CLUSTER_SPEC``. Must have
+            length ``compute_nodes + storage_nodes``.
 
     Returns:
         Storage nodes followed by compute nodes.
@@ -410,6 +437,7 @@ def build_node_processes(
             compute_nodes=compute_nodes,
             storage_nodes=storage_nodes,
             rank=rank,
+            ports=cluster_spec_ports,
         )
         env = base_env.copy()
         env["RANK"] = str(rank)
@@ -696,8 +724,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     job_root = args.job_root.expanduser().resolve()
     job_id, job_dir = _allocate_job_dir(job_root, args.job_id)
 
-    master_port = get_free_ports(1)[0]
     world_size = args.compute_nodes + args.storage_nodes
+    allocated_ports = get_free_ports(1 + world_size)
+    master_port = allocated_ports[0]
+    cluster_spec_ports = allocated_ports[1:]
     base_env = os.environ.copy()
     base_env.update(
         {
@@ -722,6 +752,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         job_dir=job_dir,
         base_env=base_env,
         gpu_assignments=gpu_assignments,
+        cluster_spec_ports=cluster_spec_ports,
     )
 
     manifest = {

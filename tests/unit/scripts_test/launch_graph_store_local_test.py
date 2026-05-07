@@ -181,6 +181,7 @@ class TestLaunchGraphStoreLocal(TestCase):
     def test_build_cluster_spec_and_node_processes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             job_dir = Path(tmpdir)
+            cluster_spec_ports = [10000, 10001, 10002, 10003]
             nodes = launcher.build_node_processes(
                 storage_nodes=2,
                 compute_nodes=2,
@@ -198,6 +199,7 @@ class TestLaunchGraphStoreLocal(TestCase):
                 job_dir=job_dir,
                 base_env={"BASE_ENV": "1"},
                 gpu_assignments=[[0], [1]],
+                cluster_spec_ports=cluster_spec_ports,
             )
 
             self.assertEqual(
@@ -225,6 +227,17 @@ class TestLaunchGraphStoreLocal(TestCase):
             self.assertEqual(
                 nodes[0].cluster_spec["task"],
                 {"type": "workerpool2", "index": 0},
+            )
+            self.assertEqual(
+                nodes[2].cluster_spec["cluster"],
+                {
+                    "workerpool0": ["workerpool0-0:10000"],
+                    "workerpool1": ["workerpool1-0:10001"],
+                    "workerpool2": [
+                        "workerpool2-0:10002",
+                        "workerpool2-1:10003",
+                    ],
+                },
             )
 
     def test_main_writes_reduced_manifest(self) -> None:
@@ -263,7 +276,11 @@ class TestLaunchGraphStoreLocal(TestCase):
                 return 0
 
             with (
-                patch.object(launcher, "_get_free_ports", return_value=[23456]),
+                patch.object(
+                    launcher,
+                    "get_free_ports",
+                    return_value=[23456, 30000, 30001],
+                ),
                 patch.object(
                     launcher,
                     "_launch_processes",
