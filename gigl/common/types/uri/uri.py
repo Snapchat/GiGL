@@ -30,12 +30,31 @@ class Uri(object):
         return ""
 
     @classmethod
-    def _is_absolute_path(cls, token: _URI_LIKE) -> bool:
+    def _is_absolute(cls, token: _URI_LIKE) -> bool:
         token_str = cls._token_to_string(token)
 
         # Note: "://" is used to detect GcsUri and HttpUri prefixes, but will incorrectly
         # classify relative LocalUri path's containing "://" as absolute
         return Path(token_str).is_absolute() or "://" in token_str
+
+    @classmethod
+    def _has_matching_uri_type(
+        cls, token: _URI_LIKE, allow_base_uri_join: bool = False
+    ) -> bool:
+        token_is_path_like = not isinstance(token, Uri)
+        if token_is_path_like: # str and Path tokens do not have a Uri type to match.
+            return True
+
+        token_matches_join_type = token.__class__ is cls
+        if token_matches_join_type: # Same concrete Uri type, e.g. GcsUri.join(GcsUri(...)).
+            return True
+
+        base_join_with_concrete_token = allow_base_uri_join and cls is Uri
+        if base_join_with_concrete_token: # Uri.join(GcsUri(...), "suffix") stays supported for compatibility.
+            return True
+
+        # Remaining Uri tokens are cross-type mixes, e.g. GcsUri with HttpUri.
+        return False
 
     @classmethod
     def join(cls, token: _URI_LIKE, *tokens: _URI_LIKE) -> Self:
@@ -48,6 +67,8 @@ class Uri(object):
               intentionally store URI-looking strings inside paths.
             - Rejecting absolute LocalUri suffix tokens is stricter than os.path.join,
               which implicitly discards earlier tokens on the join path.
+            - Concrete Uri joins cannot mix Uri token types; base Uri.join keeps
+              the first token generic for compatibility.
 
         Args:
             token: The first token to join.
@@ -57,8 +78,19 @@ class Uri(object):
             A new Uri instance representing the joined URI.
 
         """
+        # Keep base Uri.join generic for existing callers that pass concrete Uri instances.
+        if not cls._has_matching_uri_type(token, allow_base_uri_join=True):
+            raise TypeError(
+                f"Cannot join {cls.__name__} with {token.__class__.__name__}"
+            )
+
         for suffix in tokens:
-            if cls._is_absolute_path(suffix):
+            if not cls._has_matching_uri_type(suffix):
+                raise TypeError(
+                    f"Cannot join {cls.__name__} with {suffix.__class__.__name__}"
+                )
+
+            if cls._is_absolute(suffix):
                 raise TypeError(
                     f"URI join suffixes must be relative; got absolute path: {suffix}"
                 )
