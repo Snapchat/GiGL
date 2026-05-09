@@ -78,7 +78,7 @@ class UriTest(TestCase):
             LocalUri.join("/foo/bar", "folder://file.txt")
 
     def test_base_uri_join_rejects_concrete_uri_suffix(self):
-        # Base Uri.join accepts concrete Uri objects only as the first token.
+        # Concrete Uri suffixes require a matching concrete join, not base Uri.join.
         relative_local_uri = LocalUri("file.txt")
 
         with self.assertRaises(TypeError):
