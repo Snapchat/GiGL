@@ -100,6 +100,12 @@ class UriTest(TestCase):
         with self.assertRaises(TypeError):
             LocalUri.join("/foo/bar", "folder://file.txt")
 
+    def test_uri_constructors_reject_invalid_remote_paths(self):
+        with self.assertRaises(TypeError):
+            GcsUri("file.txt")
+        with self.assertRaises(TypeError):
+            HttpUri("file.txt")
+
     def test_div_join(self):
         joined: Uri
         with self.subTest("LocalUri"):
