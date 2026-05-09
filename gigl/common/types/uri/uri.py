@@ -42,15 +42,18 @@ class Uri(object):
         cls, token: _URI_LIKE, allow_base_uri_join: bool = False
     ) -> bool:
         token_is_path_like = not isinstance(token, Uri)
-        if token_is_path_like: # str and Path tokens do not have a Uri type to match.
+        if token_is_path_like:
+            # str and Path tokens do not have a Uri type to match.
             return True
 
         token_matches_join_type = token.__class__ is cls
-        if token_matches_join_type: # Same concrete Uri type, e.g. GcsUri.join(GcsUri(...)).
+        if token_matches_join_type:
+            # Same concrete Uri type, e.g. GcsUri.join(GcsUri(...)).
             return True
 
         base_join_with_concrete_token = allow_base_uri_join and cls is Uri
-        if base_join_with_concrete_token: # Uri.join(GcsUri(...), "suffix") stays supported for compatibility.
+        if base_join_with_concrete_token:
+            # Uri.join(GcsUri(...), "suffix") stays supported for compatibility.
             return True
 
         # Remaining Uri tokens are cross-type mixes, e.g. GcsUri with HttpUri.
