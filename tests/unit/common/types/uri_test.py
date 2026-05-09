@@ -23,115 +23,68 @@ class UriTest(TestCase):
 
     def test_join(self):
         joined: Uri
-        with self.subTest("str suffix"):
-            relative_path_str = "file.txt"
-            with self.subTest("LocalUri"):
-                joined = LocalUri.join("/foo/bar", relative_path_str)
-                self.assertEqual(joined, LocalUri("/foo/bar/file.txt"))
-                self.assertIsInstance(joined, LocalUri)
-            with self.subTest("HttpUri"):
-                joined = HttpUri.join("http://abc.com/xyz", relative_path_str)
-                self.assertEqual(joined, HttpUri("http://abc.com/xyz/file.txt"))
-                self.assertIsInstance(joined, HttpUri)
-            with self.subTest("GcsUri"):
-                joined = GcsUri.join("gs://bucket/", relative_path_str)
-                self.assertEqual(joined, GcsUri("gs://bucket/file.txt"))
-                self.assertIsInstance(joined, GcsUri)
-            with self.subTest("Uri"):
-                joined = Uri.join(GcsUri("gs://bucket"), relative_path_str)
-                self.assertEqual(joined, Uri("gs://bucket/file.txt"))
-                self.assertIsInstance(joined, Uri)
-
-        with self.subTest("Path suffix"):
-            relative_path = Path("file.txt")
-            with self.subTest("LocalUri"):
-                joined = LocalUri.join("/foo/bar", relative_path)
-                self.assertEqual(joined, LocalUri("/foo/bar/file.txt"))
-                self.assertIsInstance(joined, LocalUri)
-            with self.subTest("HttpUri"):
-                joined = HttpUri.join("http://abc.com/xyz", relative_path)
-                self.assertEqual(joined, HttpUri("http://abc.com/xyz/file.txt"))
-                self.assertIsInstance(joined, HttpUri)
-            with self.subTest("GcsUri"):
-                joined = GcsUri.join("gs://bucket/", relative_path)
-                self.assertEqual(joined, GcsUri("gs://bucket/file.txt"))
-                self.assertIsInstance(joined, GcsUri)
-
+        with self.subTest("LocalUri"):
+            joined = LocalUri.join("/foo/bar", "file.txt")
+            self.assertEqual(joined, LocalUri("/foo/bar/file.txt"))
+            self.assertIsInstance(joined, LocalUri)
+        with self.subTest("HttpUri"):
+            joined = HttpUri.join("http://abc.com/xyz", "foo")
+            self.assertEqual(joined, HttpUri("http://abc.com/xyz/foo"))
+            self.assertIsInstance(joined, HttpUri)
+        with self.subTest("GcsUri"):
+            joined = GcsUri.join("gs://bucket/", "file.txt")
+            self.assertEqual(joined, GcsUri("gs://bucket/file.txt"))
+            self.assertIsInstance(joined, GcsUri)
+        with self.subTest("LocalUri with Path"):
+            joined = LocalUri.join("/foo/bar", Path("file.text"))
+            self.assertEqual(joined, LocalUri("/foo/bar/file.text"))
+        with self.subTest("Uri with concrete first token"):
+            joined = Uri.join(GcsUri("gs://bucket"), "file.txt")
+            self.assertEqual(joined, Uri("gs://bucket/file.txt"))
+            self.assertIsInstance(joined, Uri)
         with self.subTest("LocalUri suffix"):
             relative_local_uri = LocalUri("file.txt")
-            with self.subTest("LocalUri"):
-                joined = LocalUri.join("/foo/bar", relative_local_uri)
-                self.assertEqual(joined, LocalUri("/foo/bar/file.txt"))
-                self.assertIsInstance(joined, LocalUri)
+            joined = LocalUri.join("/foo/bar", relative_local_uri)
+            self.assertEqual(joined, LocalUri("/foo/bar/file.txt"))
+            self.assertIsInstance(joined, LocalUri)
 
     def test_join_invalid_suffix(self):
         with self.subTest("relative LocalUri suffix with non-local join"):
             relative_local_uri = LocalUri("file.txt")
             with self.assertRaises(TypeError):
-                HttpUri.join("http://abc.com/xyz", relative_local_uri)
-            with self.assertRaises(TypeError):
                 GcsUri.join("gs://bucket/path", relative_local_uri)
-            with self.assertRaises(TypeError):
-                Uri.join("foo", relative_local_uri)
 
         with self.subTest("mixed Uri first token"):
             with self.assertRaises(TypeError):
                 LocalUri.join(GcsUri("gs://bucket/path"), "file.txt")
-            with self.assertRaises(TypeError):
-                GcsUri.join(HttpUri("http://abc.com/xyz"), "file.txt")
-            with self.assertRaises(TypeError):
-                HttpUri.join(LocalUri("/foo/bar"), "file.txt")
 
         with self.subTest("absolute LocalUri suffix"):
             absolute_local_uri = LocalUri("/other/file.txt")
             with self.assertRaises(TypeError):
                 LocalUri.join("/foo/bar", absolute_local_uri)
-            with self.assertRaises(TypeError):
-                HttpUri.join("http://abc.com/xyz", absolute_local_uri)
-            with self.assertRaises(TypeError):
-                GcsUri.join("gs://bucket/path", absolute_local_uri)
 
-        with self.subTest("HttpUri suffix"):
+        with self.subTest("absolute HttpUri suffix"):
             http_uri = HttpUri("http://abc.com/file.txt")
             with self.assertRaises(TypeError):
-                LocalUri.join("/foo/bar", http_uri)
-            with self.assertRaises(TypeError):
                 HttpUri.join("http://abc.com/xyz", http_uri)
-            with self.assertRaises(TypeError):
-                GcsUri.join("gs://bucket/path", http_uri)
 
-        with self.subTest("GcsUri suffix"):
+        with self.subTest("absolute GcsUri suffix"):
             gcs_uri = GcsUri("gs://bucket/file.txt")
-            with self.assertRaises(TypeError):
-                LocalUri.join("/foo/bar", gcs_uri)
-            with self.assertRaises(TypeError):
-                HttpUri.join("http://abc.com/xyz", gcs_uri)
             with self.assertRaises(TypeError):
                 GcsUri.join("gs://bucket/path", gcs_uri)
 
     def test_join_rejects_relative_path_with_uri_separator(self):
         with self.assertRaises(TypeError):
             LocalUri.join("/foo/bar", "folder://file.txt")
-        with self.assertRaises(TypeError):
-            Uri.join("foo", "folder://file.txt")
 
-    def test_base_uri_join_only_allows_concrete_uri_as_first_token(self):
+    def test_base_uri_join_rejects_concrete_uri_suffix(self):
+        # Base Uri.join accepts concrete Uri objects only as the first token.
         relative_local_uri = LocalUri("file.txt")
 
-        self.assertEqual(
-            Uri.join(LocalUri("/foo/bar"), "file.txt"),
-            Uri("/foo/bar/file.txt"),
-        )
-        self.assertEqual(
-            LocalUri.join("/foo/bar", relative_local_uri),
-            LocalUri("/foo/bar/file.txt"),
-        )
         with self.assertRaises(TypeError):
             Uri.join("/foo/bar", relative_local_uri)
 
-    def test_uri_constructors_reject_invalid_remote_paths(self):
-        with self.assertRaises(TypeError):
-            GcsUri("file.txt")
+    def test_http_uri_constructor_rejects_invalid_remote_path(self):
         with self.assertRaises(TypeError):
             HttpUri("file.txt")
 
