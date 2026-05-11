@@ -48,6 +48,8 @@ trainerConfig:
         ("paper", "to", "author"): [15, 15],
         ("author", "to", "paper"): [20, 20]
       }
+    tensorboard_resource_name: "projects/87123883529/locations/us-central1/tensorboards/2426122984222621696"
+    tensorboard_experiment_name: "gigl-oss-examples"
   command: python -m examples.link_prediction.graph_store.heterogeneous_training
   graphStoreStorageConfig:
     command: python -m examples.link_prediction.graph_store.storage_main
@@ -87,6 +89,8 @@ inferencerConfig:
         ("paper", "to", "author"): [15, 15],
         ("author", "to", "paper"): [20, 20]
       }
+    tensorboard_resource_name: "projects/87123883529/locations/us-central1/tensorboards/2426122984222621696"
+    tensorboard_experiment_name: "gigl-oss-examples"
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.graph_store.heterogeneous_inference
   graphStoreStorageConfig:

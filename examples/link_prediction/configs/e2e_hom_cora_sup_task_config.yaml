@@ -17,12 +17,16 @@ trainerConfig:
     # Example argument to trainer
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
+    tensorboard_resource_name: "projects/87123883529/locations/us-central1/tensorboards/2426122984222621696"
+    tensorboard_experiment_name: "gigl-oss-examples"
   command: python -m examples.link_prediction.homogeneous_training
 inferencerConfig:
   inferencerArgs:
     # Example argument to inferencer
     log_every_n_batch: "50" # Frequency in which we log batch information
     num_neighbors: "[10, 10]" # Fanout per hop, specified as a string representation of a list for the homogeneous use case
+    tensorboard_resource_name: "projects/87123883529/locations/us-central1/tensorboards/2426122984222621696"
+    tensorboard_experiment_name: "gigl-oss-examples"
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.homogeneous_inference
 sharedConfig:

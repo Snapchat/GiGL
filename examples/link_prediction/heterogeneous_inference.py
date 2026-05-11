@@ -45,6 +45,7 @@ from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
+from gigl.utils.tensorboard_writer import TensorBoardWriter
 
 logger = Logger()
 
@@ -110,6 +111,11 @@ class InferenceProcessArgs:
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
 
+    # TensorBoard
+    job_name: str
+    tensorboard_resource_name: Optional[str]
+    tensorboard_experiment_name: Optional[str]
+
 
 @torch.no_grad()
 def _inference_process(
@@ -133,6 +139,13 @@ def _inference_process(
         local_process_rank=local_rank,
     )  # The device is automatically inferred based off the local process rank and the available devices
     rank = args.machine_rank * args.local_world_size + local_rank
+    is_chief_process = args.machine_rank == 0 and local_rank == 0
+    tensorboard_writer = TensorBoardWriter.create(
+        resource_name=args.tensorboard_resource_name,
+        experiment_name=args.tensorboard_experiment_name,
+        experiment_run_name=args.job_name,
+        enabled=is_chief_process,
+    )
     world_size = args.machine_world_size * args.local_world_size
     if torch.cuda.is_available():
         torch.cuda.set_device(
@@ -257,6 +270,11 @@ def _inference_process(
                 f"Among them, data loading took {cumulative_data_loading_time:.2f} seconds."
                 f"and model inference took {cumulative_inference_time:.2f} seconds."
             )
+            batches_per_sec = args.log_every_n_batch / max(time.time() - t, 1e-9)
+            tensorboard_writer.log(
+                {"Inference/throughput_batches_per_sec": batches_per_sec},
+                step=batch_idx,
+            )
             t = time.time()
             cumulative_data_loading_time = 0
             cumulative_inference_time = 0
@@ -283,6 +301,7 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
+    tensorboard_writer.close()
     gc.collect()
 
     logger.info(
@@ -293,12 +312,20 @@ def _inference_process(
 def _run_example_inference(
     job_name: str,
     task_config_uri: str,
+    tensorboard_resource_name: Optional[str],
+    tensorboard_experiment_name: Optional[str],
 ) -> None:
     """
     Runs an example inference pipeline using GiGL Orchestration.
     Args:
         job_name (str): Name of current job
         task_config_uri (str): Path to frozen GBMLConfigPbWrapper
+        tensorboard_resource_name (Optional[str]): Vertex AI Tensorboard
+            resource name. When set together with ``tensorboard_experiment_name``,
+            the chief rank streams scalar metrics to Vertex AI Experiments.
+        tensorboard_experiment_name (Optional[str]): Vertex AI
+            TensorboardExperiment name. Required when ``tensorboard_resource_name``
+            is set.
     """
     # All machines run this logic to connect together, and return a distributed context with:
     # - the (GCP) internal IP address of the rank 0 machine, which will be used for building RPC connections.
@@ -459,6 +486,9 @@ def _run_example_inference(
             sampling_workers_per_inference_process=sampling_workers_per_inference_process,
             sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
             log_every_n_batch=log_every_n_batch,
+            job_name=job_name,
+            tensorboard_resource_name=tensorboard_resource_name,
+            tensorboard_experiment_name=tensorboard_experiment_name,
         )
 
         mp.spawn(
@@ -507,13 +537,35 @@ if __name__ == "__main__":
         help="Inference job name",
     )
     parser.add_argument("--task_config_uri", type=str, help="Gbml config uri")
+    parser.add_argument(
+        "--tensorboard_resource_name",
+        type=str,
+        help=(
+            "Optional Vertex AI Tensorboard resource name. When set together "
+            "with --tensorboard_experiment_name, the chief rank streams "
+            "scalar metrics to Vertex AI Experiments."
+        ),
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--tensorboard_experiment_name",
+        type=str,
+        help=(
+            "Optional Vertex AI TensorboardExperiment name. Required when "
+            "--tensorboard_resource_name is set."
+        ),
+        required=False,
+        default=None,
+    )
 
     # We use parse_known_args instead of parse_args since we only need job_name and task_config_uri for distributed inference
     args, unused_args = parser.parse_known_args()
     logger.info(f"Unused arguments: {unused_args}")
 
-    # We only need `job_name` and `task_config_uri` for running inference
     _run_example_inference(
         job_name=args.job_name,
         task_config_uri=args.task_config_uri,
+        tensorboard_resource_name=args.tensorboard_resource_name,
+        tensorboard_experiment_name=args.tensorboard_experiment_name,
     )

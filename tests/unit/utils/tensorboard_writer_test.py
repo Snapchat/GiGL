@@ -157,9 +157,7 @@ class TestTensorBoardWriter(TestCase):
             writer = TensorBoardWriter(active=True)
             writer.log({"Loss/train": 1.5, "Loss/val": 2.0}, step=10)
 
-        mock_log.assert_called_once_with(
-            {"Loss/train": 1.5, "Loss/val": 2.0}, step=10
-        )
+        mock_log.assert_called_once_with({"Loss/train": 1.5, "Loss/val": 2.0}, step=10)
 
     def test_log_is_noop_when_inactive(self) -> None:
         with patch("google.cloud.aiplatform.log_time_series_metrics") as mock_log:

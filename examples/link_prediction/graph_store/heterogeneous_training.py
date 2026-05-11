@@ -115,6 +115,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
 from gigl.utils.sampling import parse_fanout
+from gigl.utils.tensorboard_writer import TensorBoardWriter
 
 logger = Logger()
 
@@ -423,6 +424,11 @@ class TrainingProcessArgs:
     log_every_n_batch: int
     should_skip_training: bool
 
+    # TensorBoard
+    job_name: str
+    tensorboard_resource_name: Optional[str]
+    tensorboard_experiment_name: Optional[str]
+
 
 def _training_process(
     local_rank: int,
@@ -460,11 +466,20 @@ def _training_process(
         torch.cuda.set_device(device)
     print(f"---Rank {rank} training process set device {device}")
 
+    is_chief_process = args.cluster_info.compute_node_rank == 0 and local_rank == 0
+    tensorboard_writer = TensorBoardWriter.create(
+        resource_name=args.tensorboard_resource_name,
+        experiment_name=args.tensorboard_experiment_name,
+        experiment_run_name=args.job_name,
+        enabled=is_chief_process,
+    )
+
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
         temperature=0.07,
         remove_accidental_hits=True,
     )
+    batch_idx = 0
 
     if not args.should_skip_training:
         train_main_loader, train_random_negative_loader = _setup_dataloaders(
@@ -525,7 +540,6 @@ def _training_process(
 
         # Entering the training loop
         training_start_time = time.time()
-        batch_idx = 0
         avg_train_loss = 0.0
         last_n_batch_avg_loss: list[float] = []
         last_n_batch_time: list[float] = []
@@ -567,6 +581,7 @@ def _training_process(
             if (
                 batch_idx % args.log_every_n_batch == 0 or batch_idx < 10
             ):  # Log the first 10 batches to ensure the model is initialized correctly
+                mean_train_loss = statistics.mean(last_n_batch_avg_loss)
                 print(
                     f"rank={rank}, batch={batch_idx}, latest local train_loss={loss:.6f}"
                 )
@@ -577,15 +592,16 @@ def _training_process(
                 )
                 last_n_batch_time.clear()
                 print(
-                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={statistics.mean(last_n_batch_avg_loss):.6f}"
+                    f"rank={rank}, latest avg_train_loss={avg_train_loss:.6f}, last {args.log_every_n_batch} mean(avg_train_loss)={mean_train_loss:.6f}"
                 )
+                tensorboard_writer.log({"Loss/train": mean_train_loss}, step=batch_idx)
                 last_n_batch_avg_loss.clear()
                 flush()
 
             if batch_idx % args.val_every_n_batch == 0:
                 print(f"rank={rank}, batch={batch_idx}, validating...")
                 model.eval()
-                _run_validation_loops(
+                global_avg_val_loss = _run_validation_loops(
                     model=model,
                     main_loader=val_main_loader_iter,
                     random_negative_loader=val_random_negative_loader_iter,
@@ -595,6 +611,9 @@ def _training_process(
                     device=device,
                     log_every_n_batch=args.log_every_n_batch,
                     num_batches=num_val_batches_per_process,
+                )
+                tensorboard_writer.log(
+                    {"Loss/val": global_avg_val_loss}, step=batch_idx
                 )
                 model.train()
         else:
@@ -674,6 +693,7 @@ def _training_process(
         device=device,
         log_every_n_batch=args.log_every_n_batch,
     )
+    tensorboard_writer.log({"Loss/test": global_avg_test_loss}, step=batch_idx)
 
     # Memory cleanup and waiting for all processes to finish
     if torch.cuda.is_available():
@@ -701,6 +721,8 @@ def _training_process(
         f"---Rank {rank} finished testing in {time.time() - testing_start_time:.3f} seconds"
     )
     flush()
+
+    tensorboard_writer.close()
 
     # Graph store mode cleanup: shutdown the compute process connection to the storage cluster.
     shutdown_compute_process()
@@ -814,11 +836,22 @@ def _run_validation_loops(
 
 def _run_example_training(
     task_config_uri: str,
+    job_name: str,
+    tensorboard_resource_name: Optional[str],
+    tensorboard_experiment_name: Optional[str],
 ):
     """
     Runs an example training + testing loop using GiGL Orchestration in graph store mode.
     Args:
         task_config_uri (str): Path to YAML-serialized GbmlConfig proto.
+        job_name (str): Unique launch identifier used as the TensorBoard
+            ``ExperimentRun`` name on the chief rank.
+        tensorboard_resource_name (Optional[str]): Vertex AI Tensorboard
+            resource name. When set together with ``tensorboard_experiment_name``,
+            the chief rank streams scalar metrics to Vertex AI Experiments.
+        tensorboard_experiment_name (Optional[str]): Vertex AI
+            TensorboardExperiment name. Required when ``tensorboard_resource_name``
+            is set.
     """
     program_start_time = time.time()
     mp.set_start_method("spawn")
@@ -966,6 +999,9 @@ def _run_example_training(
         val_every_n_batch=val_every_n_batch,
         log_every_n_batch=log_every_n_batch,
         should_skip_training=should_skip_training,
+        job_name=job_name,
+        tensorboard_resource_name=tensorboard_resource_name,
+        tensorboard_experiment_name=tensorboard_experiment_name,
     )
 
     torch.multiprocessing.spawn(
@@ -985,11 +1021,40 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Arguments for distributed model training on VertexAI (graph store mode)"
     )
+    parser.add_argument(
+        "--job_name",
+        type=str,
+        help="Training job name; used as the TensorBoard ExperimentRun name",
+    )
     parser.add_argument("--task_config_uri", type=str, help="Gbml config uri")
+    parser.add_argument(
+        "--tensorboard_resource_name",
+        type=str,
+        help=(
+            "Optional Vertex AI Tensorboard resource name. When set together "
+            "with --tensorboard_experiment_name, the chief rank streams "
+            "scalar metrics to Vertex AI Experiments."
+        ),
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--tensorboard_experiment_name",
+        type=str,
+        help=(
+            "Optional Vertex AI TensorboardExperiment name. Required when "
+            "--tensorboard_resource_name is set."
+        ),
+        required=False,
+        default=None,
+    )
 
     args, unused_args = parser.parse_known_args()
     print(f"Unused arguments: {unused_args}")
 
     _run_example_training(
         task_config_uri=args.task_config_uri,
+        job_name=args.job_name,
+        tensorboard_resource_name=args.tensorboard_resource_name,
+        tensorboard_experiment_name=args.tensorboard_experiment_name,
     )
