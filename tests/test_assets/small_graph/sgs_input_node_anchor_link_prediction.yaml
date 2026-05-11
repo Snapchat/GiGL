@@ -24,3 +24,5 @@ sharedConfig:
         user: tests/test_assets/small_graph/subgraph_sampler_out/random_negative_rooted_neighborhood_samples/user/samples
       tfrecordUriPrefix: tests/test_assets/small_graph/subgraph_sampler_out/node_anchor_based_link_prediction_samples/samples
   isGraphDirected: False
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed
