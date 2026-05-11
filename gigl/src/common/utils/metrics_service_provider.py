@@ -15,7 +15,22 @@ _metrics_instance: Optional[OpsMetricPublisher] = None
 JOB_NAME_GROUPING_ENV_KEY = "GBML_JOB_NAME"
 
 
-def initialize_metrics(task_config_uri: Uri, service_name: str):
+def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
+    """Initialize the global metrics publisher from the task config.
+
+    Reads the metrics configuration from the task config YAML. If a custom
+    metrics class is specified, attempts to instantiate it. Falls back to
+    ``NopMetricsPublisher`` if no class is configured or instantiation fails.
+
+    Args:
+        task_config_uri: URI to the task config YAML file.
+        service_name: Name of the service, used for metric grouping.
+
+    Returns:
+        ``True`` if metrics were initialized successfully (including the
+        no-op default when no custom class is configured), ``False`` if a
+        custom metrics class was specified but could not be loaded or instantiated.
+    """
     global _metrics_instance
     os.environ[JOB_NAME_GROUPING_ENV_KEY] = service_name
     proto_utils = ProtoUtils()
@@ -29,17 +44,21 @@ def initialize_metrics(task_config_uri: Uri, service_name: str):
     if not metrics_cls_path:
         logger.info("Custom metrics class not provided. Using No-op metrics")
         _metrics_instance = NopMetricsPublisher()
-        return
+        return True
 
-    metrics_cls = os_utils.import_obj(metrics_cls_path)
     try:
+        metrics_cls = os_utils.import_obj(metrics_cls_path)
         metrics_cls_instance: OpsMetricPublisher = metrics_cls(**metrics_args)
         assert isinstance(metrics_cls_instance, OpsMetricPublisher)
         _metrics_instance = metrics_cls_instance
         logger.info(f"Instantiated Custom Metrics Class from: {metrics_cls_path}")
+        return True
     except Exception as e:
-        logger.error(f"Could not instantiate class {metrics_cls_path}: {e}")
-        raise e
+        logger.error(
+            f"Could not instantiate class {metrics_cls_path}: {e}. Falling back to No-op metrics."
+        )
+        _metrics_instance = NopMetricsPublisher()
+        return False
 
 
 def get_metrics_service_instance() -> Optional[OpsMetricPublisher]:
