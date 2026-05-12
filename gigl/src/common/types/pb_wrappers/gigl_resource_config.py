@@ -8,7 +8,7 @@ from gigl.common import GcsUri, UriFactory
 from gigl.common.logger import Logger
 from gigl.src.common.constants.components import GiGLComponents
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
-    CustomResourceConfig,
+    CustomLauncherConfig,
     DataflowResourceConfig,
     DataPreprocessorConfig,
     DistributedTrainerConfig,
@@ -58,7 +58,7 @@ class GiglResourceConfigWrapper:
             KFPResourceConfig,
             LocalResourceConfig,
             VertexAiGraphStoreConfig,
-            CustomResourceConfig,
+            CustomLauncherConfig,
         ]
     ] = None
     _inference_config: Optional[
@@ -67,7 +67,7 @@ class GiglResourceConfigWrapper:
             VertexAiResourceConfig,
             LocalResourceConfig,
             VertexAiGraphStoreConfig,
-            CustomResourceConfig,
+            CustomLauncherConfig,
         ]
     ] = None
 
@@ -288,7 +288,7 @@ class GiglResourceConfigWrapper:
         KFPResourceConfig,
         LocalResourceConfig,
         VertexAiGraphStoreConfig,
-        CustomResourceConfig,
+        CustomLauncherConfig,
     ]:
         """
         Returns the trainer config specified in the resource config. (e.g. Vertex AI, KFP, Local, Custom)
@@ -311,7 +311,7 @@ class GiglResourceConfigWrapper:
                     KFPResourceConfig,
                     LocalResourceConfig,
                     VertexAiGraphStoreConfig,
-                    CustomResourceConfig,
+                    CustomLauncherConfig,
                 ]
                 if (
                     deprecated_config.WhichOneof(_TRAINER_CONFIG_FIELD)  # type: ignore[arg-type]
@@ -395,7 +395,7 @@ class GiglResourceConfigWrapper:
         VertexAiResourceConfig,
         LocalResourceConfig,
         VertexAiGraphStoreConfig,
-        CustomResourceConfig,
+        CustomLauncherConfig,
     ]:
         """
         Returns the inferencer config specified in the resource config. (e.g. Dataflow, Vertex AI, Local, Custom)

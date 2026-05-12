@@ -150,12 +150,12 @@ def check_if_trainer_resource_config_valid(
         gigl_resource_config_pb2.VertexAiResourceConfig,
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
-        gigl_resource_config_pb2.CustomResourceConfig,
+        gigl_resource_config_pb2.CustomLauncherConfig,
     ] = wrapper.trainer_config
-    if isinstance(trainer_config, gigl_resource_config_pb2.CustomResourceConfig):
+    if isinstance(trainer_config, gigl_resource_config_pb2.CustomLauncherConfig):
         logger.info(
             "Skipping trainer machine-shape validation: trainer_config is a "
-            "CustomResourceConfig (launcher-pluggable; no concrete machine "
+            "CustomLauncherConfig (launcher-pluggable; no concrete machine "
             "spec to validate)."
         )
         return
@@ -172,10 +172,10 @@ def check_if_inferencer_resource_config_valid(
         resource_config=resource_config_pb
     )
     inferencer_config = resource_config_wrapper.inferencer_config
-    if isinstance(inferencer_config, gigl_resource_config_pb2.CustomResourceConfig):
+    if isinstance(inferencer_config, gigl_resource_config_pb2.CustomLauncherConfig):
         logger.info(
             "Skipping inferencer machine-shape validation: inferencer_config "
-            "is a CustomResourceConfig (launcher-pluggable; no concrete "
+            "is a CustomLauncherConfig (launcher-pluggable; no concrete "
             "machine spec to validate)."
         )
         return
@@ -313,14 +313,14 @@ def _validate_machine_config(
         )
 
 
-def check_custom_resource_config_shape(
+def check_custom_launcher_config_shape(
     resource_config_pb: gigl_resource_config_pb2.GiglResourceConfig,
     component: GiGLComponents,
 ) -> None:
-    """Assert the trainer / inferencer's ``CustomResourceConfig`` is well-shaped.
+    """Assert the trainer / inferencer's ``CustomLauncherConfig`` is well-shaped.
 
     Resolves the component's resource config through the wrapper; if it is not
-    a ``CustomResourceConfig`` this helper is a no-op. Otherwise it asserts
+    a ``CustomLauncherConfig`` this helper is a no-op. Otherwise it asserts
     ``command`` is non-empty so the launcher's runtime guard does not fail
     on a typo in the YAML.
 
@@ -329,15 +329,15 @@ def check_custom_resource_config_shape(
             inferencer oneof (depending on ``component``) is pulled out of the
             wrapper.
         component: Which GiGL component to check. Must be Trainer or
-            Inferencer; other components never carry a ``CustomResourceConfig``.
+            Inferencer; other components never carry a ``CustomLauncherConfig``.
 
     Raises:
         ValueError: If ``component`` is not Trainer or Inferencer, or if a
-            populated ``CustomResourceConfig`` has an empty ``command``.
+            populated ``CustomLauncherConfig`` has an empty ``command``.
     """
     if component not in {GiGLComponents.Trainer, GiGLComponents.Inferencer}:
         raise ValueError(
-            f"check_custom_resource_config_shape only supports "
+            f"check_custom_launcher_config_shape only supports "
             f"Trainer and Inferencer components; got {component}."
         )
 
@@ -348,19 +348,19 @@ def check_custom_resource_config_shape(
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
         gigl_resource_config_pb2.DataflowResourceConfig,
-        gigl_resource_config_pb2.CustomResourceConfig,
+        gigl_resource_config_pb2.CustomLauncherConfig,
     ]
     if component == GiGLComponents.Trainer:
         component_config = wrapper.trainer_config
     else:
         component_config = wrapper.inferencer_config
 
-    if not isinstance(component_config, gigl_resource_config_pb2.CustomResourceConfig):
+    if not isinstance(component_config, gigl_resource_config_pb2.CustomLauncherConfig):
         return
 
     if not component_config.command:
         raise ValueError(
-            f"CustomResourceConfig.command must be set for {component.value}."
+            f"CustomLauncherConfig.command must be set for {component.value}."
         )
 
 

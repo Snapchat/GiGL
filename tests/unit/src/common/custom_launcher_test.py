@@ -26,8 +26,8 @@ class TestLaunchCustom(TestCase):
         self,
         command: str,
         args: list[str] | None = None,
-    ) -> gigl_resource_config_pb2.CustomResourceConfig:
-        return gigl_resource_config_pb2.CustomResourceConfig(
+    ) -> gigl_resource_config_pb2.CustomLauncherConfig:
+        return gigl_resource_config_pb2.CustomLauncherConfig(
             command=command,
             args=args or [],
         )
@@ -41,7 +41,7 @@ class TestLaunchCustom(TestCase):
             args=["--foo=bar", "--baz=qux"],
         )
         launch_custom(
-            custom_resource_config=config,
+            custom_launcher_config=config,
             applied_task_identifier="job-42",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -66,7 +66,7 @@ class TestLaunchCustom(TestCase):
         config = self._build_config(command="", args=["ignored"])
         with self.assertRaises(ValueError):
             launch_custom(
-                custom_resource_config=config,
+                custom_launcher_config=config,
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -83,7 +83,7 @@ class TestLaunchCustom(TestCase):
         config = self._build_config(command="echo")
         with self.assertRaises(ValueError):
             launch_custom(
-                custom_resource_config=config,
+                custom_launcher_config=config,
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -99,7 +99,7 @@ class TestLaunchCustom(TestCase):
     def test_args_with_spaces_are_shell_quoted(self, mock_run: MagicMock) -> None:
         config = self._build_config(command="echo", args=["a b c", "--name=with space"])
         launch_custom(
-            custom_resource_config=config,
+            custom_launcher_config=config,
             applied_task_identifier="job",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -128,7 +128,7 @@ class TestLaunchCustom(TestCase):
             args=["--foo=${gigl:bar}"],
         )
         launch_custom(
-            custom_resource_config=config,
+            custom_launcher_config=config,
             applied_task_identifier="job",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),

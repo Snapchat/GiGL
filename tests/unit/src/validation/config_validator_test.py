@@ -352,12 +352,12 @@ class TestConfigValidationPerSGSBackends(TestCase):
             )
 
 
-class TestCustomResourceConfigInValidationChain(TestCase):
-    """Confirm the new CustomResourceConfig gates are wired into the chain.
+class TestCustomLauncherConfigInValidationChain(TestCase):
+    """Confirm the new CustomLauncherConfig gates are wired into the chain.
 
-    The shape check (``check_custom_resource_config_shape``) runs
+    The shape check (``check_custom_launcher_config_shape``) runs
     unconditionally inside ``kfp_validation_checks``. A resource config
-    with a ``CustomResourceConfig`` trainer that has an empty ``command``
+    with a ``CustomLauncherConfig`` trainer that has an empty ``command``
     must surface a ``ValueError`` from the chain, not a launcher-side
     runtime failure.
     """
@@ -381,13 +381,13 @@ class TestCustomResourceConfigInValidationChain(TestCase):
 
     def test_empty_custom_trainer_command_raises_via_chain(self) -> None:
         # Build a live-SGS task config (so the chain runs through
-        # CustomResourceConfig-aware paths).
+        # CustomLauncherConfig-aware paths).
         task_config_uri = self._write_proto_to_file(
             _create_valid_live_subgraph_sampling_task_config(),
             "live_task_config.yaml",
         )
 
-        # Resource config with a CustomResourceConfig trainer whose
+        # Resource config with a CustomLauncherConfig trainer whose
         # command is empty — the new shape check must catch it.
         resource_config = _create_valid_live_subgraph_sampling_resource_config()
         resource_config.trainer_resource_config.ClearField("trainer_config")
@@ -398,14 +398,14 @@ class TestCustomResourceConfigInValidationChain(TestCase):
 
         with self.assertRaises(ValueError) as ctx:
             kfp_validation_checks(
-                job_name="custom_resource_config_chain_test",
+                job_name="custom_launcher_config_chain_test",
                 task_config_uri=task_config_uri,
                 start_at="config_populator",
                 resource_config_uri=resource_config_uri,
             )
-        # Error message must come from check_custom_resource_config_shape,
+        # Error message must come from check_custom_launcher_config_shape,
         # not from a generic shape check elsewhere.
-        self.assertIn("CustomResourceConfig.command", str(ctx.exception))
+        self.assertIn("CustomLauncherConfig.command", str(ctx.exception))
 
 
 if __name__ == "__main__":
