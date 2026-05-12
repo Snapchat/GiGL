@@ -1,6 +1,6 @@
-"""Subprocess dispatch for ``CustomResourceConfig``-backed launchers.
+"""Subprocess dispatch for ``CustomLauncherConfig``-backed launchers.
 
-Takes ``CustomResourceConfig.command`` and ``CustomResourceConfig.args``
+Takes ``CustomLauncherConfig.command`` and ``CustomLauncherConfig.args``
 verbatim and shells out via ``subprocess.run(shell_line, shell=True)``.
 The shell-style invocation honors leading ``KEY=VALUE`` env-var
 assignments in ``command`` so callers can self-document required env
@@ -22,7 +22,7 @@ from typing import Optional
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.src.common.constants.components import GiGLComponents
-from snapchat.research.gbml.gigl_resource_config_pb2 import CustomResourceConfig
+from snapchat.research.gbml.gigl_resource_config_pb2 import CustomLauncherConfig
 
 logger = Logger()
 
@@ -32,7 +32,7 @@ _LAUNCHABLE_COMPONENTS: frozenset[GiGLComponents] = frozenset(
 
 
 def launch_custom(
-    custom_resource_config: CustomResourceConfig,
+    custom_launcher_config: CustomLauncherConfig,
     applied_task_identifier: str,
     task_config_uri: Uri,
     resource_config_uri: Uri,
@@ -42,7 +42,7 @@ def launch_custom(
     cuda_docker_uri: Optional[str],
     component: GiGLComponents,
 ) -> None:
-    """Shell out to ``custom_resource_config.command`` with ``args[]`` appended.
+    """Shell out to ``custom_launcher_config.command`` with ``args[]`` appended.
 
     Composes a shell line as ``command`` followed by each ``args[]``
     element passed through ``shlex.quote``, then invokes
@@ -64,7 +64,7 @@ def launch_custom(
     the parent process).
 
     Args:
-        custom_resource_config: Proto whose ``command`` is the shell
+        custom_launcher_config: Proto whose ``command`` is the shell
             snippet to execute and whose ``args`` are positional
             arguments appended verbatim.
         applied_task_identifier: Accepted for back-compat; ignored.
@@ -79,17 +79,17 @@ def launch_custom(
 
     Raises:
         ValueError: If ``component`` is not Trainer or Inferencer, or if
-            ``custom_resource_config.command`` is empty.
+            ``custom_launcher_config.command`` is empty.
         subprocess.CalledProcessError: If the spawned subprocess exits
             non-zero.
     """
     if component not in _LAUNCHABLE_COMPONENTS:
         raise ValueError(f"Invalid component: {component}")
-    if not custom_resource_config.command:
-        raise ValueError("CustomResourceConfig.command must be set")
+    if not custom_launcher_config.command:
+        raise ValueError("CustomLauncherConfig.command must be set")
 
-    command: str = custom_resource_config.command
-    args: list[str] = list(custom_resource_config.args)
+    command: str = custom_launcher_config.command
+    args: list[str] = list(custom_launcher_config.args)
 
     shell_line = " ".join([command, *(shlex.quote(a) for a in args)])
     logger.info(f"Launching {component.name} via subprocess: {shell_line!r}")
