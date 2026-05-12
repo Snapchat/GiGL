@@ -244,7 +244,7 @@ class TestGiglResourceConfigWrapper(TestCase):
     def test_trainer_config_custom(self):
         """Test trainer_config with Custom (user-supplied launcher) configuration."""
         config = self._create_gigl_resource_config_with_direct_shared_config()
-        trainer_config = gigl_resource_config_pb2.CustomResourceConfig(
+        trainer_config = gigl_resource_config_pb2.CustomLauncherConfig(
             command="python -m my_project.launchers.ray.launch",
             args=["--cluster=dev", "--num_workers=4"],
         )
@@ -254,7 +254,7 @@ class TestGiglResourceConfigWrapper(TestCase):
 
         wrapper = GiglResourceConfigWrapper(resource_config=config)
         self.assertIsInstance(
-            wrapper.trainer_config, gigl_resource_config_pb2.CustomResourceConfig
+            wrapper.trainer_config, gigl_resource_config_pb2.CustomLauncherConfig
         )
         self.assertEqual(wrapper.trainer_config, trainer_config)
 
@@ -375,7 +375,7 @@ class TestGiglResourceConfigWrapper(TestCase):
     def test_inferencer_config_custom(self):
         """Test inferencer_config with Custom (user-supplied launcher) configuration."""
         config = self._create_gigl_resource_config_with_direct_shared_config()
-        inferencer_config = gigl_resource_config_pb2.CustomResourceConfig(
+        inferencer_config = gigl_resource_config_pb2.CustomLauncherConfig(
             command="python -m my_project.launchers.ray.launch",
             args=["--cluster=prod", "--shards=8"],
         )
@@ -385,7 +385,7 @@ class TestGiglResourceConfigWrapper(TestCase):
 
         wrapper = GiglResourceConfigWrapper(resource_config=config)
         self.assertIsInstance(
-            wrapper.inferencer_config, gigl_resource_config_pb2.CustomResourceConfig
+            wrapper.inferencer_config, gigl_resource_config_pb2.CustomLauncherConfig
         )
         self.assertEqual(wrapper.inferencer_config, inferencer_config)
 

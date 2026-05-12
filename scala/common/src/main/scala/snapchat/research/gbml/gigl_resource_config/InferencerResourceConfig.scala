@@ -89,8 +89,8 @@ final case class InferencerResourceConfig(
     def withLocalInferencerConfig(__v: snapchat.research.gbml.gigl_resource_config.LocalResourceConfig): InferencerResourceConfig = copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.LocalInferencerConfig(__v))
     def getVertexAiGraphStoreInferencerConfig: snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig = inferencerConfig.vertexAiGraphStoreInferencerConfig.getOrElse(snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig.defaultInstance)
     def withVertexAiGraphStoreInferencerConfig(__v: snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig): InferencerResourceConfig = copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.VertexAiGraphStoreInferencerConfig(__v))
-    def getCustomInferencerConfig: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig = inferencerConfig.customInferencerConfig.getOrElse(snapchat.research.gbml.gigl_resource_config.CustomResourceConfig.defaultInstance)
-    def withCustomInferencerConfig(__v: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig): InferencerResourceConfig = copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(__v))
+    def getCustomInferencerConfig: snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig = inferencerConfig.customInferencerConfig.getOrElse(snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig.defaultInstance)
+    def withCustomInferencerConfig(__v: snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig): InferencerResourceConfig = copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(__v))
     def clearInferencerConfig: InferencerResourceConfig = copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.Empty)
     def withInferencerConfig(__v: snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig): InferencerResourceConfig = copy(inferencerConfig = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
@@ -138,7 +138,7 @@ object InferencerResourceConfig extends scalapb.GeneratedMessageCompanion[snapch
         case 34 =>
           __inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.VertexAiGraphStoreInferencerConfig(__inferencerConfig.vertexAiGraphStoreInferencerConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
         case 42 =>
-          __inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(__inferencerConfig.customInferencerConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+          __inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(__inferencerConfig.customInferencerConfig.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
         case tag =>
           if (_unknownFields__ == null) {
             _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -159,7 +159,7 @@ object InferencerResourceConfig extends scalapb.GeneratedMessageCompanion[snapch
             .orElse[snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig]]).map(snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.DataflowInferencerConfig(_)))
             .orElse[snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(3).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.LocalResourceConfig]]).map(snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.LocalInferencerConfig(_)))
             .orElse[snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(4).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig]]).map(snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.VertexAiGraphStoreInferencerConfig(_)))
-            .orElse[snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig]]).map(snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(_)))
+            .orElse[snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig](__fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig]]).map(snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(_)))
             .getOrElse(snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.Empty)
       )
     case _ => throw new RuntimeException("Expected PMessage")
@@ -173,7 +173,7 @@ object InferencerResourceConfig extends scalapb.GeneratedMessageCompanion[snapch
       case 2 => __out = snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig
       case 3 => __out = snapchat.research.gbml.gigl_resource_config.LocalResourceConfig
       case 4 => __out = snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig
-      case 5 => __out = snapchat.research.gbml.gigl_resource_config.CustomResourceConfig
+      case 5 => __out = snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig
     }
     __out
   }
@@ -194,7 +194,7 @@ object InferencerResourceConfig extends scalapb.GeneratedMessageCompanion[snapch
     def dataflowInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig] = _root_.scala.None
     def localInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.LocalResourceConfig] = _root_.scala.None
     def vertexAiGraphStoreInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig] = _root_.scala.None
-    def customInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = _root_.scala.None
+    def customInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig] = _root_.scala.None
   }
   object InferencerConfig {
     @SerialVersionUID(0L)
@@ -235,10 +235,10 @@ object InferencerResourceConfig extends scalapb.GeneratedMessageCompanion[snapch
       override def number: _root_.scala.Int = 4
     }
     @SerialVersionUID(0L)
-    final case class CustomInferencerConfig(value: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig) extends snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig {
-      type ValueType = snapchat.research.gbml.gigl_resource_config.CustomResourceConfig
+    final case class CustomInferencerConfig(value: snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig) extends snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig {
+      type ValueType = snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig
       override def isCustomInferencerConfig: _root_.scala.Boolean = true
-      override def customInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = Some(value)
+      override def customInferencerConfig: _root_.scala.Option[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig] = Some(value)
       override def number: _root_.scala.Int = 5
     }
   }
@@ -247,7 +247,7 @@ object InferencerResourceConfig extends scalapb.GeneratedMessageCompanion[snapch
     def dataflowInferencerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.DataflowResourceConfig] = field(_.getDataflowInferencerConfig)((c_, f_) => c_.copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.DataflowInferencerConfig(f_)))
     def localInferencerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.LocalResourceConfig] = field(_.getLocalInferencerConfig)((c_, f_) => c_.copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.LocalInferencerConfig(f_)))
     def vertexAiGraphStoreInferencerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.VertexAiGraphStoreConfig] = field(_.getVertexAiGraphStoreInferencerConfig)((c_, f_) => c_.copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.VertexAiGraphStoreInferencerConfig(f_)))
-    def customInferencerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = field(_.getCustomInferencerConfig)((c_, f_) => c_.copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(f_)))
+    def customInferencerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig] = field(_.getCustomInferencerConfig)((c_, f_) => c_.copy(inferencerConfig = snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig.CustomInferencerConfig(f_)))
     def inferencerConfig: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.InferencerResourceConfig.InferencerConfig] = field(_.inferencerConfig)((c_, f_) => c_.copy(inferencerConfig = f_))
   }
   final val VERTEX_AI_INFERENCER_CONFIG_FIELD_NUMBER = 1
