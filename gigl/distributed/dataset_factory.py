@@ -20,7 +20,7 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
+from gigl.common.data.dataloaders import SerializedTFRecordInfo, TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
@@ -43,6 +43,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
@@ -56,6 +57,93 @@ from gigl.utils.data_splitters import (
 logger = Logger()
 
 
+def _extract_weight_column(
+    edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+    weight_edge_feat_name: Union[str, dict[EdgeType, str]],
+    edge_entity_info: Union[SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]],
+) -> Tuple[
+    dict[EdgeType, torch.Tensor],
+    Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+]:
+    """Extracts a weight column from edge features, removing it from the feature tensor.
+
+    Returns a tuple of (edge_weights_by_type, trimmed_edge_features). The weight column
+    is removed from the feature tensor so it is not duplicated in memory.
+
+    Args:
+        edge_features: Edge feature tensor(s).
+        weight_edge_feat_name: Name of the weight feature column, either a single string
+            (applied to all edge types) or a per-edge-type mapping.
+        edge_entity_info: SerializedTFRecordInfo carrying ordered ``feature_keys`` used
+            to resolve the column name to an index.
+
+    Returns:
+        Tuple of (weights_by_type, trimmed_features) where ``weights_by_type`` maps each
+        edge type to its extracted 1-D weight tensor and ``trimmed_features`` has the
+        weight column removed.
+    """
+    # Normalise edge_features to heterogeneous format for uniform processing
+    is_homogeneous_input = isinstance(edge_features, torch.Tensor)
+    if is_homogeneous_input:
+        assert isinstance(edge_features, torch.Tensor)
+        edge_features_dict: dict[EdgeType, torch.Tensor] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_features
+        }
+    else:
+        assert isinstance(edge_features, dict)
+        edge_features_dict = edge_features
+
+    # Normalise edge_entity_info to heterogeneous format
+    if isinstance(edge_entity_info, SerializedTFRecordInfo):
+        entity_info_dict: dict[EdgeType, SerializedTFRecordInfo] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_entity_info
+        }
+    else:
+        entity_info_dict = edge_entity_info
+
+    # Normalise weight_edge_feat_name to per-edge-type mapping
+    if isinstance(weight_edge_feat_name, str):
+        weight_name_dict: dict[EdgeType, str] = {
+            et: weight_edge_feat_name for et in edge_features_dict
+        }
+    else:
+        weight_name_dict = weight_edge_feat_name
+
+    edge_weights_by_type: dict[EdgeType, torch.Tensor] = {}
+    trimmed_features_dict: dict[EdgeType, torch.Tensor] = {}
+
+    for edge_type, feat_tensor in edge_features_dict.items():
+        if edge_type not in weight_name_dict:
+            trimmed_features_dict[edge_type] = feat_tensor
+            continue
+
+        feat_name = weight_name_dict[edge_type]
+        info = entity_info_dict[edge_type]
+        feature_keys = list(info.feature_keys)
+
+        if feat_name not in feature_keys:
+            raise ValueError(
+                f"weight_edge_feat_name '{feat_name}' not found in edge feature keys "
+                f"for edge type {edge_type}: {feature_keys}"
+            )
+
+        col_idx = feature_keys.index(feat_name)
+        edge_weights_by_type[edge_type] = feat_tensor[:, col_idx]
+
+        # Remove the weight column from the feature tensor
+        keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
+        trimmed_features_dict[edge_type] = feat_tensor[:, keep_cols]
+
+    if is_homogeneous_input:
+        trimmed_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+            trimmed_features_dict[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+        )
+    else:
+        trimmed_features = trimmed_features_dict
+
+    return edge_weights_by_type, trimmed_features
+
+
 @tf_on_cpu
 def _load_and_build_partitioned_dataset(
     serialized_graph_metadata: SerializedGraphMetadata,
@@ -66,6 +154,7 @@ def _load_and_build_partitioned_dataset(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -82,6 +171,10 @@ def _load_and_build_partitioned_dataset(
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
+        weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Name of the edge feature column to use as
+            sampling weights. The column is extracted from the feature tensor and registered separately via
+            ``DistPartitioner.register_edge_weights()``; it is removed from the feature matrix to avoid duplication.
+            Supply a single string to use the same column name for all edge types, or a per-edge-type dict.
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
 
@@ -176,6 +269,15 @@ def _load_and_build_partitioned_dataset(
     if loaded_graph_tensors.node_labels is not None:
         partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
     if loaded_graph_tensors.edge_features is not None:
+        if weight_edge_feat_name is not None:
+            edge_weights_by_type, trimmed_edge_features = _extract_weight_column(
+                edge_features=loaded_graph_tensors.edge_features,
+                weight_edge_feat_name=weight_edge_feat_name,
+                edge_entity_info=serialized_graph_metadata.edge_entity_info,
+            )
+            loaded_graph_tensors.edge_features = trimmed_edge_features
+            if edge_weights_by_type:
+                partitioner.register_edge_weights(edge_weights=edge_weights_by_type)
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
         )
@@ -230,6 +332,7 @@ def _build_dataset_process(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -311,6 +414,7 @@ def _build_dataset_process(
         edge_tf_dataset_options=edge_tf_dataset_options,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
+        weight_edge_feat_name=weight_edge_feat_name,
     )
 
     output_dict["dataset"] = output_dataset
@@ -336,6 +440,7 @@ def build_dataset(
     _dataset_building_port: Optional[
         int
     ] = None,  # WARNING: This field will be deprecated in the future
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -368,6 +473,10 @@ def build_dataset(
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
         _dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
             be initialized from the current torch.distributed context.
+        weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Name of the edge feature column to use
+            as sampling weights. The column is extracted from the feature tensor and registered separately; it is
+            removed from the feature matrix to avoid memory duplication. Supply a single string to apply to all
+            edge types, or a per-edge-type dict. (default: ``None``)
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -463,6 +572,7 @@ def build_dataset(
             edge_tf_dataset_options,
             splitter,
             _ssl_positive_label_percentage,
+            weight_edge_feat_name,
         ),
     )
 

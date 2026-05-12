@@ -84,6 +84,7 @@ class DistDataset(glt.distributed.DistDataset):
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
         max_labels_per_anchor_node: Optional[int] = None,
+        has_edge_weights: bool = False,
     ) -> None:
         """
         Initializes the fields of the DistDataset class. This function is called upon each serialization of the DistDataset instance.
@@ -111,6 +112,9 @@ class DistDataset(glt.distributed.DistDataset):
             degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
             max_labels_per_anchor_node (Optional[int]): Optional cap for how many
                 labels to materialize per anchor node for ABLP label fetching.
+            has_edge_weights (bool): Whether edge weights were registered during dataset
+                construction via ``DistPartitioner.register_edge_weights()``. Automatically
+                set during ``build()``; do not pass this manually. (default: ``False``)
         """
         self._rank: int = rank
         self._world_size: int = world_size
@@ -150,6 +154,7 @@ class DistDataset(glt.distributed.DistDataset):
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = degree_tensor
         self._max_labels_per_anchor_node = max_labels_per_anchor_node
+        self._has_edge_weights: bool = has_edge_weights
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
     # naming (i.e. rank, world_size).
@@ -335,6 +340,15 @@ class DistDataset(glt.distributed.DistDataset):
 
             self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
         return self._degree_tensor
+
+    @property
+    def has_edge_weights(self) -> bool:
+        """True if edge weights were registered during dataset construction.
+
+        Used by loaders to automatically infer ``with_weight`` when it is not
+        explicitly specified.
+        """
+        return self._has_edge_weights
 
     @property
     def max_labels_per_anchor_node(self) -> Optional[int]:
@@ -575,6 +589,9 @@ class DistDataset(glt.distributed.DistDataset):
             edge_ids: Union[
                 Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
             ] = partitioned_edge_index.edge_ids
+            edge_weights: Optional[
+                Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            ] = partitioned_edge_index.weights
         else:
             edge_index = {
                 edge_type: graph_partition_data.edge_index
@@ -584,12 +601,29 @@ class DistDataset(glt.distributed.DistDataset):
                 edge_type: graph_partition_data.edge_ids
                 for edge_type, graph_partition_data in partitioned_edge_index.items()
             }
+            weights_by_type = {
+                edge_type: graph_partition_data.weights
+                for edge_type, graph_partition_data in partitioned_edge_index.items()
+                if graph_partition_data.weights is not None
+            }
+            edge_weights = weights_by_type if weights_by_type else None
+            if weights_by_type:
+                missing = set(partitioned_edge_index.keys()) - set(weights_by_type.keys())
+                if missing:
+                    logger.warning(
+                        f"Edge weights are registered for {set(weights_by_type.keys())} but "
+                        f"not for {missing}. When with_weight=True, edge types without weights "
+                        f"will fall back to uniform sampling."
+                    )
+
+        self._has_edge_weights = edge_weights is not None
 
         self.init_graph(
             edge_index=edge_index,
             edge_ids=edge_ids,
             graph_mode="CPU",
             directed=True,
+            edge_weights=edge_weights,
         )
 
         if isinstance(partitioned_edge_index, Mapping):
@@ -876,6 +910,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
         Optional[int],
+        bool,
     ]:
         """
         Serializes the member variables of the DistDatasetClass
@@ -928,6 +963,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._edge_feature_info,  # Additional field unique to DistDataset class
             self._degree_tensor,  # Additional field unique to DistDataset class
             self._max_labels_per_anchor_node,  # Additional field unique to DistDataset class
+            self._has_edge_weights,  # Additional field unique to DistDataset class
         )
         return ipc_handle
 
@@ -1185,6 +1221,7 @@ def _rebuild_distributed_dataset(
         ],  # Edge feature dim and its data type
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
         Optional[int],  # Optional per-anchor label cap for ABLP label fetching
+        bool,  # has_edge_weights
     ],
 ):
     dataset = DistDataset.from_ipc_handle(ipc_handle)

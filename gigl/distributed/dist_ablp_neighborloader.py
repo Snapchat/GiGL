@@ -91,6 +91,7 @@ class DistABLPLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        with_weight: Optional[bool] = None,
         sampler_options: Optional[SamplerOptions] = None,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
@@ -201,6 +202,13 @@ class DistABLPLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            with_weight (Optional[bool]): Whether to use edge weights for neighbor
+                sampling. When ``None`` (default), inferred automatically from the
+                dataset: ``True`` if edge weights were registered via
+                ``DistPartitioner.register_edge_weights()``, ``False`` otherwise.
+                Pass ``True`` or ``False`` explicitly to override the inference.
+                Only auto-inferred for colocated mode; graph-store mode defaults to
+                ``False`` when ``None``.
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
                 instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument
                 to instantiate the sampler.
@@ -260,6 +268,26 @@ class DistABLPLoader(BaseDistLoader):
             context, local_process_rank, local_process_world_size
         )
         del context, local_process_rank, local_process_world_size
+
+        # Validate explicit with_weight overrides and infer when not specified.
+        if isinstance(dataset, DistDataset):
+            if with_weight is True and not dataset.has_edge_weights:
+                raise ValueError(
+                    "with_weight=True requires edge weights to be registered in the dataset. "
+                    "Pass weight_edge_feat_name to build_dataset() to register edge weights, "
+                    "or omit with_weight to have it inferred automatically."
+                )
+            if with_weight is False and dataset.has_edge_weights:
+                logger.warning(
+                    "with_weight=False explicitly set but the dataset has edge weights registered. "
+                    "Weighted sampling will be disabled. Omit with_weight to enable it automatically."
+                )
+        if with_weight is None:
+            with_weight = (
+                dataset.has_edge_weights
+                if isinstance(dataset, DistDataset)
+                else False
+            )
 
         device = (
             pin_memory_device
@@ -349,6 +377,7 @@ class DistABLPLoader(BaseDistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
+            with_weight=with_weight,
         )
 
         producer: Optional[DistSamplingProducer] = None

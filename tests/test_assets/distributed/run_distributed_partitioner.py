@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type, Union
+from typing import Optional, Type, Union
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -31,6 +31,9 @@ def run_distributed_partitioner(
     master_port: int,
     input_data_strategy: InputDataStrategy,
     partitioner_class: Type[DistPartitioner],
+    rank_to_edge_weights: Optional[
+        dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    ] = None,
 ) -> None:
     """
     Runs the distributed partitioner on a specific rank.
@@ -44,6 +47,7 @@ def run_distributed_partitioner(
         master_port (int): Master port for initializing rpc for partitioning
         input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
         partitioner_class (Type[DistPartitioner]): The class to use for partitioning
+        rank_to_edge_weights (Optional[dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]]): Optional mapping of rank to 1D edge weight tensor (or dict per EdgeType for heterogeneous). Only supported with REGISTER_ALL_ENTITIES_SEPARATELY strategy.
     """
 
     input_graph = rank_to_input_graph[rank]
@@ -91,6 +95,10 @@ def run_distributed_partitioner(
         dist_partitioner.register_edge_features(edge_features=edge_features)
         del edge_index
         del edge_features
+        if rank_to_edge_weights is not None and rank in rank_to_edge_weights:
+            dist_partitioner.register_edge_weights(
+                edge_weights=rank_to_edge_weights[rank]
+            )
         (
             output_edge_index,
             output_edge_features,

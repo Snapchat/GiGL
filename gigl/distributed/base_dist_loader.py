@@ -340,6 +340,7 @@ class BaseDistLoader(DistLoader):
         batch_size: int = 1,
         shuffle: bool = False,
         drop_last: bool = False,
+        with_weight: bool = False,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -352,6 +353,9 @@ class BaseDistLoader(DistLoader):
             batch_size: How many samples per batch.
             shuffle: Whether to shuffle input nodes.
             drop_last: Whether to drop the last incomplete batch.
+            with_weight: Whether to use edge weights for sampling. Requires that
+                edge weights were registered during dataset construction via
+                ``DistPartitioner.register_edge_weights()``.
 
         Returns:
             A fully configured SamplingConfig.
@@ -369,7 +373,7 @@ class BaseDistLoader(DistLoader):
             with_edge=True,
             collect_features=True,
             with_neg=False,
-            with_weight=False,
+            with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
             seed=None,
         )
