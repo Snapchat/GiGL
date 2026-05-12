@@ -161,6 +161,7 @@ class DistPartitioner:
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
         node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+        seed: Optional[int] = None,
     ):
         """
         Initializes the parameters of the partitioner. Also optionally takes in node and edge tensors as arguments and registers them to the partitioner. Registered
@@ -176,6 +177,8 @@ class DistPartitioner:
             positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_pos_labels_on_current_rank]
             negative_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_neg_labels_on_current_rank]
             node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node labels from input. Tensors should be of shape [num_nodes_on_current_rank, node_label_dim]
+            seed (Optional[int]): When provided, seeds the random permutation used during node partitioning so that
+                the same inputs produce the same partition assignment across runs. When None, partitioning is non-deterministic.
         """
 
         self._world_size: int
@@ -183,6 +186,7 @@ class DistPartitioner:
         self._partition_mgr: _DistLinkPredicitonPartitionManager
 
         self._is_rpc_initialized: bool = False
+        self._seed: Optional[int] = seed
 
         self._is_input_homogeneous: Optional[bool] = None
         self._should_assign_edges_by_src_node: bool = should_assign_edges_by_src_node
@@ -847,7 +851,12 @@ class DistPartitioner:
         # TODO (mkolodner-sc): Explore other node partitioning strategies here beyond random permutation
         def _node_pfn(n_ids, _):
             partition_idx = n_ids % self._world_size
-            rand_order = torch.randperm(len(n_ids))
+            if self._seed is not None:
+                generator = torch.Generator()
+                generator.manual_seed(self._seed)
+                rand_order = torch.randperm(len(n_ids), generator=generator)
+            else:
+                rand_order = torch.randperm(len(n_ids))
             return partition_idx[rand_order]
 
         partitioned_results, node_partition_book = self._partition_by_chunk(

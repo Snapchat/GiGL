@@ -1419,5 +1419,81 @@ class DistRandomPartitionerTestCase(TestCase):
             partitioner3.register_node_labels(node_labels=node_labels)
 
 
+def _run_large_node_partition_worker(
+    rank: int,
+    output_dict: MutableMapping[int, Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+    master_addr: str,
+    master_port: int,
+    seed: Optional[int],
+    n_nodes_per_rank: int,
+) -> None:
+    """Spawnable worker: partitions a large homogeneous graph and stores the node partition book."""
+    init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
+    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
+
+    start = rank * n_nodes_per_rank
+    node_ids = torch.arange(start, start + n_nodes_per_rank, dtype=torch.int64)
+
+    partitioner = DistPartitioner(should_assign_edges_by_src_node=False, seed=seed)
+    partitioner.register_node_ids(node_ids=node_ids)
+    node_partition_book = partitioner.partition_node()
+
+    output_dict[rank] = node_partition_book
+
+
+class DistPartitionerDeterminismTestCase(TestCase):
+    """Tests that seeded partitioning is reproducible."""
+
+    _N_NODES_PER_RANK: int = 50
+
+    def setUp(self) -> None:
+        self._master_ip_address = "localhost"
+
+    def _run_large_partitioner_with_seed(
+        self, seed: Optional[int]
+    ) -> dict[int, Union[torch.Tensor, dict[NodeType, torch.Tensor]]]:
+        """Runs node partitioning on a large graph and returns the node partition books by rank."""
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[
+            int, Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ] = manager.dict()
+
+        mp.spawn(
+            _run_large_node_partition_worker,
+            args=(
+                output_dict,
+                self._master_ip_address,
+                master_port,
+                seed,
+                self._N_NODES_PER_RANK,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+        return dict(output_dict)
+
+    def test_seeded_partitioning_is_deterministic_on_large_graph(self) -> None:
+        """Same seed must produce identical partition books on a large graph (50 nodes per rank).
+
+        The small mocked graph has too few nodes for a meaningful determinism check since
+        there are only a handful of distinct partition outcomes. This test uses a larger
+        graph to provide stronger evidence that seeding is applied correctly.
+        """
+        partition_books_run1 = self._run_large_partitioner_with_seed(seed=42)
+        partition_books_run2 = self._run_large_partitioner_with_seed(seed=42)
+
+        for rank in range(MOCKED_NUM_PARTITIONS):
+            pb1 = partition_books_run1[rank]
+            pb2 = partition_books_run2[rank]
+            assert isinstance(pb1, torch.Tensor) and isinstance(pb2, torch.Tensor), (
+                f"Expected tensor partition books on rank {rank}"
+            )
+            self.assertTrue(
+                torch.equal(pb1, pb2),
+                msg=f"Node partition books differ on rank {rank} despite identical seed",
+            )
+
+
 if __name__ == "__main__":
     absltest.main()
