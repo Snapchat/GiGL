@@ -812,15 +812,72 @@ class BaseDistLoader(DistLoader):
         elif self._is_mp_worker:
             self._mp_producer.shutdown()
         elif rpc_is_initialized():
-            rpc_futures: list[torch.futures.Future[None]] = []
-            for server_rank, channel_id in zip(
-                self._server_rank_list, self._channel_id_list
+            # Only fire destroy_sampling_input for servers this rank actually
+            # had data on. Empty-input channels are placeholder ShmChannels that
+            # never had an epoch started (`__iter__` filters by the same mask)
+            # and never had a fetch issued against them
+            # (`RemoteReceivingChannel` initializes `_server_end_of_epoch=True`
+            # for them). Sending destroy RPCs to those servers turns shutdown
+            # into a 120-fan-out wait_all that suffers long-tail latency at
+            # large cluster sizes.
+
+            # Per-future resolution (instead of one aggregate
+            # `torch.futures.wait_all`) lets us name the slow server in the
+            # log if a hang ever does occur.
+            worker_key = self.worker_options.worker_key
+            rpc_futures: list[tuple[int, torch.futures.Future[None]]] = []
+            skipped = 0
+            for server_rank, channel_id, has_batches in zip(
+                self._server_rank_list,
+                self._channel_id_list,
+                self._remote_input_has_batches,
             ):
+                if not has_batches:
+                    skipped += 1
+                    continue
                 fut = async_request_server(
                     server_rank, DistServer.destroy_sampling_input, channel_id
                 )
-                rpc_futures.append(fut)
-            torch.futures.wait_all(rpc_futures)
+                rpc_futures.append((server_rank, fut))
+            shutdown_start = time.monotonic()
+            logger.info(
+                f"shutdown destroy_start worker_key={worker_key} "
+                f"firing={len(rpc_futures)} skipped={skipped}"
+            )
+            destroy_exceptions: list[Exception] = []
+            succeeded = 0
+            for server_rank, fut in rpc_futures:
+                try:
+                    fut.wait()
+                    succeeded += 1
+                    logger.info(
+                        f"shutdown destroy_ok worker_key={worker_key} "
+                        f"server_rank={server_rank} "
+                        f"elapsed={time.monotonic() - shutdown_start:.2f}s"
+                    )
+                except Exception as e:
+                    destroy_exceptions.append(e)
+                    logger.error(
+                        f"shutdown destroy_fail worker_key={worker_key} "
+                        f"server_rank={server_rank} "
+                        f"elapsed={time.monotonic() - shutdown_start:.2f}s "
+                        f"error={type(e).__name__}: {e}"
+                    )
+            total_elapsed = time.monotonic() - shutdown_start
+            if destroy_exceptions:
+                logger.error(
+                    f"shutdown destroy_summary worker_key={worker_key} "
+                    f"succeeded={succeeded} failed={len(destroy_exceptions)} "
+                    f"total_elapsed={total_elapsed:.2f}s"
+                )
+                raise ExceptionGroup(
+                    "shutdown destroy_sampling_input had one or more failures",
+                    destroy_exceptions,
+                )
+            logger.info(
+                f"shutdown destroy_done worker_key={worker_key} "
+                f"total_elapsed={total_elapsed:.2f}s"
+            )
         self._shutdowned = True
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
