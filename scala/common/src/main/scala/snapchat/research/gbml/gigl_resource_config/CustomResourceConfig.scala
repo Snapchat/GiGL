@@ -20,6 +20,7 @@ package snapchat.research.gbml.gigl_resource_config
   *   Positional arguments appended after the command. Each element is
   *   shell-quoted by the dispatcher so values containing spaces/quotes
   *   survive the shell pass.
+  *   e.g. "[--my_flag=my_value, --my_other_flag=my_other_value, --noskip_training]"
   */
 @SerialVersionUID(0L)
 final case class CustomResourceConfig(
