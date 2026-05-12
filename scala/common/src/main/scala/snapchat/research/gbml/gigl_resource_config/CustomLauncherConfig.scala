@@ -23,11 +23,11 @@ package snapchat.research.gbml.gigl_resource_config
   *   e.g. "[--my_flag=my_value, --my_other_flag=my_other_value, --noskip_training]"
   */
 @SerialVersionUID(0L)
-final case class CustomResourceConfig(
+final case class CustomLauncherConfig(
     command: _root_.scala.Predef.String = "",
     args: _root_.scala.Seq[_root_.scala.Predef.String] = _root_.scala.Seq.empty,
     unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
-    ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[CustomResourceConfig] {
+    ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[CustomLauncherConfig] {
     @transient
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
@@ -68,11 +68,11 @@ final case class CustomResourceConfig(
       };
       unknownFields.writeTo(_output__)
     }
-    def withCommand(__v: _root_.scala.Predef.String): CustomResourceConfig = copy(command = __v)
+    def withCommand(__v: _root_.scala.Predef.String): CustomLauncherConfig = copy(command = __v)
     def clearArgs = copy(args = _root_.scala.Seq.empty)
-    def addArgs(__vs: _root_.scala.Predef.String *): CustomResourceConfig = addAllArgs(__vs)
-    def addAllArgs(__vs: Iterable[_root_.scala.Predef.String]): CustomResourceConfig = copy(args = args ++ __vs)
-    def withArgs(__v: _root_.scala.Seq[_root_.scala.Predef.String]): CustomResourceConfig = copy(args = __v)
+    def addArgs(__vs: _root_.scala.Predef.String *): CustomLauncherConfig = addAllArgs(__vs)
+    def addAllArgs(__vs: Iterable[_root_.scala.Predef.String]): CustomLauncherConfig = copy(args = args ++ __vs)
+    def withArgs(__v: _root_.scala.Seq[_root_.scala.Predef.String]): CustomLauncherConfig = copy(args = __v)
     def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
     def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
     def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -92,13 +92,13 @@ final case class CustomResourceConfig(
       }
     }
     def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
-    def companion: snapchat.research.gbml.gigl_resource_config.CustomResourceConfig.type = snapchat.research.gbml.gigl_resource_config.CustomResourceConfig
-    // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.CustomResourceConfig])
+    def companion: snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig.type = snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig
+    // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.CustomLauncherConfig])
 }
 
-object CustomResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] {
-  implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = this
-  def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gigl_resource_config.CustomResourceConfig = {
+object CustomLauncherConfig extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig] {
+  implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig] = this
+  def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig = {
     var __command: _root_.scala.Predef.String = ""
     val __args: _root_.scala.collection.immutable.VectorBuilder[_root_.scala.Predef.String] = new _root_.scala.collection.immutable.VectorBuilder[_root_.scala.Predef.String]
     var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
@@ -118,16 +118,16 @@ object CustomResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
           _unknownFields__.parseField(tag, _input__)
       }
     }
-    snapchat.research.gbml.gigl_resource_config.CustomResourceConfig(
+    snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig(
         command = __command,
         args = __args.result(),
         unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
     )
   }
-  implicit def messageReads: _root_.scalapb.descriptors.Reads[snapchat.research.gbml.gigl_resource_config.CustomResourceConfig] = _root_.scalapb.descriptors.Reads{
+  implicit def messageReads: _root_.scalapb.descriptors.Reads[snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig] = _root_.scalapb.descriptors.Reads{
     case _root_.scalapb.descriptors.PMessage(__fieldsMap) =>
       _root_.scala.Predef.require(__fieldsMap.keys.forall(_.containingMessage eq scalaDescriptor), "FieldDescriptor does not match message type.")
-      snapchat.research.gbml.gigl_resource_config.CustomResourceConfig(
+      snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig(
         command = __fieldsMap.get(scalaDescriptor.findFieldByNumber(1).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
         args = __fieldsMap.get(scalaDescriptor.findFieldByNumber(2).get).map(_.as[_root_.scala.Seq[_root_.scala.Predef.String]]).getOrElse(_root_.scala.Seq.empty)
       )
@@ -138,11 +138,11 @@ object CustomResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
   def messageCompanionForFieldNumber(__number: _root_.scala.Int): _root_.scalapb.GeneratedMessageCompanion[_] = throw new MatchError(__number)
   lazy val nestedMessagesCompanions: Seq[_root_.scalapb.GeneratedMessageCompanion[_ <: _root_.scalapb.GeneratedMessage]] = Seq.empty
   def enumCompanionForFieldNumber(__fieldNumber: _root_.scala.Int): _root_.scalapb.GeneratedEnumCompanion[_] = throw new MatchError(__fieldNumber)
-  lazy val defaultInstance = snapchat.research.gbml.gigl_resource_config.CustomResourceConfig(
+  lazy val defaultInstance = snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig(
     command = "",
     args = _root_.scala.Seq.empty
   )
-  implicit class CustomResourceConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomResourceConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomResourceConfig](_l) {
+  implicit class CustomLauncherConfigLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig](_l) {
     def command: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.command)((c_, f_) => c_.copy(command = f_))
     def args: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Seq[_root_.scala.Predef.String]] = field(_.args)((c_, f_) => c_.copy(args = f_))
   }
@@ -151,9 +151,9 @@ object CustomResourceConfig extends scalapb.GeneratedMessageCompanion[snapchat.r
   def of(
     command: _root_.scala.Predef.String,
     args: _root_.scala.Seq[_root_.scala.Predef.String]
-  ): _root_.snapchat.research.gbml.gigl_resource_config.CustomResourceConfig = _root_.snapchat.research.gbml.gigl_resource_config.CustomResourceConfig(
+  ): _root_.snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig = _root_.snapchat.research.gbml.gigl_resource_config.CustomLauncherConfig(
     command,
     args
   )
-  // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.CustomResourceConfig])
+  // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.CustomLauncherConfig])
 }

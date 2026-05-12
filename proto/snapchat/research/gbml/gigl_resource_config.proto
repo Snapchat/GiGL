@@ -173,7 +173,7 @@ message VertexAiResourceConfig {
 // appended as positional arguments. Both fields are taken verbatim by
 // the dispatcher; any templating or substitution is the caller's
 // responsibility (e.g. OmegaConf-resolved at YAML-load time).
-message CustomResourceConfig {
+message CustomLauncherConfig {
   // Shell snippet invoked via /bin/sh -c. Leading "KEY=VALUE" assignments
   // are honored by the shell, so callers can inline env vars (e.g.
   // "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python -m my.cli").
@@ -202,7 +202,7 @@ message TrainerResourceConfig {
    KFPResourceConfig kfp_trainer_config = 2;
    LocalResourceConfig local_trainer_config = 3;
    VertexAiGraphStoreConfig vertex_ai_graph_store_trainer_config = 4;
-   CustomResourceConfig custom_trainer_config = 5;
+   CustomLauncherConfig custom_trainer_config = 5;
  }
 }
 
@@ -213,7 +213,7 @@ message InferencerResourceConfig {
    DataflowResourceConfig dataflow_inferencer_config = 2;
    LocalResourceConfig local_inferencer_config = 3;
    VertexAiGraphStoreConfig vertex_ai_graph_store_inferencer_config = 4;
-   CustomResourceConfig custom_inferencer_config = 5;
+   CustomLauncherConfig custom_inferencer_config = 5;
  }
 }
 

@@ -396,7 +396,7 @@ class VertexAiGraphStoreConfig(google.protobuf.message.Message):
 
 global___VertexAiGraphStoreConfig = VertexAiGraphStoreConfig
 
-class CustomResourceConfig(google.protobuf.message.Message):
+class CustomLauncherConfig(google.protobuf.message.Message):
     """Lets user-defined launchers be piped in.
     The launcher dispatcher invokes `command` (interpreted by /bin/sh -c so
     leading "KEY=VALUE" assignments parse as inline env vars) with `args`
@@ -429,7 +429,7 @@ class CustomResourceConfig(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing_extensions.Literal["args", b"args", "command", b"command"]) -> None: ...
 
-global___CustomResourceConfig = CustomResourceConfig
+global___CustomLauncherConfig = CustomLauncherConfig
 
 class DistributedTrainerConfig(google.protobuf.message.Message):
     """(deprecated)
@@ -479,7 +479,7 @@ class TrainerResourceConfig(google.protobuf.message.Message):
     @property
     def vertex_ai_graph_store_trainer_config(self) -> global___VertexAiGraphStoreConfig: ...
     @property
-    def custom_trainer_config(self) -> global___CustomResourceConfig: ...
+    def custom_trainer_config(self) -> global___CustomLauncherConfig: ...
     def __init__(
         self,
         *,
@@ -487,7 +487,7 @@ class TrainerResourceConfig(google.protobuf.message.Message):
         kfp_trainer_config: global___KFPResourceConfig | None = ...,
         local_trainer_config: global___LocalResourceConfig | None = ...,
         vertex_ai_graph_store_trainer_config: global___VertexAiGraphStoreConfig | None = ...,
-        custom_trainer_config: global___CustomResourceConfig | None = ...,
+        custom_trainer_config: global___CustomLauncherConfig | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing_extensions.Literal["custom_trainer_config", b"custom_trainer_config", "kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing_extensions.Literal["custom_trainer_config", b"custom_trainer_config", "kfp_trainer_config", b"kfp_trainer_config", "local_trainer_config", b"local_trainer_config", "trainer_config", b"trainer_config", "vertex_ai_graph_store_trainer_config", b"vertex_ai_graph_store_trainer_config", "vertex_ai_trainer_config", b"vertex_ai_trainer_config"]) -> None: ...
@@ -514,7 +514,7 @@ class InferencerResourceConfig(google.protobuf.message.Message):
     @property
     def vertex_ai_graph_store_inferencer_config(self) -> global___VertexAiGraphStoreConfig: ...
     @property
-    def custom_inferencer_config(self) -> global___CustomResourceConfig: ...
+    def custom_inferencer_config(self) -> global___CustomLauncherConfig: ...
     def __init__(
         self,
         *,
@@ -522,7 +522,7 @@ class InferencerResourceConfig(google.protobuf.message.Message):
         dataflow_inferencer_config: global___DataflowResourceConfig | None = ...,
         local_inferencer_config: global___LocalResourceConfig | None = ...,
         vertex_ai_graph_store_inferencer_config: global___VertexAiGraphStoreConfig | None = ...,
-        custom_inferencer_config: global___CustomResourceConfig | None = ...,
+        custom_inferencer_config: global___CustomLauncherConfig | None = ...,
     ) -> None: ...
     def HasField(self, field_name: typing_extensions.Literal["custom_inferencer_config", b"custom_inferencer_config", "dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing_extensions.Literal["custom_inferencer_config", b"custom_inferencer_config", "dataflow_inferencer_config", b"dataflow_inferencer_config", "inferencer_config", b"inferencer_config", "local_inferencer_config", b"local_inferencer_config", "vertex_ai_graph_store_inferencer_config", b"vertex_ai_graph_store_inferencer_config", "vertex_ai_inferencer_config", b"vertex_ai_inferencer_config"]) -> None: ...
