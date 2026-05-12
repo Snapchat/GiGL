@@ -17,7 +17,7 @@ from gigl.src.common.vertex_ai_launcher import (
     launch_single_pool_job,
 )
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
-    CustomResourceConfig,
+    CustomLauncherConfig,
     LocalResourceConfig,
     VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
@@ -88,9 +88,9 @@ class GLTTrainer:
                 cuda_docker_uri=cuda_docker_uri,
                 component=GiGLComponents.Trainer,
             )
-        elif isinstance(resource_config.trainer_config, CustomResourceConfig):
+        elif isinstance(resource_config.trainer_config, CustomLauncherConfig):
             launch_custom(
-                custom_resource_config=resource_config.trainer_config,
+                custom_launcher_config=resource_config.trainer_config,
                 applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
@@ -127,7 +127,7 @@ class GLTTrainer:
         elif (
             isinstance(trainer_config, VertexAiResourceConfig)
             or isinstance(trainer_config, VertexAiGraphStoreConfig)
-            or isinstance(trainer_config, CustomResourceConfig)
+            or isinstance(trainer_config, CustomLauncherConfig)
         ):
             self.__execute_VAI_training(
                 applied_task_identifier=applied_task_identifier,

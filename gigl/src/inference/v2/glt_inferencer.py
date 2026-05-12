@@ -17,7 +17,7 @@ from gigl.src.common.vertex_ai_launcher import (
     launch_single_pool_job,
 )
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
-    CustomResourceConfig,
+    CustomLauncherConfig,
     LocalResourceConfig,
     VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
@@ -93,10 +93,10 @@ class GLTInferencer:
                 component=GiGLComponents.Inferencer,
             )
         elif isinstance(
-            resource_config_wrapper.inferencer_config, CustomResourceConfig
+            resource_config_wrapper.inferencer_config, CustomLauncherConfig
         ):
             launch_custom(
-                custom_resource_config=resource_config_wrapper.inferencer_config,
+                custom_launcher_config=resource_config_wrapper.inferencer_config,
                 applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
@@ -136,7 +136,7 @@ class GLTInferencer:
                 resource_config_wrapper.inferencer_config, VertexAiGraphStoreConfig
             )
             or isinstance(
-                resource_config_wrapper.inferencer_config, CustomResourceConfig
+                resource_config_wrapper.inferencer_config, CustomLauncherConfig
             )
         ):
             self.__execute_VAI_inference(

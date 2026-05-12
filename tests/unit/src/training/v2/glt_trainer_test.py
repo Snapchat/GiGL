@@ -1,9 +1,9 @@
 """Tests for ``gigl.src.training.v2.glt_trainer`` dispatch wiring.
 
-Covers the CustomResourceConfig branch added alongside the existing
+Covers the CustomLauncherConfig branch added alongside the existing
 VertexAiResourceConfig / VertexAiGraphStoreConfig branches. VAI dispatch
 is exercised by existing integration flows; these tests only assert that
-CustomResourceConfig reaches ``launch_custom`` with the expected kwargs.
+CustomLauncherConfig reaches ``launch_custom`` with the expected kwargs.
 """
 
 from typing import Final
@@ -54,7 +54,7 @@ def _build_resource_config_with_custom_trainer() -> (
         shared_resource_config=shared,
     )
     resource_config.trainer_resource_config.custom_trainer_config.CopyFrom(
-        gigl_resource_config_pb2.CustomResourceConfig(
+        gigl_resource_config_pb2.CustomLauncherConfig(
             command="python -m my_project.launchers.ray.launch",
             args=["--cluster=dev", "--num_workers=4"],
         )
@@ -72,7 +72,7 @@ def _build_gbml_config_with_trainer_command() -> gbml_config_pb2.GbmlConfig:
 
 
 class TestGLTTrainerCustomDispatch(TestCase):
-    """Asserts CustomResourceConfig routes to ``launch_custom``."""
+    """Asserts CustomLauncherConfig routes to ``launch_custom``."""
 
     @patch("gigl.src.training.v2.glt_trainer.launch_custom")
     @patch(
@@ -80,7 +80,7 @@ class TestGLTTrainerCustomDispatch(TestCase):
         ".get_gbml_config_pb_wrapper_from_uri"
     )
     @patch("gigl.src.training.v2.glt_trainer.get_resource_config")
-    def test_custom_resource_config_dispatches_to_launch_custom(
+    def test_custom_launcher_config_dispatches_to_launch_custom(
         self,
         mock_get_resource_config,
         mock_get_gbml,
@@ -119,9 +119,9 @@ class TestGLTTrainerCustomDispatch(TestCase):
         self.assertEqual(call_kwargs["cpu_docker_uri"], "gcr.io/p/cpu:tag")
         self.assertEqual(call_kwargs["cuda_docker_uri"], "gcr.io/p/cuda:tag")
 
-        # The forwarded CustomResourceConfig matches what we put in the
+        # The forwarded CustomLauncherConfig matches what we put in the
         # resource config.
-        forwarded = call_kwargs["custom_resource_config"]
+        forwarded = call_kwargs["custom_launcher_config"]
         self.assertEqual(forwarded.command, "python -m my_project.launchers.ray.launch")
         self.assertEqual(
             list(forwarded.args),

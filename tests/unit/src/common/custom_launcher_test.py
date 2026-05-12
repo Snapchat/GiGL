@@ -149,7 +149,7 @@ class TestLaunchCustom(TestCase):
         # from the corresponding kwargs.
         config = self._build_config(command="echo")
         launch_custom(
-            custom_resource_config=config,
+            custom_launcher_config=config,
             applied_task_identifier="job-99",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -174,7 +174,7 @@ class TestLaunchCustom(TestCase):
         sentinel_key = "CUSTOM_LAUNCHER_TEST_SENTINEL"
         with patch.dict(os.environ, {sentinel_key: "outer-value"}, clear=False):
             launch_custom(
-                custom_resource_config=self._build_config(command="echo"),
+                custom_launcher_config=self._build_config(command="echo"),
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -209,7 +209,7 @@ class TestLaunchCustom(TestCase):
             )
 
         launch_custom(
-            custom_resource_config=self._build_config(command="echo"),
+            custom_launcher_config=self._build_config(command="echo"),
             applied_task_identifier="job",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -240,7 +240,7 @@ class TestLaunchCustom(TestCase):
         # literal "None" string. Subprocess CLIs reading these env vars
         # treat empty as "not provided".
         launch_custom(
-            custom_resource_config=self._build_config(command="echo"),
+            custom_launcher_config=self._build_config(command="echo"),
             applied_task_identifier="job",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
