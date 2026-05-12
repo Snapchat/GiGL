@@ -9,7 +9,7 @@ from gigl.src.validation_check.libs.resource_config_checks import (
     _check_if_spark_resource_config_valid,
     _validate_accelerator_type,
     _validate_machine_config,
-    check_custom_resource_config_shape,
+    check_custom_launcher_config_shape,
     check_if_inferencer_graph_store_storage_command_valid,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
@@ -22,7 +22,7 @@ from gigl.src.validation_check.libs.resource_config_checks import (
 from snapchat.research.gbml import gbml_config_pb2, gigl_resource_config_pb2
 from tests.test_assets.test_case import TestCase
 
-# Placeholder shell snippet used by CustomResourceConfig fixtures.
+# Placeholder shell snippet used by CustomLauncherConfig fixtures.
 _FAKE_COMMAND = "echo fake"
 
 # Helper functions for creating valid configurations
@@ -215,7 +215,7 @@ def _create_valid_custom_trainer_config(
     command: str = _FAKE_COMMAND,
     args: list[str] | None = None,
 ) -> gigl_resource_config_pb2.GiglResourceConfig:
-    """Create a GiglResourceConfig with a CustomResourceConfig trainer."""
+    """Create a GiglResourceConfig with a CustomLauncherConfig trainer."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
     config.trainer_resource_config.custom_trainer_config.command = command
     config.trainer_resource_config.custom_trainer_config.args.extend(args or [])
@@ -226,7 +226,7 @@ def _create_valid_custom_inferencer_config(
     command: str = _FAKE_COMMAND,
     args: list[str] | None = None,
 ) -> gigl_resource_config_pb2.GiglResourceConfig:
-    """Create a GiglResourceConfig with a CustomResourceConfig inferencer."""
+    """Create a GiglResourceConfig with a CustomLauncherConfig inferencer."""
     config = gigl_resource_config_pb2.GiglResourceConfig()
     config.inferencer_resource_config.custom_inferencer_config.command = command
     config.inferencer_resource_config.custom_inferencer_config.args.extend(args or [])
@@ -820,10 +820,10 @@ class TestInferencerGraphStoreStorageCommand(TestCase):
         check_if_inferencer_graph_store_storage_command_valid(gbml_config)
 
 
-class TestCustomResourceConfigBypass(TestCase):
-    """Test suite for CustomResourceConfig caller-level bypass.
+class TestCustomLauncherConfigBypass(TestCase):
+    """Test suite for CustomLauncherConfig caller-level bypass.
 
-    ``CustomResourceConfig`` is launcher-pluggable: it has no concrete machine
+    ``CustomLauncherConfig`` is launcher-pluggable: it has no concrete machine
     shape to validate. The callers (``check_if_trainer_resource_config_valid``
     and ``check_if_inferencer_resource_config_valid``) short-circuit before
     reaching ``_validate_machine_config``, which keeps that helper's contract
@@ -831,7 +831,7 @@ class TestCustomResourceConfigBypass(TestCase):
     """
 
     def test_trainer_custom_config_bypasses_machine_validation(self):
-        """CustomResourceConfig trainer bypasses _validate_machine_config entirely."""
+        """CustomLauncherConfig trainer bypasses _validate_machine_config entirely."""
         config = _create_valid_custom_trainer_config(
             args=["--cluster_size=4"]
         )
@@ -842,7 +842,7 @@ class TestCustomResourceConfigBypass(TestCase):
         mock_validate.assert_not_called()
 
     def test_inferencer_custom_config_bypasses_machine_validation(self):
-        """CustomResourceConfig inferencer bypasses _validate_machine_config entirely."""
+        """CustomLauncherConfig inferencer bypasses _validate_machine_config entirely."""
         config = _create_valid_custom_inferencer_config(
             args=["--cluster_size=4"]
         )
@@ -871,16 +871,16 @@ class TestCustomResourceConfigBypass(TestCase):
         mock_validate.assert_called_once()
 
 
-class TestCustomResourceConfigShape(TestCase):
-    """Test suite for ``check_custom_resource_config_shape``.
+class TestCustomLauncherConfigShape(TestCase):
+    """Test suite for ``check_custom_launcher_config_shape``.
 
-    Shape-only check: a populated ``CustomResourceConfig`` must have a
+    Shape-only check: a populated ``CustomLauncherConfig`` must have a
     non-empty ``command``. Non-custom configs are no-ops.
     """
 
     def test_populated_command_passes(self):
         config = _create_valid_custom_trainer_config(command="python -m my.cli")
-        check_custom_resource_config_shape(
+        check_custom_launcher_config_shape(
             resource_config_pb=config,
             component=GiGLComponents.Trainer,
         )
@@ -888,7 +888,7 @@ class TestCustomResourceConfigShape(TestCase):
     def test_empty_trainer_command_raises(self):
         config = _create_valid_custom_trainer_config(command="")
         with self.assertRaises(ValueError):
-            check_custom_resource_config_shape(
+            check_custom_launcher_config_shape(
                 resource_config_pb=config,
                 component=GiGLComponents.Trainer,
             )
@@ -896,21 +896,21 @@ class TestCustomResourceConfigShape(TestCase):
     def test_empty_inferencer_command_raises(self):
         config = _create_valid_custom_inferencer_config(command="")
         with self.assertRaises(ValueError):
-            check_custom_resource_config_shape(
+            check_custom_launcher_config_shape(
                 resource_config_pb=config,
                 component=GiGLComponents.Inferencer,
             )
 
     def test_non_custom_trainer_is_no_op(self):
         config = _create_valid_vertex_ai_trainer_config()
-        check_custom_resource_config_shape(
+        check_custom_launcher_config_shape(
             resource_config_pb=config,
             component=GiGLComponents.Trainer,
         )
 
     def test_non_custom_inferencer_is_no_op(self):
         config = _create_valid_vertex_ai_inferencer_config()
-        check_custom_resource_config_shape(
+        check_custom_launcher_config_shape(
             resource_config_pb=config,
             component=GiGLComponents.Inferencer,
         )
@@ -918,7 +918,7 @@ class TestCustomResourceConfigShape(TestCase):
     def test_unsupported_component_raises(self):
         config = _create_valid_custom_trainer_config()
         with self.assertRaises(ValueError):
-            check_custom_resource_config_shape(
+            check_custom_launcher_config_shape(
                 resource_config_pb=config,
                 component=GiGLComponents.DataPreprocessor,
             )
