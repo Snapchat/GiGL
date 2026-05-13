@@ -20,7 +20,7 @@ final case class UserDefined(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = pathToUdf
         if (!__value.isEmpty) {
@@ -41,7 +41,7 @@ final case class UserDefined(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {
@@ -151,14 +151,14 @@ object UserDefined extends scalapb.GeneratedMessageCompanion[snapchat.research.g
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = value
           if (!__value.isEmpty) {
@@ -175,7 +175,7 @@ object UserDefined extends scalapb.GeneratedMessageCompanion[snapchat.research.g
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -219,7 +219,7 @@ object UserDefined extends scalapb.GeneratedMessageCompanion[snapchat.research.g
       def companion: snapchat.research.gbml.subgraph_sampling_strategy.UserDefined.ParamsEntry.type = snapchat.research.gbml.subgraph_sampling_strategy.UserDefined.ParamsEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.UserDefined.ParamsEntry])
   }
-  
+
   object ParamsEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.subgraph_sampling_strategy.UserDefined.ParamsEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.subgraph_sampling_strategy.UserDefined.ParamsEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.subgraph_sampling_strategy.UserDefined.ParamsEntry = {
@@ -284,7 +284,7 @@ object UserDefined extends scalapb.GeneratedMessageCompanion[snapchat.research.g
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.UserDefined.ParamsEntry])
   }
-  
+
   implicit class UserDefinedLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.subgraph_sampling_strategy.UserDefined]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.subgraph_sampling_strategy.UserDefined](_l) {
     def pathToUdf: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.pathToUdf)((c_, f_) => c_.copy(pathToUdf = f_))
     def params: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, _root_.scala.Predef.String]] = field(_.params)((c_, f_) => c_.copy(params = f_))

@@ -38,7 +38,7 @@ final case class PreprocessedMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       condensedNodeTypeToPreprocessedMetadata.foreach { __v =>
@@ -181,7 +181,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = nodeIdKey
           if (!__value.isEmpty) {
@@ -196,28 +196,28 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           val __value = __item
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
         }
-        
+
         {
           val __value = tfrecordUriPrefix
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(4, __value)
           }
         };
-        
+
         {
           val __value = schemaUri
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(5, __value)
           }
         };
-        
+
         {
           val __value = enumeratedNodeIdsBqTable
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(6, __value)
           }
         };
-        
+
         {
           val __value = enumeratedNodeDataBqTable
           if (!__value.isEmpty) {
@@ -228,7 +228,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           val __value = featureDim.get
           __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(8, __value)
         };
-        
+
         {
           val __value = transformFnAssetsUri
           if (!__value.isEmpty) {
@@ -245,7 +245,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -366,7 +366,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput.type = snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.PreprocessedMetadata.NodeMetadataOutput])
   }
-  
+
   object NodeMetadataOutput extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput = {
@@ -499,7 +499,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.NodeMetadataOutput])
   }
-  
+
   /** Houses metadata of edge features output from DataPreprocessor
     *
     * @param featureKeys
@@ -540,21 +540,21 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           val __value = __item
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(2, __value)
         }
-        
+
         {
           val __value = tfrecordUriPrefix
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
           }
         };
-        
+
         {
           val __value = schemaUri
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(4, __value)
           }
         };
-        
+
         {
           val __value = enumeratedEdgeDataBqTable
           if (!__value.isEmpty) {
@@ -565,7 +565,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           val __value = featureDim.get
           __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(6, __value)
         };
-        
+
         {
           val __value = transformFnAssetsUri
           if (!__value.isEmpty) {
@@ -582,7 +582,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         featureKeys.foreach { __v =>
@@ -679,7 +679,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo.type = snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfo])
   }
-  
+
   object EdgeMetadataInfo extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo = {
@@ -792,7 +792,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfo])
   }
-  
+
   /** Houses metadata about edge TFTransform output from DataPreprocessor.
     *
     * @param srcNodeIdKey
@@ -819,14 +819,14 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = srcNodeIdKey
           if (!__value.isEmpty) {
             __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
           }
         };
-        
+
         {
           val __value = dstNodeIdKey
           if (!__value.isEmpty) {
@@ -855,7 +855,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -932,7 +932,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataOutput.type = snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataOutput
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataOutput])
   }
-  
+
   object EdgeMetadataOutput extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataOutput] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataOutput] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataOutput = {
@@ -1035,7 +1035,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataOutput])
   }
-  
+
   @SerialVersionUID(0L)
   final case class CondensedNodeTypeToPreprocessedMetadataEntry(
       key: _root_.scala.Int = 0,
@@ -1046,7 +1046,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (__value != 0) {
@@ -1067,7 +1067,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -1110,7 +1110,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry.type = snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry])
   }
-  
+
   object CondensedNodeTypeToPreprocessedMetadataEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry = {
@@ -1182,7 +1182,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry])
   }
-  
+
   @SerialVersionUID(0L)
   final case class CondensedEdgeTypeToPreprocessedMetadataEntry(
       key: _root_.scala.Int = 0,
@@ -1193,7 +1193,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (__value != 0) {
@@ -1214,7 +1214,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -1257,7 +1257,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def companion: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry.type = snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry])
   }
-  
+
   object CondensedEdgeTypeToPreprocessedMetadataEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry = {
@@ -1329,7 +1329,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry])
   }
-  
+
   implicit class PreprocessedMetadataLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata](_l) {
     def condensedNodeTypeToPreprocessedMetadata: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Int, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput]] = field(_.condensedNodeTypeToPreprocessedMetadata)((c_, f_) => c_.copy(condensedNodeTypeToPreprocessedMetadata = f_))
     def condensedEdgeTypeToPreprocessedMetadata: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Int, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataOutput]] = field(_.condensedEdgeTypeToPreprocessedMetadata)((c_, f_) => c_.copy(condensedEdgeTypeToPreprocessedMetadata = f_))

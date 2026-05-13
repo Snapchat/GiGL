@@ -505,6 +505,35 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
+    def test_fetch_ablp_input_respects_max_labels_per_anchor_node(
+        self, mock_async_request
+    ):
+        _create_server_with_splits()
+        self.assertIsNotNone(_test_server)
+        assert _test_server is not None
+        _test_server.dataset.max_labels_per_anchor_node = 1
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        result = remote_dataset.fetch_ablp_input(
+            split="train", anchor_node_type=USER, supervision_edge_type=USER_TO_STORY
+        )
+        pos_labels, neg_labels = result[0].labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            pos_labels,
+            torch.tensor([[0], [1], [2]]),
+        )
+        assert neg_labels is not None
+        self.assert_tensor_equality(
+            neg_labels,
+            torch.tensor([[2], [3], [4]]),
+        )
+
+    @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+        side_effect=_mock_async_request_server,
+    )
     def test_fetch_ablp_input_with_sharding(self, mock_async_request):
         """Test fetch_ablp_input with sharding across compute nodes."""
         _create_server_with_splits()

@@ -48,7 +48,7 @@ final case class SupervisedLinkBasedTaskSample(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       rootEdge.foreach { __v =>

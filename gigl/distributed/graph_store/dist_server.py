@@ -6,9 +6,67 @@ and ABLP (anchor-based link prediction) via BaseGiGLSampler subclasses
 (DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR).
 
 Based on https://github.com/alibaba/graphlearn-for-pytorch/blob/main/graphlearn_torch/python/distributed/dist_server.py
+
+Teardown protocol
+-----------------
+Cluster teardown is a strict three-phase sequence:
+
+1. **Per-loader (compute side).** Each ``DistLoader.shutdown()`` issues
+   ``DistServer.destroy_sampling_input(channel_id)`` against every
+   storage server it registered with. This call performs the actual
+   teardown work on the server: ``runtime.unregister_input`` for the
+   channel and, when the channel is the last on its backend,
+   ``runtime.shutdown`` for the backend.
+2. **Per-compute-process.** After all loaders are torn down, the
+   compute process calls
+   ``gigl.distributed.graph_store.compute.shutdown_compute_process``,
+   which calls ``glt.distributed.shutdown_client``
+   and tears down the compute torch process group.
+3. **Per-storage-process.** ``wait_and_shutdown_server`` blocks until
+   ``DistServer.exit`` flips, then runs ``DistServer.shutdown()``
+   (strict validation — see below), ``barrier()``, ``shutdown_rpc()``.
+
+An example fo the teardown protocol:
+```python
+def compute_process():
+    train_loader = ...
+    val_loader = ...
+    test_loader = ...
+
+    loaders = [train_loader, val_loader, test_loader]
+    for data in train_loader:
+        train(data)
+        if should_val():
+            for data in val_loader:
+                val(data)
+    # Shutdown the loaders after training and validation.
+    train_loader.shutdown()
+    val_loader.shutdown()
+
+    for data in test_loader:
+        test(data)
+    # Shutdown the loader after testing.
+    test_loader.shutdown()
+
+
+    # Step 2: Per-compute-process
+    shutdown_compute_process()
+
+# Step 3: Per-storage-process
+wait_and_shutdown_server()
+```
+
+``DistServer.shutdown()`` does no teardown work itself. It validates
+that phase 1 ran for every channel/backend, raises ``RuntimeError`` if
+state remains, and drops residual tombstone/stats bookkeeping. The
+actual ``runtime.shutdown()`` work happens in
+``destroy_sampling_input`` when the last channel on a backend is
+destroyed. ``wait_and_shutdown_server`` catches ``DistServer.shutdown``
+exceptions so a buggy compute client cannot wedge healthy storage
+peers on the barrier; the failing storage process re-raises after the
+barrier so the orchestrator sees a non-zero exit.
 """
 
-import logging
 import threading
 import time
 from collections import abc
@@ -18,19 +76,9 @@ from typing import Any, Callable, Literal, Optional, TypeVar, Union
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
 from graphlearn_torch.channel import QueueTimeoutError, SampleMessage, ShmChannel
-from graphlearn_torch.distributed import (
-    RemoteDistSamplingWorkerOptions,
-    barrier,
-    init_rpc,
-    shutdown_rpc,
-)
+from graphlearn_torch.distributed import barrier, init_rpc, shutdown_rpc
 from graphlearn_torch.partition import PartitionBook
-from graphlearn_torch.sampler import (
-    EdgeSamplerInput,
-    NodeSamplerInput,
-    RemoteSamplerInput,
-    SamplingConfig,
-)
+from graphlearn_torch.sampler import RemoteSamplerInput
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_dataset import DistDataset
@@ -44,8 +92,7 @@ from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     SharedDistSamplingBackend,
 )
-from gigl.distributed.sampler import ABLPNodeSamplerInput
-from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -70,6 +117,18 @@ class ChannelState:
         channel: The shared-memory channel for passing sampled messages.
         epoch: The last epoch started on this channel.
         lock: A reentrant lock guarding channel-level operations.
+        tombstoned: Terminal-state tombstone. Set to ``True`` once
+            ``destroy_sampling_input`` has finished cleaning up this
+            channel. The channel object may briefly outlive its
+            registry entry — an in-flight ``fetch_one_sampled_message``
+            on another RPC thread reads this flag to break out of its
+            recv loop. Past-participle name: this is "done" state, not
+            "in progress" state. Asymmetric with
+            ``SamplingBackendState.tearing_down`` by design — backends
+            are removed from the registry when teardown completes, so
+            no terminal flag is needed there; channels are not removed
+            until the in-flight fetch observes the tombstone, so the
+            flag has to live on the object.
     """
 
     backend_id: int
@@ -77,6 +136,7 @@ class ChannelState:
     channel: ShmChannel
     epoch: int = -1
     lock: threading.RLock = field(default_factory=threading.RLock)
+    tombstoned: bool = False
 
 
 @dataclass
@@ -85,12 +145,24 @@ class SamplingBackendState:
 
     Args:
         backend_id: The unique ID of this backend.
-        backend_key: The key identifying this backend (e.g. ``"dist_neighbor_loader_0"``).
+        backend_key: The key identifying this backend
+            (e.g. ``"dist_neighbor_loader_0"``).
         runtime: The shared sampling backend runtime.
         active_channels: Set of channel IDs currently registered on this backend.
         lock: A reentrant lock guarding backend-level operations.
         init_complete: Whether ``runtime.init_backend()`` has completed successfully.
-        init_error: If ``runtime.init_backend()`` raised, the exception; otherwise ``None``.
+        init_error: If ``runtime.init_backend()`` raised, the exception;
+            otherwise ``None``.
+        tearing_down: In-progress marker. Set to ``True`` while
+            ``destroy_sampling_input`` is tearing down this backend's
+            runtime. A second-caller of ``init_sampling_backend`` that
+            blocks on ``lock`` and observes this flag raises
+            ``RuntimeError`` so it does not reuse a half-shutdown
+            runtime. Present-participle name: this is "in progress"
+            state, not "done" state. Asymmetric with
+            ``ChannelState.tombstoned`` by design — the registry entry
+            is removed once teardown completes, so no terminal flag is
+            needed; after removal nothing can find this object.
     """
 
     backend_id: int
@@ -100,6 +172,7 @@ class SamplingBackendState:
     lock: threading.RLock = field(default_factory=threading.RLock)
     init_complete: bool = False
     init_error: Optional[BaseException] = None
+    tearing_down: bool = False
 
 
 @dataclass
@@ -135,25 +208,42 @@ class DistServer:
         self._backend_id_by_backend_key: dict[str, int] = {}
         self._backend_state_by_backend_id: dict[int, SamplingBackendState] = {}
         self._channel_state_by_channel_id: dict[int, ChannelState] = {}
+        self._tombstoned_channel_ids: set[int] = set()
         self._fetch_stats_by_channel_id: dict[int, _ChannelFetchStats] = {}
         self._log_every_n = log_every_n
 
     def shutdown(self) -> None:
+        """Final post-teardown bookkeeping cleanup — does not perform any shutdown.
+
+        Lenient contract: callers are expected to have torn down every
+        channel and backend via ``destroy_sampling_input`` before
+        invoking this method. The actual ``runtime.shutdown()`` work
+        happens in ``destroy_sampling_input`` when the last channel on
+        a backend is destroyed; this method only drops residual
+        tombstone/stats bookkeeping and warns if any sampling state is
+        still registered.
+        """
         with self._lock:
-            backends = list(self._backend_state_by_backend_id.values())
-            self._backend_id_by_backend_key.clear()
-            self._backend_state_by_backend_id.clear()
-            self._channel_state_by_channel_id.clear()
-            self._fetch_stats_by_channel_id.clear()
-        for backend_state in backends:
-            try:
-                backend_state.runtime.shutdown()
-            except Exception:
+            if (
+                self._channel_state_by_channel_id
+                or self._backend_state_by_backend_id
+                or self._backend_id_by_backend_key
+            ):
                 logger.warning(
-                    f"Failed to shut down backend backend_id={backend_state.backend_id} "
-                    f"backend_key={backend_state.backend_key}",
-                    exc_info=True,
+                    "DistServer.shutdown() called with live channels/backends; "
+                    "leaving residual state for process exit. "
+                    f"live_channels={sorted(self._channel_state_by_channel_id)} "
+                    f"live_backends={sorted(self._backend_state_by_backend_id)} "
+                    f"live_backend_keys={sorted(self._backend_id_by_backend_key)}"
                 )
+            # Always drop bookkeeping. Registry dicts (channels/backends)
+            # are also dropped so a subsequent shutdown call is a clean
+            # no-op rather than re-warning on the same residual state.
+            self._channel_state_by_channel_id.clear()
+            self._backend_state_by_backend_id.clear()
+            self._backend_id_by_backend_key.clear()
+            self._tombstoned_channel_ids.clear()
+            self._fetch_stats_by_channel_id.clear()
 
     def wait_for_exit(self) -> None:
         r"""Block until the exit flag been set to ``True``."""
@@ -468,7 +558,11 @@ class DistServer:
             request.supervision_edge_type, self.dataset.get_edge_types()
         )
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            self.dataset, anchors, positive_label_edge_type, negative_label_edge_type
+            self.dataset,
+            anchors,
+            positive_label_edge_type,
+            negative_label_edge_type,
+            max_labels_per_anchor_node=self.dataset.max_labels_per_anchor_node,
         )
         return anchors, positive_labels, negative_labels
 
@@ -489,7 +583,8 @@ class DistServer:
 
         Raises:
             RuntimeError: If a prior concurrent initialization for the same
-                ``backend_key`` failed.
+                ``backend_key`` failed, or if the backend is currently being
+                torn down by ``destroy_sampling_input``.
         """
         request_start_time = time.monotonic()
         is_first = False
@@ -556,6 +651,12 @@ class DistServer:
             # first caller finishes init (or fails). Ordering is enforced
             # by the acquire-before-self._lock-release invariant above.
             with backend_state.lock:
+                if backend_state.tearing_down:
+                    raise RuntimeError(
+                        f"init_sampling_backend: backend_key={opts.backend_key} "
+                        f"is being torn down; a new backend cannot be "
+                        f"initialized until teardown completes. This is an odd bug, please report it."
+                    )
                 if backend_state.init_error is not None:
                     raise RuntimeError(
                         f"init_sampling_backend: prior initialization failed "
@@ -573,13 +674,35 @@ class DistServer:
 
         Returns:
             The unique channel ID for this input.
+
+        Raises:
+            KeyError: If ``opts.backend_id`` does not refer to a registered
+                backend (caller bug; backend must be registered first).
+            Exception: Re-raises any failure from
+                ``runtime.register_input`` after rolling back the partial
+                channel state.
         """
         request_start_time = time.monotonic()
+        sampler_input = opts.sampler_input
+
+        if isinstance(sampler_input, RemoteSamplerInput):
+            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
+
         with self._lock:
             backend_state = self._backend_state_by_backend_id[opts.backend_id]
             channel_id = self._next_channel_id
             self._next_channel_id += 1
-            channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
+            # If the sampler input is empty, we create a channel with 1 slot and 1MB size
+            # We do this to save on memory usage for empty inputs.
+            # NOTE: We must keep creating these channels as we need to "register input" for
+            # all nodes on the storage cluster, as they the `NeighborSampler` is responsible for
+            # serving incoming sampling requests as well as sending them out.
+            # TODO(kmonte): Look into either supporting truly empty channels or having a shared
+            # DistSampler.
+            if len(sampler_input) == 0:
+                channel = ShmChannel(1, "1MB")
+            else:
+                channel = ShmChannel(opts.buffer_capacity, opts.buffer_size)
             channel_state = ChannelState(
                 backend_id=opts.backend_id,
                 worker_key=opts.worker_key,
@@ -591,10 +714,6 @@ class DistServer:
             # reflects state at the moment of registration, not a later
             # value that could be mutated by concurrent register/destroy.
             active_channels_at_register = len(backend_state.active_channels)
-
-        sampler_input = opts.sampler_input
-        if isinstance(sampler_input, RemoteSamplerInput):
-            sampler_input = sampler_input.to_local_sampler_input(dataset=self.dataset)
 
         try:
             with backend_state.lock:
@@ -625,114 +744,130 @@ class DistServer:
         If this is the last channel on the backend, the backend is shut
         down and removed.
 
-        Caller contract: callers must have drained the channel (i.e.,
-        observed :meth:`fetch_one_sampled_message` return ``(None, True)``)
-        before calling destroy. This is required because
-        :meth:`fetch_one_sampled_message` holds ``channel_state.lock`` for
-        the duration of its recv loop; a destroy issued mid-epoch will
-        block waiting for the fetch to exit, and if the producer is stuck,
-        destroy will block indefinitely. All in-tree callers satisfy this
-        contract via ``BaseDistLoader``'s teardown sequence.
-
         Args:
             channel_id: The ID of the channel to destroy.
         """
-        with self._lock:
-            channel_state = self._channel_state_by_channel_id.get(channel_id)
-            if channel_state is None:
-                return
-            backend_state = self._backend_state_by_backend_id.get(
-                channel_state.backend_id
-            )
-
-        # Hold channel_state.lock to serialize destroy against in-flight
-        # start_new_epoch_sampling and any remaining
-        # fetch_one_sampled_message. Pre-PR #578, the old
-        # destroy_sampling_producer and start_new_epoch_sampling shared
-        # the same _producer_lock, so destroy/start_epoch were serialized;
-        # this restores that invariant via the two-phase API's
-        # per-channel lock.
-        with channel_state.lock:
+        request_start_time = time.monotonic()
+        backend_id_for_log: Optional[int] = None
+        triggered_backend_shutdown = False
+        try:
             with self._lock:
-                self._channel_state_by_channel_id.pop(channel_id, None)
-                # Pop fetch stats inside self._lock for consistency with
-                # how neighboring dicts are mutated. Does not close the
-                # race with _log_fetch_stats_if_due (which runs under
-                # channel_state.lock but not self._lock); a concurrent
-                # in-flight fetch may still recreate the entry — the
-                # orphan is benign and cleared on next shutdown or
-                # channel reuse.
-                self._fetch_stats_by_channel_id.pop(channel_id, None)
+                channel_state = self._channel_state_by_channel_id.get(channel_id)
+                if channel_state is None:
+                    # Idempotent re-destroy: the channel was already torn
+                    # down by a prior destroy_sampling_input call, which
+                    # popped the channel, popped its fetch stats, and set
+                    # ``tombstoned=True``. Just make sure the tombstone is
+                    # present so a concurrent start_new_epoch_sampling
+                    # silent-no-ops rather than raising "unknown
+                    # channel_id". No re-pop here — the prior destroy
+                    # already did the work, and this branch must not
+                    # duplicate the backend-still-registered cleanup
+                    # below.
+                    self._tombstoned_channel_ids.add(channel_id)
+                    return
+                backend_state = self._backend_state_by_backend_id.get(
+                    channel_state.backend_id
+                )
+                backend_id_for_log = channel_state.backend_id
+                if backend_state is None:
+                    # Defensive: in current code this is unreachable. The
+                    # invariant is that a channel's backend outlives the
+                    # channel — the backend registry entry is popped only
+                    # inside the ``should_shutdown_backend`` branch below,
+                    # which fires only when
+                    # ``backend_state.active_channels`` is empty. Reaching
+                    # this branch would mean a future code path popped the
+                    # backend without popping its channels, or test code
+                    # set up the state by hand. Treat it as a partial
+                    # teardown: tombstone the channel, drop bookkeeping,
+                    # and bail.
+                    self._tombstoned_channel_ids.add(channel_id)
+                    self._channel_state_by_channel_id.pop(channel_id, None)
+                    self._fetch_stats_by_channel_id.pop(channel_id, None)
+                    channel_state.tombstoned = True
+                    return
 
-            if backend_state is None:
-                return
-
+            # Two-lock dance:
+            #
+            # * ``backend_state.lock`` serializes this destroy against
+            #   ``init_sampling_backend`` (second-caller),
+            #   ``register_sampling_input``, and
+            #   ``start_new_epoch_sampling`` for the same backend. We hold
+            #   it across the runtime work
+            #   (``unregister_input``, ``shutdown``) so a concurrent init
+            #   for the same backend_key blocks until we have either
+            #   finished or set ``tearing_down=True``.
+            # * ``self._lock`` protects registry-dict mutations only. We
+            #   acquire it under ``backend_state.lock`` for short
+            #   re-validation windows and release it before the runtime
+            #   calls so other RPCs (fetches, inits for *other* backends)
+            #   are not blocked behind a worker join.
+            #
+            # Re-validate channel/backend state under ``self._lock``
+            # because another call could have raced between the first
+            # lock-drop and our acquire of ``backend_state.lock``.
+            should_shutdown_backend = False
             with backend_state.lock:
+                with self._lock:
+                    current_channel_state = self._channel_state_by_channel_id.get(
+                        channel_id
+                    )
+                    if current_channel_state is None:
+                        return
+                    if current_channel_state.backend_id != backend_state.backend_id:
+                        return
+                    current_channel_state.tombstoned = True
+                    self._tombstoned_channel_ids.add(channel_id)
+                    self._channel_state_by_channel_id.pop(channel_id, None)
+                    self._fetch_stats_by_channel_id.pop(channel_id, None)
+                # ``runtime.unregister_input`` joins the per-channel
+                # worker. We release ``self._lock`` first (above) so
+                # unrelated RPCs (fetches on other channels, inits for
+                # other backends) are not blocked behind the worker join.
+                # ``backend_state.lock`` is still held, so any concurrent
+                # operation on *this* backend is serialized against us.
+                # The channel is already popped from the registry and
+                # tombstoned, so other callers see it as gone.
                 backend_state.runtime.unregister_input(channel_id)
-
-        should_shutdown_backend = False
-        with self._lock:
-            backend_state.active_channels.discard(channel_id)
-            if not backend_state.active_channels:
-                self._backend_state_by_backend_id.pop(backend_state.backend_id, None)
-                self._backend_id_by_backend_key.pop(backend_state.backend_key, None)
-                should_shutdown_backend = True
-        if should_shutdown_backend:
-            backend_state.runtime.shutdown()
-
-    def create_sampling_producer(
-        self,
-        sampler_input: Union[
-            NodeSamplerInput, EdgeSamplerInput, RemoteSamplerInput, ABLPNodeSamplerInput
-        ],
-        sampling_config: SamplingConfig,
-        worker_options: RemoteDistSamplingWorkerOptions,
-        sampler_options: SamplerOptions,
-    ) -> int:
-        """Create a sampling producer by delegating to the two-phase API.
-
-        Bridge method that keeps existing loaders working. Internally calls
-        :meth:`init_sampling_backend` and :meth:`register_sampling_input`,
-        returning the ``channel_id`` as the ``producer_id``.
-
-        Args:
-            sampler_input: The input data for sampling.
-            sampling_config: Configuration of sampling meta info.
-            worker_options: Options for launching remote sampling workers.
-            sampler_options: Controls which sampler class is instantiated.
-
-        Returns:
-            A unique ID (channel_id) usable as a producer_id.
-        """
-        backend_id = self.init_sampling_backend(
-            InitSamplingBackendRequest(
-                backend_key=worker_options.worker_key,
-                worker_options=worker_options,
-                sampler_options=sampler_options,
-                sampling_config=sampling_config,
-            )
-        )
-        channel_id = self.register_sampling_input(
-            RegisterBackendRequest(
-                backend_id=backend_id,
-                worker_key=worker_options.worker_key,
-                sampler_input=sampler_input,
-                sampling_config=sampling_config,
-                buffer_capacity=worker_options.buffer_capacity,
-                buffer_size=worker_options.buffer_size,
-            )
-        )
-        return channel_id
-
-    def destroy_sampling_producer(self, producer_id: int) -> None:
-        """Destroy a sampling producer by delegating to :meth:`destroy_sampling_input`.
-
-        Bridge method that keeps existing loaders working.
-
-        Args:
-            producer_id: The producer ID (channel_id) to destroy.
-        """
-        self.destroy_sampling_input(producer_id)
+                with self._lock:
+                    backend_state.active_channels.discard(channel_id)
+                    if not backend_state.active_channels:
+                        should_shutdown_backend = True
+                # Shut the runtime down BEFORE popping the registry entries,
+                # while still holding backend_state.lock. A concurrent
+                # init_sampling_backend for the same backend_key will find
+                # this still-registered backend, fall through to the
+                # second-caller path, block on backend_state.lock, and see
+                # tearing_down=True so it raises rather than reusing a
+                # half-shutdown runtime.
+                if should_shutdown_backend:
+                    triggered_backend_shutdown = True
+                    backend_state.tearing_down = True
+                    backend_state.runtime.shutdown()
+                    with self._lock:
+                        self._backend_state_by_backend_id.pop(
+                            backend_state.backend_id, None
+                        )
+                        self._backend_id_by_backend_key.pop(
+                            backend_state.backend_key, None
+                        )
+        finally:
+            # Slow-path warning: a healthy destroy is dominated by
+            # ``runtime.unregister_input`` (an enqueue) and, on the last
+            # channel, ``runtime.shutdown()`` (workers joined with a 5 s
+            # timeout each, then terminated). >1 s on the non-last
+            # destroy or >30 s on the last destroy is the smoking-gun
+            # signal we are missing today.
+            elapsed = time.monotonic() - request_start_time
+            slow_threshold = 30.0 if triggered_backend_shutdown else 1.0
+            if elapsed > slow_threshold:
+                logger.warning(
+                    f"destroy_sampling_input slow channel_id={channel_id} "
+                    f"backend_id={backend_id_for_log} "
+                    f"triggered_backend_shutdown={triggered_backend_shutdown} "
+                    f"elapsed={elapsed:.3f}s"
+                )
 
     def start_new_epoch_sampling(self, channel_id: int, epoch: int) -> None:
         """Start one new epoch on one registered channel.
@@ -740,42 +875,100 @@ class DistServer:
         No-op if this channel has already started ``epoch`` or a later
         epoch (idempotent — safe to call repeatedly from retries).
 
+        No-op if the channel is in the tombstoned set: this handles the
+        legitimate destroy/start race window where a compute peer's
+        start RPC arrives after destroy has landed.
+
         Args:
             channel_id: The ID of the channel to start the epoch on.
             epoch: The epoch number to start.
 
         Raises:
-            RuntimeError: If the channel or its backend is not found.
+            RuntimeError: If ``channel_id`` was never registered on this
+                server (vs. legitimately tombstoned — tombstoned ids
+                are treated as a silent no-op).
         """
         with self._lock:
             channel_state = self._channel_state_by_channel_id.get(channel_id)
             if channel_state is None:
+                # Tombstoned: legitimate destroy/start race where the
+                # compute peer's start RPC arrived after destroy
+                # already landed on the server. Silent no-op.
+                if channel_id in self._tombstoned_channel_ids:
+                    return
+                # Never registered — caller bug. Loud.
                 raise RuntimeError(
-                    f"start_new_epoch_sampling: channel_id={channel_id} not found"
+                    f"start_new_epoch_sampling: unknown channel_id={channel_id}"
                 )
             backend_state = self._backend_state_by_backend_id.get(
                 channel_state.backend_id
             )
         if backend_state is None:
-            raise RuntimeError(
-                f"start_new_epoch_sampling: backend for channel_id={channel_id} "
-                f"backend_id={channel_state.backend_id} not found"
-            )
+            # Backend was torn down between the channel-lookup above
+            # and the backend-lookup. The channel will be tombstoned
+            # by the destroy that popped the backend. Treat as
+            # tombstoned.
+            return
 
-        # Serialize check/update/dispatch under channel_state.lock so
-        # concurrent callers with different epoch values cannot interleave
-        # the check-then-set on channel_state.epoch, and so a concurrent
-        # fetch cannot observe channel_state.epoch bumped before
-        # runtime.start_new_epoch_sampling has been dispatched.
-        with channel_state.lock:
-            if channel_state.epoch >= epoch:
-                return
-            channel_state.epoch = epoch
+        # Same two-lock dance as destroy_sampling_input (see comment
+        # there). We hold ``backend_state.lock`` across the runtime
+        # call so destroy/init for this backend serialize behind us,
+        # and we acquire ``self._lock`` only for short re-validation /
+        # epoch-update windows so other RPCs are not blocked behind
+        # the runtime dispatch.
+        with backend_state.lock:
+            with self._lock:
+                # Re-validate everything: state could have changed
+                # between our first lookup (under self._lock) and our
+                # acquire of backend_state.lock. In particular, a
+                # destroy that ran in that window may have popped the
+                # channel, swapped the backend, or set
+                # ``tombstoned=True``.
+                current_channel_state = self._channel_state_by_channel_id.get(
+                    channel_id
+                )
+                current_backend_state = self._backend_state_by_backend_id.get(
+                    channel_state.backend_id
+                )
+                if current_channel_state is None:
+                    return
+                if current_backend_state is not backend_state:
+                    # Backend was rebuilt under the same backend_id
+                    # (or the channel was reassigned) — bail; this
+                    # RPC is for stale state.
+                    return
+                if current_channel_state.backend_id != backend_state.backend_id:
+                    return
+                if current_channel_state.tombstoned:
+                    return
+                if current_channel_state.epoch >= epoch:
+                    # Idempotent: same or later epoch already running.
+                    return
+                worker_key = current_channel_state.worker_key
             logger.info(
                 f"Starting epoch channel_id={channel_id} backend_id={channel_state.backend_id} "
                 f"epoch={epoch}"
             )
+            # Dispatch outside self._lock — runtime.start_new_epoch_sampling
+            # may take work; same reasoning as the unregister_input
+            # call in destroy_sampling_input.
             backend_state.runtime.start_new_epoch_sampling(channel_id, epoch)
+            with self._lock:
+                # Re-check tombstoned once more before bumping epoch:
+                # a destroy that landed during the dispatch above must
+                # not observe ``epoch`` advanced past it.
+                post_dispatch_channel_state = self._channel_state_by_channel_id.get(
+                    channel_id
+                )
+                if post_dispatch_channel_state is None:
+                    return
+                if post_dispatch_channel_state.tombstoned:
+                    return
+                post_dispatch_channel_state.epoch = epoch
+            logger.debug(
+                "start_new_epoch_sampling dispatched "
+                f"channel_id={channel_id} worker_key={worker_key} epoch={epoch}"
+            )
 
     def _log_fetch_stats_if_due(
         self, channel_id: int, worker_key: str, elapsed: float
@@ -843,6 +1036,24 @@ class DistServer:
                     )
                     return msg, False
                 except QueueTimeoutError:
+                    if channel_state.tombstoned:
+                        self._log_fetch_stats_if_due(
+                            channel_id,
+                            channel_state.worker_key,
+                            time.monotonic() - request_start_time,
+                        )
+                        return None, True
+                    with self._lock:
+                        current_backend_state = self._backend_state_by_backend_id.get(
+                            channel_state.backend_id
+                        )
+                    if current_backend_state is not backend_state:
+                        self._log_fetch_stats_if_due(
+                            channel_id,
+                            channel_state.worker_key,
+                            time.monotonic() - request_start_time,
+                        )
+                        return None, True
                     # Timeout is expected whenever the producer has
                     # nothing ready; poll is_channel_epoch_done and loop.
                     if (
@@ -928,12 +1139,21 @@ def init_server(
 
 
 def wait_and_shutdown_server() -> None:
-    r"""Block until all client have been shutdowned, and further shutdown the
+    r"""Block until all clients have shut down, then shut down the
     server on the current process and destroy all RPC connections.
+
+    Best-effort cluster liveness: if ``DistServer.shutdown`` raises
+    (e.g. because a client crashed leaving state behind) we capture
+    the exception, run ``barrier()`` + ``shutdown_rpc()`` so healthy
+    storage peers do not hang on the barrier, then re-raise so the
+    orchestrator sees a non-zero exit on the failing storage process.
+
+    Step 3 of the three-phase teardown described in the module
+    docstring.
     """
     current_context = glt_dist_server.get_context()
     if current_context is None:
-        logging.warning(
+        logger.warning(
             "'wait_and_shutdown_server': try to shutdown server when "
             "the current process has not been initialized as a server."
         )
@@ -945,20 +1165,37 @@ def wait_and_shutdown_server() -> None:
             f"got {current_context.role}."
         )
     global _dist_server
+    shutdown_error: Optional[BaseException] = None
     if _dist_server is not None:
         _dist_server.wait_for_exit()
-        _dist_server.shutdown()
+        try:
+            _dist_server.shutdown()
+        except Exception as exc:
+            # Capture-and-continue so healthy peers clear the barrier.
+            # Re-raised after barrier + shutdown_rpc so the orchestrator
+            # sees the failure as a non-zero exit. Broad except by
+            # design — any failure during shutdown must not skip the
+            # barrier (see commit 2eeb0c7d for the original wedge fix).
+            shutdown_error = exc
+            logger.exception(
+                "DistServer.shutdown() failed during cluster teardown; "
+                "continuing with barrier/shutdown_rpc, will re-raise after."
+            )
         _dist_server = None
-        # Also clear GLT's _dist_server
+        # Also clear GLT's _dist_server (we set it in init_server so
+        # GLT's RPC mechanism routes through us; leaving it would let
+        # the next init_server call observe stale state).
         glt_dist_server._dist_server = None
     barrier()
     shutdown_rpc()
+    if shutdown_error is not None:
+        raise shutdown_error
 
 
 def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
-        logging.warning(
+        logger.warning(
             f"'_call_func_on_server': receive a non-callable function target {func}"
         )
         return None

@@ -46,7 +46,7 @@ PipelineJob created. Resource name: projects/my-project-id/locations/us-central1
 To use this PipelineJob in another session:
 pipeline_job = aiplatform.PipelineJob.get('projects/my-project-id/locations/us-central1/pipelineJobs/get-pipeline-20250226170755')
 View Pipeline Job:
-https://console.cloud.google.com/vertex-ai/locations/us-central1/pipelines/runs/get-pipeline-20250226170755?project=my-project-id
+https://console.cloud.google.com/agent-platform/locations/us-central1/pipelines/runs/get-pipeline-20250226170755?project=my-project-id
 Associating projects/my-project-id/locations/us-central1/pipelineJobs/get-pipeline-20250226170755 to Experiment: example-experiment
 
 
@@ -360,7 +360,7 @@ class VertexAIService:
         # Since for some reason upgrading from VertexAI v1.27.1 to v1.48.0
         # caused the logs to occasionally not be printed.
         logger.info(
-            f"See job logs at: https://console.cloud.google.com/ai/platform/locations/{self._location}/training/{job.name}?project={self._project}"
+            f"See job logs at: https://console.cloud.google.com/agent-platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
         job.wait_for_completion()
         return job
@@ -426,7 +426,7 @@ class VertexAIService:
     @staticmethod
     def get_pipeline_run_url(project: str, location: str, job_name: str) -> str:
         """Returns the URL for the pipeline run."""
-        return f"https://console.cloud.google.com/vertex-ai/locations/{location}/pipelines/runs/{job_name}?project={project}"
+        return f"https://console.cloud.google.com/agent-platform/locations/{location}/pipelines/runs/{job_name}?project={project}"
 
     @staticmethod
     def wait_for_run_completion(

@@ -61,3 +61,5 @@ trainerConfig:
     test_main_sample_num_workers: '1'
     test_random_sample_num_workers: '1'
   trainerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed

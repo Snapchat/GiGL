@@ -22,7 +22,7 @@ object AbstractAssigners {
         * e.g. could be assigning a NodePb (T) to some Enum (S).
         *
         * @param obj the object to hash
-        * @return 
+        * @return
         */
     def assign(obj: T): S
   }
@@ -59,7 +59,7 @@ object AbstractAssigners {
 
     /**
       * Relative width of each bucket in the hash space.  e.g. [0.2, 0.4, 0.4] would indicate 3 buckets, where
-      * the second and third bucket are twice as prominent as the first bucket. 
+      * the second and third bucket are twice as prominent as the first bucket.
       */
     lazy val weights: Seq[Float] = bucketWeights.values.toList
 

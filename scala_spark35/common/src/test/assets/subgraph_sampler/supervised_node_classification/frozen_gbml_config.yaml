@@ -25,3 +25,5 @@ sharedConfig:
       labeledTfrecordUriPrefix:  common/src/test/assets/subgraph_sampler/supervised_node_classification/output/labeled/samples/
       unlabeledTfrecordUriPrefix:  common/src/test/assets/subgraph_sampler/supervised_node_classification/output/unlabeled/samples/
   preprocessedMetadataUri: common/src/test/assets/subgraph_sampler/supervised_node_classification/preprocessed_metadata.yaml
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed

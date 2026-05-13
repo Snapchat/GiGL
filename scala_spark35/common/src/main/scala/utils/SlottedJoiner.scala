@@ -9,7 +9,7 @@ object SlottedJoiner {
 
   /**
    * This class helps handle OOM and disk space issues in Spark jobs during large table joins.
-   * Instead of one big join, it partitions the left table into smaller tables and joins 
+   * Instead of one big join, it partitions the left table into smaller tables and joins
    * them iteratively with the right table, ensuring better scalability with commodity hardware.
    *
    * Usage:
@@ -17,11 +17,11 @@ object SlottedJoiner {
    * vla rightDf = ...
    * val numSlots = 10
    * val slottedLeftDf = SlottedJoiner.computeSlotsOnDataframe(
-   *    df=leftDf, 
-   *    columnToComputeSlotOn="joinKey", 
+   *    df=leftDf,
+   *    columnToComputeSlotOn="joinKey",
    *    numSlots=numSlots
    * )
-   * 
+   *
    * // Caching helps us avoid recomputing the tables
    * cacher.createDiskPartitionedTable(
    *    df = leftSlottedDF,
@@ -119,7 +119,7 @@ object SlottedJoiner {
 
         val queryWithSlottedTables = f"""
                   WITH ${leftTableName} as (
-                      SELECT * 
+                      SELECT *
                       FROM ${leftSlottedTableName}
                       WHERE ${SLOT_NUM_COLUMN_NAME} = ${slotNum}
                   ) ${currSlotQuery}
@@ -171,12 +171,12 @@ object SlottedJoiner {
         .replace(rightSlottedTableName, rightTableName)
       val queryWithSlottedTables = f"""
                 WITH ${leftTableName} as (
-                    SELECT * 
+                    SELECT *
                     FROM ${leftSlottedTableName}
                     WHERE ${SLOT_NUM_COLUMN_NAME} = ${slotNum}
                 ),
                 ${rightTableName} as (
-                    SELECT * 
+                    SELECT *
                     FROM ${rightSlottedTableName}
                     WHERE ${SLOT_NUM_COLUMN_NAME} = ${slotNum}
                 ) ${currSlotQuery}

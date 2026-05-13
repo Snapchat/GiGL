@@ -32,7 +32,10 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.env.distributed import GraphStoreInfo
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
+from gigl.utils.data_splitters import (
+    DistNodeAnchorLinkSplitter,
+    DistNodeSplitter,
+)
 
 logger = Logger()
 
@@ -45,6 +48,7 @@ def build_storage_dataset(
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None,
     should_load_tensors_in_parallel: bool = True,
     ssl_positive_label_percentage: Optional[float] = None,
+    max_labels_per_anchor_node: Optional[int] = None,
 ) -> DistDataset:
     """Build a :class:`DistDataset` for a storage node from a task config.
 
@@ -71,6 +75,9 @@ def build_storage_dataset(
             self-supervised positive labels.  Must be ``None`` when
             supervised edge labels are already provided.  For example,
             ``0.1`` selects 10 % of edges.
+        max_labels_per_anchor_node: Optional cap for how many labels to
+            materialize per anchor node when the storage server serves ABLP
+            input.
 
     Returns:
         A partitioned :class:`DistDataset` ready to be served.
@@ -83,7 +90,8 @@ def build_storage_dataset(
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
         tfrecord_uri_pattern=tf_record_uri_pattern,
     )
-    return build_dataset(
+    # TODO: Pipe in max_labels_per_anchor_node to build_dataset.
+    dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
@@ -91,6 +99,8 @@ def build_storage_dataset(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
+    dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
+    return dataset
 
 
 def _run_storage_server_session(
@@ -114,7 +124,7 @@ def _run_storage_server_session(
        nodes for collective operations (e.g., degree tensor aggregation).
     3. **Waits for the server to exit.** The server blocks until clients
        call
-       :func:`gigl.distributed.graph_store.compute.shutdown_compute_proccess`.
+       :func:`gigl.distributed.graph_store.compute.shutdown_compute_process`.
 
     .. note::
         The GLT server is initialised *before* the ``torch.distributed``
@@ -167,7 +177,7 @@ def _run_storage_server_session(
         f"{storage_rank} / {cluster_info.num_storage_nodes} to exit"
     )
     # Wait for the server to exit.  Will block until clients also shut
-    # down (with `gigl.distributed.graph_store.compute.shutdown_compute_proccess`).
+    # down (with `gigl.distributed.graph_store.compute.shutdown_compute_process`).
     wait_and_shutdown_server()
 
     torch.distributed.destroy_process_group()
