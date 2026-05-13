@@ -1,5 +1,5 @@
 from tempfile import NamedTemporaryFile
-from typing import Optional, Type, TypeVar
+from typing import Any, Optional, Type, TypeVar, cast
 
 import yaml
 from google.protobuf import message
@@ -28,7 +28,12 @@ class ProtoUtils:
             omega_conf_obj = OmegaConf.create(raw_data)
         tfh.close()
         obj_dict = OmegaConf.to_object(omega_conf_obj)
-        proto = ParseDict(js_dict=obj_dict, message=proto_cls())
+        if not isinstance(obj_dict, dict):
+            raise TypeError(
+                f"ProtoUtils.read_proto_from_yaml expected a mapping at the YAML root for "
+                f"{uri}, got {type(obj_dict).__name__}."
+            )
+        proto = ParseDict(js_dict=cast(dict[str, Any], obj_dict), message=proto_cls())
         return proto
 
     def read_proto_from_binary(self, uri: Uri, proto_cls: Type[T]) -> T:
