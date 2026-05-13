@@ -212,6 +212,12 @@ class DistNeighborLoader(BaseDistLoader):
                 else False
             )
 
+        if with_weight and isinstance(sampler_options, PPRSamplerOptions):
+            raise NotImplementedError(
+                "Weighted sampling is not yet supported with PPRSamplerOptions. "
+                "Weight-proportional residual propagation for PPR is planned but not implemented."
+            )
+
         # Determine mode
         if isinstance(dataset, RemoteDistDataset):
             self._sampling_cluster_setup = SamplingClusterSetup.GRAPH_STORE

@@ -289,6 +289,12 @@ class DistABLPLoader(BaseDistLoader):
                 else False
             )
 
+        if with_weight and isinstance(sampler_options, PPRSamplerOptions):
+            raise NotImplementedError(
+                "Weighted sampling is not yet supported with PPRSamplerOptions. "
+                "Weight-proportional residual propagation for PPR is planned but not implemented."
+            )
+
         device = (
             pin_memory_device
             if pin_memory_device
