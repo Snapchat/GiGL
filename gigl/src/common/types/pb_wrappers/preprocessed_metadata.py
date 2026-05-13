@@ -282,7 +282,8 @@ class PreprocessedMetadataPbWrapper:
     ) -> FeatureVocabDict:
         if isinstance(transform_fn_assets_uri, LocalUri):
             list_files_fn = partial(
-                LocalFsUtils.list_at_path, entity=LocalFsUtils.FileSystemEntity.FILE
+                LocalFsUtils.list_at_path,
+                file_system_entity=LocalFsUtils.FileSystemEntity.FILE,
             )  # type: ignore
             read_file_fn = lambda path: open(path, "rb")  # type: ignore
         elif isinstance(transform_fn_assets_uri, GcsUri):

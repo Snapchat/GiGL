@@ -91,7 +91,7 @@ def list_at_path(
     Args:
         local_path (LocalUri): The local path to search for files and directories.
         regex (Optional[str]): Optional regex to match. If not provided then all children will be returned.
-        entity (Optional[FileSystemEntity]): Optional entity type to filter by. If not provided then all children will be returned.
+        file_system_entity (Optional[FileSystemEntity]): Optional entity type to filter by. If not provided then all children will be returned.
         names_only (bool): If True, return only the base names of the files and directories. Defaults to False. e.g /path/to/file.txt -> file.txt
 
     Returns:
