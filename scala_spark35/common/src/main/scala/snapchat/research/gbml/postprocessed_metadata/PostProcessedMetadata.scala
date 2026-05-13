@@ -17,7 +17,7 @@ final case class PostProcessedMetadata(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = postProcessorLogMetricsUri
         if (!__value.isEmpty) {
@@ -34,7 +34,7 @@ final case class PostProcessedMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {

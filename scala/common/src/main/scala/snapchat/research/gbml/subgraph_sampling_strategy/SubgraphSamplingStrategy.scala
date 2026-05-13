@@ -32,7 +32,7 @@ final case class SubgraphSamplingStrategy(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       strategy.messagePassingPaths.foreach { __v =>
@@ -143,7 +143,7 @@ object SubgraphSamplingStrategy extends scalapb.GeneratedMessageCompanion[snapch
       override def number: _root_.scala.Int = 0
       override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
     }
-  
+
     @SerialVersionUID(0L)
     final case class MessagePassingPaths(value: snapchat.research.gbml.subgraph_sampling_strategy.MessagePassingPathStrategy) extends snapchat.research.gbml.subgraph_sampling_strategy.SubgraphSamplingStrategy.Strategy {
       type ValueType = snapchat.research.gbml.subgraph_sampling_strategy.MessagePassingPathStrategy

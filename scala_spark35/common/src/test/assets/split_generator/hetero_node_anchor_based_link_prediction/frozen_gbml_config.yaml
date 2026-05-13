@@ -56,3 +56,5 @@ taskMetadata:
     - dstNodeType: user
       relation: to
       srcNodeType: story
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed

@@ -32,35 +32,35 @@ final case class KFPTrainerConfig(
     private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
     private[this] def __computeSerializedSize(): _root_.scala.Int = {
       var __size = 0
-      
+
       {
         val __value = cpuRequest
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(1, __value)
         }
       };
-      
+
       {
         val __value = memoryRequest
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(2, __value)
         }
       };
-      
+
       {
         val __value = gpuType
         if (!__value.isEmpty) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(3, __value)
         }
       };
-      
+
       {
         val __value = gpuLimit
         if (__value != 0) {
           __size += _root_.com.google.protobuf.CodedOutputStream.computeUInt32Size(4, __value)
         }
       };
-      
+
       {
         val __value = numReplicas
         if (__value != 0) {
@@ -77,7 +77,7 @@ final case class KFPTrainerConfig(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       {

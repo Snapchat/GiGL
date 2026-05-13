@@ -445,6 +445,7 @@ class DistABLPLoaderTest(TestCase):
                     10: torch.tensor([13, 16]),
                     15: torch.tensor([17]),
                 },
+                max_labels_per_anchor_node=None,
             ),
             param(
                 "Positive edges",
@@ -457,6 +458,28 @@ class DistABLPLoaderTest(TestCase):
                     15: torch.tensor([16]),
                 },
                 expected_negative_labels=None,
+                max_labels_per_anchor_node=None,
+            ),
+            param(
+                "Positive and Negative edges with label cap",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                expected_node=torch.tensor([10, 11, 12, 13, 14, 15, 16, 17]),
+                expected_srcs=torch.tensor([10, 10, 15, 15, 16, 16, 11, 11]),
+                expected_dsts=torch.tensor([11, 12, 13, 14, 12, 14, 13, 17]),
+                expected_positive_labels={
+                    10: torch.tensor([15]),
+                    15: torch.tensor([16]),
+                },
+                expected_negative_labels={
+                    10: torch.tensor([13]),
+                    15: torch.tensor([17]),
+                },
+                max_labels_per_anchor_node=1,
             ),
         ]
     )
@@ -469,6 +492,7 @@ class DistABLPLoaderTest(TestCase):
         expected_dsts,
         expected_positive_labels,
         expected_negative_labels,
+        max_labels_per_anchor_node,
     ):
         # Graph looks like https://is.gd/w2oEVp:
         # Message passing
@@ -511,7 +535,12 @@ class DistABLPLoaderTest(TestCase):
             partitioned_positive_labels=None,
             partitioned_node_labels=None,
         )
-        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            max_labels_per_anchor_node=max_labels_per_anchor_node,
+        )
         dataset.build(partition_output=partition_output)
 
         mp.spawn(
