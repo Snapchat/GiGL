@@ -606,3 +606,14 @@ class RemoteDistDataset:
             0,
             DistServer.get_node_types,
         )
+
+    def fetch_has_edge_weights(self) -> bool:
+        """Fetch whether edge weights were registered in the remote dataset.
+
+        Returns:
+            True if edge weights were registered via ``DistPartitioner.register_edge_weights()``.
+        """
+        return request_server(
+            0,
+            DistServer.get_has_edge_weights,
+        )

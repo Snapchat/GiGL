@@ -938,6 +938,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
             Optional[int]: Optional per-anchor label cap for ABLP label fetching
+            bool: Whether edge weights were registered during dataset construction
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
 

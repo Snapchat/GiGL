@@ -655,9 +655,25 @@ class DistPartitioner:
             input_edge_entity=edge_weights
         )
 
-        assert input_edge_weights, (
-            "Edge weights is an empty dictionary. Please provide edge weights to register."
-        )
+        if not input_edge_weights:
+            raise ValueError(
+                "Edge weights is an empty dictionary. Please provide edge weights to register."
+            )
+
+        for edge_type, weight_tensor in input_edge_weights.items():
+            if weight_tensor.ndim != 1:
+                raise ValueError(
+                    f"Edge weights for edge type {edge_type} must be a 1-D tensor of shape "
+                    f"[num_edges], got shape {tuple(weight_tensor.shape)}."
+                )
+            if self._edge_index is not None and edge_type in self._edge_index:
+                local_num_edges = self._edge_index[edge_type].shape[1]
+                if weight_tensor.shape[0] != local_num_edges:
+                    raise ValueError(
+                        f"Edge weights for edge type {edge_type} have length "
+                        f"{weight_tensor.shape[0]} but the registered edge index has "
+                        f"{local_num_edges} edges on this rank."
+                    )
 
         self._edge_weights = convert_to_tensor(input_edge_weights, dtype=torch.float32)
 
@@ -1161,7 +1177,8 @@ class DistPartitioner:
 
         gc.collect()
 
-        if len(edge_res_list) == 0:
+        had_zero_edges = len(edge_res_list) == 0
+        if had_zero_edges:
             partitioned_edge_index = torch.empty((2, 0))
         else:
             partitioned_edge_index = torch.stack(
@@ -1189,6 +1206,8 @@ class DistPartitioner:
             logger.info(
                 f"No edge features detected for edge type {edge_type}, will only partition edge indices for this edge type."
             )
+            if had_zero_edges:
+                partitioned_edge_ids = torch.empty(0)
             del edge_ids
             del self._edge_ids[edge_type]
             if len(self._edge_ids) == 0:

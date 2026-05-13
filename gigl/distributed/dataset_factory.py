@@ -63,7 +63,7 @@ def _extract_weight_column(
     edge_entity_info: Union[
         SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]
     ],
-) -> Tuple[
+) -> tuple[
     dict[EdgeType, torch.Tensor],
     Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
 ]:
@@ -120,7 +120,13 @@ def _extract_weight_column(
             continue
 
         feat_name = weight_name_dict[edge_type]
-        info = entity_info_dict[edge_type]
+        info = entity_info_dict.get(edge_type)
+        if info is None:
+            raise ValueError(
+                f"weight_edge_feat_name specifies edge type {edge_type} but no "
+                f"SerializedTFRecordInfo is available for that type. "
+                f"Available edge types: {list(entity_info_dict.keys())}"
+            )
         feature_keys = list(info.feature_keys)
 
         if feat_name not in feature_keys:
@@ -177,6 +183,7 @@ def _load_and_build_partitioned_dataset(
             sampling weights. The column is extracted from the feature tensor and registered separately via
             ``DistPartitioner.register_edge_weights()``; it is removed from the feature matrix to avoid duplication.
             Supply a single string to use the same column name for all edge types, or a per-edge-type dict.
+
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
 
