@@ -19,6 +19,9 @@ class InputDataStrategy(Enum):
     REGISTER_ALL_ENTITIES_SEPARATELY = "REGISTER_ALL_ENTITIES_SEPARATELY"
     REGISTER_ALL_ENTITIES_TOGETHER = "REGISTER_ALL_ENTITIES_TOGETHER"
     REGISTER_MINIMAL_ENTITIES_SEPARATELY = "REGISTER_MINIMAL_ENTITIES_SEPARATELY"
+    REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES = (
+        "REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES"
+    )
 
 
 def run_distributed_partitioner(
@@ -111,6 +114,69 @@ def run_distributed_partitioner(
         dist_partitioner.register_node_labels(node_labels=node_labels)
         del node_labels
         del node_features
+        (
+            output_node_features,
+            output_node_labels,
+        ) = dist_partitioner.partition_node_features_and_labels(
+            node_partition_book=output_node_partition_book
+        )
+
+        dist_partitioner.register_labels(
+            label_edge_index=positive_labels, is_positive=True
+        )
+        del positive_labels
+        output_positive_labels = dist_partitioner.partition_labels(
+            node_partition_book=output_node_partition_book, is_positive=True
+        )
+
+        dist_partitioner.register_labels(
+            label_edge_index=negative_labels, is_positive=False
+        )
+        del negative_labels
+        output_negative_labels = dist_partitioner.partition_labels(
+            node_partition_book=output_node_partition_book, is_positive=False
+        )
+
+        partition_output = PartitionOutput(
+            node_partition_book=output_node_partition_book,
+            edge_partition_book=output_edge_partition_book,
+            partitioned_edge_index=output_edge_index,
+            partitioned_node_features=output_node_features,
+            partitioned_node_labels=output_node_labels,
+            partitioned_edge_features=output_edge_features,
+            partitioned_positive_labels=output_positive_labels,
+            partitioned_negative_labels=output_negative_labels,
+        )
+    elif (
+        input_data_strategy
+        == InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES
+    ):
+        # Same as REGISTER_ALL_ENTITIES_SEPARATELY but skips edge feature registration,
+        # so weights can be tested independently of features.
+        dist_partitioner = partitioner_class(
+            should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+        )
+        dist_partitioner.register_node_ids(node_ids=node_ids)
+        del node_ids
+        output_node_partition_book = dist_partitioner.partition_node()
+
+        dist_partitioner.register_edge_index(edge_index=edge_index)
+        del edge_index, edge_features
+        if rank_to_edge_weights is not None and rank in rank_to_edge_weights:
+            dist_partitioner.register_edge_weights(
+                edge_weights=rank_to_edge_weights[rank]
+            )
+        (
+            output_edge_index,
+            output_edge_features,
+            output_edge_partition_book,
+        ) = dist_partitioner.partition_edge_index_and_edge_features(
+            node_partition_book=output_node_partition_book
+        )
+
+        dist_partitioner.register_node_features(node_features=node_features)
+        dist_partitioner.register_node_labels(node_labels=node_labels)
+        del node_labels, node_features
         (
             output_node_features,
             output_node_labels,

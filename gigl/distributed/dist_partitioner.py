@@ -1163,7 +1163,6 @@ class DistPartitioner:
 
         if len(edge_res_list) == 0:
             partitioned_edge_index = torch.empty((2, 0))
-            partitioned_edge_ids = torch.empty(0)
         else:
             partitioned_edge_index = torch.stack(
                 (
@@ -1172,119 +1171,137 @@ class DistPartitioner:
                 ),
                 dim=0,
             )
-            if should_skip_edge_feats and not has_weights_for_edge_type:
-                partitioned_edge_ids = None
-            else:
-                partitioned_edge_ids = torch.cat([r[2] for r in edge_res_list])
 
         edge_res_list.clear()
 
         gc.collect()
 
-        # Partitioning Edge Weights (before creating GraphPartitionData so weights
-        # can be included at construction time; frozen dataclass cannot be mutated).
+        # Partition edge features and weights together in a single pass,
+        # mirroring how node features and labels are co-partitioned.
+        # Input tuple layout: (edge_feat?, edge_weights?, edge_ids)
+        # IDs are always at r[-1]; features at r[0]; weights at r[1] when
+        # features are also present, else r[0].
+        current_feat_part: Optional[FeaturePartitionData] = None
         partitioned_weights: Optional[torch.Tensor] = None
-        if has_weights_for_edge_type:
-            assert edge_partition_book is not None, (
-                "edge_partition_book must be populated when edge weights are registered"
-            )
-            assert self._edge_weights is not None
-            edge_weights_tensor = self._edge_weights[edge_type]
+        partitioned_edge_ids: Optional[torch.Tensor] = None
 
-            def _edge_weight_pfn(edge_ids_chunk, _):
-                assert edge_partition_book is not None
-                return edge_partition_book[edge_ids_chunk]
-
-            weight_res_list, _ = self._partition_by_chunk(
-                input_data=(edge_weights_tensor, edge_ids),
-                rank_indices=edge_ids,
-                partition_function=_edge_weight_pfn,
-                total_val_size=num_edges,
-                generate_pb=False,
-            )
-            del edge_weights_tensor
-            del self._edge_weights[edge_type]
-            if len(self._edge_weights) == 0:
-                self._edge_weights = None
-            gc.collect()
-
-            if len(weight_res_list) == 0:
-                partitioned_weights = torch.empty(0)
-            else:
-                partitioned_weights = torch.cat([r[0] for r in weight_res_list])
-            weight_res_list.clear()
-            gc.collect()
-
-        current_graph_part = GraphPartitionData(
-            edge_index=partitioned_edge_index,
-            edge_ids=partitioned_edge_ids,
-            weights=partitioned_weights,
-        )
-
-        # Partitioning Edge Features
-
-        if should_skip_edge_feats:
+        if not should_generate_partition_book:
             logger.info(
                 f"No edge features detected for edge type {edge_type}, will only partition edge indices for this edge type."
             )
-            current_feat_part = None
             del edge_ids
             del self._edge_ids[edge_type]
             if len(self._edge_ids) == 0:
                 self._edge_ids = None
             gc.collect()
         else:
-            assert self._edge_feat_dim is not None and edge_type in self._edge_feat_dim
-            assert self._edge_feat is not None and edge_type in self._edge_feat
             assert edge_partition_book is not None
-            edge_feat = self._edge_feat[edge_type]
-            edge_feat_dim = self._edge_feat_dim[edge_type]
 
-            def _edge_feature_pfn(edge_feature_ids, _):
+            edge_feat: Optional[torch.Tensor] = None
+            edge_feat_dim: Optional[int] = None
+            edge_weights_tensor: Optional[torch.Tensor] = None
+            if not should_skip_edge_feats:
+                assert self._edge_feat is not None and edge_type in self._edge_feat
+                assert (
+                    self._edge_feat_dim is not None and edge_type in self._edge_feat_dim
+                )
+                edge_feat = self._edge_feat[edge_type]
+                edge_feat_dim = self._edge_feat_dim[edge_type]
+            if has_weights_for_edge_type:
+                assert self._edge_weights is not None
+                edge_weights_tensor = self._edge_weights[edge_type]
+
+            input_parts: list[torch.Tensor] = []
+            if edge_feat is not None:
+                input_parts.append(edge_feat)
+            if edge_weights_tensor is not None:
+                input_parts.append(edge_weights_tensor)
+            input_parts.append(edge_ids)
+
+            # Positional indices: features first, weights next, ids always last.
+            feat_idx: Optional[int] = 0 if not should_skip_edge_feats else None
+            weight_idx: Optional[int] = (
+                (1 if not should_skip_edge_feats else 0)
+                if has_weights_for_edge_type
+                else None
+            )
+
+            def _edge_feat_weight_pfn(
+                ids_chunk: torch.Tensor, _: object
+            ) -> torch.Tensor:
                 assert edge_partition_book is not None
-                return edge_partition_book[edge_feature_ids]
+                return edge_partition_book[ids_chunk]
 
-            # partitioned_results is a list of tuples. Each tuple correpsonds
-            # to a chunk of data. A tuple contains edge features and edge ids.
-            edge_feat_res_list, _ = self._partition_by_chunk(
-                input_data=(edge_feat, edge_ids),
+            # Each result tuple contains (edge_feat?, edge_weights?, edge_ids).
+            feat_weight_res_list, _ = self._partition_by_chunk(
+                input_data=tuple(input_parts),
                 rank_indices=edge_ids,
-                partition_function=_edge_feature_pfn,
+                partition_function=_edge_feat_weight_pfn,
                 total_val_size=num_edges,
                 generate_pb=False,
             )
-            del edge_feat, edge_ids
-            del (
-                self._edge_feat[edge_type],
-                self._edge_feat_dim[edge_type],
-                self._edge_ids[edge_type],
-            )
+
+            del edge_ids
+            del self._edge_ids[edge_type]
             if len(self._edge_ids) == 0:
                 self._edge_ids = None
-            if len(self._edge_feat) == 0 and len(self._edge_feat_dim) == 0:
-                self._edge_feat = None
-                self._edge_feat_dim = None
+            if not should_skip_edge_feats:
+                assert edge_feat is not None
+                assert self._edge_feat is not None and self._edge_feat_dim is not None
+                del edge_feat
+                del self._edge_feat[edge_type], self._edge_feat_dim[edge_type]
+                if len(self._edge_feat) == 0 and len(self._edge_feat_dim) == 0:
+                    self._edge_feat = None
+                    self._edge_feat_dim = None
+            if has_weights_for_edge_type:
+                assert edge_weights_tensor is not None
+                assert self._edge_weights is not None
+                del edge_weights_tensor
+                del self._edge_weights[edge_type]
+                if len(self._edge_weights) == 0:
+                    self._edge_weights = None
             gc.collect()
-            if len(edge_feat_res_list) == 0:
-                partitioned_edge_features = torch.empty(0, edge_feat_dim)
-                partitioned_edge_feat_ids = torch.empty(0)
-            else:
-                partitioned_edge_features = torch.cat(
-                    [r[0] for r in edge_feat_res_list]
-                )
-                partitioned_edge_feat_ids = torch.cat(
-                    [r[1] for r in edge_feat_res_list]
-                )
 
-            current_feat_part = FeaturePartitionData(
-                feats=partitioned_edge_features, ids=partitioned_edge_feat_ids
-            )
-            logger.info(
-                f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
-            )
+            if len(feat_weight_res_list) == 0:
+                partitioned_edge_ids = torch.empty(0)
+                if not should_skip_edge_feats:
+                    assert edge_feat_dim is not None
+                    current_feat_part = FeaturePartitionData(
+                        feats=torch.empty(0, edge_feat_dim),
+                        ids=partitioned_edge_ids,
+                    )
+                if has_weights_for_edge_type:
+                    partitioned_weights = torch.empty(0)
+            else:
+                partitioned_edge_ids = torch.cat([r[-1] for r in feat_weight_res_list])
+                if not should_skip_edge_feats:
+                    assert feat_idx is not None and edge_feat_dim is not None
+                    current_feat_part = FeaturePartitionData(
+                        feats=torch.cat([r[feat_idx] for r in feat_weight_res_list]),
+                        ids=partitioned_edge_ids,
+                    )
+                if has_weights_for_edge_type:
+                    assert weight_idx is not None
+                    partitioned_weights = torch.cat(
+                        [r[weight_idx] for r in feat_weight_res_list]
+                    )
+
+            feat_weight_res_list.clear()
+            gc.collect()
+
+            if not should_skip_edge_feats:
+                logger.info(
+                    f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
+                )
             logger.info(
                 f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
             )
+
+        current_graph_part = GraphPartitionData(
+            edge_index=partitioned_edge_index,
+            edge_ids=partitioned_edge_ids,
+            weights=partitioned_weights,
+        )
 
         return current_graph_part, current_feat_part, edge_partition_book
 
