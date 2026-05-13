@@ -69,5 +69,21 @@ class ProtoUtilsTest(TestCase):
         )
 
 
+    def test_read_proto_from_yaml_raises_typeerror_when_root_is_not_a_mapping(self):
+        list_yaml = "- a\n- b\n- c\n"
+        tmp_file = NamedTemporaryFile(delete=False)
+        tmp_file.write(list_yaml.encode())
+        tmp_file.close()
+        try:
+            with self.assertRaises(TypeError) as ctx:
+                self.proto_utils.read_proto_from_yaml(
+                    uri=LocalUri(tmp_file.name),
+                    proto_cls=gbml_config_pb2.GbmlConfig,
+                )
+            self.assertIn("expected a mapping at the YAML root", str(ctx.exception))
+        finally:
+            os.remove(tmp_file.name)
+
+
 if __name__ == "__main__":
     absltest.main()
