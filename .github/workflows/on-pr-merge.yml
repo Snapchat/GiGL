@@ -158,6 +158,8 @@ jobs:
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
       shell: bash
+      env:
+        SBT_OPTS: '-Dsbt.override.build.repos=true -Dsbt.repository.config=repositories'
       run: |
         # sourcing .profile is important to resolve paths for java, sbt, et al.
         # It is setup in the setup-python-tools action.
