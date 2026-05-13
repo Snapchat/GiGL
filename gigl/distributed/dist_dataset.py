@@ -343,10 +343,8 @@ class DistDataset(glt.distributed.DistDataset):
 
     @property
     def has_edge_weights(self) -> bool:
-        """True if edge weights were registered during dataset construction.
-
-        Used by loaders to automatically infer ``with_weight`` when it is not
-        explicitly specified.
+        """True if edge weights were registered during dataset construction via
+        ``DistPartitioner.register_edge_weights()``.
         """
         return self._has_edge_weights
 
@@ -573,11 +571,15 @@ class DistDataset(glt.distributed.DistDataset):
             GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
     ) -> None:
-        """
-        Initializes the graph structure with edge index and edge IDs from partition output.
+        """Initializes the graph structure from partition output.
+
+        Sets up the GLT graph with edge index, edge IDs, and optional edge weights.
+        For heterogeneous graphs with weights registered on only some edge types, a
+        warning is logged and unweighted edge types fall back to uniform sampling.
 
         Args:
-            partitioned_edge_index(Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): The partitioned graph data
+            partitioned_edge_index: Partitioned graph data per edge type (heterogeneous)
+                or a single partition (homogeneous).
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -608,7 +610,9 @@ class DistDataset(glt.distributed.DistDataset):
             }
             edge_weights = weights_by_type if weights_by_type else None
             if weights_by_type:
-                missing = set(partitioned_edge_index.keys()) - set(weights_by_type.keys())
+                missing = set(partitioned_edge_index.keys()) - set(
+                    weights_by_type.keys()
+                )
                 if missing:
                     logger.warning(
                         f"Edge weights are registered for {set(weights_by_type.keys())} but "

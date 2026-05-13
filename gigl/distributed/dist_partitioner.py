@@ -1191,9 +1191,9 @@ class DistPartitioner:
             assert self._edge_weights is not None
             edge_weights_tensor = self._edge_weights[edge_type]
 
-            def _edge_weight_pfn(weight_ids, _):
+            def _edge_weight_pfn(edge_ids_chunk, _):
                 assert edge_partition_book is not None
-                return edge_partition_book[weight_ids]
+                return edge_partition_book[edge_ids_chunk]
 
             weight_res_list, _ = self._partition_by_chunk(
                 input_data=(edge_weights_tensor, edge_ids),

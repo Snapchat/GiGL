@@ -90,7 +90,7 @@ class DistNeighborLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
-        with_weight: Optional[bool] = None,
+        with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
     ):
@@ -159,13 +159,10 @@ class DistNeighborLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
-            with_weight (Optional[bool]): Whether to use edge weights for neighbor
-                sampling. When ``None`` (default), inferred automatically from the
-                dataset: ``True`` if edge weights were registered via
-                ``DistPartitioner.register_edge_weights()``, ``False`` otherwise.
-                Pass ``True`` or ``False`` explicitly to override the inference.
-                Only auto-inferred for colocated mode; graph-store mode defaults to
-                ``False`` when ``None``.
+            with_weight (bool): Whether to use edge weights for neighbor sampling.
+                Requires edge weights to be registered via
+                ``DistPartitioner.register_edge_weights()`` during dataset construction.
+                Defaults to ``False``.
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
                 instantiated. Pass ``KHopNeighborSamplerOptions`` to use the built-in sampler,
                 or ``CustomSamplerOptions`` to dynamically import a custom sampler class.
@@ -192,31 +189,7 @@ class DistNeighborLoader(BaseDistLoader):
         )
         del context, local_process_rank, local_process_world_size
 
-        # Validate explicit with_weight overrides and infer when not specified.
-        if isinstance(dataset, DistDataset):
-            if with_weight is True and not dataset.has_edge_weights:
-                raise ValueError(
-                    "with_weight=True requires edge weights to be registered in the dataset. "
-                    "Pass weight_edge_feat_name to build_dataset() to register edge weights, "
-                    "or omit with_weight to have it inferred automatically."
-                )
-            if with_weight is False and dataset.has_edge_weights:
-                logger.warning(
-                    "with_weight=False explicitly set but the dataset has edge weights registered. "
-                    "Weighted sampling will be disabled. Omit with_weight to enable it automatically."
-                )
-        if with_weight is None:
-            with_weight = (
-                dataset.has_edge_weights
-                if isinstance(dataset, DistDataset)
-                else False
-            )
-
-        if with_weight and isinstance(sampler_options, PPRSamplerOptions):
-            raise NotImplementedError(
-                "Weighted sampling is not yet supported with PPRSamplerOptions. "
-                "Weight-proportional residual propagation for PPR is planned but not implemented."
-            )
+        BaseDistLoader.validate_with_weight(with_weight, dataset, sampler_options)
 
         # Determine mode
         if isinstance(dataset, RemoteDistDataset):

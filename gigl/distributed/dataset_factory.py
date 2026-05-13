@@ -43,8 +43,8 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
@@ -60,7 +60,9 @@ logger = Logger()
 def _extract_weight_column(
     edge_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
     weight_edge_feat_name: Union[str, dict[EdgeType, str]],
-    edge_entity_info: Union[SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]],
+    edge_entity_info: Union[
+        SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]
+    ],
 ) -> Tuple[
     dict[EdgeType, torch.Tensor],
     Union[torch.Tensor, dict[EdgeType, torch.Tensor]],

@@ -334,6 +334,38 @@ class BaseDistLoader(DistLoader):
             )
 
     @staticmethod
+    def validate_with_weight(
+        with_weight: bool,
+        dataset: Union[DistDataset, RemoteDistDataset],
+        sampler_options: SamplerOptions,
+    ) -> None:
+        """Validates the ``with_weight`` parameter against the dataset and sampler.
+
+        Args:
+            with_weight: Whether weighted sampling was requested.
+            dataset: The dataset being sampled from.
+            sampler_options: The sampler to be used.
+
+        Raises:
+            ValueError: If ``with_weight=True`` but no edge weights are registered.
+            NotImplementedError: If ``with_weight=True`` and a PPR sampler is requested.
+        """
+        if (
+            with_weight
+            and isinstance(dataset, DistDataset)
+            and not dataset.has_edge_weights
+        ):
+            raise ValueError(
+                "with_weight=True requires edge weights to be registered in the dataset. "
+                "Pass weight_edge_feat_name to build_dataset() to register edge weights."
+            )
+        if with_weight and isinstance(sampler_options, PPRSamplerOptions):
+            raise NotImplementedError(
+                "Weighted sampling is not yet supported with PPRSamplerOptions. "
+                "Weight-proportional residual propagation for PPR is planned but not implemented."
+            )
+
+    @staticmethod
     def create_sampling_config(
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         dataset_schema: DatasetSchema,
