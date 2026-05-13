@@ -158,6 +158,9 @@ jobs:
           gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
     - name: Run Lint Tests
       shell: bash
+      # Route sbt through Google's Maven Central mirror to avoid 429 rate limits from repo1.maven.org.
+      # Intentionally set here (CI env) rather than in scala/.sbtopts or scala_spark35/.sbtopts to avoid
+      # affecting downstream consumers of GiGL (e.g. as a submodule) that have their own Maven routing.
       env:
         SBT_OPTS: '-Dsbt.override.build.repos=true -Dsbt.repository.config=repositories'
       run: |
