@@ -149,6 +149,8 @@ class LoadedGraphTensors:
     positive_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     # Unpartitioned Negative Edge Label
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
+    edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """

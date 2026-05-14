@@ -27,6 +27,7 @@ logger = Logger()
 _ID_FMT = "{entity}_ids"
 _FEATURE_FMT = "{entity}_features"
 _LABEL_FMT = "{entity}_labels"
+_WEIGHT_FMT = "{entity}_weights"
 _NODE_KEY = "node"
 _EDGE_KEY = "edge"
 _POSITIVE_LABEL_KEY = "positive_label"
@@ -72,6 +73,7 @@ def _data_loading_process(
     ],
     rank: int,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> None:
     """
     Spawned multiprocessing.Process which loads homogeneous or heterogeneous information for a specific entity type [node, edge, positive_label, negative_label]
@@ -117,6 +119,7 @@ def _data_loading_process(
         ids: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        weights: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
             graph_type,
             serialized_entity_tf_record_info,
@@ -129,14 +132,13 @@ def _data_loading_process(
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
                 )
-            (
-                entity_ids,
-                entity_features,
-                entity_labels,
-            ) = tf_record_dataloader.load_as_torch_tensors(
+            loaded_entity = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,
             )
+            entity_ids = loaded_entity.ids
+            entity_features = loaded_entity.features
+            entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
                 f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
@@ -161,6 +163,42 @@ def _data_loading_process(
                     f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
+        # Extract weight column from edge features when weight_edge_feat_name is set.
+        # The weight column is sliced out of each edge type's feature tensor and stored
+        # separately so it is not duplicated in the feature matrix.
+        if weight_edge_feat_name is not None and entity_type == _EDGE_KEY:
+            if isinstance(weight_edge_feat_name, str):
+                if len(serialized_tf_record_info) > 1:
+                    raise ValueError(
+                        f"weight_edge_feat_name must be a dict[EdgeType, str] for heterogeneous "
+                        f"graphs with multiple edge types ({sorted(serialized_tf_record_info)}). "
+                        "Provide an explicit per-edge-type mapping instead of a single string."
+                    )
+                weight_name_dict: dict[Union[NodeType, EdgeType], str] = {
+                    et: weight_edge_feat_name for et in serialized_tf_record_info
+                }
+            else:
+                weight_name_dict = weight_edge_feat_name  # type: ignore[assignment]
+
+            for graph_type, feat_tensor in list(features.items()):
+                if graph_type not in weight_name_dict:
+                    continue
+                col_name = weight_name_dict[graph_type]
+                feature_keys = list(serialized_tf_record_info[graph_type].feature_keys)
+                if col_name not in feature_keys:
+                    raise ValueError(
+                        f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
+                        f"for edge type {graph_type}: {feature_keys}"
+                    )
+                col_idx = feature_keys.index(col_name)
+                weights[graph_type] = feat_tensor[:, col_idx]
+                keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
+                features[graph_type] = feat_tensor[:, keep_cols]
+                logger.info(
+                    f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
+                    f"from {entity_type} features for graph type {graph_type}"
+                )
+
         logger.info(
             f"Rank {rank} is attempting to share {entity_type} id memory for tfrecord directories: {all_tf_record_uris}"
         )
@@ -180,6 +218,12 @@ def _data_loading_process(
             )
             share_memory(labels)
 
+        if weights:
+            logger.info(
+                f"Rank {rank} is attempting to share {entity_type} weight memory for tfrecord directories: {all_tf_record_uris}"
+            )
+            share_memory(weights)
+
         output_dict[_ID_FMT.format(entity=entity_type)] = (
             list(ids.values())[0] if is_input_homogeneous else ids
         )
@@ -190,6 +234,10 @@ def _data_loading_process(
         if labels:
             output_dict[_LABEL_FMT.format(entity=entity_type)] = (
                 list(labels.values())[0] if is_input_homogeneous else labels
+            )
+        if weights:
+            output_dict[_WEIGHT_FMT.format(entity=entity_type)] = (
+                list(weights.values())[0] if is_input_homogeneous else weights
             )
 
         logger.info(
@@ -207,6 +255,7 @@ def load_torch_tensors_from_tf_record(
     rank: int = 0,
     node_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     edge_tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> LoadedGraphTensors:
     """
     Loads all torch tensors from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
@@ -222,6 +271,10 @@ def load_torch_tensors_from_tf_record(
         rank (int): Rank on current machine
         node_tf_dataset_options (TFDatasetOptions): The options to use for nodes when building the dataset.
         edge_tf_dataset_options (TFDatasetOptions): The options to use for edges when building the dataset.
+        weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Name of the edge feature column to extract
+            as sampling weights. The column is removed from the edge feature matrix and returned separately via
+            ``LoadedGraphTensors.edge_weights``. Supply a single string for homogeneous graphs or a per-edge-type
+            dict for heterogeneous graphs.
     Returns:
         loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
     """
@@ -269,6 +322,7 @@ def load_torch_tensors_from_tf_record(
             "serialized_tf_record_info": serialized_graph_metadata.edge_entity_info,
             "rank": rank,
             "tf_dataset_options": edge_tf_dataset_options,
+            "weight_edge_feat_name": weight_edge_feat_name,
         },
     )
 
@@ -351,6 +405,7 @@ def load_torch_tensors_from_tf_record(
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
     edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
+    edge_weights = edge_output_dict.get(_WEIGHT_FMT.format(entity=_EDGE_KEY), None)
 
     positive_labels = edge_output_dict.get(
         _ID_FMT.format(entity=_POSITIVE_LABEL_KEY), None
@@ -378,4 +433,5 @@ def load_torch_tensors_from_tf_record(
         edge_features=edge_features,
         positive_label=positive_labels,
         negative_label=negative_labels,
+        edge_weights=edge_weights,
     )
