@@ -16,6 +16,7 @@ from gigl.src.validation_check.libs.frozen_config_path_checks import (
     assert_trained_model_exists,
 )
 from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
+    check_custom_launcher_config_requires_glt_backend,
     check_inferencer_graph_store_compatibility,
     check_trainer_graph_store_compatibility,
 )
@@ -23,6 +24,7 @@ from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
 from gigl.src.validation_check.libs.resource_config_checks import (
+    check_custom_launcher_config_shape,
     check_if_inferencer_resource_config_valid,
     check_if_preprocessor_resource_config_valid,
     check_if_shared_resource_config_valid,
@@ -202,25 +204,31 @@ START_COMPONENT_TO_GRAPH_STORE_COMPATIBILITY_CHECKS = {
     GiGLComponents.ConfigPopulator.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_launcher_config_requires_glt_backend,
     ],
     GiGLComponents.DataPreprocessor.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_launcher_config_requires_glt_backend,
     ],
     GiGLComponents.SubgraphSampler.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_launcher_config_requires_glt_backend,
     ],
     GiGLComponents.SplitGenerator.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_launcher_config_requires_glt_backend,
     ],
     GiGLComponents.Trainer.value: [
         check_trainer_graph_store_compatibility,
         check_inferencer_graph_store_compatibility,
+        check_custom_launcher_config_requires_glt_backend,
     ],
     GiGLComponents.Inferencer.value: [
         check_inferencer_graph_store_compatibility,
+        check_custom_launcher_config_requires_glt_backend,
     ],
     # PostProcessor doesn't need graph store compatibility checks
 }
@@ -346,6 +354,15 @@ def kfp_validation_checks(
         gbml_config_pb_wrapper=gbml_config_pb_wrapper,
         resource_config_wrapper=resource_config_wrapper,
     )
+
+    # Validate any populated CustomLauncherConfig has a non-empty command.
+    # Unconditional — the check is shape-only and does not call out to any
+    # external service.
+    for component in (GiGLComponents.Trainer, GiGLComponents.Inferencer):
+        check_custom_launcher_config_shape(
+            resource_config_pb=resource_config_pb,
+            component=component,
+        )
 
     # check if trained model file exist when skipping training
     if gbml_config_pb.shared_config.should_skip_training == True:

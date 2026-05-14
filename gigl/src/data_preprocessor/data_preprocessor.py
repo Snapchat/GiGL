@@ -352,6 +352,12 @@ class DataPreprocessor:
             edge_ref_to_preprocessing_spec
         )
 
+        if num_dataflow_jobs == 0:
+            logger.info("No data references to preprocess; skipping Dataflow.")
+            return PreprocessedMetadataReferences(
+                node_data=node_refs_and_results, edge_data=edge_refs_and_results
+            )
+
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=num_dataflow_jobs
         ) as executor:
