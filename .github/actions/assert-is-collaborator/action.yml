@@ -5,7 +5,7 @@ inputs:
     description: The GitHub username to check
     required: true
   initiating-pr-number:
-    description: The PR number that the check may be associated with, if provided will comment on the PR incase of failures 
+    description: The PR number that the check may be associated with, if provided will comment on the PR incase of failures
     required: false
 runs:
   using: "composite"
@@ -22,7 +22,7 @@ runs:
         script: |
           try {
             const username = "${{ inputs.username }}";
-            const result = await github.rest.repos.checkCollaborator({ 
+            const result = await github.rest.repos.checkCollaborator({
               owner: context.repo.owner,
               repo: context.repo.repo,
               username: username
@@ -41,7 +41,7 @@ runs:
               console.log(`Error checking collaborator status: ${error.message}`);
             }
           }
-          
+
     - name: Comment workflow permissions
       if: ${{ failure() && steps.assert-is-collaborator.conclusion == 'failure' && inputs.initiating-pr-number != '' }}
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
@@ -49,4 +49,3 @@ runs:
         pr_number: ${{ inputs.initiating-pr-number }}
         message: |
           🔒 User ${{ inputs.username }} does not have permissions to run this workflow
-            

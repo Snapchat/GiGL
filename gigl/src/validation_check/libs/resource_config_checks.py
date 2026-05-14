@@ -149,7 +149,15 @@ def check_if_trainer_resource_config_valid(
         gigl_resource_config_pb2.VertexAiResourceConfig,
         gigl_resource_config_pb2.KFPResourceConfig,
         gigl_resource_config_pb2.VertexAiGraphStoreConfig,
+        gigl_resource_config_pb2.CustomLauncherConfig,
     ] = wrapper.trainer_config
+    if isinstance(trainer_config, gigl_resource_config_pb2.CustomLauncherConfig):
+        logger.info(
+            "Skipping trainer machine-shape validation: trainer_config is a "
+            "CustomLauncherConfig (launcher-pluggable; no concrete machine "
+            "spec to validate)."
+        )
+        return
     _validate_machine_config(config=trainer_config)
 
 
@@ -163,6 +171,13 @@ def check_if_inferencer_resource_config_valid(
         resource_config=resource_config_pb
     )
     inferencer_config = resource_config_wrapper.inferencer_config
+    if isinstance(inferencer_config, gigl_resource_config_pb2.CustomLauncherConfig):
+        logger.info(
+            "Skipping inferencer machine-shape validation: inferencer_config "
+            "is a CustomLauncherConfig (launcher-pluggable; no concrete "
+            "machine spec to validate)."
+        )
+        return
     _validate_machine_config(config=inferencer_config)
 
 

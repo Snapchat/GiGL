@@ -31,7 +31,7 @@ final case class InferenceMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       nodeTypeToInferencerOutputInfoMap.foreach { __v =>
@@ -123,7 +123,7 @@ object InferenceMetadata extends scalapb.GeneratedMessageCompanion[snapchat.rese
       private[this] var __serializedSizeMemoized: _root_.scala.Int = 0
       private[this] def __computeSerializedSize(): _root_.scala.Int = {
         var __size = 0
-        
+
         {
           val __value = key
           if (!__value.isEmpty) {
@@ -144,7 +144,7 @@ object InferenceMetadata extends scalapb.GeneratedMessageCompanion[snapchat.rese
           __serializedSizeMemoized = __size
         }
         __size - 1
-        
+
       }
       def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
         {
@@ -187,7 +187,7 @@ object InferenceMetadata extends scalapb.GeneratedMessageCompanion[snapchat.rese
       def companion: snapchat.research.gbml.inference_metadata.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry.type = snapchat.research.gbml.inference_metadata.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry
       // @@protoc_insertion_point(GeneratedMessage[snapchat.research.gbml.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry])
   }
-  
+
   object NodeTypeToInferencerOutputInfoMapEntry extends scalapb.GeneratedMessageCompanion[snapchat.research.gbml.inference_metadata.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry] {
     implicit def messageCompanion: scalapb.GeneratedMessageCompanion[snapchat.research.gbml.inference_metadata.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry] = this
     def parseFrom(`_input__`: _root_.com.google.protobuf.CodedInputStream): snapchat.research.gbml.inference_metadata.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry = {
@@ -259,7 +259,7 @@ object InferenceMetadata extends scalapb.GeneratedMessageCompanion[snapchat.rese
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.InferenceMetadata.NodeTypeToInferencerOutputInfoMapEntry])
   }
-  
+
   implicit class InferenceMetadataLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.inference_metadata.InferenceMetadata]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.inference_metadata.InferenceMetadata](_l) {
     def nodeTypeToInferencerOutputInfoMap: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.collection.immutable.Map[_root_.scala.Predef.String, snapchat.research.gbml.inference_metadata.InferenceOutput]] = field(_.nodeTypeToInferencerOutputInfoMap)((c_, f_) => c_.copy(nodeTypeToInferencerOutputInfoMap = f_))
   }

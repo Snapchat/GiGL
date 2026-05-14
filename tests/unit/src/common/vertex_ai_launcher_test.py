@@ -194,13 +194,18 @@ class TestVertexAILauncher(TestCase):
         self.assertIn(
             f"--epochs={process_runtime_args['epochs']}", compute_job_config.args
         )
+        self.assertIn("--use_cuda", compute_job_config.args)
 
         # Verify storage pool config
         self.assertEqual(storage_job_config.machine_type, storage_pool.machine_type)
+        self.assertEqual(storage_job_config.container_uri, cpu_docker_uri)
         self.assertIn(
             "gigl.distributed.graph_store.storage_main",
             " ".join(storage_job_config.command),
         )
+        self.assertIsNotNone(storage_job_config.args)
+        assert storage_job_config.args is not None  # Type narrowing for mypy
+        self.assertNotIn("--use_cuda", storage_job_config.args)
 
         # Verify environment variables
         compute_env_vars = {
@@ -306,6 +311,7 @@ class TestVertexAILauncher(TestCase):
         self.assertIn(
             f"--output_path={process_runtime_args['output_path']}", job_config.args
         )
+        self.assertNotIn("--use_cuda", job_config.args)
 
         # Verify resource labels
         expected_labels = {

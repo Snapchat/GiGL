@@ -87,3 +87,5 @@ inferencerConfig:
   # - gigl.src.inference.v1.lib.base_inferencer.BaseInferencer
   inferencerClsPath: gigl.src.common.modeling_task_specs.node_anchor_based_link_prediction_modeling_task_spec.NodeAnchorBasedLinkPredictionModelingTaskSpec
 # ========
+featureFlags:
+  should_run_glt_backend: "False"  # TODO(#611): Remove this if not needed

@@ -38,7 +38,7 @@ final case class FlattenedGraphMetadata(
         __serializedSizeMemoized = __size
       }
       __size - 1
-      
+
     }
     def writeTo(`_output__`: _root_.com.google.protobuf.CodedOutputStream): _root_.scala.Unit = {
       outputMetadata.supervisedNodeClassificationOutput.foreach { __v =>
@@ -165,7 +165,7 @@ object FlattenedGraphMetadata extends scalapb.GeneratedMessageCompanion[snapchat
       override def number: _root_.scala.Int = 0
       override def value: _root_.scala.Nothing = throw new java.util.NoSuchElementException("Empty.value")
     }
-  
+
     @SerialVersionUID(0L)
     final case class SupervisedNodeClassificationOutput(value: snapchat.research.gbml.flattened_graph_metadata.SupervisedNodeClassificationOutput) extends snapchat.research.gbml.flattened_graph_metadata.FlattenedGraphMetadata.OutputMetadata {
       type ValueType = snapchat.research.gbml.flattened_graph_metadata.SupervisedNodeClassificationOutput

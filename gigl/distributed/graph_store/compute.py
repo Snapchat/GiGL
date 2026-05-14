@@ -76,14 +76,21 @@ def init_compute_process(
     )
 
 
-def shutdown_compute_proccess() -> None:
-    """
-    Shuts down the distributed setup for a compute node in a Graph Store cluster.
+def shutdown_compute_process() -> None:
+    """Shut down the compute side of a Graph Store cluster.
 
-    Should be called *once* per compute process (e.g. one per process per compute node, once per cluster_info.compute_cluster_world_size)
+    Step 2 of the three-phase teardown described in
+    :mod:`gigl.distributed.graph_store.dist_server` — call this *after*
+    every ``DistLoader.shutdown()`` on this rank has returned, so all
+    server-side channels are already destroyed.
 
-    Args:
-        None
+    Calls ``glt.distributed.shutdown_client`` and
+    ``torch.distributed.destroy_process_group`` exactly once per
+    compute process.
+
+    Should be called *once* per compute process (e.g. one per process
+    per compute node, once per
+    cluster_info.compute_cluster_world_size).
     """
     glt.distributed.shutdown_client()
     torch.distributed.destroy_process_group()
