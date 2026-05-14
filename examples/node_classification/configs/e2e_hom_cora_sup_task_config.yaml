@@ -1,0 +1,49 @@
+# This config is used to run homogeneous CORA supervised node classification training
+# and inference using in-memory GiGL SGS. Run via `make run_hom_cora_snc_e2e_test`.
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: paper
+    relation: cites
+    srcNodeType: paper
+  nodeTypes:
+  - paper
+taskMetadata:
+  nodeBasedTaskMetadata:
+    supervisionNodeTypes:
+      - paper
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
+    dataPreprocessorArgs:
+      mocked_dataset_name: 'cora_homogeneous_supervised_node_classification_edge_features'
+trainerConfig:
+  trainerArgs:
+    log_every_n_batch: "25"
+    num_neighbors: "[10, 10]"
+    num_classes: "7"
+    train_batch_size: "16"
+    num_max_train_batches: "200"
+    num_val_batches: "20"
+    val_every_n_batch: "50"
+  command: python -m examples.node_classification.homogeneous_training
+inferencerConfig:
+  inferencerArgs:
+    log_every_n_batch: "25"
+    num_neighbors: "[10, 10]"
+    num_classes: "7"
+  inferenceBatchSize: 512
+  command: python -m examples.node_classification.homogeneous_inference
+sharedConfig:
+  shouldSkipAutomaticTempAssetCleanup: false
+  shouldSkipInference: false
+  # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines.
+  shouldSkipModelEvaluation: true
+featureFlags:
+  should_run_glt_backend: 'True'
+  data_preprocessor_num_shards: '2'
+  # NODE_BASED_TASK tasks unconditionally populate `predictions_path` in the inference metadata
+  # (see gigl/src/config_populator/config_populator.py:348-358); the post-processor's
+  # unenumerator then expects whichever paths are populated to point at real BQ tables.
+  # We disable the embeddings path so the post-processor only unenumerates the predictions
+  # table that this example actually writes via `PredictionExporter`.
+  should_populate_embeddings_path: 'False'
