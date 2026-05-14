@@ -832,9 +832,7 @@ class TestCustomLauncherConfigBypass(TestCase):
 
     def test_trainer_custom_config_bypasses_machine_validation(self):
         """CustomLauncherConfig trainer bypasses _validate_machine_config entirely."""
-        config = _create_valid_custom_trainer_config(
-            args=["--cluster_size=4"]
-        )
+        config = _create_valid_custom_trainer_config(args=["--cluster_size=4"])
         with patch(
             "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
         ) as mock_validate:
@@ -843,9 +841,7 @@ class TestCustomLauncherConfigBypass(TestCase):
 
     def test_inferencer_custom_config_bypasses_machine_validation(self):
         """CustomLauncherConfig inferencer bypasses _validate_machine_config entirely."""
-        config = _create_valid_custom_inferencer_config(
-            args=["--cluster_size=4"]
-        )
+        config = _create_valid_custom_inferencer_config(args=["--cluster_size=4"])
         with patch(
             "gigl.src.validation_check.libs.resource_config_checks._validate_machine_config"
         ) as mock_validate:
