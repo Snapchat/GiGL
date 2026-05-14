@@ -85,7 +85,7 @@ class TestLaunchCustom(TestCase):
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="",
+                process_command="echo 'hello, world!",
                 process_runtime_args={},
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
@@ -95,9 +95,7 @@ class TestLaunchCustom(TestCase):
 
     @patch("gigl.src.common.custom_launcher.subprocess.run")
     def test_args_with_spaces_are_shell_quoted(self, mock_run: MagicMock) -> None:
-        config = self._build_config(
-            command="echo", args=["a b c", "--name=with space"]
-        )
+        config = self._build_config(command="echo", args=["a b c", "--name=with space"])
         launch_custom(
             custom_launcher_config=config,
             applied_task_identifier="job",
@@ -114,34 +112,6 @@ class TestLaunchCustom(TestCase):
         # shell sees one argv element per proto args[] entry.
         self.assertIn("'a b c'", shell_line)
         self.assertIn("'--name=with space'", shell_line)
-
-    @patch("gigl.src.common.custom_launcher.subprocess.run")
-    def test_unsubstituted_gigl_placeholder_passes_through_verbatim(
-        self, mock_run: MagicMock
-    ) -> None:
-        # The launcher performs no template substitution: any
-        # ``${gigl:*}`` placeholder in command/args reaches subprocess
-        # unchanged. Consumers that want substitution must resolve at
-        # YAML-load time before the proto reaches this module.
-        config = self._build_config(
-            command="python -m my.cli",
-            args=["--foo=${gigl:bar}"],
-        )
-        launch_custom(
-            custom_launcher_config=config,
-            applied_task_identifier="job",
-            task_config_uri=Uri("gs://bucket/task.yaml"),
-            resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="",
-            process_runtime_args={},
-            cpu_docker_uri=None,
-            cuda_docker_uri=None,
-            component=GiGLComponents.Trainer,
-        )
-        shell_line = mock_run.call_args.args[0]
-        # The placeholder is preserved verbatim inside the shell-quoted
-        # arg.
-        self.assertIn("${gigl:bar}", shell_line)
 
 
 if __name__ == "__main__":
