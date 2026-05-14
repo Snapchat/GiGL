@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from functools import partial
+from typing import Callable, cast
 
 from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
@@ -280,15 +280,24 @@ class PreprocessedMetadataPbWrapper:
         self,
         transform_fn_assets_uri: Uri,
     ) -> FeatureVocabDict:
+        list_files_fn: Callable[[Uri], list[Uri]]
         if isinstance(transform_fn_assets_uri, LocalUri):
-            list_files_fn = partial(
-                LocalFsUtils.list_at_path,
-                file_system_entity=LocalFsUtils.FileSystemEntity.FILE,
+            list_files_fn = lambda uri: cast(
+                list[Uri],
+                LocalFsUtils.list_at_path(
+                    local_path=cast(LocalUri, uri),
+                    file_system_entity=LocalFsUtils.FileSystemEntity.FILE,
+                ),
             )
             read_file_fn = lambda path: open(path, "rb")
         elif isinstance(transform_fn_assets_uri, GcsUri):
             gcs_utils = GcsUtils()
-            list_files_fn = gcs_utils.list_uris_with_gcs_path_pattern
+            list_files_fn = lambda uri: cast(
+                list[Uri],
+                gcs_utils.list_uris_with_gcs_path_pattern(
+                    gcs_path=cast(GcsUri, uri),
+                ),
+            )
             read_file_fn = gcs_utils.download_file_from_gcs_to_temp_file
         else:
             raise ValueError(
