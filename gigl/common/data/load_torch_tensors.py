@@ -121,7 +121,7 @@ def _data_loading_process(
         labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         weights: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
-            graph_type,
+            edge_type,
             serialized_entity_tf_record_info,
         ) in serialized_tf_record_info.items():
             # We currently do not support training with labels for edge entities
@@ -139,28 +139,28 @@ def _data_loading_process(
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
             entity_labels = loaded_entity.labels
-            ids[graph_type] = entity_ids
+            ids[edge_type] = entity_ids
             logger.info(
-                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
             )
             if entity_features is not None:
-                features[graph_type] = entity_features
+                features[edge_type] = entity_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} features for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
-                labels[graph_type] = entity_labels
+                labels[edge_type] = entity_labels
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} labels for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
         # Extract weight column from edge features when weight_edge_feat_name is set.
@@ -174,30 +174,47 @@ def _data_loading_process(
                         f"graphs with multiple edge types ({sorted(serialized_tf_record_info)}). "
                         "Provide an explicit per-edge-type mapping instead of a single string."
                     )
-                weight_name_dict: dict[Union[NodeType, EdgeType], str] = {
-                    et: weight_edge_feat_name for et in serialized_tf_record_info
-                }
-            else:
-                weight_name_dict = weight_edge_feat_name  # type: ignore[assignment]
-
-            for graph_type, feat_tensor in list(features.items()):
-                if graph_type not in weight_name_dict:
-                    continue
-                col_name = weight_name_dict[graph_type]
-                feature_keys = list(serialized_tf_record_info[graph_type].feature_keys)
-                if col_name not in feature_keys:
-                    raise ValueError(
-                        f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
-                        f"for edge type {graph_type}: {feature_keys}"
+                # Single column name applies to all loaded edge types.
+                for edge_type, feat_tensor in list(features.items()):
+                    col_name = weight_edge_feat_name
+                    feature_keys = list(
+                        serialized_tf_record_info[edge_type].feature_keys
                     )
-                col_idx = feature_keys.index(col_name)
-                weights[graph_type] = feat_tensor[:, col_idx]
-                keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
-                features[graph_type] = feat_tensor[:, keep_cols]
-                logger.info(
-                    f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
-                    f"from {entity_type} features for graph type {graph_type}"
-                )
+                    if col_name not in feature_keys:
+                        raise ValueError(
+                            f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
+                            f"for edge type {edge_type}: {feature_keys}"
+                        )
+                    col_idx = feature_keys.index(col_name)
+                    weights[edge_type] = feat_tensor[:, col_idx]
+                    keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
+                    features[edge_type] = feat_tensor[:, keep_cols]
+                    logger.info(
+                        f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
+                        f"from {entity_type} features for type {edge_type}"
+                    )
+            else:
+                # Iterate the EdgeType-keyed dict directly to stay within EdgeType.
+                for edge_type, col_name in weight_edge_feat_name.items():
+                    if edge_type not in features:
+                        continue
+                    feat_tensor = features[edge_type]
+                    feature_keys = list(
+                        serialized_tf_record_info[edge_type].feature_keys
+                    )
+                    if col_name not in feature_keys:
+                        raise ValueError(
+                            f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
+                            f"for edge type {edge_type}: {feature_keys}"
+                        )
+                    col_idx = feature_keys.index(col_name)
+                    weights[edge_type] = feat_tensor[:, col_idx]
+                    keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
+                    features[edge_type] = feat_tensor[:, keep_cols]
+                    logger.info(
+                        f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
+                        f"from {entity_type} features for type {edge_type}"
+                    )
 
         logger.info(
             f"Rank {rank} is attempting to share {entity_type} id memory for tfrecord directories: {all_tf_record_uris}"
