@@ -319,10 +319,6 @@ replace-imports-with-any = [
   "kfp.**",
   "tensorflow.**",
   "tensorflow_metadata.**",
-  # Keep torch type checking enabled by not listing torch here. Temporary ty
-  # suppressions are tracked via TODO-tagged inline ignores documented in
-  # docs/ty_ignore_buckets.md.
-  # "torch.**",
   "torch_geometric.**",
   "torchrec.**",
 ]
