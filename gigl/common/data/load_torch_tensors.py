@@ -121,7 +121,7 @@ def _data_loading_process(
         labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         weights: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
-            edge_type,
+            graph_type,
             serialized_entity_tf_record_info,
         ) in serialized_tf_record_info.items():
             # We currently do not support training with labels for edge entities
@@ -139,28 +139,28 @@ def _data_loading_process(
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
             entity_labels = loaded_entity.labels
-            ids[edge_type] = entity_ids
+            ids[graph_type] = entity_ids
             logger.info(
-                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
             )
             if entity_features is not None:
-                features[edge_type] = entity_features
+                features[graph_type] = entity_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} features for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} features for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
-                labels[edge_type] = entity_labels
+                labels[graph_type] = entity_labels
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} labels for type {edge_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} labels for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
         # Extract weight column from edge features when weight_edge_feat_name is set.
