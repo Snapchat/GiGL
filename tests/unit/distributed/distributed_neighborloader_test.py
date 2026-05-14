@@ -318,7 +318,7 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
 
     user_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_USER, dataset.node_ids[_USER]),
+        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
@@ -326,7 +326,7 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
 
     story_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_STORY, dataset.node_ids[_STORY]),
+        input_nodes=(_STORY, dataset.node_ids[_STORY]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,

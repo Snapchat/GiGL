@@ -537,7 +537,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_types = list(nodes_to_sample.keys())
             ppr_results = await asyncio.gather(
                 *[
-                    self._compute_ppr_scores(nodes_to_sample[seed_type], seed_type)
+                    self._compute_ppr_scores(nodes_to_sample[seed_type], seed_type)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                     for seed_type in seed_types
                 ]
             )
