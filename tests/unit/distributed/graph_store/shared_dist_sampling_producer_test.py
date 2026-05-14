@@ -12,6 +12,7 @@ from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingT
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     EPOCH_DONE_EVENT,
     ActiveEpochState,
+    CommandPayload,
     RegisterInputCmd,
     SharedDistSamplingBackend,
     SharedMpCommand,
@@ -300,7 +301,7 @@ class DistSamplingProducerTest(TestCase):
         ) -> None:
             commands.append((worker_rank, command, payload))
 
-        backend._enqueue_worker_command = enqueue_worker_command  # type: ignore[method-assign]
+        backend._enqueue_worker_command = enqueue_worker_command  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
         # Returns without any worker acknowledgement: there is no sync wait.
         backend.unregister_input(1)
