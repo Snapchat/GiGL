@@ -64,7 +64,7 @@ class GcsIterableDataset(torch.utils.data.IterableDataset):
         return current_worker_file_uris_to_process
 
     def __iter__(self) -> Iterator[Any]:
-        raise NotImplemented
+        raise NotImplementedError
 
 
 class GcsJSONLIterableDataset(GcsIterableDataset):

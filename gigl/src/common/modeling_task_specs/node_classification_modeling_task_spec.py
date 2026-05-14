@@ -160,7 +160,8 @@ class NodeClassificationModelingTaskSpec(
                 out = self.model(inputs)
                 # Figure out why below is a typing issue
                 loss = self._train_loss_fn(
-                    input=out[root_node_indices], target=root_node_labels
+                    input=out[root_node_indices],  # ty: ignore[unknown-argument]
+                    target=root_node_labels,  # ty: ignore[unknown-argument]
                 )  # type: ignore
                 loss.backward()
                 self._optimizer.step()
@@ -200,7 +201,9 @@ class NodeClassificationModelingTaskSpec(
             assert root_node_labels is not None
 
             results: InferBatchResults = self.infer_batch(batch=batch, device=device)
-            num_correct_in_batch = int((results.predictions == root_node_labels).sum())  # type: ignore # https://github.com/Snapchat/GiGL/issues/408
+            num_correct_in_batch = int(
+                (results.predictions == root_node_labels).sum()
+            )  # https://github.com/Snapchat/GiGL/issues/408
             num_correct += num_correct_in_batch
             num_evaluated += len(batch.root_node_labels)
 
@@ -249,7 +252,7 @@ class NodeClassificationModelingTaskSpec(
         for epoch in range(self.__num_epochs):
             logger.info(f"Batch training... for epoch {epoch}/{self.__num_epochs}")
             train_loss = self._train(
-                data_loader=data_loaders.train_main,  # type: ignore[arg-type]
+                data_loader=data_loaders.train_main,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
                 device=device,
             )
             train_loss_str = (

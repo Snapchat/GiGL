@@ -175,7 +175,7 @@ if __name__ == "__main__":
         ),
         nprocs=int(args.process_count),
         join=True,
-    )
+    )  # ty: ignore[call-non-callable] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
 
     # Now let's load the embeddings to a dataframe
     # Note in a "production" setting we have `gigl.common.data.export.load_embeddings_to_bigquery`

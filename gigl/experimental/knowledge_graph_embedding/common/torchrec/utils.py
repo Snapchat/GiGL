@@ -137,7 +137,7 @@ def apply_sparse_optimizer(
     if not optimizer_cls and optimizer_kwargs:
         optimizer_cls = RowWiseAdagrad
         optimizer_kwargs = {"lr": 0.01}
-    apply_optimizer_in_backward(optimizer_cls, parameters, optimizer_kwargs)
+    apply_optimizer_in_backward(optimizer_cls, parameters, optimizer_kwargs)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
 
 
 def apply_dense_optimizer(

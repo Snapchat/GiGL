@@ -62,7 +62,7 @@ class GINEConv(MessagePassing):
     ) -> Tensor:
         """"""
         if isinstance(x, Tensor):
-            x: OptPairTensor = (x, x)  # type: ignore
+            x: OptPairTensor = (x, x)
 
         # propagate_type: (x: OptPairTensor, edge_attr: OptTensor)
         out = self.propagate(edge_index, x=x, edge_attr=edge_attr, size=size)

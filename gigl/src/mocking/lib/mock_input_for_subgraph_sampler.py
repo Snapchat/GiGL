@@ -295,7 +295,7 @@ def generate_preprocessed_tfrecord_data(
                 feature_keys=node_preprocess_metadata.feature_cols,
                 label_keys=[node_preprocess_metadata.label_col]
                 if node_preprocess_metadata.label_col is not None
-                else None,  # type: ignore
+                else None,
                 tfrecord_uri_prefix=node_preprocess_metadata.features_uri.uri,
                 schema_uri=node_preprocess_metadata.schema_uri.uri,
                 feature_dim=num_features,
