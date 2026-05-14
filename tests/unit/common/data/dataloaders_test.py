@@ -598,6 +598,194 @@ class TFRecordDataLoaderTest(TestCase):
             torch.tensor(sorted(edge_feature_vals), dtype=torch.float32),
         )
 
+    def test_load_edge_weights_multidim_feature(self):
+        """Weight column offset is correct when a preceding feature key is multi-dimensional.
+
+        A preceding feature with shape=[2] contributes 2 columns to the concatenated tensor,
+        so the weight column lives at offset 2, not offset 1.
+        """
+        n_edges = 3
+        node_dir = tempfile.TemporaryDirectory()
+        edge_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(node_dir.cleanup)
+        self.addCleanup(edge_dir.cleanup)
+
+        with tf.io.TFRecordWriter(
+            str(Path(node_dir.name) / "nodes.tfrecord")
+        ) as writer:
+            for i in range(3):
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(
+                            feature={
+                                "node_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[i])
+                                )
+                            }
+                        )
+                    ).SerializeToString()
+                )
+
+        # Each edge has: src_id, dst_id, a 2-dim embedding, and a scalar weight.
+        embedding_vals = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+        weight_vals = [0.1, 0.2, 0.3]
+        with tf.io.TFRecordWriter(
+            str(Path(edge_dir.name) / "edges.tfrecord")
+        ) as writer:
+            for i in range(n_edges):
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(
+                            feature={
+                                "src_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[i % 3])
+                                ),
+                                "dst_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[(i + 1) % 3])
+                                ),
+                                "embedding": tf.train.Feature(
+                                    float_list=tf.train.FloatList(
+                                        value=embedding_vals[i]
+                                    )
+                                ),
+                                "edge_weight": tf.train.Feature(
+                                    float_list=tf.train.FloatList(
+                                        value=[weight_vals[i]]
+                                    )
+                                ),
+                            }
+                        )
+                    ).SerializeToString()
+                )
+
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        loaded = load_torch_tensors_from_tf_record(
+            tf_record_dataloader=loader,
+            serialized_graph_metadata=SerializedGraphMetadata(
+                node_entity_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
+                    feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                    feature_keys=[],
+                    feature_dim=0,
+                    entity_key="node_id",
+                    tfrecord_uri_pattern="nodes.tfrecord",
+                ),
+                edge_entity_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(edge_dir.name),
+                    feature_spec={
+                        "src_id": tf.io.FixedLenFeature([], tf.int64),
+                        "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                        "embedding": tf.io.FixedLenFeature([2], tf.float32),
+                        "edge_weight": tf.io.FixedLenFeature([], tf.float32),
+                    },
+                    feature_keys=["embedding", "edge_weight"],
+                    feature_dim=3,
+                    entity_key=("src_id", "dst_id"),
+                    tfrecord_uri_pattern="edges.tfrecord",
+                ),
+            ),
+            should_load_tensors_in_parallel=False,
+            edge_tf_dataset_options=TFDatasetOptions(deterministic=True),
+            weight_edge_feat_name="edge_weight",
+        )
+
+        assert isinstance(loaded.edge_weights, torch.Tensor)
+        assert isinstance(loaded.edge_features, torch.Tensor)
+        # Weight is a 1-D scalar per edge; embedding columns remain
+        self.assertEqual(loaded.edge_weights.shape, torch.Size([n_edges]))
+        self.assertEqual(loaded.edge_features.shape, torch.Size([n_edges, 2]))
+        assert_close(
+            loaded.edge_weights.sort().values,
+            torch.tensor(sorted(weight_vals), dtype=torch.float32),
+        )
+
+    def test_load_edge_weights_only_feature(self):
+        """When the weight column is the only edge feature, edge_features is None after extraction."""
+        n_edges = 3
+        node_dir = tempfile.TemporaryDirectory()
+        edge_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(node_dir.cleanup)
+        self.addCleanup(edge_dir.cleanup)
+
+        with tf.io.TFRecordWriter(
+            str(Path(node_dir.name) / "nodes.tfrecord")
+        ) as writer:
+            for i in range(3):
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(
+                            feature={
+                                "node_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[i])
+                                )
+                            }
+                        )
+                    ).SerializeToString()
+                )
+
+        weight_vals = [0.5, 1.0, 1.5]
+        with tf.io.TFRecordWriter(
+            str(Path(edge_dir.name) / "edges.tfrecord")
+        ) as writer:
+            for i in range(n_edges):
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(
+                            feature={
+                                "src_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[i % 3])
+                                ),
+                                "dst_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[(i + 1) % 3])
+                                ),
+                                "edge_weight": tf.train.Feature(
+                                    float_list=tf.train.FloatList(
+                                        value=[weight_vals[i]]
+                                    )
+                                ),
+                            }
+                        )
+                    ).SerializeToString()
+                )
+
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        loaded = load_torch_tensors_from_tf_record(
+            tf_record_dataloader=loader,
+            serialized_graph_metadata=SerializedGraphMetadata(
+                node_entity_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
+                    feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                    feature_keys=[],
+                    feature_dim=0,
+                    entity_key="node_id",
+                    tfrecord_uri_pattern="nodes.tfrecord",
+                ),
+                edge_entity_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(edge_dir.name),
+                    feature_spec={
+                        "src_id": tf.io.FixedLenFeature([], tf.int64),
+                        "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                        "edge_weight": tf.io.FixedLenFeature([], tf.float32),
+                    },
+                    feature_keys=["edge_weight"],
+                    feature_dim=1,
+                    entity_key=("src_id", "dst_id"),
+                    tfrecord_uri_pattern="edges.tfrecord",
+                ),
+            ),
+            should_load_tensors_in_parallel=False,
+            edge_tf_dataset_options=TFDatasetOptions(deterministic=True),
+            weight_edge_feat_name="edge_weight",
+        )
+
+        assert isinstance(loaded.edge_weights, torch.Tensor)
+        self.assertIsNone(loaded.edge_features)
+        self.assertEqual(loaded.edge_weights.shape, torch.Size([n_edges]))
+        assert_close(
+            loaded.edge_weights.sort().values,
+            torch.tensor(sorted(weight_vals), dtype=torch.float32),
+        )
+
     @parameterized.expand(
         [
             param(

@@ -20,6 +20,7 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed import DistPartitioner
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.networking import get_free_port
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -210,6 +211,81 @@ def _build_heterogeneous_bipartite_weight_graph() -> tuple[
                 edge_index=torch.stack([gi2u_src, gi2u_dst]),
                 edge_ids=None,
                 weights=gi2u_w,
+            ),
+        },
+        partitioned_node_features={
+            _USER: FeaturePartitionData(feats=user_feats, ids=torch.arange(n_user)),
+            _ITEM: FeaturePartitionData(feats=item_feats, ids=torch.arange(n_item)),
+        },
+        partitioned_edge_features=None,
+        partitioned_positive_labels=None,
+        partitioned_negative_labels=None,
+        partitioned_node_labels=None,
+    )
+    return partition_output, n_user, n_good_item, n_bad_item
+
+
+def _build_heterogeneous_bipartite_partial_weight_graph() -> tuple[
+    PartitionOutput, int, int, int
+]:
+    """Same graph as _build_heterogeneous_bipartite_weight_graph but ITEM_TO_USER is unweighted.
+
+    This validates that partial-weight heterogeneous graphs work correctly:
+    the weighted U2I edge type still respects weights (bad items are unreachable)
+    while the unweighted I2U edge type samples uniformly without crashing.
+    """
+    n_user = 10
+    n_good_item = 40
+    n_bad_item = 20
+    n_item = n_good_item + n_bad_item
+
+    user_ids = torch.arange(n_user)
+    good_item_ids = torch.arange(n_good_item)
+    bad_item_ids = torch.arange(n_good_item, n_item)
+
+    u2gi_src = user_ids.repeat_interleave(n_good_item)
+    u2gi_dst = good_item_ids.repeat(n_user)
+    u2gi_w = torch.ones(n_user * n_good_item)
+
+    u2bi_src = user_ids.repeat_interleave(n_bad_item)
+    u2bi_dst = bad_item_ids.repeat(n_user)
+    u2bi_w = torch.zeros(n_user * n_bad_item)
+
+    gi2u_src = good_item_ids.repeat_interleave(n_user)
+    gi2u_dst = user_ids.repeat(n_good_item)
+
+    u2i_src = torch.cat([u2gi_src, u2bi_src])
+    u2i_dst = torch.cat([u2gi_dst, u2bi_dst])
+    u2i_w = torch.cat([u2gi_w, u2bi_w])
+    n_u2i_edges = u2i_src.shape[0]
+
+    user_feats = torch.full((n_user, 1), 2.0)
+    item_feats = torch.cat(
+        [
+            torch.full((n_good_item, 1), 1.0),
+            torch.full((n_bad_item, 1), 0.0),
+        ]
+    )
+
+    partition_output = PartitionOutput(
+        node_partition_book={
+            _USER: torch.zeros(n_user),
+            _ITEM: torch.zeros(n_item),
+        },
+        edge_partition_book={
+            _USER_TO_ITEM: torch.zeros(n_u2i_edges),
+            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0]),
+        },
+        partitioned_edge_index={
+            _USER_TO_ITEM: GraphPartitionData(
+                edge_index=torch.stack([u2i_src, u2i_dst]),
+                edge_ids=None,
+                weights=u2i_w,
+            ),
+            _ITEM_TO_USER: GraphPartitionData(
+                edge_index=torch.stack([gi2u_src, gi2u_dst]),
+                edge_ids=None,
+                weights=None,  # unweighted — samples uniformly
             ),
         },
         partitioned_node_features={
@@ -622,6 +698,72 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 msg=f"Rank {rank}: U2I edge_ids must be None",
             )
 
+    def test_range_partitioner_homogeneous_weights_partitioned_correctly(self) -> None:
+        """DistRangePartitioner: edge weights land on the correct rank after range-based partitioning.
+
+        Mirrors test_homogeneous_weights_partitioned_correctly but uses DistRangePartitioner.
+        With range-based partitioning, edge_ids are sequential per-rank (0..3 on rank 0,
+        4..7 on rank 1), and the registered weights (src_node_id / 10.0) equal
+        edge_id * 0.1 for this test graph.
+        """
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
+
+        rank_to_edge_weights = {
+            0: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO[0].float() / 10.0,
+            1: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE[0].float() / 10.0,
+        }
+
+        mp.spawn(
+            run_distributed_partitioner,
+            args=(
+                output_dict,
+                False,  # is_heterogeneous
+                RANK_TO_MOCKED_GRAPH,
+                True,  # should_assign_edges_by_src_node
+                self._master_ip_address,
+                master_port,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
+                DistRangePartitioner,
+                rank_to_edge_weights,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+
+        for rank, partition_output in output_dict.items():
+            partitioned_edge_index = partition_output.partitioned_edge_index
+            self.assertIsInstance(partitioned_edge_index, GraphPartitionData)
+            assert isinstance(partitioned_edge_index, GraphPartitionData)
+
+            weights = partitioned_edge_index.weights
+            self.assertIsNotNone(
+                weights,
+                msg=f"Rank {rank}: expected weights in GraphPartitionData, got None",
+            )
+            assert weights is not None
+
+            edge_ids = partitioned_edge_index.edge_ids
+            self.assertIsNotNone(
+                edge_ids,
+                msg=f"Rank {rank}: edge_ids must be present when features are registered",
+            )
+            assert edge_ids is not None
+
+            self.assertEqual(
+                weights.shape,
+                edge_ids.shape,
+                msg=f"Rank {rank}: weights and edge_ids must have the same length",
+            )
+
+            expected_weights = edge_ids.float() * 0.1
+            torch.testing.assert_close(
+                weights.sort().values,
+                expected_weights.sort().values,
+                msg=f"Rank {rank}: partitioned weights do not match expected src_node_id / 10.0",
+            )
+
 
 class DistributedWeightedSamplingTest(TestCase):
     """End-to-end correctness tests for DistNeighborLoader with with_weight=True.
@@ -678,6 +820,25 @@ class DistributedWeightedSamplingTest(TestCase):
         actively selects.
         """
         partition_output, n_user, _, _ = _build_heterogeneous_bipartite_weight_graph()
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_weighted_sampling_correctness_heterogeneous,
+            args=(dataset, n_user),
+        )
+
+    def test_weighted_sampling_partial_weights_heterogeneous(self) -> None:
+        """Partial weights: weighted U2I respects weights; unweighted I2U samples uniformly.
+
+        U2I is weighted (good items weight=1, bad items weight=0) — bad items must
+        never appear.  I2U has no weights registered, so it uses uniform sampling.
+        Verifies that mixing weighted and unweighted edge types in one heterogeneous
+        graph does not crash and that weighted edges still behave correctly.
+        """
+        partition_output, n_user, _, _ = (
+            _build_heterogeneous_bipartite_partial_weight_graph()
+        )
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 

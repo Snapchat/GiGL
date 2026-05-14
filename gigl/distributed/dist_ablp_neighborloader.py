@@ -203,8 +203,8 @@ class DistABLPLoader(BaseDistLoader):
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
             with_weight (bool): Whether to use edge weights for neighbor sampling.
-                Requires edge weights to be registered via
-                ``DistPartitioner.register_edge_weights()`` during dataset construction.
+                Requires edge weights to have been provided via
+                ``build_dataset(weight_edge_feat_name=...)`` during dataset construction.
                 Defaults to ``False``.
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
                 instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument

@@ -251,6 +251,7 @@ class LoadedGraphTensors:
         self.node_features = to_heterogeneous_node(self.node_features)
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
+        self.edge_weights = to_heterogeneous_edge(self.edge_weights)
         self.positive_label = None
         self.negative_label = None
         gc.collect()

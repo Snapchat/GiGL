@@ -630,7 +630,9 @@ class DistPartitioner:
         """Registers per-edge sampling weights to the partitioner.
 
         Weights must be a 1-D float tensor of shape ``[num_edges]``, one scalar per edge.
-        Must be called after ``register_edge_index()`` and before ``partition()``.
+        Must be called before ``partition()``. May be called before or after
+        ``register_edge_index()``; shape validation against the edge index is performed
+        only when ``register_edge_index()`` has already been called.
 
         Weights are kept separate from edge features — do not include the weight column
         in edge features passed to ``register_edge_features()``.
@@ -666,6 +668,8 @@ class DistPartitioner:
                     f"Edge weights for edge type {edge_type} must be a 1-D tensor of shape "
                     f"[num_edges], got shape {tuple(weight_tensor.shape)}."
                 )
+            # Shape validation is best-effort: only fires when register_edge_index()
+            # has already been called for this edge type.
             if self._edge_index is not None and edge_type in self._edge_index:
                 local_num_edges = self._edge_index[edge_type].shape[1]
                 if weight_tensor.shape[0] != local_num_edges:
@@ -1130,16 +1134,12 @@ class DistPartitioner:
             and self._num_edges is not None
         ), "Must have registered edges prior to partitioning them"
 
-        should_skip_edge_feats = (
-            self._edge_feat is None or edge_type not in self._edge_feat
-        )
+        has_edge_feats = self._edge_feat is not None and edge_type in self._edge_feat
         has_weights_for_edge_type = (
             self._edge_weights is not None and edge_type in self._edge_weights
         )
         # Need a partition book if we have features or weights to reindex.
-        should_generate_partition_book = (
-            not should_skip_edge_feats or has_weights_for_edge_type
-        )
+        should_generate_partition_book = has_edge_feats or has_weights_for_edge_type
 
         # Partitioning Edge Indices
 
@@ -1219,7 +1219,7 @@ class DistPartitioner:
             edge_feat: Optional[torch.Tensor] = None
             edge_feat_dim: Optional[int] = None
             edge_weights_tensor: Optional[torch.Tensor] = None
-            if not should_skip_edge_feats:
+            if has_edge_feats:
                 assert self._edge_feat is not None and edge_type in self._edge_feat
                 assert (
                     self._edge_feat_dim is not None and edge_type in self._edge_feat_dim
@@ -1238,11 +1238,9 @@ class DistPartitioner:
             input_parts.append(edge_ids)
 
             # Positional indices: features first, weights next, ids always last.
-            feat_idx: Optional[int] = 0 if not should_skip_edge_feats else None
+            feat_idx: Optional[int] = 0 if has_edge_feats else None
             weight_idx: Optional[int] = (
-                (1 if not should_skip_edge_feats else 0)
-                if has_weights_for_edge_type
-                else None
+                (1 if has_edge_feats else 0) if has_weights_for_edge_type else None
             )
 
             def _edge_feat_weight_pfn(
@@ -1264,7 +1262,7 @@ class DistPartitioner:
             del self._edge_ids[edge_type]
             if len(self._edge_ids) == 0:
                 self._edge_ids = None
-            if not should_skip_edge_feats:
+            if has_edge_feats:
                 assert edge_feat is not None
                 assert self._edge_feat is not None and self._edge_feat_dim is not None
                 del edge_feat
@@ -1283,7 +1281,7 @@ class DistPartitioner:
 
             if len(feat_weight_res_list) == 0:
                 partitioned_edge_ids = torch.empty(0)
-                if not should_skip_edge_feats:
+                if has_edge_feats:
                     assert edge_feat_dim is not None
                     current_feat_part = FeaturePartitionData(
                         feats=torch.empty(0, edge_feat_dim),
@@ -1293,7 +1291,7 @@ class DistPartitioner:
                     partitioned_weights = torch.empty(0)
             else:
                 partitioned_edge_ids = torch.cat([r[-1] for r in feat_weight_res_list])
-                if not should_skip_edge_feats:
+                if has_edge_feats:
                     assert feat_idx is not None and edge_feat_dim is not None
                     current_feat_part = FeaturePartitionData(
                         feats=torch.cat([r[feat_idx] for r in feat_weight_res_list]),
@@ -1308,7 +1306,7 @@ class DistPartitioner:
             feat_weight_res_list.clear()
             gc.collect()
 
-            if not should_skip_edge_feats:
+            if has_edge_feats:
                 logger.info(
                     f"Got edge tensor-based partition book for edge type {edge_type} on rank {self._rank} of shape {edge_partition_book.shape}"
                 )

@@ -608,7 +608,6 @@ class DistDataset(glt.distributed.DistDataset):
                 for edge_type, graph_partition_data in partitioned_edge_index.items()
                 if graph_partition_data.weights is not None
             }
-            edge_weights = weights_by_type if weights_by_type else None
             if weights_by_type:
                 missing = set(partitioned_edge_index.keys()) - set(
                     weights_by_type.keys()
@@ -616,9 +615,13 @@ class DistDataset(glt.distributed.DistDataset):
                 if missing:
                     logger.warning(
                         f"Edge weights are registered for {set(weights_by_type.keys())} but "
-                        f"not for {missing}. When with_weight=True, edge types without weights "
-                        f"will fall back to uniform sampling."
+                        f"not for {missing}. Filling missing edge types with uniform weights "
+                        f"(all 1s) so GLT does not segfault on partial-weight heterogeneous graphs."
                     )
+                    for edge_type in missing:
+                        n_edges = partitioned_edge_index[edge_type].edge_index.size(1)
+                        weights_by_type[edge_type] = torch.ones(n_edges)
+            edge_weights = weights_by_type if weights_by_type else None
 
         self._has_edge_weights = edge_weights is not None
 

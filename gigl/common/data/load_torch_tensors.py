@@ -29,6 +29,61 @@ _FEATURE_FMT = "{entity}_features"
 _LABEL_FMT = "{entity}_labels"
 _EDGE_WEIGHTS_KEY = "edge_weights"
 _NODE_KEY = "node"
+
+
+def _extract_weight_col(
+    feat_tensor: torch.Tensor,
+    feature_keys: list[str],
+    feature_spec: dict,
+    col_name: str,
+    edge_type: EdgeType,
+) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Slice a named weight column out of a feature tensor.
+
+    Accounts for multi-dim features: each feature key may contribute more than one column
+    to ``feat_tensor`` (e.g. ``FixedLenFeature(shape=[16])`` contributes 16 columns).
+    The weight feature must be a scalar (width 1).
+
+    Args:
+        feat_tensor: Edge feature tensor of shape ``[num_edges, total_feature_cols]``.
+        feature_keys: Ordered list of feature names matching the columns of ``feat_tensor``.
+        feature_spec: Feature spec dict mapping feature name to its TF feature spec (used to
+            determine per-key column widths).
+        col_name: Name of the column to extract as weights.
+        edge_type: Edge type (used only in error messages).
+
+    Returns:
+        A tuple ``(weights, trimmed_features)`` where ``weights`` is a 1-D tensor of shape
+        ``[num_edges]`` and ``trimmed_features`` is ``feat_tensor`` with the weight column
+        removed.
+
+    Raises:
+        ValueError: If ``col_name`` is not in ``feature_keys`` or the weight feature is not
+            width 1.
+    """
+    if col_name not in feature_keys:
+        raise ValueError(
+            f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
+            f"for edge type {edge_type}: {feature_keys}"
+        )
+    key_idx = feature_keys.index(col_name)
+    col_widths = [
+        (spec.shape[-1] if spec.shape else 1)
+        for spec in (feature_spec[k] for k in feature_keys)
+    ]
+    weight_width = col_widths[key_idx]
+    if weight_width != 1:
+        raise ValueError(
+            f"weight_edge_feat_name '{col_name}' for edge type {edge_type} must be a scalar "
+            f"feature (width 1), but has width {weight_width}."
+        )
+    col_offset = sum(col_widths[:key_idx])
+    weights = feat_tensor[:, col_offset]
+    keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_offset]
+    trimmed = feat_tensor[:, keep_cols] if keep_cols else None
+    return weights, trimmed
+
+
 _EDGE_KEY = "edge"
 _POSITIVE_LABEL_KEY = "positive_label"
 _NEGATIVE_LABEL_KEY = "negative_label"
@@ -91,6 +146,11 @@ def _data_loading_process(
             Serialized information for current entity
         rank (int): Rank of the current machine
         tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
+        weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Only used when
+            ``entity_type == _EDGE_KEY``. Name of the edge feature column to extract as
+            sampling weights. Ignored for node, positive_label, and negative_label entities.
+            Supply a single string for homogeneous graphs or a per-edge-type dict for
+            heterogeneous graphs.
     """
     # We add a try - except clause here to ensure that exceptions are properly circulated back to the parent process
     try:
@@ -176,18 +236,21 @@ def _data_loading_process(
                     )
                 col_name = weight_edge_feat_name
                 edge_type, feat_tensor = next(iter(features.items()))
+                assert isinstance(edge_type, EdgeType)
                 feature_keys = list(serialized_tf_record_info[edge_type].feature_keys)
-                if col_name not in feature_keys:
-                    raise ValueError(
-                        f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
-                        f"for edge type {edge_type}: {feature_keys}"
-                    )
-                col_idx = feature_keys.index(col_name)
-                weights[edge_type] = feat_tensor[:, col_idx]
-                keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
-                features[edge_type] = feat_tensor[:, keep_cols]
+                weights[edge_type], trimmed = _extract_weight_col(
+                    feat_tensor,
+                    feature_keys,
+                    serialized_tf_record_info[edge_type].feature_spec,
+                    col_name,
+                    edge_type,
+                )
+                if trimmed is not None:
+                    features[edge_type] = trimmed
+                else:
+                    del features[edge_type]
                 logger.info(
-                    f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
+                    f"Rank {rank} extracted weight column '{col_name}' "
                     f"from {entity_type} features for type {edge_type}"
                 )
             else:
@@ -199,17 +262,19 @@ def _data_loading_process(
                     feature_keys = list(
                         serialized_tf_record_info[edge_type].feature_keys
                     )
-                    if col_name not in feature_keys:
-                        raise ValueError(
-                            f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
-                            f"for edge type {edge_type}: {feature_keys}"
-                        )
-                    col_idx = feature_keys.index(col_name)
-                    weights[edge_type] = feat_tensor[:, col_idx]
-                    keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
-                    features[edge_type] = feat_tensor[:, keep_cols]
+                    weights[edge_type], trimmed = _extract_weight_col(
+                        feat_tensor,
+                        feature_keys,
+                        serialized_tf_record_info[edge_type].feature_spec,
+                        col_name,
+                        edge_type,
+                    )
+                    if trimmed is not None:
+                        features[edge_type] = trimmed
+                    else:
+                        del features[edge_type]
                     logger.info(
-                        f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
+                        f"Rank {rank} extracted weight column '{col_name}' "
                         f"from {entity_type} features for type {edge_type}"
                     )
 
