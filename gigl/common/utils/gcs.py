@@ -420,7 +420,9 @@ class GcsUtils:
             dst_prefix: str,
             src_blobs: list[storage.Blob],
         ):
-            dst_blob_names: list[str] = []
+            dst_blob_names: list[str] = [
+                src_blob.name.replace(src_prefix, dst_prefix, 1)
+            ]
             for src_blob in src_blobs:
                 assert src_blob.name is not None, (
                     "Blob from list_blobs must have a name"

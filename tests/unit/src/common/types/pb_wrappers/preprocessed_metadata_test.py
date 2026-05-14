@@ -1,11 +1,18 @@
+import os
+import tempfile
+
 from absl.testing import absltest
 
 from gigl.src.common.constants.graph_metadata import DEFAULT_CONDENSED_NODE_TYPE
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
+    PreprocessedMetadataPbWrapper,
+)
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from snapchat.research.gbml import preprocessed_metadata_pb2
 from tests.test_assets.test_case import TestCase
 
 
@@ -54,6 +61,37 @@ class PreprocessedMetadataTest(TestCase):
         self.assertEqual(feature_spec_keys, original_feature_keys)
         self.assertEqual(feature_index_keys, original_feature_keys)
         self.assertEqual(feature_schema_keys, original_feature_keys)
+
+    def test_local_uri_transform_fn_assets_branch(self):
+        """Exercise the LocalUri branch of __get_feature_to_vocab_list_map.
+
+        Locks in the kwarg name forwarded to LocalFsUtils.list_at_path; a
+        mismatch (e.g. entity= vs file_system_entity=) raises TypeError only
+        when this branch actually runs, which no production caller does.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # An empty file is a valid (empty) TFDV Schema textproto.
+            schema_path = os.path.join(tmp_dir, "schema.pbtxt")
+            with open(schema_path, "w"):
+                pass
+            transform_fn_assets_dir = os.path.join(tmp_dir, "transform_fn_assets")
+            os.makedirs(transform_fn_assets_dir)
+
+            preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
+            node_metadata = (
+                preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[0]
+            )
+            node_metadata.schema_uri = schema_path
+            node_metadata.transform_fn_assets_uri = transform_fn_assets_dir
+
+            wrapper = PreprocessedMetadataPbWrapper(
+                preprocessed_metadata_pb=preprocessed_metadata_pb
+            )
+
+            feature_schema = wrapper.condensed_node_type_to_feature_schema_map[
+                DEFAULT_CONDENSED_NODE_TYPE
+            ]
+            self.assertEqual(feature_schema.feature_vocab, {})
 
 
 if __name__ == "__main__":

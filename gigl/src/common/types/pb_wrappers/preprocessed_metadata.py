@@ -282,7 +282,8 @@ class PreprocessedMetadataPbWrapper:
     ) -> FeatureVocabDict:
         if isinstance(transform_fn_assets_uri, LocalUri):
             list_files_fn = partial(
-                LocalFsUtils.list_at_path, entity=LocalFsUtils.FileSystemEntity.FILE
+                LocalFsUtils.list_at_path,
+                file_system_entity=LocalFsUtils.FileSystemEntity.FILE,
             )
             read_file_fn = lambda path: open(path, "rb")
         elif isinstance(transform_fn_assets_uri, GcsUri):
@@ -294,7 +295,7 @@ class PreprocessedMetadataPbWrapper:
                 f"Invalid uri: {transform_fn_assets_uri}. Must be either {GcsUri.__name__} or {LocalUri.__name__}"
             )
 
-        assets_file_paths = list_files_fn(transform_fn_assets_uri)  # type: ignore
+        assets_file_paths = list_files_fn(transform_fn_assets_uri)
         feature_to_vocab_list_map = {}
         for asset_file_path in assets_file_paths:
             feature_key = asset_file_path.uri.split("/")[-1]
