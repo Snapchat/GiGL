@@ -353,13 +353,14 @@ class BaseDistLoader(DistLoader):
         has_edge_weights = (
             dataset.has_edge_weights
             if isinstance(dataset, DistDataset)
-            else dataset.fetch_has_edge_weights()
+            else dataset.fetch_edge_weights_registered()
         )
         if with_weight and not has_edge_weights:
             raise ValueError(
                 "with_weight=True requires edge weights to be registered in the dataset. "
                 "Pass weight_edge_feat_name to build_dataset() to register edge weights."
             )
+        # TODO(mkolodner-sc): Implement weight-proportional residual propagation for PPR.
         if with_weight and isinstance(sampler_options, PPRSamplerOptions):
             raise NotImplementedError(
                 "Weighted sampling is not yet supported with PPRSamplerOptions. "

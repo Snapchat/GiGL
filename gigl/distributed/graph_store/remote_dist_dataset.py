@@ -607,7 +607,7 @@ class RemoteDistDataset:
             DistServer.get_node_types,
         )
 
-    def fetch_has_edge_weights(self) -> bool:
+    def fetch_edge_weights_registered(self) -> bool:
         """Fetch whether edge weights were registered in the remote dataset.
 
         Returns:
@@ -615,5 +615,5 @@ class RemoteDistDataset:
         """
         return request_server(
             0,
-            DistServer.get_has_edge_weights,
+            DistServer.get_edge_weights_registered,
         )

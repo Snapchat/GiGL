@@ -425,7 +425,7 @@ class DistServer:
         """
         return self.dataset.edge_dir
 
-    def get_has_edge_weights(self) -> bool:
+    def get_edge_weights_registered(self) -> bool:
         """Return whether edge weights were registered in the dataset.
 
         Returns:

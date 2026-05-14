@@ -74,8 +74,10 @@ def _extract_weight_column(
 
     Args:
         edge_features: Edge feature tensor(s).
-        weight_edge_feat_name: Name of the weight feature column, either a single string
-            (applied to all edge types) or a per-edge-type mapping.
+        weight_edge_feat_name: Name of the weight feature column. A single string is
+            only valid for single-edge-type (homogeneous) graphs; heterogeneous graphs
+            must supply a ``dict[EdgeType, str]`` to be explicit about which edge
+            type(s) carry the weight column.
         edge_entity_info: SerializedTFRecordInfo carrying ordered ``feature_keys`` used
             to resolve the column name to an index.
 
@@ -103,8 +105,17 @@ def _extract_weight_column(
     else:
         entity_info_dict = edge_entity_info
 
-    # Normalise weight_edge_feat_name to per-edge-type mapping
+    # Normalise weight_edge_feat_name to per-edge-type mapping.
+    # A bare string is only unambiguous for single-edge-type graphs; for
+    # heterogeneous graphs a dict[EdgeType, str] must be provided so that
+    # the caller is explicit about which edge type(s) carry the weight column.
     if isinstance(weight_edge_feat_name, str):
+        if len(edge_features_dict) > 1:
+            raise ValueError(
+                f"weight_edge_feat_name must be a dict[EdgeType, str] for heterogeneous graphs "
+                f"with multiple edge types ({sorted(edge_features_dict)}). "
+                "Provide an explicit per-edge-type mapping instead of a single string."
+            )
         weight_name_dict: dict[EdgeType, str] = {
             et: weight_edge_feat_name for et in edge_features_dict
         }
