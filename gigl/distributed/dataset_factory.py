@@ -49,6 +49,7 @@ from gigl.utils.data_splitters import (
     DistNodeSplitter,
     NodeAnchorLinkSplitter,
     NodeSplitter,
+    get_max_labels_per_anchor_node_from_runtime_args,
     select_ssl_positive_label_edges,
 )
 
@@ -501,6 +502,8 @@ def build_dataset_from_task_config_uri(
     - should_load_tensors_in_parallel (bool): Whether TFRecord loading should happen in parallel across entities
         Must be None if supervised edge labels are provided in advance.
         Slotted for refactor once this functionality is available in the transductive `splitter` directly.
+    - max_labels_per_anchor_node (Optional[int]): Cap for how many labels to
+      materialize per anchor node for ABLP label fetching.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -529,6 +532,7 @@ def build_dataset_from_task_config_uri(
     )
 
     ssl_positive_label_percentage: Optional[float] = None
+    max_labels_per_anchor_node: Optional[int] = None
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None
     if is_inference:
         args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
@@ -575,6 +579,7 @@ def build_dataset_from_task_config_uri(
             raise ValueError(
                 f"Unsupported task metadata type: {task_metadata_pb_wrapper.task_metadata_type}"
             )
+    max_labels_per_anchor_node = get_max_labels_per_anchor_node_from_runtime_args(args)
 
     assert sample_edge_direction in (
         "in",
@@ -623,9 +628,11 @@ def build_dataset_from_task_config_uri(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         distributed_context=distributed_context,
+        should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         partitioner_class=partitioner_class,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )
+    dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
 
     return dataset

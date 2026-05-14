@@ -101,7 +101,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
-    shutdown_compute_proccess,
+    shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.utils import get_graph_store_info
@@ -370,7 +370,7 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
-    shutdown_compute_proccess()
+    shutdown_compute_process()
     gc.collect()
 
     logger.info(
