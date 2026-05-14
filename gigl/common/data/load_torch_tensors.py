@@ -27,7 +27,7 @@ logger = Logger()
 _ID_FMT = "{entity}_ids"
 _FEATURE_FMT = "{entity}_features"
 _LABEL_FMT = "{entity}_labels"
-_WEIGHT_FMT = "{entity}_weights"
+_EDGE_WEIGHTS_KEY = "edge_weights"
 _NODE_KEY = "node"
 _EDGE_KEY = "edge"
 _POSITIVE_LABEL_KEY = "positive_label"
@@ -141,26 +141,26 @@ def _data_loading_process(
             entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
-                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
             )
             if entity_features is not None:
                 features[graph_type] = entity_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} features for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
                 labels[graph_type] = entity_labels
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} labels for type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
         # Extract weight column from edge features when weight_edge_feat_name is set.
@@ -168,31 +168,28 @@ def _data_loading_process(
         # separately so it is not duplicated in the feature matrix.
         if weight_edge_feat_name is not None and entity_type == _EDGE_KEY:
             if isinstance(weight_edge_feat_name, str):
-                if len(serialized_tf_record_info) > 1:
+                if len(serialized_tf_record_info) != 1 or len(features) != 1:
                     raise ValueError(
                         f"weight_edge_feat_name must be a dict[EdgeType, str] for heterogeneous "
                         f"graphs with multiple edge types ({sorted(serialized_tf_record_info)}). "
                         "Provide an explicit per-edge-type mapping instead of a single string."
                     )
-                # Single column name applies to all loaded edge types.
-                for edge_type, feat_tensor in list(features.items()):
-                    col_name = weight_edge_feat_name
-                    feature_keys = list(
-                        serialized_tf_record_info[edge_type].feature_keys
+                col_name = weight_edge_feat_name
+                edge_type, feat_tensor = next(iter(features.items()))
+                feature_keys = list(serialized_tf_record_info[edge_type].feature_keys)
+                if col_name not in feature_keys:
+                    raise ValueError(
+                        f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
+                        f"for edge type {edge_type}: {feature_keys}"
                     )
-                    if col_name not in feature_keys:
-                        raise ValueError(
-                            f"weight_edge_feat_name '{col_name}' not found in edge feature keys "
-                            f"for edge type {edge_type}: {feature_keys}"
-                        )
-                    col_idx = feature_keys.index(col_name)
-                    weights[edge_type] = feat_tensor[:, col_idx]
-                    keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
-                    features[edge_type] = feat_tensor[:, keep_cols]
-                    logger.info(
-                        f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
-                        f"from {entity_type} features for type {edge_type}"
-                    )
+                col_idx = feature_keys.index(col_name)
+                weights[edge_type] = feat_tensor[:, col_idx]
+                keep_cols = [i for i in range(feat_tensor.shape[1]) if i != col_idx]
+                features[edge_type] = feat_tensor[:, keep_cols]
+                logger.info(
+                    f"Rank {rank} extracted weight column '{col_name}' (col {col_idx}) "
+                    f"from {entity_type} features for type {edge_type}"
+                )
             else:
                 # Iterate the EdgeType-keyed dict directly to stay within EdgeType.
                 for edge_type, col_name in weight_edge_feat_name.items():
@@ -253,7 +250,7 @@ def _data_loading_process(
                 list(labels.values())[0] if is_input_homogeneous else labels
             )
         if weights:
-            output_dict[_WEIGHT_FMT.format(entity=entity_type)] = (
+            output_dict[_EDGE_WEIGHTS_KEY] = (
                 list(weights.values())[0] if is_input_homogeneous else weights
             )
 
@@ -422,7 +419,7 @@ def load_torch_tensors_from_tf_record(
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
     edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
-    edge_weights = edge_output_dict.get(_WEIGHT_FMT.format(entity=_EDGE_KEY), None)
+    edge_weights = edge_output_dict.get(_EDGE_WEIGHTS_KEY, None)
 
     positive_labels = edge_output_dict.get(
         _ID_FMT.format(entity=_POSITIVE_LABEL_KEY), None
