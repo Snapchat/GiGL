@@ -90,7 +90,7 @@ class DistributedDatasetTestCase(TestCase):
         if isinstance(actual, dict) and isinstance(expected, dict):
             self.assertEqual(actual.keys(), expected.keys())
             for key in actual.keys():
-                assert_close(actual[key], expected[key], atol=0, rtol=0)
+                assert_close(actual[key], expected[key], atol=0, rtol=0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         elif isinstance(actual, torch.Tensor) and isinstance(expected, torch.Tensor):
             assert_close(actual, expected, atol=0, rtol=0)
 

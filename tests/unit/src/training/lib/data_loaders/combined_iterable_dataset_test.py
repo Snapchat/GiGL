@@ -78,13 +78,14 @@ class CombinedIterableDatasetTest(TestCase):
             loopy_dataset = LoopyIterableDataset(iterable_dataset=tf_dataset)
             loopy_datasets_map[condensed_node_type_str] = loopy_dataset
 
-        dataset = CombinedIterableDatasets(iterable_dataset_map=loopy_datasets_map)
+        dataset = CombinedIterableDatasets(iterable_dataset_map=loopy_datasets_map)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
         dataset_iter = iter(dataset)
         for _ in range(15):
             dataset_sample = next(dataset_iter)
             self.assertEqual(self._node_types, list(dataset_sample.keys()))
             self.assertEqual(
-                self._node_types, [node.type for node in list(dataset_sample.values())]
+                self._node_types,
+                [node.type for node in list(dataset_sample.values())],  # ty: ignore[unresolved-attribute] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
             )
 
     def test_can_load_non_loopy_data(self):
@@ -107,13 +108,14 @@ class CombinedIterableDatasetTest(TestCase):
             )
             datasets_map[condensed_node_type_str] = tf_dataset
 
-        dataset = CombinedIterableDatasets(iterable_dataset_map=datasets_map)
+        dataset = CombinedIterableDatasets(iterable_dataset_map=datasets_map)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
         dataset_iter = iter(dataset)
         for _ in range(10):
             dataset_sample = next(dataset_iter)
             self.assertEqual(self._node_types, list(dataset_sample.keys()))
             self.assertEqual(
-                self._node_types, [node.type for node in list(dataset_sample.values())]
+                self._node_types,
+                [node.type for node in list(dataset_sample.values())],  # ty: ignore[unresolved-attribute] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
             )
         with self.assertRaises(RuntimeError):
             dataset_sample = next(dataset_iter)

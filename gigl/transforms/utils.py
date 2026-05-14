@@ -36,7 +36,7 @@ def add_node_attr(
         for node_type, value in values.items():
             if node_type not in data.node_types:
                 continue
-            _set_node_attr_for_type(data, node_type, value, attr_name)
+            _set_node_attr_for_type(data, node_type, value, attr_name)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
         return data
 
     # Otherwise, values is a tensor in homogeneous order - split by node type
@@ -113,7 +113,7 @@ def add_edge_attr(
         for edge_type, value in values.items():
             if edge_type not in data.edge_types:
                 continue
-            _set_edge_attr_for_type(data, edge_type, value, attr_name)
+            _set_edge_attr_for_type(data, edge_type, value, attr_name)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
         return data
 
     # Otherwise, values is a tensor in homogeneous order - split by edge type

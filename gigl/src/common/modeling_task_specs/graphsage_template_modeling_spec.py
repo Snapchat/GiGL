@@ -129,7 +129,7 @@ class GraphSageTemplateTrainerSpec(
     @model.setter
     def model(self, model: torch.nn.Module) -> None:
         self.__model = model
-        self.__model.graph_backend = GraphBackend.PYG
+        self.__model.graph_backend = GraphBackend.PYG  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
 
     def init_model(
         self,
@@ -339,7 +339,7 @@ class GraphSageTemplateTrainerSpec(
 
             pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[
                 CondensedEdgeType(0)
-            ].root_node_to_target_node_id[root_node.item()]
+            ].root_node_to_target_node_id[root_node.item()]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
             if pos_nodes.numel():
                 pos_scores = torch.mm(
@@ -349,7 +349,7 @@ class GraphSageTemplateTrainerSpec(
             hard_neg_nodes: torch.LongTensor = (
                 main_batch.hard_neg_supervision_edge_data[
                     CondensedEdgeType(0)
-                ].root_node_to_target_node_id[root_node.item()]
+                ].root_node_to_target_node_id[root_node.item()]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
             )  # shape=[num_hard_neg_nodes]
 
             if hard_neg_nodes.numel():
@@ -517,9 +517,9 @@ class GraphSageTemplateTrainerSpec(
                     mrr = 1.0 / pos_rank.float()
 
                     hit_rates = hit_rate_at_k(
-                        pos_scores=pos_scores,
-                        neg_scores=neg_scores,
-                        ks=torch.tensor(ks, device=device, dtype=torch.long),
+                        pos_scores=pos_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                        neg_scores=neg_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                        ks=torch.tensor(ks, device=device, dtype=torch.long),  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
                     )
 
                     total_mrr += mrr.mean().item()

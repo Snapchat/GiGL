@@ -250,7 +250,7 @@ class NodeAnchorBasedLinkPredictionBatch:
                 iterable_dataset=_iterable_training_dataset
             )
         else:
-            iterable_training_dataset = _iterable_training_dataset
+            iterable_training_dataset = _iterable_training_dataset  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
 
         collate_fn = partial(
             NodeAnchorBasedLinkPredictionBatch.collate_pyg_node_anchor_based_link_prediction_minibatch,

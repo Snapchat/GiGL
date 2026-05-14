@@ -503,7 +503,7 @@ def to_homogeneous(
                 f"Expected a single value in the dictionary, but got multiple keys: {x.keys()}"
             )
         n = next(iter(x.values()))
-        return n
+        return n  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
     return x
 
 

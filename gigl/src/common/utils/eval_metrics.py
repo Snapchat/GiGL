@@ -43,7 +43,7 @@ def hit_rate_at_k(
     )
     ks_adjusted = ks - 1  # subtract 1 since indices are 0-indexed
     hits_at_ks = torch.gather(input=hit_rates_padded, dim=0, index=ks_adjusted)
-    return hits_at_ks
+    return hits_at_ks  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
 
 def mean_reciprocal_rank(
@@ -68,4 +68,4 @@ def mean_reciprocal_rank(
     adjusted_ranks = unadjusted_ranks + 1  # +1 since ranks are 0-indexed here
     reciprocal_ranks = 1.0 / adjusted_ranks  # compute reciprocal
     mrr = torch.mean(reciprocal_ranks)
-    return mrr
+    return mrr  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.

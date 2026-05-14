@@ -197,7 +197,7 @@ def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
     Returns:
         torch.Tensor: The converted PyTorch tensor.
     """
-    return torch.utils.dlpack.from_dlpack(tf.experimental.dlpack.to_dlpack(tf_tensor))
+    return torch.utils.dlpack.from_dlpack(tf.experimental.dlpack.to_dlpack(tf_tensor))  # ty: ignore[possibly-missing-submodule] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
 
 
 def _build_example_parser(

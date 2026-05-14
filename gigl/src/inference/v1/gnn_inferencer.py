@@ -248,7 +248,7 @@ class InferencerV1:
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
         graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=inferencer_instance.model.graph_backend
+            backend_name=inferencer_instance.model.graph_backend  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
         )
 
         inference_blueprint: BaseInferenceBlueprint = (

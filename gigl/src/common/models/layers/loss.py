@@ -65,7 +65,7 @@ class MarginLoss(nn.Module):
             input1=pos_scores_repeated,
             input2=all_neg_scores_repeated,
             target=ys,
-            margin=self.margin,
+            margin=self.margin,  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
             reduction="sum",
         )
         sample_size = pos_scores_repeated.numel()
@@ -143,7 +143,7 @@ class SoftmaxLoss(nn.Module):
 
         loss = F.cross_entropy(
             input=all_scores
-            / self.softmax_temperature,  # https://github.com/Snapchat/GiGL/issues/408
+            / self.softmax_temperature,  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[unsupported-operator] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
             target=ys,
             reduction="sum",
         )

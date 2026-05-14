@@ -87,7 +87,7 @@ class CountMinSketch(object):
         return torch.tensor(
             [self.estimate(item) for item in tensor_cpu],
             dtype=torch.long,
-        )
+        )  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
     def get_table(self) -> np.ndarray:
         """
@@ -116,5 +116,5 @@ def calculate_in_batch_candidate_sampling_probability(
     """
     estimated_prob: torch.FloatTensor = (
         batch_size * frequency_tensor.float() / total_cnt
-    )
+    )  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
     return estimated_prob.clamp(max=1.0)

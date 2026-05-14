@@ -141,7 +141,7 @@ class TrainingSamplesProtosTranslator:
                 ):
                     condensed_supervision_edge_type_to_pos_edge_feats[
                         condensed_edge_type
-                    ].append(pos_edge[1])
+                    ].append(pos_edge[1])  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
             for hard_neg_edge_pb in sample.hard_neg_edges:
                 hard_neg_edge: Tuple[Edge, Optional[torch.Tensor]] = (
@@ -165,7 +165,7 @@ class TrainingSamplesProtosTranslator:
                 ):
                     condensed_supervision_edge_type_to_hard_neg_edge_feats[
                         condensed_edge_type
-                    ].append(hard_neg_edge[1])
+                    ].append(hard_neg_edge[1])  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
             for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types:
                 condensed_edge_type_to_supervision_edge_data[condensed_edge_type] = (
@@ -180,7 +180,7 @@ class TrainingSamplesProtosTranslator:
                             torch.stack(
                                 condensed_supervision_edge_type_to_pos_edge_feats[
                                     condensed_edge_type
-                                ]
+                                ]  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
                             )
                             if len(
                                 condensed_supervision_edge_type_to_pos_edge_feats[
@@ -189,12 +189,12 @@ class TrainingSamplesProtosTranslator:
                             )
                             > 0
                             else None
-                        ),
+                        ),  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
                         hard_neg_edge_features=(
                             torch.stack(
                                 condensed_supervision_edge_type_to_hard_neg_edge_feats[
                                     condensed_edge_type
-                                ]
+                                ]  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
                             )
                             if len(
                                 condensed_supervision_edge_type_to_hard_neg_edge_feats[
@@ -203,7 +203,7 @@ class TrainingSamplesProtosTranslator:
                             )
                             > 0
                             else None
-                        ),
+                        ),  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
                     )
                 )
 
