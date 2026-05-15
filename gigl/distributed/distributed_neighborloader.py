@@ -92,6 +92,7 @@ class DistNeighborLoader(BaseDistLoader):
         drop_last: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
+        seed: Optional[int] = None,
     ):
         """
         Distributed Neighbor Loader.
@@ -170,6 +171,9 @@ class DistNeighborLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
+            seed (Optional[int]): When provided, seeds the sampling RNG so that the same inputs
+                produce the same batches across runs. When None, sampling is non-deterministic.
+                (default: ``None``).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -263,6 +267,7 @@ class DistNeighborLoader(BaseDistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
+            seed=seed,
         )
 
         producer: Optional[DistSamplingProducer] = None

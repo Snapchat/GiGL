@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping
+from multiprocessing import Manager
 
 import torch
 import torch.multiprocessing as mp
@@ -8,9 +9,11 @@ from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -395,6 +398,27 @@ def _run_cora_supervised_node_classification(
             f"Number of labels should match number of nodes, got {datum.y.size(0)} labels and {datum.node.size(0)} nodes"
         )
 
+    shutdown_rpc()
+
+
+def _run_seeded_e2e_loader_worker(
+    _: int,
+    dataset: DistDataset,
+    output_list,
+    seed: int,
+) -> None:
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[1, 1],
+        pin_memory_device=torch.device("cpu"),
+        batch_size=5,
+        shuffle=True,
+        seed=seed,
+    )
+    for datum in loader:
+        assert isinstance(datum, Data)
+        output_list.append(datum.node.clone())
     shutdown_rpc()
 
 
@@ -859,6 +883,94 @@ class DistributedNeighborLoaderTest(TestCase):
         create_test_process_group()
         with self.assertRaises(expected_error):
             DistNeighborLoader(**kwargs)
+
+
+class CreateSamplingConfigSeedTestCase(TestCase):
+    """Tests that create_sampling_config correctly threads the seed into SamplingConfig."""
+
+    def _make_dataset_schema(self) -> DatasetSchema:
+        return DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
+            node_feature_info=None,
+            edge_feature_info=None,
+            edge_dir="in",
+        )
+
+    def test_seed_is_propagated_to_sampling_config(self) -> None:
+        schema = self._make_dataset_schema()
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[5, 5],
+            dataset_schema=schema,
+            seed=42,
+        )
+        self.assertEqual(config.seed, 42)
+
+    def test_no_seed_leaves_config_seed_none(self) -> None:
+        schema = self._make_dataset_schema()
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[5, 5],
+            dataset_schema=schema,
+        )
+        self.assertIsNone(config.seed)
+
+
+class DistNeighborLoaderE2EDeterminismTestCase(TestCase):
+    """Verifies that identical seeds produce identical batch ordering and neighbor samples end-to-end."""
+
+    _N: int = 50
+
+    def _make_ring_dataset(self) -> DistDataset:
+        N = self._N
+        src = torch.arange(N)
+        dst = (torch.arange(N) + 1) % N
+        edge_index = torch.stack([src, dst])
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(N, dtype=torch.int64),
+            edge_partition_book=None,
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=edge_index,
+                edge_ids=None,
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(N, 2), ids=torch.arange(N)
+            ),
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="in")
+        dataset.build(partition_output=partition_output)
+        return dataset
+
+    def _collect_batches(self, dataset: DistDataset, seed: int) -> list[torch.Tensor]:
+        manager = Manager()
+        output_list = manager.list()
+        mp.spawn(
+            fn=_run_seeded_e2e_loader_worker,
+            args=(dataset, output_list, seed),
+            nprocs=1,
+            join=True,
+        )
+        return list(output_list)
+
+    def test_seeded_sampling_is_e2e_deterministic(self) -> None:
+        """Same seed must yield identical batch ordering and neighbor samples on a 50-node ring graph."""
+        dataset = self._make_ring_dataset()
+        batches_run1 = self._collect_batches(dataset, seed=42)
+        batches_run2 = self._collect_batches(dataset, seed=42)
+
+        self.assertEqual(
+            len(batches_run1),
+            len(batches_run2),
+            msg="Number of batches differs between runs with identical seed",
+        )
+        for i, (b1, b2) in enumerate(zip(batches_run1, batches_run2)):
+            self.assertTrue(
+                torch.equal(b1, b2),
+                msg=f"Batch {i} node tensors differ despite identical seed",
+            )
 
 
 if __name__ == "__main__":

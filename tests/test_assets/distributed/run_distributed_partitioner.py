@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type, Union
+from typing import Optional, Type, Union
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -31,6 +31,7 @@ def run_distributed_partitioner(
     master_port: int,
     input_data_strategy: InputDataStrategy,
     partitioner_class: Type[DistPartitioner],
+    seed: Optional[int] = None,
 ) -> None:
     """
     Runs the distributed partitioner on a specific rank.
@@ -44,6 +45,7 @@ def run_distributed_partitioner(
         master_port (int): Master port for initializing rpc for partitioning
         input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
         partitioner_class (Type[DistPartitioner]): The class to use for partitioning
+        seed (Optional[int]): Seed for deterministic node partitioning. When None, partitioning is non-deterministic.
     """
 
     input_graph = rank_to_input_graph[rank]
@@ -81,6 +83,7 @@ def run_distributed_partitioner(
     if input_data_strategy == InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY:
         dist_partitioner = partitioner_class(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+            seed=seed,
         )
         # We call del to mimic the real use case for handling these input tensors
         dist_partitioner.register_node_ids(node_ids=node_ids)
@@ -139,6 +142,7 @@ def run_distributed_partitioner(
     elif input_data_strategy == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY:
         dist_partitioner = partitioner_class(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+            seed=seed,
         )
         # We call del to mimic the real use case for handling these input tensors
         dist_partitioner.register_node_ids(node_ids=node_ids)
@@ -176,6 +180,7 @@ def run_distributed_partitioner(
             positive_labels=positive_labels,
             negative_labels=negative_labels,
             node_labels=node_labels,
+            seed=seed,
         )
         # We call del to mimic the real use case for handling these input tensors
         del (

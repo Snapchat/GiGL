@@ -66,6 +66,7 @@ def _load_and_build_partitioned_dataset(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    seed: Optional[int] = None,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -82,6 +83,8 @@ def _load_and_build_partitioned_dataset(
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
+        seed (Optional[int]): When provided, seeds the partitioner RNG so that the same inputs produce the same
+            partition assignment across runs. When None, partitioning is non-deterministic.
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
 
@@ -164,7 +167,8 @@ def _load_and_build_partitioned_dataset(
             f"Initializing {partitioner_class.__name__} instance while partitioning edges to its destination node machine"
         )
     partitioner = partitioner_class(
-        should_assign_edges_by_src_node=should_assign_edges_by_src_node
+        should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+        seed=seed,
     )
 
     partitioner.register_node_ids(node_ids=loaded_graph_tensors.node_ids)
@@ -230,6 +234,7 @@ def _build_dataset_process(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    seed: Optional[int] = None,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -311,6 +316,7 @@ def _build_dataset_process(
         edge_tf_dataset_options=edge_tf_dataset_options,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
+        seed=seed,
     )
 
     output_dict["dataset"] = output_dataset
@@ -336,6 +342,7 @@ def build_dataset(
     _dataset_building_port: Optional[
         int
     ] = None,  # WARNING: This field will be deprecated in the future
+    seed: Optional[int] = None,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -368,6 +375,8 @@ def build_dataset(
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
         _dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
             be initialized from the current torch.distributed context.
+        seed (Optional[int]): When provided, seeds the partitioner RNG so that the same inputs produce the same
+            partition assignment across runs. When None, partitioning is non-deterministic.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -463,6 +472,7 @@ def build_dataset(
             edge_tf_dataset_options,
             splitter,
             _ssl_positive_label_percentage,
+            seed,
         ),
     )
 

@@ -340,6 +340,7 @@ class BaseDistLoader(DistLoader):
         batch_size: int = 1,
         shuffle: bool = False,
         drop_last: bool = False,
+        seed: Optional[int] = None,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -352,6 +353,8 @@ class BaseDistLoader(DistLoader):
             batch_size: How many samples per batch.
             shuffle: Whether to shuffle input nodes.
             drop_last: Whether to drop the last incomplete batch.
+            seed: When provided, seeds the sampling RNG so that the same inputs produce the same
+                batches across runs. When None, sampling is non-deterministic.
 
         Returns:
             A fully configured SamplingConfig.
@@ -371,7 +374,7 @@ class BaseDistLoader(DistLoader):
             with_neg=False,
             with_weight=False,
             edge_dir=dataset_schema.edge_dir,
-            seed=None,
+            seed=seed,
         )
 
     @staticmethod
