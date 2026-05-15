@@ -554,8 +554,14 @@ def _run_validation_loops(
                 f"min(batch_time)={min(last_n_batch_time):.3f} sec"
             )
             last_n_batch_time.clear()
-    local_avg_loss = statistics.mean(batch_losses)
-    local_avg_acc = statistics.mean(batch_accs)
+    if len(batch_losses):
+        local_avg_loss = statistics.mean(batch_losses)
+    else:
+        local_avg_loss = 0.0
+    if len(batch_accs):
+        local_avg_acc = statistics.mean(batch_accs)
+    else:
+        local_avg_acc = 0.0
     logger.info(
         f"rank={rank} finished validation loop, local loss={local_avg_loss:.6f}, "
         f"local acc={local_avg_acc:.4f}"
@@ -593,7 +599,7 @@ def _run_example_training(
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    local_world_size = int(trainer_args.get("local_world_size", "1"))
+    local_world_size = int(trainer_args.get("local_world_size", "2"))
     if torch.cuda.is_available():
         if local_world_size > torch.cuda.device_count():
             raise ValueError(
