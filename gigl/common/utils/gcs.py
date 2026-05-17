@@ -132,14 +132,8 @@ class GcsUtils:
             parallel (bool): Flag indicating whether to upload files in parallel. Defaults to True.
         """
         if parallel:
-            project = self.__storage_client.project
-            if project is None:
-                raise ValueError(
-                    "GCS storage client has no associated project. "
-                    "Set GOOGLE_CLOUD_PROJECT or pass project= to GcsUtils()."
-                )
             _upload_files_to_gcs_parallel(
-                project=project,
+                project=self.__storage_client.project,  # ty: ignore[invalid-argument-type]
                 local_file_path_to_gcs_path_map=local_file_path_to_gcs_path_map,
             )
         else:
