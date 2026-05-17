@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 import torch
 from google.protobuf.json_format import ParseDict
@@ -70,8 +70,15 @@ class HeterogeneousGraphSparseEmbeddingConfig:
         assert graph_metadata is not None, "Graph metadata is required in the config."
 
         graph_metadata_dict = OmegaConf.to_container(graph_metadata, resolve=True)
+        if not isinstance(graph_metadata_dict, dict):
+            raise TypeError(
+                f"HeterogeneousGraphSparseEmbeddingConfig.from_omegaconf expected "
+                f"dataset.metadata to resolve to a mapping, got "
+                f"{type(graph_metadata_dict).__name__}."
+            )
         pb = ParseDict(
-            js_dict=graph_metadata_dict, message=graph_schema_pb2.GraphMetadata()
+            js_dict=cast(dict[str, Any], graph_metadata_dict),
+            message=graph_schema_pb2.GraphMetadata(),
         )
         graph_metadata = GraphMetadataPbWrapper(graph_metadata_pb=pb)
 
