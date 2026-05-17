@@ -76,17 +76,17 @@ def log_node_classification_split_details(
     :return:
     """
     logger.info(
-        f"Train split: {train_split.graph.num_nodes} nodes "  # type: ignore
+        f"Train split: {train_split.graph.num_nodes} nodes "
         f"({len(train_split.labeled_nodes)} labeled), "
-        f"{train_split.graph.num_edges} edges."  # type: ignore
+        f"{train_split.graph.num_edges} edges."
     )
     logger.info(
-        f"Val split: {val_split.graph.num_nodes} nodes "  # type: ignore
+        f"Val split: {val_split.graph.num_nodes} nodes "
         f"({len(val_split.labeled_nodes)} labeled), "
-        f"{val_split.graph.num_edges} edges."  # type: ignore
+        f"{val_split.graph.num_edges} edges."
     )
     logger.info(
-        f"Test split: {test_split.graph.num_nodes} nodes "  # type: ignore
+        f"Test split: {test_split.graph.num_nodes} nodes "
         f"({len(test_split.labeled_nodes)} labeled), "
-        f"{test_split.graph.num_edges} edges."  # type: ignore
+        f"{test_split.graph.num_edges} edges."
     )

@@ -126,7 +126,7 @@ def _load_and_build_partitioned_dataset(
             for supervision_edge_type in splitter._supervision_edge_types:
                 positive_label_edges[supervision_edge_type] = (
                     select_ssl_positive_label_edges(
-                        edge_index=loaded_graph_tensors.edge_index[
+                        edge_index=loaded_graph_tensors.edge_index[  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                             supervision_edge_type
                         ],
                         positive_label_percentage=_ssl_positive_label_percentage,
@@ -415,9 +415,8 @@ def build_dataset(
         node_world_size = torch.distributed.get_world_size()
         node_rank = torch.distributed.get_rank()
         master_ip_address = get_internal_ip_from_master_node()
-        master_dataset_building_ports = tuple(
-            get_free_ports_from_master_node(num_ports=2)
-        )  # type: ignore[assignment]
+        ports = get_free_ports_from_master_node(num_ports=2)
+        master_dataset_building_ports = (ports[0], ports[1])
 
         if should_cleanup_distributed_context and torch.distributed.is_initialized():
             logger.info(
@@ -618,7 +617,7 @@ def build_dataset_from_task_config_uri(
     )
 
     # Need to do this "backwards" so the parent class can be defined first.
-    # Otherwise, mypy complains that:
+    # Otherwise, the type checker complains that:
     # "expression has type "type[DistPartitioner]", variable has type "type[DistRangePartitioner]"
     if not should_use_range_partitioning:
         partitioner_class = DistPartitioner

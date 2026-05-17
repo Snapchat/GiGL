@@ -32,7 +32,7 @@ make format_py           # Auto-fix Python only
 make format_scala        # Auto-fix Scala only
 make format_md           # Auto-fix Markdown only
 make check_format        # Check without fixing
-make type_check          # mypy static type checking
+make type_check          # ty static type checking
 
 # Build
 make compile_protos      # Regenerate protobuf code after .proto changes

@@ -85,7 +85,7 @@ class TestLinkPredictionGNN(TestCase):
         assert isinstance(result, dict)
         self.assertEqual(set(result.keys()), set(output_node_types))
         for node_type in output_node_types:
-            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))
+            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
     def test_forward_heterogeneous_missing_node_types(self):
         encoder = DummyEncoder()

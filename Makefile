@@ -160,7 +160,7 @@ format_cpp:
 format: format_py format_cpp format_scala format_md
 
 type_check:
-	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
+	uv run ty check ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions

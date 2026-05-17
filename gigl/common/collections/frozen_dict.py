@@ -45,7 +45,7 @@ class FrozenDict(Mapping[KT, VT]):
         for self_key, self_val in self.items():
             if self_key not in other:
                 return False
-            if self_val != other[self_key]:
+            if self_val != other[self_key]:  # ty: ignore[invalid-argument-type]
                 return False
         return True
 
