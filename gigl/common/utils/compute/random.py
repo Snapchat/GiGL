@@ -60,7 +60,7 @@ def seed_everything(
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
-        logger.info(
+        logger.warning(
             f"seed_everything: seeded python/numpy/torch with seed={seed}; "
             f"expensive deterministic algorithms ON; "
             f"throughput will degrade"
