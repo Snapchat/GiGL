@@ -120,24 +120,30 @@ def get_sharding_plan(
 def apply_sparse_optimizer(
     parameters: Iterable[nn.Parameter],
     optimizer_cls: Optional[Type[Optimizer]] = None,
-    optimizer_kwargs: Dict[str, Any] = dict(),
+    optimizer_kwargs: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """
-    Apply a sparse optimizer to the sparse/EBC parts of a model.
+    """Apply a sparse optimizer to the sparse/EBC parts of a model.
+
     This optimizer is fused, so it will be applied directly in the backward pass.
 
     This should only be used for sparse parameters.
 
     Args:
         parameters (Iterable[nn.Parameter]): The sparse parameters to apply the optimizer to.
-        optimizer_cls (Type[Optimizer], optional): The optimizer class to use. Defaults to RowWiseAdagrad.
-        optimizer_kwargs (Dict[str, Any], optional): Additional keyword arguments for the optimizer.
+        optimizer_cls (Type[Optimizer], optional): The optimizer class to use.
+            Defaults to ``RowWiseAdagrad`` when ``None`` is passed.
+        optimizer_kwargs (Dict[str, Any], optional): Additional keyword arguments
+            for the optimizer. Defaults to ``{"lr": 0.01}`` when both
+            ``optimizer_cls`` and ``optimizer_kwargs`` are unset.
     """
 
-    if not optimizer_cls and optimizer_kwargs:
+    if optimizer_cls is None:
         optimizer_cls = RowWiseAdagrad
-        optimizer_kwargs = {"lr": 0.01}
-    apply_optimizer_in_backward(optimizer_cls, parameters, optimizer_kwargs)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+        if not optimizer_kwargs:
+            optimizer_kwargs = {"lr": 0.01}
+    if optimizer_kwargs is None:
+        optimizer_kwargs = {}
+    apply_optimizer_in_backward(optimizer_cls, parameters, optimizer_kwargs)
 
 
 def apply_dense_optimizer(

@@ -100,18 +100,27 @@ class MarginLoss(nn.Module):
 
 
 class SoftmaxLoss(nn.Module):
-    """
-    A loss layer built on top of the PyTorch implementation of the softmax cross entropy loss.
+    """A loss layer built on top of the PyTorch implementation of the softmax cross entropy loss.
 
-    The loss function by default calculate the loss by
-        cross_entropy(all_scores, ys, reduction='sum')
+    The loss function by default calculates the loss by
+        cross_entropy(all_scores / softmax_temperature, ys, reduction='sum').
+
+    Dividing the scores by ``softmax_temperature`` controls the sharpness of the
+    softmax distribution. A temperature of ``1.0`` is a no-op and corresponds to
+    plain cross-entropy.
 
     See: https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html for more information.
+
+    Args:
+        softmax_temperature (float): Scaling factor applied via ``scores /
+            softmax_temperature`` before computing cross-entropy. Defaults to
+            ``1.0`` (no scaling). Must be non-zero; the caller is responsible for
+            supplying a finite, non-zero value.
     """
 
     def __init__(
         self,
-        softmax_temperature: Optional[float] = None,
+        softmax_temperature: float = 1.0,
     ):
         super(SoftmaxLoss, self).__init__()
         self.softmax_temperature = softmax_temperature
@@ -142,8 +151,7 @@ class SoftmaxLoss(nn.Module):
         )  # shape=[num_pos_nodes]
 
         loss = F.cross_entropy(
-            input=all_scores
-            / self.softmax_temperature,  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[unsupported-operator] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+            input=all_scores / self.softmax_temperature,
             target=ys,
             reduction="sum",
         )
