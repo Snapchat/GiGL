@@ -266,7 +266,9 @@ class DistABLPLoader(BaseDistLoader):
         )
         del context, local_process_rank, local_process_world_size
 
-        BaseDistLoader.validate_with_weight(with_weight, dataset, sampler_options)
+        BaseDistLoader.validate_for_weighted_sampling(
+            with_weight, dataset, sampler_options
+        )
 
         device = (
             pin_memory_device

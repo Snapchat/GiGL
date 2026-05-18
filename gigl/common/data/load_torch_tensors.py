@@ -67,10 +67,10 @@ def _extract_weight_col(
             f"for edge type {edge_type}: {feature_keys}"
         )
     key_idx = feature_keys.index(col_name)
-    col_widths = [
-        (spec.shape[-1] if spec.shape else 1)
-        for spec in (feature_spec[k] for k in feature_keys)
-    ]
+    col_widths = []
+    for key in feature_keys:
+        spec = feature_spec[key]
+        col_widths.append(spec.shape[-1] if spec.shape else 1)
     weight_width = col_widths[key_idx]
     if weight_width != 1:
         raise ValueError(

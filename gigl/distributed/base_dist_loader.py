@@ -334,7 +334,7 @@ class BaseDistLoader(DistLoader):
             )
 
     @staticmethod
-    def validate_with_weight(
+    def validate_for_weighted_sampling(
         with_weight: bool,
         dataset: Union[DistDataset, RemoteDistDataset],
         sampler_options: SamplerOptions,

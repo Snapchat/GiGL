@@ -668,17 +668,6 @@ class DistPartitioner:
                     f"Edge weights for edge type {edge_type} must be a 1-D tensor of shape "
                     f"[num_edges], got shape {tuple(weight_tensor.shape)}."
                 )
-            # Shape validation is best-effort: only fires when register_edge_index()
-            # has already been called for this edge type.
-            if self._edge_index is not None and edge_type in self._edge_index:
-                local_num_edges = self._edge_index[edge_type].shape[1]
-                if weight_tensor.shape[0] != local_num_edges:
-                    raise ValueError(
-                        f"Edge weights for edge type {edge_type} have length "
-                        f"{weight_tensor.shape[0]} but the registered edge index has "
-                        f"{local_num_edges} edges on this rank."
-                    )
-
         self._edge_weights = convert_to_tensor(input_edge_weights, dtype=torch.float32)
 
     def register_labels(
@@ -1239,9 +1228,9 @@ class DistPartitioner:
 
             # Positional indices: features first, weights next, ids always last.
             feat_idx: Optional[int] = 0 if has_edge_feats else None
-            weight_idx: Optional[int] = (
-                (1 if has_edge_feats else 0) if has_weights_for_edge_type else None
-            )
+            weight_idx: Optional[int] = None
+            if has_weights_for_edge_type:
+                weight_idx = 1 if has_edge_feats else 0
 
             def _edge_feat_weight_pfn(
                 ids_chunk: torch.Tensor, _: object

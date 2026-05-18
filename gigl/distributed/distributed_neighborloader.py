@@ -189,7 +189,9 @@ class DistNeighborLoader(BaseDistLoader):
         )
         del context, local_process_rank, local_process_world_size
 
-        BaseDistLoader.validate_with_weight(with_weight, dataset, sampler_options)
+        BaseDistLoader.validate_for_weighted_sampling(
+            with_weight, dataset, sampler_options
+        )
 
         # Determine mode
         if isinstance(dataset, RemoteDistDataset):
