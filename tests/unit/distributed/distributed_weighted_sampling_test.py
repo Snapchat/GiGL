@@ -801,17 +801,16 @@ class DistributedWeightedSamplingTest(TestCase):
         so the weighted sampler actively selects from the pool each hop.
         """
         partition_output, n_hub, _, _ = _build_homogeneous_bipartite_weight_graph()
+        assert isinstance(partition_output.partitioned_edge_index, GraphPartitionData)
+        expected_weights = partition_output.partitioned_edge_index.weights
+
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        assert isinstance(partition_output.partitioned_edge_index, GraphPartitionData)
         self.assertTrue(dataset.has_edge_weights)
         self.assertIsNotNone(dataset.edge_weights)
         assert isinstance(dataset.edge_weights, torch.Tensor)
-        torch.testing.assert_close(
-            dataset.edge_weights,
-            partition_output.partitioned_edge_index.weights,
-        )
+        torch.testing.assert_close(dataset.edge_weights, expected_weights)
 
         mp.spawn(
             fn=_run_weighted_sampling_correctness_homogeneous,
