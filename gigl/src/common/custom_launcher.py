@@ -12,8 +12,16 @@ a plain CLI that argparses whatever flags the YAML wires up via
 dynamic content (runtime URIs, image refs, etc.) is the caller's
 responsibility — typically resolved at YAML-load time before the
 proto reaches this module.
+
+The dispatcher exports its context args as ``GIGL_*`` environment
+variables on the subprocess env (see ``gigl.env.custom_launcher``) so
+receiving CLIs can ``os.environ.get(...)`` whatever runtime context
+they need. The parent process's ``os.environ`` is never mutated; the
+``GIGL_*`` keys live only in the per-call env passed to
+``subprocess.run``.
 """
 
+import os
 import shlex
 import subprocess
 from collections.abc import Mapping
@@ -21,6 +29,15 @@ from typing import Optional
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.env.custom_launcher import (
+    GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
+    GIGL_COMPONENT_ENV_KEY,
+    GIGL_CPU_DOCKER_URI_ENV_KEY,
+    GIGL_CUDA_DOCKER_URI_ENV_KEY,
+    GIGL_PROCESS_COMMAND_ENV_KEY,
+    GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
+    GIGL_TASK_CONFIG_URI_ENV_KEY,
+)
 from gigl.src.common.constants.components import GiGLComponents
 from snapchat.research.gbml.gigl_resource_config_pb2 import CustomLauncherConfig
 
@@ -46,7 +63,7 @@ def launch_custom(
 
     Composes a shell line as ``command`` followed by each ``args[]``
     element passed through ``shlex.quote``, then invokes
-    ``subprocess.run(shell_line, shell=True, check=True)``.
+    ``subprocess.run(shell_line, shell=True, check=True, env=env)``.
 
     The dispatcher takes ``command`` and ``args[]`` verbatim — no
     template substitution of any kind. Any placeholder text in those
@@ -54,28 +71,35 @@ def launch_custom(
     substitution should resolve it at YAML-load time before the proto
     reaches this module.
 
-    ``applied_task_identifier``, ``task_config_uri``,
-    ``resource_config_uri``, ``process_command``,
-    ``process_runtime_args``, ``cpu_docker_uri``, and ``cuda_docker_uri``
-    are accepted for API symmetry with the GLT-side Vertex AI launchers
-    but are intentionally not plumbed into the subprocess — the
-    receiving CLI is expected to source whatever context it needs from
-    the resource config it gets handed (or from env vars inherited from
-    the parent process).
+    The subprocess env is built per-call from ``os.environ.copy()`` plus
+    the ``GIGL_*`` keys defined in :mod:`gigl.env.custom_launcher`. The
+    parent process's ``os.environ`` is never mutated. Optional URI args
+    (``cpu_docker_uri``, ``cuda_docker_uri``) are omitted from the env
+    when ``None`` so the receiver's ``os.environ.get(KEY)`` returns
+    ``None`` and preserves the original ``Optional[str]`` semantics.
 
     Args:
         custom_launcher_config: Proto whose ``command`` is the shell
             snippet to execute and whose ``args`` are positional
             arguments appended verbatim.
-        applied_task_identifier: Accepted for back-compat; ignored.
-        task_config_uri: Accepted for back-compat; ignored.
-        resource_config_uri: Accepted for back-compat; ignored.
-        process_command: Accepted for back-compat; ignored.
-        process_runtime_args: Accepted for back-compat; ignored.
-        cpu_docker_uri: Accepted for back-compat; ignored.
-        cuda_docker_uri: Accepted for back-compat; ignored.
+        applied_task_identifier: Exported to the subprocess as
+            ``GIGL_APPLIED_TASK_IDENTIFIER``.
+        task_config_uri: Exported to the subprocess as
+            ``GIGL_TASK_CONFIG_URI`` (stringified).
+        resource_config_uri: Exported to the subprocess as
+            ``GIGL_RESOURCE_CONFIG_URI`` (stringified).
+        process_command: Exported to the subprocess as
+            ``GIGL_PROCESS_COMMAND``.
+        process_runtime_args: Accepted for API symmetry with the
+            GLT-side Vertex AI launchers but not currently exported —
+            there is no clean single-env-var encoding for a dict.
+        cpu_docker_uri: Exported as ``GIGL_CPU_DOCKER_URI`` when set;
+            the env var is omitted entirely when ``None``.
+        cuda_docker_uri: Exported as ``GIGL_CUDA_DOCKER_URI`` when set;
+            the env var is omitted entirely when ``None``.
         component: Which GiGL component is being launched. Must be in
-            ``_LAUNCHABLE_COMPONENTS``.
+            ``_LAUNCHABLE_COMPONENTS``. Exported as ``GIGL_COMPONENT``
+            using ``component.name`` (e.g. ``"Trainer"``).
 
     Raises:
         ValueError: If ``component`` is not Trainer or Inferencer, or if
@@ -91,6 +115,17 @@ def launch_custom(
     command: str = custom_launcher_config.command
     args: list[str] = list(custom_launcher_config.args)
 
+    env: dict[str, str] = os.environ.copy()
+    env[GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY] = applied_task_identifier
+    env[GIGL_TASK_CONFIG_URI_ENV_KEY] = str(task_config_uri)
+    env[GIGL_RESOURCE_CONFIG_URI_ENV_KEY] = str(resource_config_uri)
+    env[GIGL_PROCESS_COMMAND_ENV_KEY] = process_command
+    env[GIGL_COMPONENT_ENV_KEY] = component.name
+    if cpu_docker_uri is not None:
+        env[GIGL_CPU_DOCKER_URI_ENV_KEY] = cpu_docker_uri
+    if cuda_docker_uri is not None:
+        env[GIGL_CUDA_DOCKER_URI_ENV_KEY] = cuda_docker_uri
+
     shell_line = " ".join([command, *(shlex.quote(a) for a in args)])
     logger.info(f"Launching {component.name} via subprocess: {shell_line!r}")
-    subprocess.run(shell_line, shell=True, check=True)
+    subprocess.run(shell_line, shell=True, check=True, env=env)
