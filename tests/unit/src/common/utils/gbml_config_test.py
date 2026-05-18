@@ -81,12 +81,8 @@ class GbmlConfigTest(TestCase):
 
         gbml_config_pb_wrapper = GbmlConfigPbWrapper(gbml_config_pb=gbml_config_pb)
 
-        condensed_to_node_type = (
-            EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_node_type_to_node_type_map
-        )
-        condensed_to_edge_type = (
-            EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_edge_type_to_edge_type_map
-        )
+        condensed_to_node_type = EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_node_type_to_node_type_map
+        condensed_to_edge_type = EXAMPLE_HETEROGENEOUS_GRAPH_METADATA_PB_WRAPPER.condensed_edge_type_to_edge_type_map
         expected_node_types = {
             condensed_to_node_type[c]
             for c in EXAMPLE_HETEROGENEOUS_CONDENSED_NODE_TYPES
@@ -112,27 +108,32 @@ class GbmlConfigTest(TestCase):
 
         # Values agree with the condensed-keyed source for every entry.
         preprocessed = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
-        for condensed_node_type, expected_dim in (
-            preprocessed.condensed_node_type_to_feature_dim_map.items()
-        ):
+        for (
+            condensed_node_type,
+            expected_dim,
+        ) in preprocessed.condensed_node_type_to_feature_dim_map.items():
             node_type = condensed_to_node_type[condensed_node_type]
             self.assertEqual(
-                gbml_config_pb_wrapper.node_type_to_feature_dim_map[node_type], expected_dim
+                gbml_config_pb_wrapper.node_type_to_feature_dim_map[node_type],
+                expected_dim,
             )
-        for condensed_node_type, expected_schema in (
-            preprocessed.condensed_node_type_to_feature_schema_map.items()
-        ):
+        for (
+            condensed_node_type,
+            expected_schema,
+        ) in preprocessed.condensed_node_type_to_feature_schema_map.items():
             node_type = condensed_to_node_type[condensed_node_type]
             self.assertEqual(
                 gbml_config_pb_wrapper.node_type_to_feature_schema_map[node_type],
                 expected_schema,
             )
-        for condensed_edge_type, expected_dim in (
-            preprocessed.condensed_edge_type_to_feature_dim_map.items()
-        ):
+        for (
+            condensed_edge_type,
+            expected_dim,
+        ) in preprocessed.condensed_edge_type_to_feature_dim_map.items():
             edge_type = condensed_to_edge_type[condensed_edge_type]
             self.assertEqual(
-                gbml_config_pb_wrapper.edge_type_to_feature_dim_map[edge_type], expected_dim
+                gbml_config_pb_wrapper.edge_type_to_feature_dim_map[edge_type],
+                expected_dim,
             )
 
     def test_typed_keyed_feature_maps_default_empty_when_metadata_missing(self):
