@@ -8,7 +8,6 @@ Covers two surfaces:
      and asserting no bad node appears in any sampled subgraph.
 """
 
-from collections.abc import Mapping
 from typing import MutableMapping
 
 import torch
@@ -351,7 +350,9 @@ def _run_weighted_sampling_correctness_heterogeneous(
     """
     create_test_process_group()
     node_ids = dataset.node_ids
-    assert isinstance(node_ids, Mapping)
+    assert not isinstance(node_ids, torch.Tensor) and node_ids is not None, (
+        "Expected heterogeneous dataset with dict node_ids"
+    )
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=(_USER, node_ids[_USER]),
