@@ -10,7 +10,6 @@ Frozen dataclasses so they are safe to pickle across RPC boundaries
 from dataclasses import dataclass
 from typing import Optional, Union
 
-import torch
 from graphlearn_torch.typing import EdgeType
 
 from gigl.common.logger import Logger
@@ -58,9 +57,6 @@ class PPRSamplerOptions:
             hub nodes receive diminishing residual per neighbor, so capping the fetch
             has little effect on PPR accuracy while keeping per-hop RPC cost bounded.
             Set large to approximate fetching all neighbors.
-        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
-            to ``torch.int32``, which supports total degrees up to ~2 billion.
-            Use a larger dtype if nodes have exceptionally high aggregate degrees.
         max_fetch_iterations: Maximum number of iterations that issue RPC neighbor
             fetches. After this many fetch iterations, subsequent iterations push
             residuals using only already-cached neighbor lists (no new RPCs).
@@ -73,7 +69,6 @@ class PPRSamplerOptions:
     eps: float = 1e-4
     max_ppr_nodes: int = 50
     num_neighbors_per_hop: int = 1_000
-    total_degree_dtype: torch.dtype = torch.int32
     max_fetch_iterations: Optional[int] = None
 
 

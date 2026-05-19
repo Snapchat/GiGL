@@ -93,7 +93,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.typing import EdgeType
+from graphlearn_torch.typing import EdgeType, NodeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
@@ -343,7 +343,7 @@ def _shared_sampling_worker_loop(
     event_queue: mp.Queue,
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    degree_tensors: Optional[dict[NodeType, torch.Tensor]],
 ) -> None:
     """Run one shared graph-store worker that schedules many input channels.
 
@@ -899,15 +899,14 @@ class SharedDistSamplingBackend:
                 edge_types=edge_types,
                 edge_dir=data.edge_dir,
             )
-            self._degree_tensors: Optional[
-                Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-            ] = build_ppr_total_degree_tensors(
-                degree_tensors=degree_tensors,
-                dtype=sampler_options.total_degree_dtype,
-                node_type_to_edge_types=node_type_to_edge_types,
+            self._degree_tensors: Optional[dict[NodeType, torch.Tensor]] = (
+                build_ppr_total_degree_tensors(
+                    degree_tensors=degree_tensors,
+                    node_type_to_edge_types=node_type_to_edge_types,
+                )
             )
         else:
-            self._degree_tensors = degree_tensors
+            self._degree_tensors = None
         share_memory(self._degree_tensors)
 
     def init_backend(self) -> None:

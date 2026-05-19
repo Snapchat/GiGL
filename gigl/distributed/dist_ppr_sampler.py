@@ -71,14 +71,14 @@ def build_ppr_node_type_to_edge_types(
 
 def build_ppr_total_degree_tensors(
     degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-    dtype: torch.dtype,
     node_type_to_edge_types: dict[NodeType, list[EdgeType]],
 ) -> dict[NodeType, torch.Tensor]:
     """Pre-compute total-degree tensors for the PPR forward-push kernel.
 
-    For homogeneous graphs converts the single degree tensor to ``dtype``.
+    For homogeneous graphs converts the single degree tensor to int16.
     For heterogeneous graphs sums per-edge-type degrees into a per-node-type
-    total, padding shorter tensors with zeros where node counts differ.
+    total (capped at int16 max), padding shorter tensors with zeros where node
+    counts differ.
 
     This function is intentionally standalone so it can be called once in the
     parent process (and the result shared across workers) rather than redundantly
@@ -87,24 +87,24 @@ def build_ppr_total_degree_tensors(
     Args:
         degree_tensors: Per-edge-type degree tensors (homogeneous: single
             ``torch.Tensor``; heterogeneous: ``dict[EdgeType, torch.Tensor]``).
-        dtype: Target dtype for the output tensors.
         node_type_to_edge_types: Mapping from anchor NodeType to the list of
             EdgeTypes traversable from it, as returned by
             :func:`build_ppr_node_type_to_edge_types`.
 
     Returns:
         Dict mapping NodeType to a 1-D total-degree tensor of shape
-        ``[num_nodes_of_that_type]`` with dtype ``dtype``.
+        ``[num_nodes_of_that_type]`` with dtype ``torch.int16``, capped at
+        ``torch.iinfo(torch.int16).max``.
 
     Raises:
         ValueError: If a required edge type is missing from ``degree_tensors``.
     """
+    _INT16_MAX = torch.iinfo(torch.int16).max
     result: dict[NodeType, torch.Tensor] = {}
 
     if isinstance(degree_tensors, torch.Tensor):
-        result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(dtype)
+        result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(torch.int16)
     else:
-        dtype_max = torch.iinfo(dtype).max
         for node_type, edge_types in node_type_to_edge_types.items():
             max_len = 0
             for et in edge_types:
@@ -118,7 +118,7 @@ def build_ppr_total_degree_tensors(
             for et in edge_types:
                 et_degrees = degree_tensors[et]
                 summed[: len(et_degrees)] += et_degrees.to(torch.int64)
-            result[node_type] = summed.clamp(max=dtype_max).to(dtype)
+            result[node_type] = summed.clamp(max=_INT16_MAX).to(torch.int16)
 
     return result
 
@@ -160,10 +160,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
-        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
-            to ``torch.int32``. Use a larger dtype if nodes have exceptionally high
-            aggregate degrees.
-        degree_tensors: Pre-computed degree tensors from the dataset.
+        degree_tensors: Pre-computed total-degree tensors (int16, capped at
+            int16 max), keyed by NodeType.  Must be pre-computed by the caller
+            (e.g. via :func:`build_ppr_total_degree_tensors`) so that workers
+            share a single allocation rather than recomputing per-worker.
     """
 
     def __init__(
@@ -173,8 +173,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         num_neighbors_per_hop: int = 100_000,
-        total_degree_dtype: torch.dtype = torch.int32,
-        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        degree_tensors: dict[NodeType, torch.Tensor],
         max_fetch_iterations: Optional[int] = None,
         **kwargs,
     ):
@@ -216,30 +215,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        # Precompute total degree per node type: the sum of degrees across all
-        # edge types traversable from that node type.  This is a graph-level
-        # property used on every PPR iteration, so computing it once at init
-        # avoids per-node summation and cache lookups in the hot loop.
-        #
-        # In graph-store mode, SharedDistSamplingProducer pre-computes the
-        # total-degree dict once in the parent process, moves it to shared
-        # memory, and passes it here as degree_tensors (keys are NodeType
-        # strings).  In colocated mode degree_tensors arrives as raw
-        # per-edge-type tensors (keys are EdgeType tuples, or a bare Tensor
-        # for homogeneous graphs) and we compute the total here.
-        if (
-            isinstance(degree_tensors, dict)
-            and degree_tensors
-            and not isinstance(next(iter(degree_tensors)), tuple)
-        ):
-            # Already the pre-computed total (NodeType string keys).
-            self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = (
-                degree_tensors
-            )
-        else:
-            self._node_type_to_total_degree = self._build_total_degree_tensors(
-                degree_tensors, total_degree_dtype
-            )
+        # Total-degree tensors keyed by NodeType, pre-computed by the caller.
+        # Callers (create_mp_producer for colocated, SharedDistSamplingBackend
+        # for graph-store) run build_ppr_total_degree_tensors once in the parent
+        # process and place the result in shared memory so all worker processes
+        # map the same allocation.
+        self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = degree_tensors
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
         # NodeType / EdgeType keys are only used at the Python boundary
@@ -285,31 +266,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # Degree tensors indexed by ntype_id.  Destination-only types get an empty
         # tensor; the C++ kernel returns 0 for those, matching _get_total_degree.
         self._degree_tensors_for_cpp: list[torch.Tensor] = [
-            self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
+            self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int16))
             for nt in all_node_types
         ]
-
-    def _build_total_degree_tensors(
-        self,
-        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        dtype: torch.dtype,
-    ) -> dict[NodeType, torch.Tensor]:
-        """Build total-degree tensors by summing per-edge-type degrees for each node type.
-
-        Delegates to the module-level :func:`build_ppr_total_degree_tensors`.
-
-        Args:
-            degree_tensors: Per-edge-type degree tensors from the dataset.
-            dtype: Dtype for the output tensors.
-
-        Returns:
-            Dict mapping node type to a 1-D tensor of total degrees.
-        """
-        return build_ppr_total_degree_tensors(
-            degree_tensors=degree_tensors,
-            dtype=dtype,
-            node_type_to_edge_types=self._node_type_to_edge_types,
-        )
 
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""
