@@ -366,8 +366,8 @@ class GraphTransformerEncoder(nn.Module):
 
     Converts heterogeneous graph data into fixed-length sequences via
     ``heterodata_to_graph_transformer_input``, processes through pre-norm
-    transformer encoder layers, and produces per-node embeddings via
-    attention-weighted neighbor readout (from RelGT's LocalModule).
+    transformer encoder layers, and produces per-node embeddings via a
+    configurable readout over the anchor token and its sequence context.
 
     Conforms to the same forward interface as ``HGT`` and ``SimpleHGN``,
     making it a drop-in encoder for ``LinkPredictionGNN``.
@@ -435,6 +435,10 @@ class GraphTransformerEncoder(nn.Module):
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
+        readout_mode: Readout applied after the transformer encoder stack.
+            ``"anchor_neighbor_attention"`` preserves the current RelGT-style
+            anchor-plus-neighbor attention pooling. ``"anchor_only"`` returns
+            the normalized anchor token directly.
         pe_integration_mode: How to fuse positional encodings into the model
             input. ``"concat"`` preserves the current behavior by concatenating
             node-level PE to token features. ``"add"`` uses node-level additive
@@ -496,6 +500,9 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
+        readout_mode: Literal["anchor_neighbor_attention", "anchor_only"] = (
+            "anchor_neighbor_attention"
+        ),
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
         feedforward_ratio: Optional[float] = None,
@@ -540,6 +547,12 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method='ppr' because khop sequences do not "
                 "enforce a stable token order."
             )
+        if readout_mode not in {"anchor_neighbor_attention", "anchor_only"}:
+            raise ValueError(
+                "readout_mode must be one of "
+                "{'anchor_neighbor_attention', 'anchor_only'}, "
+                f"got '{readout_mode}'"
+            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
@@ -569,6 +582,7 @@ class GraphTransformerEncoder(nn.Module):
         self._anchor_based_input_embedding_dict = anchor_based_input_embedding_dict
         self._pairwise_attention_bias_attr_names = pairwise_attention_bias_attr_names
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
+        self._readout_mode = readout_mode
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
         anchor_input_embedding_attr_names = (
@@ -671,7 +685,8 @@ class GraphTransformerEncoder(nn.Module):
 
         self._final_norm = nn.LayerNorm(hid_dim)
 
-        # Readout attention: projects concatenated (anchor, neighbor) to score
+        # Always instantiate the neighbor readout head so checkpoints can move
+        # between readout modes without changing parameter shapes.
         self._readout_attention = nn.Linear(2 * hid_dim, 1)
 
         # Output projection: hid_dim -> out_dim
@@ -1037,7 +1052,7 @@ class GraphTransformerEncoder(nn.Module):
         valid_mask: Tensor,
         attn_bias: Optional[Tensor] = None,
     ) -> Tensor:
-        """Process sequences through transformer layers and attention readout.
+        """Process sequences through transformer layers and configured readout.
 
         Args:
             sequences: Input tensor of shape ``(batch_size, max_seq_len, hid_dim)``.
@@ -1056,7 +1071,11 @@ class GraphTransformerEncoder(nn.Module):
         x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
-        # Readout: anchor (position 0) + attention-weighted neighbor aggregation
+        if self._readout_mode == "anchor_only":
+            return x[:, 0, :]
+
+        # RelGT-style readout: anchor (position 0) + attention-weighted
+        # neighbor aggregation.
         anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
         neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
         neighbor_valid_mask = valid_mask[:, 1:]
