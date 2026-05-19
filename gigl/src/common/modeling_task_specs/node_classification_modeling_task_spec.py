@@ -201,6 +201,7 @@ class NodeClassificationModelingTaskSpec(
             assert root_node_labels is not None
 
             results: InferBatchResults = self.infer_batch(batch=batch, device=device)
+            assert results.predictions is not None
             num_correct_in_batch = int(
                 (results.predictions == root_node_labels).sum()
             )  # https://github.com/Snapchat/GiGL/issues/408

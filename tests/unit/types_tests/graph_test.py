@@ -307,6 +307,36 @@ class GraphTypesTyest(TestCase):
                 expected_tensor,
             )
 
+    def test_treat_labels_as_edges_converts_homogeneous_edge_weights(self) -> None:
+        """treat_labels_as_edges() must convert homogeneous edge_weights to heterogeneous form.
+
+        Regression: edge_weights was previously left as a raw tensor while all other fields
+        were converted to heterogeneous dicts. DistPartitioner rejects that mixed-mode input,
+        so weighted homogeneous ABLP dataset construction would fail.
+        """
+        weights = torch.tensor([0.5, 1.0])
+        graph_tensors = LoadedGraphTensors(
+            node_ids=torch.tensor([0, 1, 2]),
+            node_features=torch.tensor([[1.0], [2.0], [3.0]]),
+            node_labels=None,
+            edge_index=torch.tensor([[0, 1], [1, 2]]),
+            edge_features=None,
+            positive_label=torch.tensor([[0], [2]]),
+            negative_label=None,
+            edge_weights=weights,
+        )
+        graph_tensors.treat_labels_as_edges(edge_dir="out")
+
+        edge_weights = graph_tensors.edge_weights
+        self.assertIsInstance(
+            edge_weights,
+            dict,
+            "edge_weights must be a heterogeneous dict after treat_labels_as_edges()",
+        )
+        assert not isinstance(edge_weights, torch.Tensor) and edge_weights is not None
+        self.assertIn(DEFAULT_HOMOGENEOUS_EDGE_TYPE, edge_weights)
+        torch.testing.assert_close(edge_weights[DEFAULT_HOMOGENEOUS_EDGE_TYPE], weights)
+
     def test_select_label_edge_types(self):
         message_passing_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
         edge_types = [
