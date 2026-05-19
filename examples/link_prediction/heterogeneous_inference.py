@@ -154,7 +154,9 @@ def _inference_process(
     ] = args.dataset.node_ids
     assert node_type_to_input_node_ids is not None and not isinstance(
         node_type_to_input_node_ids, torch.Tensor
-    ), f"Node IDs must be a dictionary for heterogeneous inference, got {type(node_type_to_input_node_ids)}"
+    ), (
+        f"Node IDs must be a dictionary for heterogeneous inference, got {type(node_type_to_input_node_ids)}"
+    )
     input_node_ids: torch.Tensor = node_type_to_input_node_ids[args.inference_node_type]
 
     data_loader = gigl.distributed.DistNeighborLoader(
