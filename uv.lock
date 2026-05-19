@@ -702,7 +702,7 @@ wheels = [
 
 [[package]]
 name = "gigl"
-version = "0.2.0"
+version = "0.2.0.dev20260519205122"
 source = { editable = "." }
 dependencies = [
     { name = "argo-workflows" },
@@ -825,8 +825,8 @@ lint = [
     { name = "mdformat" },
     { name = "mdformat-tables" },
     { name = "mypy-protobuf" },
-    { name = "ty" },
     { name = "ruff" },
+    { name = "ty" },
 ]
 test = [
     { name = "parameterized" },
@@ -951,8 +951,8 @@ lint = [
     { name = "mdformat", specifier = "==0.7.22" },
     { name = "mdformat-tables", specifier = "==1.0.0" },
     { name = "mypy-protobuf", specifier = "==3.3.0" },
-    { name = "ty", specifier = "~=0.0.29" },
     { name = "ruff", specifier = "==0.15.10" },
+    { name = "ty", specifier = "~=0.0.29" },
 ]
 test = [{ name = "parameterized", specifier = "==0.9.0" }]
 typing-stubs = [
@@ -965,7 +965,7 @@ typing-stubs = [
 
 [[package]]
 name = "gigl-core"
-version = "0.2.0"
+version = "0.2.0.dev20260519205122"
 source = { directory = "gigl-core" }
 
 [[package]]
