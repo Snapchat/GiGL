@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 from absl.testing import absltest
 
 from gigl.common import Uri
-from gigl.env.custom_launcher import (
+from gigl.common.constants import (
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+)
+from gigl.env.constants import (
     GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
     GIGL_COMPONENT_ENV_KEY,
     GIGL_CPU_DOCKER_URI_ENV_KEY,
@@ -150,7 +154,9 @@ class TestLaunchCustom(TestCase):
         self.assertEqual(env[GIGL_COMPONENT_ENV_KEY], "Trainer")
 
     @patch("gigl.src.common.custom_launcher.subprocess.run")
-    def test_dispatch_omits_optional_uris_when_none(self, mock_run: MagicMock) -> None:
+    def test_dispatch_defaults_optional_uris_to_release_images(
+        self, mock_run: MagicMock
+    ) -> None:
         config = self._build_config(command="echo")
         launch_custom(
             custom_launcher_config=config,
@@ -164,49 +170,26 @@ class TestLaunchCustom(TestCase):
             component=GiGLComponents.Inferencer,
         )
         env = mock_run.call_args.kwargs["env"]
-        # Optional URIs must be omitted entirely (not stringified to "None"
-        # nor set to ""), so receivers see env.get(KEY) is None.
-        self.assertNotIn(GIGL_CPU_DOCKER_URI_ENV_KEY, env)
-        self.assertNotIn(GIGL_CUDA_DOCKER_URI_ENV_KEY, env)
-        # Required keys are still present.
+        # When the caller passes None for a docker URI, the env var
+        # falls back to the public release image so receivers always
+        # see a usable URI.
+        self.assertEqual(
+            env[GIGL_CPU_DOCKER_URI_ENV_KEY], DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
+        )
+        self.assertEqual(
+            env[GIGL_CUDA_DOCKER_URI_ENV_KEY], DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
+        )
         self.assertEqual(env[GIGL_COMPONENT_ENV_KEY], "Inferencer")
 
     @patch("gigl.src.common.custom_launcher.subprocess.run")
-    def test_dispatch_does_not_mutate_parent_os_environ(
+    def test_dispatch_isolates_subprocess_env_from_parent(
         self, mock_run: MagicMock
     ) -> None:
-        # Pre-condition: none of the GIGL_* keys leak into the parent.
-        snapshot = dict(os.environ)
-        config = self._build_config(command="echo")
-        launch_custom(
-            custom_launcher_config=config,
-            applied_task_identifier="job",
-            task_config_uri=Uri("gs://bucket/task.yaml"),
-            resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="echo",
-            process_runtime_args={},
-            cpu_docker_uri="gcr.io/p/cpu:tag",
-            cuda_docker_uri="gcr.io/p/cuda:tag",
-            component=GiGLComponents.Trainer,
-        )
-        self.assertEqual(dict(os.environ), snapshot)
-        for key in (
-            GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
-            GIGL_TASK_CONFIG_URI_ENV_KEY,
-            GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
-            GIGL_PROCESS_COMMAND_ENV_KEY,
-            GIGL_CPU_DOCKER_URI_ENV_KEY,
-            GIGL_CUDA_DOCKER_URI_ENV_KEY,
-            GIGL_COMPONENT_ENV_KEY,
-        ):
-            self.assertNotIn(key, os.environ)
-
-    @patch("gigl.src.common.custom_launcher.subprocess.run")
-    def test_dispatch_preserves_inherited_env(self, mock_run: MagicMock) -> None:
         sentinel_key = "GIGL_TEST_PARENT_ENV_SENTINEL"
         sentinel_value = "preserved-value"
         try:
             os.environ[sentinel_key] = sentinel_value
+            snapshot = dict(os.environ)
             config = self._build_config(command="echo")
             launch_custom(
                 custom_launcher_config=config,
@@ -215,10 +198,24 @@ class TestLaunchCustom(TestCase):
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
                 process_command="echo",
                 process_runtime_args={},
-                cpu_docker_uri=None,
-                cuda_docker_uri=None,
+                cpu_docker_uri="gcr.io/p/cpu:tag",
+                cuda_docker_uri="gcr.io/p/cuda:tag",
                 component=GiGLComponents.Trainer,
             )
+            # Parent os.environ is untouched; none of the GIGL_* keys
+            # leak into it.
+            self.assertEqual(dict(os.environ), snapshot)
+            for key in (
+                GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
+                GIGL_TASK_CONFIG_URI_ENV_KEY,
+                GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
+                GIGL_PROCESS_COMMAND_ENV_KEY,
+                GIGL_CPU_DOCKER_URI_ENV_KEY,
+                GIGL_CUDA_DOCKER_URI_ENV_KEY,
+                GIGL_COMPONENT_ENV_KEY,
+            ):
+                self.assertNotIn(key, os.environ)
+            # Inherited parent env entries reach the subprocess env.
             env = mock_run.call_args.kwargs["env"]
             self.assertEqual(env.get(sentinel_key), sentinel_value)
         finally:

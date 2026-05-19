@@ -14,7 +14,7 @@ responsibility — typically resolved at YAML-load time before the
 proto reaches this module.
 
 The dispatcher exports its context args as ``GIGL_*`` environment
-variables on the subprocess env (see ``gigl.env.custom_launcher``) so
+variables on the subprocess env (see ``gigl.env.constants``) so
 receiving CLIs can ``os.environ.get(...)`` whatever runtime context
 they need. The parent process's ``os.environ`` is never mutated; the
 ``GIGL_*`` keys live only in the per-call env passed to
@@ -28,8 +28,12 @@ from collections.abc import Mapping
 from typing import Optional
 
 from gigl.common import Uri
+from gigl.common.constants import (
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
+)
 from gigl.common.logger import Logger
-from gigl.env.custom_launcher import (
+from gigl.env.constants import (
     GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
     GIGL_COMPONENT_ENV_KEY,
     GIGL_CPU_DOCKER_URI_ENV_KEY,
@@ -72,11 +76,13 @@ def launch_custom(
     reaches this module.
 
     The subprocess env is built per-call from ``os.environ.copy()`` plus
-    the ``GIGL_*`` keys defined in :mod:`gigl.env.custom_launcher`. The
-    parent process's ``os.environ`` is never mutated. Optional URI args
-    (``cpu_docker_uri``, ``cuda_docker_uri``) are omitted from the env
-    when ``None`` so the receiver's ``os.environ.get(KEY)`` returns
-    ``None`` and preserves the original ``Optional[str]`` semantics.
+    the ``GIGL_*`` keys defined in :mod:`gigl.env.constants`. The
+    parent process's ``os.environ`` is never mutated. When ``None`` is
+    passed for ``cpu_docker_uri`` / ``cuda_docker_uri``, the
+    corresponding env var falls back to
+    :data:`gigl.common.constants.DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU` /
+    :data:`gigl.common.constants.DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA`
+    so receivers always observe a usable image URI.
 
     Args:
         custom_launcher_config: Proto whose ``command`` is the shell
@@ -93,10 +99,11 @@ def launch_custom(
         process_runtime_args: Accepted for API symmetry with the
             GLT-side Vertex AI launchers but not currently exported —
             there is no clean single-env-var encoding for a dict.
-        cpu_docker_uri: Exported as ``GIGL_CPU_DOCKER_URI`` when set;
-            the env var is omitted entirely when ``None``.
-        cuda_docker_uri: Exported as ``GIGL_CUDA_DOCKER_URI`` when set;
-            the env var is omitted entirely when ``None``.
+        cpu_docker_uri: Exported as ``GIGL_CPU_DOCKER_URI``. Falls back
+            to ``DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU`` when ``None``.
+        cuda_docker_uri: Exported as ``GIGL_CUDA_DOCKER_URI``. Falls
+            back to ``DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA`` when
+            ``None``.
         component: Which GiGL component is being launched. Must be in
             ``_LAUNCHABLE_COMPONENTS``. Exported as ``GIGL_COMPONENT``
             using ``component.name`` (e.g. ``"Trainer"``).
@@ -121,10 +128,12 @@ def launch_custom(
     env[GIGL_RESOURCE_CONFIG_URI_ENV_KEY] = str(resource_config_uri)
     env[GIGL_PROCESS_COMMAND_ENV_KEY] = process_command
     env[GIGL_COMPONENT_ENV_KEY] = component.name
-    if cpu_docker_uri is not None:
-        env[GIGL_CPU_DOCKER_URI_ENV_KEY] = cpu_docker_uri
-    if cuda_docker_uri is not None:
-        env[GIGL_CUDA_DOCKER_URI_ENV_KEY] = cuda_docker_uri
+    env[GIGL_CPU_DOCKER_URI_ENV_KEY] = (
+        cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
+    )
+    env[GIGL_CUDA_DOCKER_URI_ENV_KEY] = (
+        cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
+    )
 
     shell_line = " ".join([command, *(shlex.quote(a) for a in args)])
     logger.info(f"Launching {component.name} via subprocess: {shell_line!r}")
