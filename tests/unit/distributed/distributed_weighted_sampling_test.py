@@ -350,10 +350,11 @@ def _run_weighted_sampling_correctness_heterogeneous(
     Any batch containing a bad item node means a weight=0 edge was sampled.
     """
     create_test_process_group()
-    assert isinstance(dataset.node_ids, Mapping)
+    node_ids = dataset.node_ids
+    assert isinstance(node_ids, Mapping)
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_USER, dataset.node_ids[_USER]),
+        input_nodes=(_USER, node_ids[_USER]),
         num_neighbors=[10, 5],
         with_weight=True,
         pin_memory_device=torch.device("cpu"),

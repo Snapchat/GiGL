@@ -327,15 +327,16 @@ class GraphTypesTyest(TestCase):
         )
         graph_tensors.treat_labels_as_edges(edge_dir="out")
 
+        edge_weights = graph_tensors.edge_weights
         self.assertIsInstance(
-            graph_tensors.edge_weights,
+            edge_weights,
             dict,
             "edge_weights must be a heterogeneous dict after treat_labels_as_edges()",
         )
-        assert isinstance(graph_tensors.edge_weights, dict)
-        self.assertIn(DEFAULT_HOMOGENEOUS_EDGE_TYPE, graph_tensors.edge_weights)
+        assert isinstance(edge_weights, dict)
+        self.assertIn(DEFAULT_HOMOGENEOUS_EDGE_TYPE, edge_weights)
         torch.testing.assert_close(
-            graph_tensors.edge_weights[DEFAULT_HOMOGENEOUS_EDGE_TYPE], weights
+            edge_weights[DEFAULT_HOMOGENEOUS_EDGE_TYPE], weights
         )
 
     def test_select_label_edge_types(self):
