@@ -97,7 +97,11 @@ from graphlearn_torch.typing import EdgeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.dist_ppr_sampler import (
+    build_ppr_node_type_to_edge_types,
+    build_ppr_total_degree_tensors,
+)
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.dist_sampler import (
     SamplerInput,
     SamplerRuntime,
@@ -872,12 +876,38 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
-        # Move degree tensors to shared memory before workers are spawned so
-        # each worker maps the same allocation instead of pickling a private copy.
-        # In colocated mode this is handled by DistDataset.to_ipc_handle(); here
-        # the tensors arrive via RPC from the storage server and are not yet in
-        # shared memory, causing num_workers copies without this call.
-        self._degree_tensors = degree_tensors
+        # For PPR sampling, pre-compute the total-degree dict (summed across edge
+        # types, converted to the target dtype) once here in the parent process.
+        # Workers receive the result directly as degree_tensors and skip the
+        # per-worker summation in DistPPRNeighborSampler._build_total_degree_tensors.
+        #
+        # Then move to shared memory so all spawned workers map the same
+        # allocation instead of each pickling a private copy.  In colocated mode
+        # DistDataset.to_ipc_handle() handles shared memory; here the tensors
+        # arrive via RPC and are plain heap allocations without this call.
+        if (
+            isinstance(sampler_options, PPRSamplerOptions)
+            and degree_tensors is not None
+        ):
+            assert data.graph is not None, (
+                "DistDataset.graph must be set for PPR sampling"
+            )
+            is_homogeneous = not isinstance(data.graph, dict)
+            edge_types = list(data.graph.keys()) if isinstance(data.graph, dict) else []
+            node_type_to_edge_types = build_ppr_node_type_to_edge_types(
+                is_homogeneous=is_homogeneous,
+                edge_types=edge_types,
+                edge_dir=data.edge_dir,
+            )
+            self._degree_tensors: Optional[
+                Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            ] = build_ppr_total_degree_tensors(
+                degree_tensors=degree_tensors,
+                dtype=sampler_options.total_degree_dtype,
+                node_type_to_edge_types=node_type_to_edge_types,
+            )
+        else:
+            self._degree_tensors = degree_tensors
         share_memory(self._degree_tensors)
 
     def init_backend(self) -> None:
