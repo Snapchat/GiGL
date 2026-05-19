@@ -24,7 +24,6 @@ they need. The parent process's ``os.environ`` is never mutated; the
 import os
 import shlex
 import subprocess
-from collections.abc import Mapping
 from typing import Optional
 
 from gigl.common import Uri
@@ -38,7 +37,6 @@ from gigl.env.constants import (
     GIGL_COMPONENT_ENV_KEY,
     GIGL_CPU_DOCKER_URI_ENV_KEY,
     GIGL_CUDA_DOCKER_URI_ENV_KEY,
-    GIGL_PROCESS_COMMAND_ENV_KEY,
     GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
     GIGL_TASK_CONFIG_URI_ENV_KEY,
 )
@@ -57,8 +55,6 @@ def launch_custom(
     applied_task_identifier: str,
     task_config_uri: Uri,
     resource_config_uri: Uri,
-    process_command: str,
-    process_runtime_args: Mapping[str, str],
     cpu_docker_uri: Optional[str],
     cuda_docker_uri: Optional[str],
     component: GiGLComponents,
@@ -94,11 +90,6 @@ def launch_custom(
             ``GIGL_TASK_CONFIG_URI`` (stringified).
         resource_config_uri: Exported to the subprocess as
             ``GIGL_RESOURCE_CONFIG_URI`` (stringified).
-        process_command: Exported to the subprocess as
-            ``GIGL_PROCESS_COMMAND``.
-        process_runtime_args: Accepted for API symmetry with the
-            GLT-side Vertex AI launchers but not currently exported —
-            there is no clean single-env-var encoding for a dict.
         cpu_docker_uri: Exported as ``GIGL_CPU_DOCKER_URI``. Falls back
             to ``DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU`` when ``None``.
         cuda_docker_uri: Exported as ``GIGL_CUDA_DOCKER_URI``. Falls
@@ -126,7 +117,6 @@ def launch_custom(
     env[GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY] = applied_task_identifier
     env[GIGL_TASK_CONFIG_URI_ENV_KEY] = str(task_config_uri)
     env[GIGL_RESOURCE_CONFIG_URI_ENV_KEY] = str(resource_config_uri)
-    env[GIGL_PROCESS_COMMAND_ENV_KEY] = process_command
     env[GIGL_COMPONENT_ENV_KEY] = component.name
     env[GIGL_CPU_DOCKER_URI_ENV_KEY] = (
         cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU

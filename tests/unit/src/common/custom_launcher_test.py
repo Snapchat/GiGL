@@ -15,7 +15,6 @@ from gigl.env.constants import (
     GIGL_COMPONENT_ENV_KEY,
     GIGL_CPU_DOCKER_URI_ENV_KEY,
     GIGL_CUDA_DOCKER_URI_ENV_KEY,
-    GIGL_PROCESS_COMMAND_ENV_KEY,
     GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
     GIGL_TASK_CONFIG_URI_ENV_KEY,
 )
@@ -57,8 +56,6 @@ class TestLaunchCustom(TestCase):
             applied_task_identifier="job-42",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="ignored",
-            process_runtime_args={"ignored": "v"},
             cpu_docker_uri="gcr.io/p/cpu:tag",
             cuda_docker_uri="gcr.io/p/cuda:tag",
             component=GiGLComponents.Trainer,
@@ -82,8 +79,6 @@ class TestLaunchCustom(TestCase):
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="",
-                process_runtime_args={},
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
                 component=GiGLComponents.Trainer,
@@ -99,8 +94,6 @@ class TestLaunchCustom(TestCase):
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="echo 'hello, world!",
-                process_runtime_args={},
                 cpu_docker_uri=None,
                 cuda_docker_uri=None,
                 component=GiGLComponents.DataPreprocessor,
@@ -115,8 +108,6 @@ class TestLaunchCustom(TestCase):
             applied_task_identifier="job",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="",
-            process_runtime_args={},
             cpu_docker_uri=None,
             cuda_docker_uri=None,
             component=GiGLComponents.Trainer,
@@ -135,8 +126,6 @@ class TestLaunchCustom(TestCase):
             applied_task_identifier="job-42",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="python -m my.cli",
-            process_runtime_args={},
             cpu_docker_uri="gcr.io/p/cpu:tag",
             cuda_docker_uri="gcr.io/p/cuda:tag",
             component=GiGLComponents.Trainer,
@@ -147,7 +136,6 @@ class TestLaunchCustom(TestCase):
         self.assertEqual(
             env[GIGL_RESOURCE_CONFIG_URI_ENV_KEY], "gs://bucket/resource.yaml"
         )
-        self.assertEqual(env[GIGL_PROCESS_COMMAND_ENV_KEY], "python -m my.cli")
         self.assertEqual(env[GIGL_CPU_DOCKER_URI_ENV_KEY], "gcr.io/p/cpu:tag")
         self.assertEqual(env[GIGL_CUDA_DOCKER_URI_ENV_KEY], "gcr.io/p/cuda:tag")
         # component is exported via .name (the enum member identifier).
@@ -163,8 +151,6 @@ class TestLaunchCustom(TestCase):
             applied_task_identifier="job",
             task_config_uri=Uri("gs://bucket/task.yaml"),
             resource_config_uri=Uri("gs://bucket/resource.yaml"),
-            process_command="echo",
-            process_runtime_args={},
             cpu_docker_uri=None,
             cuda_docker_uri=None,
             component=GiGLComponents.Inferencer,
@@ -196,8 +182,6 @@ class TestLaunchCustom(TestCase):
                 applied_task_identifier="job",
                 task_config_uri=Uri("gs://bucket/task.yaml"),
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
-                process_command="echo",
-                process_runtime_args={},
                 cpu_docker_uri="gcr.io/p/cpu:tag",
                 cuda_docker_uri="gcr.io/p/cuda:tag",
                 component=GiGLComponents.Trainer,
@@ -209,7 +193,6 @@ class TestLaunchCustom(TestCase):
                 GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
                 GIGL_TASK_CONFIG_URI_ENV_KEY,
                 GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
-                GIGL_PROCESS_COMMAND_ENV_KEY,
                 GIGL_CPU_DOCKER_URI_ENV_KEY,
                 GIGL_CUDA_DOCKER_URI_ENV_KEY,
                 GIGL_COMPONENT_ENV_KEY,
