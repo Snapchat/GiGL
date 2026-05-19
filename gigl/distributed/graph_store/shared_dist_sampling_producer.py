@@ -103,6 +103,7 @@ from gigl.distributed.utils.dist_sampler import (
     SamplerRuntime,
     create_dist_sampler,
 )
+from gigl.utils.share_memory import share_memory
 
 logger = Logger()
 
@@ -871,7 +872,13 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
+        # Move degree tensors to shared memory before workers are spawned so
+        # each worker maps the same allocation instead of pickling a private copy.
+        # In colocated mode this is handled by DistDataset.to_ipc_handle(); here
+        # the tensors arrive via RPC from the storage server and are not yet in
+        # shared memory, causing num_workers copies without this call.
         self._degree_tensors = degree_tensors
+        share_memory(self._degree_tensors)
 
     def init_backend(self) -> None:
         """Initialize worker processes once for this backend.
