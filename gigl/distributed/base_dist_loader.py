@@ -39,10 +39,6 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_ppr_sampler import (
-    build_ppr_node_type_to_edge_types,
-    build_ppr_total_degree_tensors,
-)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.compute import async_request_server
 from gigl.distributed.graph_store.dist_server import DistServer
@@ -429,27 +425,7 @@ class BaseDistLoader(DistLoader):
         """
         channel = BaseDistLoader.create_colocated_channel(worker_options)
         if isinstance(sampler_options, PPRSamplerOptions):
-            assert dataset.graph is not None, (
-                "DistDataset.graph must be set for PPR sampling"
-            )
-            raw_degree_tensors = dataset.degree_tensor
-            is_homogeneous = not isinstance(dataset.graph, dict)
-            edge_types = (
-                list(dataset.graph.keys()) if isinstance(dataset.graph, dict) else []
-            )
-            node_type_to_edge_types = build_ppr_node_type_to_edge_types(
-                is_homogeneous=is_homogeneous,
-                edge_types=edge_types,
-                edge_dir=dataset.edge_dir,
-            )
-            degree_tensors = build_ppr_total_degree_tensors(
-                degree_tensors=raw_degree_tensors,
-                node_type_to_edge_types=node_type_to_edge_types,
-            )
-            logger.info(
-                f"Pre-computed total degree tensors for PPR sampling across "
-                f"{len(degree_tensors)} node types."
-            )
+            degree_tensors = dataset.degree_tensor
         else:
             degree_tensors = None
         return DistSamplingProducer(

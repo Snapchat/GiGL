@@ -17,7 +17,7 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
-from gigl.types.graph import is_label_edge_type
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
 # write metadata keys (f"{KEY}{repr(edge_type)}" → e.g. "ppr_edge_index.('user', 'to', 'story')")
@@ -26,101 +26,15 @@ from gigl.types.graph import is_label_edge_type
 PPR_EDGE_INDEX_METADATA_KEY = "ppr_edge_index."
 PPR_WEIGHT_METADATA_KEY = "ppr_weight."
 
-# Sentinel type names for homogeneous graphs.  The PPR algorithm uses
-# dict[NodeType, ...] internally for both homo and hetero graphs; these
-# sentinels let the homogeneous path reuse the same dict-based code.
-_PPR_HOMOGENEOUS_NODE_TYPE = "ppr_homogeneous_node_type"
+# Sentinel edge type for homogeneous graphs.  The PPR algorithm uses
+# dict[NodeType, ...] internally for both homo and hetero graphs; the
+# DEFAULT_HOMOGENEOUS_NODE_TYPE sentinel lets the homogeneous path reuse
+# the same dict-based code.
 _PPR_HOMOGENEOUS_EDGE_TYPE = (
-    _PPR_HOMOGENEOUS_NODE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     "to",
-    _PPR_HOMOGENEOUS_NODE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
-
-
-def build_ppr_node_type_to_edge_types(
-    is_homogeneous: bool,
-    edge_types: list[EdgeType],
-    edge_dir: str,
-) -> dict[NodeType, list[EdgeType]]:
-    """Build the node-type → edge-types mapping used by the PPR forward-push kernel.
-
-    For homogeneous graphs returns the singleton sentinel mapping.  For
-    heterogeneous graphs, groups non-label edge types by their anchor node type
-    (destination for ``edge_dir="in"``, source for ``edge_dir="out"``).
-
-    Args:
-        is_homogeneous: True if the graph has a single node/edge type.
-        edge_types: All edge types present in the graph (ignored when homogeneous).
-        edge_dir: Sampling direction — ``"in"`` or ``"out"``.
-
-    Returns:
-        Dict mapping each anchor NodeType to the list of EdgeTypes traversable
-        from it during a PPR walk.
-    """
-    if is_homogeneous:
-        return {_PPR_HOMOGENEOUS_NODE_TYPE: [_PPR_HOMOGENEOUS_EDGE_TYPE]}
-
-    node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(list)
-    for etype in edge_types:
-        if is_label_edge_type(etype):
-            continue
-        anchor_type = etype[-1] if edge_dir == "in" else etype[0]
-        node_type_to_edge_types[anchor_type].append(etype)
-    return dict(node_type_to_edge_types)
-
-
-def build_ppr_total_degree_tensors(
-    degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-    node_type_to_edge_types: dict[NodeType, list[EdgeType]],
-) -> dict[NodeType, torch.Tensor]:
-    """Pre-compute total-degree tensors for the PPR forward-push kernel.
-
-    For homogeneous graphs converts the single degree tensor to int16.
-    For heterogeneous graphs sums per-edge-type degrees into a per-node-type
-    total (capped at int16 max), padding shorter tensors with zeros where node
-    counts differ.
-
-    This function is intentionally standalone so it can be called once in the
-    parent process (and the result shared across workers) rather than redundantly
-    inside each worker's ``DistPPRNeighborSampler.__init__``.
-
-    Args:
-        degree_tensors: Per-edge-type degree tensors (homogeneous: single
-            ``torch.Tensor``; heterogeneous: ``dict[EdgeType, torch.Tensor]``).
-        node_type_to_edge_types: Mapping from anchor NodeType to the list of
-            EdgeTypes traversable from it, as returned by
-            :func:`build_ppr_node_type_to_edge_types`.
-
-    Returns:
-        Dict mapping NodeType to a 1-D total-degree tensor of shape
-        ``[num_nodes_of_that_type]`` with dtype ``torch.int16``, capped at
-        ``torch.iinfo(torch.int16).max``.
-
-    Raises:
-        ValueError: If a required edge type is missing from ``degree_tensors``.
-    """
-    _INT16_MAX = torch.iinfo(torch.int16).max
-    result: dict[NodeType, torch.Tensor] = {}
-
-    if isinstance(degree_tensors, torch.Tensor):
-        result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(torch.int16)
-    else:
-        for node_type, edge_types in node_type_to_edge_types.items():
-            max_len = 0
-            for et in edge_types:
-                if et not in degree_tensors:
-                    raise ValueError(
-                        f"Edge type {et} not found in degree tensors. "
-                        f"Available: {list(degree_tensors.keys())}"
-                    )
-                max_len = max(max_len, len(degree_tensors[et]))
-            summed = torch.zeros(max_len, dtype=torch.int64)
-            for et in edge_types:
-                et_degrees = degree_tensors[et]
-                summed[: len(et_degrees)] += et_degrees.to(torch.int64)
-            result[node_type] = summed.clamp(max=_INT16_MAX).to(torch.int16)
-
-    return result
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
@@ -210,7 +124,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
                 self._node_type_to_edge_types[anchor_type].append(etype)
         else:
-            self._node_type_to_edge_types[_PPR_HOMOGENEOUS_NODE_TYPE] = [
+            self._node_type_to_edge_types[DEFAULT_HOMOGENEOUS_NODE_TYPE] = [
                 _PPR_HOMOGENEOUS_EDGE_TYPE
             ]
             self._is_homogeneous = True
@@ -389,7 +303,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             valid_counts      = tensor([1,  3,   2,   0])
         """
         if seed_node_type is None:
-            seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
+            seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
 
         ppr_state = PPRForwardPush(
@@ -449,12 +363,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if self._is_homogeneous:
             assert (
                 len(ntype_to_flat_ids) == 1
-                and _PPR_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
+                and DEFAULT_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
             )
             return (
-                ntype_to_flat_ids[_PPR_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_flat_weights[_PPR_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_valid_counts[_PPR_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
             )
         else:
             return (
