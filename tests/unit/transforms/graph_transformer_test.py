@@ -654,7 +654,7 @@ class TestPyTorchTransformerIntegration(TestCase):
 
         # Check that gradients exist and are not NaN
         self.assertIsNotNone(sequences.grad)
-        assert sequences.grad is not None  # Type narrowing for mypy
+        assert sequences.grad is not None  # Type narrowing for the type checker
         self.assertFalse(torch.isnan(sequences.grad).any())
 
     def test_transformer_with_classification_head(self):

@@ -7,7 +7,7 @@ class FrozenDictTest(TestCase):
         frozen_dict: FrozenDict[int, int] = FrozenDict()
 
         def assign_dict_value():
-            frozen_dict[10] = 20  # type: ignore [index]
+            frozen_dict[10] = 20  # type: ignore[index]  # ty: ignore[invalid-assignment]
 
         self.assertRaises(Exception, assign_dict_value)
 

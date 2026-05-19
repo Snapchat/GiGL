@@ -1,4 +1,5 @@
 import concurrent
+import concurrent.futures
 from typing import List
 
 from google.cloud import bigquery

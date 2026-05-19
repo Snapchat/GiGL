@@ -17,6 +17,7 @@ dist/
 *.egg-info/
 miniconda/
 .mypy_cache/
+.ty/
 tools/
 .metals/
 .bloop/

@@ -76,9 +76,13 @@ class TFValueEncoder:
 
         # encode value
         if dtype.is_integer or dtype.is_bool:
-            tf_feature = TFValueEncoder.__int_values_to_tf_feature(value=value)
+            tf_feature = TFValueEncoder.__int_values_to_tf_feature(
+                value=value  # ty: ignore[invalid-argument-type]
+            )
         elif dtype.is_floating:
-            tf_feature = TFValueEncoder.__float_values_to_tf_feature(value=value)
+            tf_feature = TFValueEncoder.__float_values_to_tf_feature(
+                value=value  # ty: ignore[invalid-argument-type]
+            )
         else:
             tf_feature = TFValueEncoder.__bytes_values_to_tf_feature(value=value)
 

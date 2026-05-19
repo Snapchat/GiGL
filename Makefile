@@ -160,7 +160,7 @@ format_cpp:
 format: format_py format_cpp format_scala format_md
 
 type_check:
-	uv run mypy ${PYTHON_DIRS} --check-untyped-defs
+	uv run ty check ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
@@ -277,6 +277,14 @@ run_het_dblp_sup_gs_e2e_test:
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_gs_test"
+
+run_hom_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+run_hom_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
+run_hom_cora_snc_e2e_test:
+	uv run python tests/e2e_tests/e2e_test.py \
+		--compiled_pipeline_path=$(compiled_pipeline_path) \
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		--test_names="hom_cora_snc_test"
 
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline

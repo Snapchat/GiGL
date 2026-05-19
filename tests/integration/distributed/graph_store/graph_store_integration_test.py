@@ -111,13 +111,13 @@ def _assert_global_seed_coverage(
     Gathers seen and expected seeds from all ranks and verifies full coverage.
     """
     # Gather seen seeds from all ranks
-    all_seen: list[torch.Tensor] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
+    all_seen: list[torch.Tensor] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
     torch.distributed.all_gather_object(all_seen, _to_long_cpu(local_seen))
     globally_seen = _sorted_seed_tensor(_concat_seed_tensors(all_seen))
 
     # Gather expected seeds from all ranks. In graph-store mode, input sharding is
     # per compute process, not per compute node.
-    all_expected: list[torch.Tensor] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]
+    all_expected: list[torch.Tensor] = [None] * cluster_info.compute_cluster_world_size  # type: ignore[list-item]  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
     torch.distributed.all_gather_object(all_expected, _to_long_cpu(local_expected))
     globally_expected = _sorted_seed_tensor(_concat_seed_tensors(all_expected))
 

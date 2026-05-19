@@ -206,7 +206,7 @@ make unit_test_py PY_TEST_FILES="eval_metrics_test.py"
 # Runs just Scala unit tests
 make unit_test_scala
 
-# Run the python static type checker `mypy`
+# Run the python static type checker `ty`
 make type_check
 
 # Run all formatting/linting tests

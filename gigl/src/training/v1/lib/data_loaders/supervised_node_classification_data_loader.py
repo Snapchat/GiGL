@@ -196,7 +196,7 @@ class SupervisedNodeClassificationBatch:
                 iterable_dataset=_iterable_training_dataset
             )
         else:
-            iterable_training_dataset = _iterable_training_dataset
+            iterable_training_dataset = _iterable_training_dataset  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
 
         collate_fn = partial(
             SupervisedNodeClassificationBatch.collate_pyg_node_classification_minibatch,

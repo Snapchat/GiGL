@@ -102,20 +102,20 @@ def log_node_anchor_based_link_prediction_split_details(
     :return:
     """
     logger.info(
-        f"Train split: {train_split.graph.num_nodes} nodes, "  # type: ignore
-        f"{train_split.graph.num_edges} edges used in message passing."  # type: ignore
+        f"Train split: {train_split.graph.num_nodes} nodes, "
+        f"{train_split.graph.num_edges} edges used in message passing."
         f" ( {len(train_split.pos_edges)} + supervision edges, "
         f"{len(train_split.hard_neg_edges)} - supervision edges )"
     )
     logger.info(
-        f"Val split: {val_split.graph.num_nodes} nodes, "  # type: ignore
-        f"{val_split.graph.num_edges} edges used in message passing."  # type: ignore
+        f"Val split: {val_split.graph.num_nodes} nodes, "
+        f"{val_split.graph.num_edges} edges used in message passing."
         f" ( {len(val_split.pos_edges)} + supervision edges, "
         f"{len(val_split.hard_neg_edges)} - supervision edges )"
     )
     logger.info(
-        f"Test split: {test_split.graph.num_nodes} nodes, "  # type: ignore
-        f"{test_split.graph.num_edges} edges used in message passing."  # type: ignore
+        f"Test split: {test_split.graph.num_nodes} nodes, "
+        f"{test_split.graph.num_edges} edges used in message passing."
         f" ({len(test_split.pos_edges)} + supervision edges, "
         f"{len(test_split.hard_neg_edges)} - supervision edges )"
     )

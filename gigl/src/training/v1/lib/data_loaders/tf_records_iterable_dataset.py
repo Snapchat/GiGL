@@ -3,8 +3,8 @@ from typing import Callable, Generic, Iterable, Iterator, TypeVar
 import numpy as np
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
-import tensorflow_transform as tft
 import torch.utils.data
+from tensorflow_transform.tf_metadata import schema_utils
 
 from gigl.common import Uri
 from gigl.src.common.types.graph_data import NodeType
@@ -137,9 +137,7 @@ class CombinedIterableDatasets(torch.utils.data.IterableDataset, Generic[T]):
 def get_np_iterator_from_tfrecords(schema_path: Uri, tfrecord_files: list[str]):
     batch_size = 1
     schema = tfdv.load_schema_text(schema_path.uri)
-    feature_spec = tft.tf_metadata.schema_utils.schema_as_feature_spec(
-        schema
-    ).feature_spec
+    feature_spec = schema_utils.schema_as_feature_spec(schema).feature_spec
     dataset = (
         tf.data.TFRecordDataset(tfrecord_files)
         .map(lambda record: tf.io.parse_example(record, feature_spec))

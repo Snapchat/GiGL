@@ -1,6 +1,7 @@
 from typing import Tuple
 
 import absl
+import absl.logging
 import tensorflow as tf
 from tensorflow_data_validation import load_schema_text
 from tensorflow_metadata.proto.v0.schema_pb2 import Schema
