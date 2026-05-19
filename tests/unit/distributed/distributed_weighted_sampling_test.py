@@ -22,11 +22,18 @@ from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.networking import get_free_port
-from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
+)
+from tests.test_assets.distributed.bipartite_weight_graph import (
+    ITEM,
+    ITEM_TO_USER,
+    USER,
+    USER_TO_ITEM,
+    build_heterogeneous_bipartite_weight_graph,
+    build_homogeneous_bipartite_weight_graph,
 )
 from tests.test_assets.distributed.constants import (
     MOCKED_NUM_PARTITIONS,
@@ -43,189 +50,13 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
 from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
-_USER = NodeType("user")
-_ITEM = NodeType("item")
-_USER_TO_ITEM = EdgeType(_USER, Relation("to"), _ITEM)
-_ITEM_TO_USER = EdgeType(_ITEM, Relation("to"), _USER)
-
-
 # ---------------------------------------------------------------------------
 # Graph builders
 # ---------------------------------------------------------------------------
 
 
-def _build_homogeneous_bipartite_weight_graph() -> tuple[
-    PartitionOutput, int, int, int
-]:
-    """Build a homogeneous graph with hub, good, and bad nodes.
-
-    Graph structure:
-      - 10 hub nodes (0..9): used as seed nodes; feature value = 2.0
-      - 50 good nodes (10..59): reachable from hubs via weight=1 edges; feature = 1.0
-      - 40 bad nodes (60..99): reachable from hubs via weight=0 edges; feature = 0.0
-      - Each good node also has 5 outgoing weight=1 edges to nearby good nodes
-        (ring topology, for 2nd-hop sampling).
-
-    With weighted sampling only good nodes should ever appear as sampled
-    neighbors — weight=0 edges to bad nodes must never be traversed.
-
-    Returns:
-        (partition_output, n_hub, n_good, n_bad)
-    """
-    n_hub = 10
-    n_good = 50
-    n_bad = 40
-    n = n_hub + n_good + n_bad  # 100
-
-    hub_ids = torch.arange(n_hub)
-    good_ids = torch.arange(n_hub, n_hub + n_good)
-    bad_ids = torch.arange(n_hub + n_good, n)
-
-    # Hub → Good: weight=1
-    hub_good_src = hub_ids.repeat_interleave(n_good)
-    hub_good_dst = good_ids.repeat(n_hub)
-    hub_good_w = torch.ones(n_hub * n_good)
-
-    # Hub → Bad: weight=0
-    hub_bad_src = hub_ids.repeat_interleave(n_bad)
-    hub_bad_dst = bad_ids.repeat(n_hub)
-    hub_bad_w = torch.zeros(n_hub * n_bad)
-
-    # Good → Good: ring with 5 outgoing edges per node, weight=1 (2nd-hop targets)
-    connections_per_good = 5
-    good_src = good_ids.repeat_interleave(connections_per_good)
-    # Row i of [connections_per_good, n_good].T gives neighbors of good_ids[i]
-    good_dst = torch.stack(
-        [torch.roll(good_ids, -j) for j in range(1, connections_per_good + 1)]
-    ).T.reshape(-1)
-    good_w = torch.ones(n_good * connections_per_good)
-
-    edge_src = torch.cat([hub_good_src, hub_bad_src, good_src])
-    edge_dst = torch.cat([hub_good_dst, hub_bad_dst, good_dst])
-    weights = torch.cat([hub_good_w, hub_bad_w, good_w])
-    edge_index = torch.stack([edge_src, edge_dst])
-    n_edges = edge_src.shape[0]
-
-    # Feature encodes node type: hub=2.0, good=1.0, bad=0.0
-    node_feats = torch.cat(
-        [
-            torch.full((n_hub, 1), 2.0),
-            torch.full((n_good, 1), 1.0),
-            torch.full((n_bad, 1), 0.0),
-        ]
-    )
-
-    partition_output = PartitionOutput(
-        node_partition_book=torch.zeros(n),
-        edge_partition_book=torch.zeros(n_edges),
-        partitioned_edge_index=GraphPartitionData(
-            edge_index=edge_index,
-            edge_ids=None,
-            weights=weights,
-        ),
-        partitioned_node_features=FeaturePartitionData(
-            feats=node_feats,
-            ids=torch.arange(n),
-        ),
-        partitioned_edge_features=None,
-        partitioned_positive_labels=None,
-        partitioned_negative_labels=None,
-        partitioned_node_labels=None,
-    )
-    return partition_output, n_hub, n_good, n_bad
-
-
-def _build_heterogeneous_bipartite_weight_graph() -> tuple[
-    PartitionOutput, int, int, int
-]:
-    """Build a heterogeneous (user/item) graph with good and bad item nodes.
-
-    Graph structure:
-      - 10 user nodes (0..9): seed nodes; user feature = 2.0
-      - 60 item nodes total:
-          - Items 0..39: good, reachable from users via weight=1 edges; feature = 1.0
-          - Items 40..59: bad, reachable from users via weight=0 edges; feature = 0.0
-      - Good items also have weight=1 edges back to all users (for 2nd-hop).
-
-    With weighted sampling only good item nodes should ever appear as sampled
-    item neighbors.
-
-    Returns:
-        (partition_output, n_user, n_good_item, n_bad_item)
-    """
-    n_user = 10
-    n_good_item = 40
-    n_bad_item = 20
-    n_item = n_good_item + n_bad_item  # 60
-
-    user_ids = torch.arange(n_user)
-    good_item_ids = torch.arange(n_good_item)
-    bad_item_ids = torch.arange(n_good_item, n_item)
-
-    # User → Good Item: weight=1
-    u2gi_src = user_ids.repeat_interleave(n_good_item)
-    u2gi_dst = good_item_ids.repeat(n_user)
-    u2gi_w = torch.ones(n_user * n_good_item)
-
-    # User → Bad Item: weight=0
-    u2bi_src = user_ids.repeat_interleave(n_bad_item)
-    u2bi_dst = bad_item_ids.repeat(n_user)
-    u2bi_w = torch.zeros(n_user * n_bad_item)
-
-    # Good Item → User: weight=1 (2nd-hop back to users)
-    gi2u_src = good_item_ids.repeat_interleave(n_user)
-    gi2u_dst = user_ids.repeat(n_good_item)
-    gi2u_w = torch.ones(n_good_item * n_user)
-
-    u2i_src = torch.cat([u2gi_src, u2bi_src])
-    u2i_dst = torch.cat([u2gi_dst, u2bi_dst])
-    u2i_w = torch.cat([u2gi_w, u2bi_w])
-    n_u2i_edges = u2i_src.shape[0]
-
-    user_feats = torch.full((n_user, 1), 2.0)
-    # Item feature encodes type: good=1.0, bad=0.0
-    item_feats = torch.cat(
-        [
-            torch.full((n_good_item, 1), 1.0),
-            torch.full((n_bad_item, 1), 0.0),
-        ]
-    )
-
-    partition_output = PartitionOutput(
-        node_partition_book={
-            _USER: torch.zeros(n_user),
-            _ITEM: torch.zeros(n_item),
-        },
-        edge_partition_book={
-            _USER_TO_ITEM: torch.zeros(n_u2i_edges),
-            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0]),
-        },
-        partitioned_edge_index={
-            _USER_TO_ITEM: GraphPartitionData(
-                edge_index=torch.stack([u2i_src, u2i_dst]),
-                edge_ids=None,
-                weights=u2i_w,
-            ),
-            _ITEM_TO_USER: GraphPartitionData(
-                edge_index=torch.stack([gi2u_src, gi2u_dst]),
-                edge_ids=None,
-                weights=gi2u_w,
-            ),
-        },
-        partitioned_node_features={
-            _USER: FeaturePartitionData(feats=user_feats, ids=torch.arange(n_user)),
-            _ITEM: FeaturePartitionData(feats=item_feats, ids=torch.arange(n_item)),
-        },
-        partitioned_edge_features=None,
-        partitioned_positive_labels=None,
-        partitioned_negative_labels=None,
-        partitioned_node_labels=None,
-    )
-    return partition_output, n_user, n_good_item, n_bad_item
-
-
 def _build_heterogeneous_bipartite_partial_weight_graph() -> tuple[
-    PartitionOutput, int, int, int
+    PartitionOutput, int
 ]:
     """Same graph as _build_heterogeneous_bipartite_weight_graph but ITEM_TO_USER is unweighted.
 
@@ -268,35 +99,35 @@ def _build_heterogeneous_bipartite_partial_weight_graph() -> tuple[
 
     partition_output = PartitionOutput(
         node_partition_book={
-            _USER: torch.zeros(n_user),
-            _ITEM: torch.zeros(n_item),
+            USER: torch.zeros(n_user),
+            ITEM: torch.zeros(n_item),
         },
         edge_partition_book={
-            _USER_TO_ITEM: torch.zeros(n_u2i_edges),
-            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0]),
+            USER_TO_ITEM: torch.zeros(n_u2i_edges),
+            ITEM_TO_USER: torch.zeros(gi2u_src.shape[0]),
         },
         partitioned_edge_index={
-            _USER_TO_ITEM: GraphPartitionData(
+            USER_TO_ITEM: GraphPartitionData(
                 edge_index=torch.stack([u2i_src, u2i_dst]),
                 edge_ids=None,
                 weights=u2i_w,
             ),
-            _ITEM_TO_USER: GraphPartitionData(
+            ITEM_TO_USER: GraphPartitionData(
                 edge_index=torch.stack([gi2u_src, gi2u_dst]),
                 edge_ids=None,
                 weights=None,  # unweighted — samples uniformly
             ),
         },
         partitioned_node_features={
-            _USER: FeaturePartitionData(feats=user_feats, ids=torch.arange(n_user)),
-            _ITEM: FeaturePartitionData(feats=item_feats, ids=torch.arange(n_item)),
+            USER: FeaturePartitionData(feats=user_feats, ids=torch.arange(n_user)),
+            ITEM: FeaturePartitionData(feats=item_feats, ids=torch.arange(n_item)),
         },
         partitioned_edge_features=None,
         partitioned_positive_labels=None,
         partitioned_negative_labels=None,
         partitioned_node_labels=None,
     )
-    return partition_output, n_user, n_good_item, n_bad_item
+    return partition_output, n_user
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +186,7 @@ def _run_weighted_sampling_correctness_heterogeneous(
     )
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_USER, node_ids[_USER]),
+        input_nodes=(USER, node_ids[USER]),
         num_neighbors=[10, 5],
         with_weight=True,
         pin_memory_device=torch.device("cpu"),
@@ -363,8 +194,8 @@ def _run_weighted_sampling_correctness_heterogeneous(
     count = 0
     for datum in loader:
         assert isinstance(datum, HeteroData), f"Expected HeteroData, got {type(datum)}"
-        if _ITEM in datum.node_types:
-            item_x = datum[_ITEM].x
+        if ITEM in datum.node_types:
+            item_x = datum[ITEM].x
             assert item_x is not None, "Item features missing from sampled subgraph"
             bad_mask = item_x[:, 0] == 0.0
             assert not bad_mask.any(), (
@@ -802,7 +633,7 @@ class DistributedWeightedSamplingTest(TestCase):
         sampling.  Fanout [10, 5] samples fewer neighbors than available good ones,
         so the weighted sampler actively selects from the pool each hop.
         """
-        partition_output, n_hub, _, _ = _build_homogeneous_bipartite_weight_graph()
+        partition_output, n_hub = build_homogeneous_bipartite_weight_graph()
         assert isinstance(partition_output.partitioned_edge_index, GraphPartitionData)
         expected_weights = partition_output.partitioned_edge_index.weights
 
@@ -829,7 +660,7 @@ class DistributedWeightedSamplingTest(TestCase):
         Fanout [10, 5] is smaller than the 40 available good items, so the sampler
         actively selects.
         """
-        partition_output, n_user, _, _ = _build_heterogeneous_bipartite_weight_graph()
+        partition_output, n_user = build_heterogeneous_bipartite_weight_graph()
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
@@ -846,9 +677,7 @@ class DistributedWeightedSamplingTest(TestCase):
         Verifies that mixing weighted and unweighted edge types in one heterogeneous
         graph does not crash and that weighted edges still behave correctly.
         """
-        partition_output, n_user, _, _ = (
-            _build_heterogeneous_bipartite_partial_weight_graph()
-        )
+        partition_output, n_user = _build_heterogeneous_bipartite_partial_weight_graph()
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
