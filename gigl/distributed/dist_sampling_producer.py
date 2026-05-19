@@ -103,6 +103,7 @@ def _sampling_worker_loop(
             sampler_options=sampler_options,
             degree_tensors=degree_tensors,
             current_device=current_device,
+            edge_weights=data.edge_weights,
         )
         dist_sampler.start_loop()
 

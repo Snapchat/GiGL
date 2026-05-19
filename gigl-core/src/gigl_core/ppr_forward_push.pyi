@@ -14,7 +14,9 @@ class PPRForwardPush:
     def drain_queue(self) -> dict[int, torch.Tensor] | None: ...
     def push_residuals(
         self,
-        fetched_by_etype_id: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        fetched_by_etype_id: dict[
+            int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+        ],
     ) -> None: ...
     def extract_top_k(
         self, max_ppr_nodes: int

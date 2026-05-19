@@ -48,6 +48,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     scores are approximated here using the Forward Push algorithm (Andersen et
     al., 2006).
 
+    **Weighted PPR**: when ``edge_weights`` is provided, neighbor fetching during
+    traversal always uses uniform sampling (all neighbors are fetched without
+    weight-biased selection).  The weighting is applied exclusively in how the PPR
+    residual is spread: each neighbor receives residual proportional to its edge
+    weight rather than an equal share.  This is the correct formulation — using
+    weighted sampling during traversal would double-count high-weight edges (once
+    by over-representing them in the fetch and again by giving them more residual).
+
     This sampler supports both homogeneous and heterogeneous graphs. For heterogeneous graphs,
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
@@ -90,6 +98,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         total_degree_dtype: torch.dtype = torch.int32,
         degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
+        edge_weights: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -98,6 +109,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
+        self._edge_weights = edge_weights
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -251,7 +263,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         nodes_by_etype_id: dict[int, torch.Tensor],
         device: torch.device,
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
         Issues one ``_sample_one_hop`` call per edge type (not per node), so all
@@ -265,11 +277,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             device: Torch device for intermediate tensor creation.
 
         Returns:
-            Dict mapping etype_id to ``(node_ids, flat_neighbors, counts)`` as
-            int64 tensors, ready to pass directly to ``push_residuals``.
+            Dict mapping etype_id to ``(node_ids, flat_neighbors, counts, flat_weights)``
+            as tensors, ready to pass directly to ``push_residuals``.
             ``flat_neighbors`` is the flat concatenation of all neighbor lists
             for that edge type; ``counts[i]`` is the neighbor count for
-            ``node_ids[i]``.
+            ``node_ids[i]``.  ``flat_weights`` is a float64 tensor of the same
+            shape as ``flat_neighbors`` in weighted mode, or an empty tensor in
+            uniform mode.
 
         Example::
 
@@ -279,8 +293,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             }
             # Might return (neighbor lists depend on graph structure):
             {
-                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1])),
-                5: (tensor([7]),    tensor([0, 3]),        tensor([2])),
+                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1]), tensor([])),
+                5: (tensor([7]),    tensor([0, 3]),        tensor([2]),    tensor([])),
             }
         """
         # Fire all per-edge-type RPC calls concurrently.  Each _sample_one_hop
@@ -299,10 +313,36 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 )
             )
         outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
-        return {
-            eid: (nodes_by_etype_id[eid], output.nbr, output.nbr_num)
-            for eid, output in zip(eids, outputs)
-        }
+
+        _empty_weights = torch.empty(0, dtype=torch.float64)
+
+        result: dict[
+            int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+        ] = {}
+        for eid, output in zip(eids, outputs):
+            if self._edge_weights is not None:
+                assert output.edge is not None, (
+                    "output.edge must be set when edge_weights is provided; "
+                    "ensure with_edge=True in SamplingConfig (hardcoded in create_sampling_config)."
+                )
+                if self._is_homogeneous:
+                    assert isinstance(self._edge_weights, torch.Tensor)
+                    flat_weights = self._edge_weights[output.edge].to(torch.float64)
+                else:
+                    assert isinstance(self._edge_weights, dict)
+                    etype = self._etype_id_to_etype[eid]
+                    flat_weights = self._edge_weights[etype][output.edge].to(
+                        torch.float64
+                    )
+            else:
+                flat_weights = _empty_weights
+            result[eid] = (
+                nodes_by_etype_id[eid],
+                output.nbr,
+                output.nbr_num,
+                flat_weights,
+            )
+        return result
 
     async def _compute_ppr_scores(
         self,

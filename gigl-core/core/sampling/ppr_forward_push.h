@@ -52,9 +52,12 @@ class PPRForwardPush {
     std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueue();
 
     // Push residuals given fetched neighbor data.
-    // fetchedByEtypeId: {etype_id: (node_ids[N], flat_nbrs[sum(counts)], counts[N])}
+    // fetchedByEtypeId: {etype_id: (node_ids[N], flat_nbrs[sum(counts)], counts[N], flat_weights[sum(counts)])}
+    // flat_weights is empty (numel()==0) for uniform-residual mode; non-empty for
+    // weight-proportional mode.  _hasWeights is latched true on the first call with a
+    // non-empty flat_weights and never reset within one PPRForwardPush lifetime.
     void pushResiduals(const std::unordered_map<
-                       int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>&
+                       int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>>&
                            fetchedByEtypeId);
 
     // Return top-k PPR nodes per seed per node type.
@@ -102,6 +105,14 @@ class PPRForwardPush {
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
     std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
+
+    // True once any pushResiduals call receives a non-empty flat_weights tensor.
+    // Latched true for the object lifetime; never reset.
+    bool _hasWeights{false};
+
+    // Per-edge weights parallel to _neighborCache: _weightCache[packKey(node, etype)][i]
+    // is the weight of the i-th cached neighbor.  Only populated in weighted mode.
+    std::unordered_map<uint64_t, std::vector<double>> _weightCache;
 
 };
 
