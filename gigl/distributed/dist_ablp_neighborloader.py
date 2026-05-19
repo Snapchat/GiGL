@@ -91,6 +91,7 @@ class DistABLPLoader(BaseDistLoader):
         num_cpu_threads: Optional[int] = None,
         shuffle: bool = False,
         drop_last: bool = False,
+        with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         context: Optional[DistributedContext] = None,  # TODO: (svij) Deprecate this
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
@@ -201,6 +202,10 @@ class DistABLPLoader(BaseDistLoader):
                 Defaults to `2` if set to `None` when using cpu training/inference.
             shuffle (bool): Whether to shuffle the input nodes. (default: ``False``).
             drop_last (bool): Whether to drop the last incomplete batch. (default: ``False``).
+            with_weight (bool): Whether to use edge weights for neighbor sampling.
+                Requires edge weights to have been provided via
+                ``build_dataset(weight_edge_feat_name=...)`` during dataset construction.
+                Defaults to ``False``.
             sampler_options (Optional[SamplerOptions]): Controls which sampler class is
                 instantiated. Defaults to `KHopNeighborSamplerOptions`, which will use the num_neighbors argument
                 to instantiate the sampler.
@@ -260,6 +265,10 @@ class DistABLPLoader(BaseDistLoader):
             context, local_process_rank, local_process_world_size
         )
         del context, local_process_rank, local_process_world_size
+
+        BaseDistLoader.validate_for_weighted_sampling(
+            with_weight, dataset, sampler_options
+        )
 
         device = (
             pin_memory_device
@@ -349,6 +358,7 @@ class DistABLPLoader(BaseDistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
+            with_weight=with_weight,
         )
 
         producer: Optional[DistSamplingProducer] = None
