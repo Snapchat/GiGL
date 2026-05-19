@@ -74,8 +74,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
-        degree_tensors: Pre-computed total-degree tensors (int16, capped at
-            int16 max), keyed by NodeType.  Must be pre-computed by the caller
+        degree_tensors: Pre-computed total-degree tensors (int32), keyed by NodeType.
+            Must be pre-computed by the caller
             (e.g. via :func:`build_ppr_total_degree_tensors`) so that workers
             share a single allocation rather than recomputing per-worker.
     """
@@ -180,7 +180,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         # Degree tensors indexed by ntype_id.  Destination-only types get an empty
         # tensor; the C++ kernel returns 0 for those, matching _get_total_degree.
         self._degree_tensors_for_cpp: list[torch.Tensor] = [
-            self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int16))
+            self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
             for nt in all_node_types
         ]
 

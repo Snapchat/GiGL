@@ -65,9 +65,8 @@ def compute_and_broadcast_degree_tensor(
     Returns:
         dict[NodeType, torch.Tensor]: Aggregated degree tensors keyed by node
             type.  For homogeneous graphs the single entry uses
-            ``DEFAULT_HOMOGENEOUS_NODE_TYPE`` as its key.  Values are int16
-            tensors of shape ``[num_nodes_of_that_type]``, capped at
-            ``torch.iinfo(torch.int16).max``.
+            ``DEFAULT_HOMOGENEOUS_NODE_TYPE`` as its key.  Values are int32
+            tensors of shape ``[num_nodes_of_that_type]``.
 
     Raises:
         RuntimeError: If torch.distributed is not initialized.
@@ -97,17 +96,16 @@ def compute_and_broadcast_degree_tensor(
                 logger.warning(
                     f"Topology/indptr not available for edge type {edge_type}, using empty tensor."
                 )
-                degrees = torch.empty(0, dtype=torch.int16)
+                degrees = torch.empty(0, dtype=torch.int32)
             else:
                 degrees = _compute_degrees_from_indptr(topo.indptr)
 
             if anchor_type in local_dict:
-                # Accumulate in int64 to avoid overflow, clamp back to int16
                 existing = local_dict[anchor_type]
                 max_len = max(len(existing), len(degrees))
                 summed = _pad_to_size(existing, max_len).to(torch.int64)
                 summed[: len(degrees)] += degrees.to(torch.int64)
-                local_dict[anchor_type] = _clamp_to_int16(summed)
+                local_dict[anchor_type] = summed.to(torch.int32)
             else:
                 local_dict[anchor_type] = degrees
 
@@ -139,15 +137,9 @@ def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
     return torch.cat([tensor, padding])
 
 
-def _clamp_to_int16(tensor: torch.Tensor) -> torch.Tensor:
-    """Clamp tensor values to int16 max and convert dtype."""
-    max_int16 = torch.iinfo(torch.int16).max
-    return tensor.clamp(max=max_int16).to(torch.int16)
-
-
 def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     """Compute degrees from CSR row pointers: degree[i] = indptr[i+1] - indptr[i]."""
-    return (indptr[1:] - indptr[:-1]).to(torch.int16)
+    return (indptr[1:] - indptr[:-1]).to(torch.int32)
 
 
 def _all_reduce_degrees(
@@ -209,7 +201,7 @@ def _all_reduce_degrees(
         padded = _pad_to_size(tensor, max_size).to(torch.int64).to(device)
         torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
-        return _clamp_to_int16((padded // local_world_size).cpu())
+        return (padded // local_world_size).to(torch.int32).cpu()
 
     result: dict[NodeType, torch.Tensor] = {}
     for node_type in sorted(local_degrees.keys()):
