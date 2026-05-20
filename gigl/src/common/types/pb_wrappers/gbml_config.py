@@ -104,24 +104,30 @@ class GbmlConfigPbWrapper:
                 self,
                 "_node_type_to_feature_dim_map",
                 {
-                    graph_metadata.condensed_node_type_to_node_type_map[c]: d
-                    for c, d in preprocessed_metadata.condensed_node_type_to_feature_dim_map.items()
+                    graph_metadata.condensed_node_type_to_node_type_map[
+                        condensed_node_type
+                    ]: feature_dim
+                    for condensed_node_type, feature_dim in preprocessed_metadata.condensed_node_type_to_feature_dim_map.items()
                 },
             )
             object.__setattr__(
                 self,
                 "_node_type_to_feature_schema_map",
                 {
-                    graph_metadata.condensed_node_type_to_node_type_map[c]: s
-                    for c, s in preprocessed_metadata.condensed_node_type_to_feature_schema_map.items()
+                    graph_metadata.condensed_node_type_to_node_type_map[
+                        condensed_node_type
+                    ]: feature_schema
+                    for condensed_node_type, feature_schema in preprocessed_metadata.condensed_node_type_to_feature_schema_map.items()
                 },
             )
             object.__setattr__(
                 self,
                 "_edge_type_to_feature_dim_map",
                 {
-                    graph_metadata.condensed_edge_type_to_edge_type_map[c]: d
-                    for c, d in preprocessed_metadata.condensed_edge_type_to_feature_dim_map.items()
+                    graph_metadata.condensed_edge_type_to_edge_type_map[
+                        condensed_edge_type
+                    ]: feature_dim
+                    for condensed_edge_type, feature_dim in preprocessed_metadata.condensed_edge_type_to_feature_dim_map.items()
                 },
             )
         # Populate the _flattened_graph_metadata_pb_wrapper field
