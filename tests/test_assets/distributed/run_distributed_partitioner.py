@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type, Union
+from typing import Optional, Type, Union
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -19,6 +19,9 @@ class InputDataStrategy(Enum):
     REGISTER_ALL_ENTITIES_SEPARATELY = "REGISTER_ALL_ENTITIES_SEPARATELY"
     REGISTER_ALL_ENTITIES_TOGETHER = "REGISTER_ALL_ENTITIES_TOGETHER"
     REGISTER_MINIMAL_ENTITIES_SEPARATELY = "REGISTER_MINIMAL_ENTITIES_SEPARATELY"
+    REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES = (
+        "REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES"
+    )
 
 
 def run_distributed_partitioner(
@@ -31,6 +34,9 @@ def run_distributed_partitioner(
     master_port: int,
     input_data_strategy: InputDataStrategy,
     partitioner_class: Type[DistPartitioner],
+    rank_to_edge_weights: Optional[
+        dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
+    ] = None,
 ) -> None:
     """
     Runs the distributed partitioner on a specific rank.
@@ -44,6 +50,7 @@ def run_distributed_partitioner(
         master_port (int): Master port for initializing rpc for partitioning
         input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
         partitioner_class (Type[DistPartitioner]): The class to use for partitioning
+        rank_to_edge_weights (Optional[dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]]): Optional mapping of rank to 1D edge weight tensor (or dict per EdgeType for heterogeneous). Only supported with REGISTER_ALL_ENTITIES_SEPARATELY strategy.
     """
 
     input_graph = rank_to_input_graph[rank]
@@ -78,7 +85,10 @@ def run_distributed_partitioner(
     init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
     dist_partitioner: DistPartitioner
 
-    if input_data_strategy == InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY:
+    if input_data_strategy in (
+        InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
+        InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
+    ):
         dist_partitioner = partitioner_class(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
         )
@@ -88,9 +98,14 @@ def run_distributed_partitioner(
         output_node_partition_book = dist_partitioner.partition_node()
 
         dist_partitioner.register_edge_index(edge_index=edge_index)
-        dist_partitioner.register_edge_features(edge_features=edge_features)
         del edge_index
+        if input_data_strategy == InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY:
+            dist_partitioner.register_edge_features(edge_features=edge_features)
         del edge_features
+        if rank_to_edge_weights is not None and rank in rank_to_edge_weights:
+            dist_partitioner.register_edge_weights(
+                edge_weights=rank_to_edge_weights[rank]
+            )
         (
             output_edge_index,
             output_edge_features,

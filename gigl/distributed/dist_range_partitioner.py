@@ -217,21 +217,41 @@ class DistRangePartitioner(DistPartitioner):
         )
 
         edge_index = self._edge_index[edge_type]
+        has_edge_feats = self._edge_feat is not None and edge_type in self._edge_feat
+        has_edge_weights = (
+            self._edge_weights is not None and edge_type in self._edge_weights
+        )
 
-        input_data: tuple[torch.Tensor, ...]
-
-        if self._edge_feat is None or edge_type not in self._edge_feat:
+        if not has_edge_feats:
             logger.info(
                 f"No edge features detected for edge type {edge_type}, will only partition edge indices for this edge type."
             )
-            edge_feat = None
-            edge_feat_dim = None
-            input_data = (edge_index[0], edge_index[1])
-        else:
-            assert self._edge_feat_dim is not None and edge_type in self._edge_feat_dim
+
+        edge_feat: Optional[torch.Tensor] = None
+        edge_feat_dim: Optional[int] = None
+        edge_weights_tensor: Optional[torch.Tensor] = None
+
+        if has_edge_feats:
+            assert self._edge_feat is not None and self._edge_feat_dim is not None
+            assert edge_type in self._edge_feat_dim
             edge_feat = self._edge_feat[edge_type]
             edge_feat_dim = self._edge_feat_dim[edge_type]
-            input_data = (edge_index[0], edge_index[1], edge_feat)
+        if has_edge_weights:
+            assert self._edge_weights is not None
+            edge_weights_tensor = self._edge_weights[edge_type]
+
+        # Build input_data tuple: (src, dst[, feat][, weights])
+        # Track the index of each optional tensor so we can unpack res_list correctly.
+        input_parts: list[torch.Tensor] = [edge_index[0], edge_index[1]]
+        feat_idx: Optional[int] = None
+        weight_idx: Optional[int] = None
+        if edge_feat is not None:
+            feat_idx = len(input_parts)
+            input_parts.append(edge_feat)
+        if edge_weights_tensor is not None:
+            weight_idx = len(input_parts)
+            input_parts.append(edge_weights_tensor)
+        input_data: tuple[torch.Tensor, ...] = tuple(input_parts)
 
         if self._should_assign_edges_by_src_node:
             target_node_partition_book = node_partition_book[edge_type.src_node_type]
@@ -249,10 +269,13 @@ class DistRangePartitioner(DistPartitioner):
             partition_function=edge_partition_fn,
         )
 
-        del input_data, edge_index, target_indices, edge_feat
+        del input_data, edge_index, target_indices, edge_feat, edge_weights_tensor
         del self._edge_index[edge_type]
         if self._edge_feat is not None and edge_type in self._edge_feat:
-            del self._edge_feat[edge_type]
+            assert self._edge_feat_dim is not None
+            del self._edge_feat[edge_type], self._edge_feat_dim[edge_type]
+        if self._edge_weights is not None and edge_type in self._edge_weights:
+            del self._edge_weights[edge_type]
 
         # We check if edge_index or edge_feat dict is empty after deleting the tensor. If so, we set these fields to None.
         if not self._edge_index:
@@ -260,11 +283,17 @@ class DistRangePartitioner(DistPartitioner):
         if not self._edge_feat and not self._edge_feat_dim:
             self._edge_feat = None
             self._edge_feat_dim = None
+        if self._edge_weights is not None and not self._edge_weights:
+            self._edge_weights = None
 
         gc.collect()
 
         if len(res_list) == 0:
             partitioned_edge_index = torch.empty((2, 0))
+            partitioned_edge_features = (
+                torch.empty(0, edge_feat_dim) if edge_feat_dim is not None else None
+            )
+            partitioned_weights = torch.empty(0) if has_edge_weights else None
         else:
             partitioned_edge_index = torch.stack(
                 (
@@ -273,19 +302,22 @@ class DistRangePartitioner(DistPartitioner):
                 ),
                 dim=0,
             )
-
-        if edge_feat_dim is not None:
-            if len(res_list) == 0:
-                partitioned_edge_features = torch.empty(0, edge_feat_dim)
-            else:
-                partitioned_edge_features = torch.cat([r[2] for r in res_list])
+            partitioned_edge_features = (
+                torch.cat([r[feat_idx] for r in res_list])
+                if feat_idx is not None
+                else None
+            )
+            partitioned_weights = (
+                torch.cat([r[weight_idx] for r in res_list])
+                if weight_idx is not None
+                else None
+            )
 
         res_list.clear()
-
         gc.collect()
 
-        # Generating edge partition book
-
+        # Generate range-based edge partition book and infer edge IDs.
+        # Only needed when edge features are present — weights use positional IDs.
         num_edges_on_each_rank: list[tuple[int, int]] = sorted(
             all_gather((self._rank, partitioned_edge_index.size(1))).values(),
             key=lambda x: x[0],
@@ -304,10 +336,11 @@ class DistRangePartitioner(DistPartitioner):
             partitioned_edge_ids = get_ids_on_rank(
                 partition_book=edge_partition_book, rank=self._rank
             )
-
+            assert partitioned_edge_features is not None
             current_graph_part = GraphPartitionData(
                 edge_index=partitioned_edge_index,
                 edge_ids=partitioned_edge_ids,
+                weights=partitioned_weights,
             )
             current_feat_part = FeaturePartitionData(
                 feats=partitioned_edge_features, ids=None
@@ -320,6 +353,7 @@ class DistRangePartitioner(DistPartitioner):
             current_graph_part = GraphPartitionData(
                 edge_index=partitioned_edge_index,
                 edge_ids=None,
+                weights=partitioned_weights,
             )
             edge_partition_book = None
 
