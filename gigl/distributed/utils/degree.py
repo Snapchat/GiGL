@@ -5,9 +5,8 @@ This module provides functions to compute node out-degrees from graph partitions
 and aggregate them across distributed machines. Degrees are computed from the
 CSR (Compressed Sparse Row) topology stored in GraphLearn-Torch Graph objects.
 
-Degrees are accumulated per anchor node type (summing across all edge types
-incident to that node type) before the distributed all-reduce, so callers
-receive ``dict[NodeType, torch.Tensor]`` directly with no further conversion.
+Note: Degree tensors are not moved to shared memory and may be duplicated across
+processes on the same machine.
 
 Requirements
 ============
@@ -28,28 +27,24 @@ from typing import Union
 
 import torch
 from graphlearn_torch.data import Graph
-from graphlearn_torch.typing import NodeType
 from torch_geometric.typing import EdgeType
 
 from gigl.common.logger import Logger
 from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
+from gigl.types.graph import is_label_edge_type
 
 logger = Logger()
 
 
 def compute_and_broadcast_degree_tensor(
     graph: Union[Graph, dict[EdgeType, Graph]],
-    edge_dir: str,
-) -> dict[NodeType, torch.Tensor]:
-    """Compute node degrees from a graph and aggregate across all machines.
+) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+    """
+    Compute node degrees from a graph and aggregate across all machines.
 
-    For each non-label edge type, degrees are derived from the CSR row pointers
-    (indptr).  For heterogeneous graphs, degrees are summed across all edge types
-    incident to each anchor node type **locally** before the all-reduce, so the
-    per-edge-type tensor is only a transient intermediate and is never stored,
-    returned, or transmitted over RPC.
+    Computes degrees from the CSR row pointers (indptr) and performs all-reduce
+    to aggregate across ranks.
 
     Over-counting correction (for processes sharing the same data) is handled
     automatically by detecting the distributed topology.
@@ -57,17 +52,13 @@ def compute_and_broadcast_degree_tensor(
     Args:
         graph: A Graph (homogeneous) or dict[EdgeType, Graph] (heterogeneous).
             For heterogeneous graphs, label edge types are automatically excluded
-            — they are supervision edges and should not contribute to node degree
-            for graph traversal algorithms like PPR.
-        edge_dir: Sampling direction — ``"in"`` or ``"out"``.  Determines which
-            end of each edge is the anchor node type for degree accumulation.
+            from the computation — they are supervision edges and should not
+            contribute to node degree for graph traversal algorithms like PPR.
 
     Returns:
-        dict[NodeType, torch.Tensor]: Aggregated degree tensors keyed by node
-            type.  For homogeneous graphs the single entry uses
-            ``DEFAULT_HOMOGENEOUS_NODE_TYPE`` as its key.  Values are int16
-            tensors of shape ``[num_nodes_of_that_type]``, capped at
-            ``torch.iinfo(torch.int16).max``.
+        Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensors.
+            - For homogeneous graphs: A tensor of shape [num_nodes].
+            - For heterogeneous graphs: A dict mapping non-label EdgeType to degree tensors.
 
     Raises:
         RuntimeError: If torch.distributed is not initialized.
@@ -78,51 +69,52 @@ def compute_and_broadcast_degree_tensor(
             "compute_and_broadcast_degree_tensor requires torch.distributed to be initialized."
         )
 
-    local_dict: dict[NodeType, torch.Tensor] = {}
-
+    # Compute local degrees from graph topology
     if isinstance(graph, Graph):
         topo = graph.topo
         if topo is None or topo.indptr is None:
             raise ValueError("Topology/indptr not available for graph.")
-        local_dict[DEFAULT_HOMOGENEOUS_NODE_TYPE] = _compute_degrees_from_indptr(
-            topo.indptr
+        local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
+            _compute_degrees_from_indptr(topo.indptr)
         )
     else:
+        local_dict: dict[EdgeType, torch.Tensor] = {}
         for edge_type, edge_graph in graph.items():
+            # Label edge types are supervision edges and should not contribute
+            # to node degree for graph traversal algorithms like PPR.
             if is_label_edge_type(edge_type):
                 continue
-            anchor_type: NodeType = edge_type[-1] if edge_dir == "in" else edge_type[0]
             topo = edge_graph.topo
             if topo is None or topo.indptr is None:
                 logger.warning(
                     f"Topology/indptr not available for edge type {edge_type}, using empty tensor."
                 )
-                degrees = torch.empty(0, dtype=torch.int16)
+                local_dict[edge_type] = torch.empty(0, dtype=torch.int16)
             else:
-                degrees = _compute_degrees_from_indptr(topo.indptr)
+                local_dict[edge_type] = _compute_degrees_from_indptr(topo.indptr)
+        local_degrees = local_dict
 
-            if anchor_type in local_dict:
-                # Accumulate in int64 to avoid overflow, clamp back to int16
-                existing = local_dict[anchor_type]
-                max_len = max(len(existing), len(degrees))
-                summed = _pad_to_size(existing, max_len).to(torch.int64)
-                summed[: len(degrees)] += degrees.to(torch.int64)
-                local_dict[anchor_type] = _clamp_to_int16(summed)
-            else:
-                local_dict[anchor_type] = degrees
+    # All-reduce across ranks (over-counting correction handled internally)
+    result = _all_reduce_degrees(local_degrees)
 
-    result = _all_reduce_degrees(local_dict)
-
-    for node_type, degrees in result.items():
-        if degrees.numel() > 0:
+    # Log results
+    if isinstance(result, torch.Tensor):
+        if result.numel() > 0:
             logger.info(
-                f"{node_type}: {degrees.size(0)} nodes, "
-                f"max={degrees.max().item()}, min={degrees.min().item()}"
+                f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
             )
         else:
-            logger.info(
-                f"Graph contained 0 nodes for node type {node_type} when computing degrees"
-            )
+            logger.info("Graph contained 0 nodes when computing degrees")
+    else:
+        for edge_type, degrees in result.items():
+            if degrees.numel() > 0:
+                logger.info(
+                    f"{edge_type}: {degrees.size(0)} nodes, max={degrees.max().item()}, min={degrees.min().item()}"
+                )
+            else:
+                logger.info(
+                    f"Graph contained 0 nodes for edge type {edge_type} when computing degrees"
+                )
 
     return result
 
@@ -151,19 +143,21 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
 
 
 def _all_reduce_degrees(
-    local_degrees: dict[NodeType, torch.Tensor],
-) -> dict[NodeType, torch.Tensor]:
-    """All-reduce degree tensors across ranks.
+    local_degrees: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+    """All-reduce degree tensors across ranks, handling both homogeneous and heterogeneous cases.
 
-    Moves tensors to GPU for the all-reduce if using NCCL backend (which
-    requires CUDA), otherwise keeps tensors on CPU (for Gloo backend).
+    For heterogeneous graphs, iterates over the edge types in local_degrees. All partitions
+    are expected to have entries for all edge types (even if some have empty tensors).
+
+    Moves tensors to GPU for the all-reduce if using NCCL backend (which requires CUDA),
+    otherwise keeps tensors on CPU (for Gloo backend).
 
     Over-counting correction:
-        In distributed training, multiple processes on the same machine often
-        share the same graph partition data (via shared memory). When we
-        all-reduce degrees, each process contributes its "local" degrees — but
-        if 4 processes on one machine all read the same partition, that
-        partition's degrees get summed 4 times instead of 1.
+        In distributed training, multiple processes on the same machine often share the
+        same graph partition data (via shared memory). When we all-reduce degrees, each
+        process contributes its "local" degrees - but if 4 processes on one machine all
+        read the same partition, that partition's degrees get summed 4 times instead of 1.
 
         Example: Machine A has 2 processes sharing partition with degrees [3, 5, 2].
                  Machine B has 2 processes sharing partition with degrees [1, 4, 6].
@@ -174,16 +168,16 @@ def _all_reduce_degrees(
                  With correction: divide by local_world_size (2 per machine)
                                   = [4, 9, 8]  (correct: [3+1, 5+4, 2+6])
 
-        This function detects how many processes share the same machine by
-        comparing IP addresses, then divides by that count to correct the
-        over-counting.
+        This function detects how many processes share the same machine by comparing
+        IP addresses, then divides by that count to correct the over-counting.
 
     Args:
-        local_degrees: Dict mapping NodeType to local degree tensors.
-            All partitions must have entries for all node types.
+        local_degrees: Either a single tensor (homogeneous) or dict mapping EdgeType
+            to tensors (heterogeneous). For heterogeneous graphs, all partitions must
+            have entries for all edge types.
 
     Returns:
-        Aggregated degree tensors keyed by NodeType.
+        Aggregated degree tensors in the same format as input.
 
     Raises:
         RuntimeError: If torch.distributed is not initialized.
@@ -193,25 +187,38 @@ def _all_reduce_degrees(
             "_all_reduce_degrees requires torch.distributed to be initialized."
         )
 
+    # Compute local_world_size: number of processes on the same machine sharing data
     all_ips = get_internal_ip_from_all_ranks()
     my_rank = torch.distributed.get_rank()
     my_ip = all_ips[my_rank]
     local_world_size = Counter(all_ips)[my_ip]
 
+    # NCCL backend requires CUDA tensors; Gloo works with CPU
     device = get_device_from_process_group()
 
     def reduce_tensor(tensor: torch.Tensor) -> torch.Tensor:
         """All-reduce a single tensor with size sync and over-counting correction."""
+        # Synchronize max size across all ranks
         local_size = torch.tensor([tensor.size(0)], dtype=torch.long, device=device)
         torch.distributed.all_reduce(local_size, op=torch.distributed.ReduceOp.MAX)
         max_size = int(local_size.item())
 
+        # Pad, convert to int64 (all_reduce doesn't support int16), move to device
         padded = _pad_to_size(tensor, max_size).to(torch.int64).to(device)
         torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
+        # Correct for over-counting, move back to CPU, and clamp to int16
+        # TODO (mkolodner-sc): Potentially want to paramaterize this in the future if we want degrees higher than the int16 max.
         return _clamp_to_int16((padded // local_world_size).cpu())
 
-    result: dict[NodeType, torch.Tensor] = {}
-    for node_type in sorted(local_degrees.keys()):
-        result[node_type] = reduce_tensor(local_degrees[node_type])
+    # Homogeneous case
+    if isinstance(local_degrees, torch.Tensor):
+        return reduce_tensor(local_degrees)
+
+    # Heterogeneous case: all-reduce each edge type
+    # Sort edge types for deterministic ordering across ranks
+    result: dict[EdgeType, torch.Tensor] = {}
+    for edge_type in sorted(local_degrees.keys()):
+        result[edge_type] = reduce_tensor(local_degrees[edge_type])
+
     return result

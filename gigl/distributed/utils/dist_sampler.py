@@ -10,7 +10,7 @@ from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
 )
 from graphlearn_torch.sampler import EdgeSamplerInput, NodeSamplerInput, SamplingConfig
-from graphlearn_torch.typing import NodeType
+from graphlearn_torch.typing import EdgeType
 
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
@@ -35,7 +35,7 @@ def create_dist_sampler(
     worker_options: Union[MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions],
     channel: ChannelBase,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     current_device: torch.device,
 ) -> SamplerRuntime:
     """Create a GiGL sampler runtime for one channel on one worker.
@@ -84,6 +84,7 @@ def create_dist_sampler(
             max_ppr_nodes=sampler_options.max_ppr_nodes,
             max_fetch_iterations=sampler_options.max_fetch_iterations,
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
+            total_degree_dtype=sampler_options.total_degree_dtype,
             degree_tensors=degree_tensors,
         )
     else:

@@ -660,6 +660,11 @@ class GraphTransformerEncoder(nn.Module):
                 num_heads,
                 bias=False,
             )
+            self._pairwise_nonmissing_attention_bias = nn.Parameter(
+                torch.zeros(num_heads)
+            )
+        else:
+            self.register_parameter("_pairwise_nonmissing_attention_bias", None)
 
         # Transformer encoder layers
         # Default feedforward ratio: 4.0 for standard activations, 8/3 for XGLU
@@ -981,6 +986,7 @@ class GraphTransformerEncoder(nn.Module):
             attention_bias_data: Dictionary containing optional PE tensors:
                 - "anchor_bias": (batch, seq, num_anchor_attrs) or None
                 - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
+                - "pairwise_nonmissing_mask": (batch, seq, seq) or None
 
         Returns:
             Combined attention bias tensor of shape (batch_size, num_heads, seq_len, seq_len)
@@ -1043,6 +1049,17 @@ class GraphTransformerEncoder(nn.Module):
                 0, 3, 1, 2
             )  # (batch, num_heads, seq, seq)
             attn_bias = attn_bias + pairwise_bias
+
+        pairwise_nonmissing_mask = attention_bias_data.get("pairwise_nonmissing_mask")
+        if pairwise_nonmissing_mask is not None:
+            if self._pairwise_nonmissing_attention_bias is None:
+                raise ValueError(
+                    "Pairwise nonmissing attention bias is not initialized."
+                )
+            attn_bias = attn_bias + (
+                pairwise_nonmissing_mask.to(dtype).unsqueeze(1)
+                * self._pairwise_nonmissing_attention_bias.view(1, -1, 1, 1)
+            )
 
         return attn_bias
 

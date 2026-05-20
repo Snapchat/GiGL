@@ -14,7 +14,11 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoderLayer,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from tests.test_assets.test_case import TestCase
+
+try:
+    from tests.test_assets.test_case import TestCase
+except ModuleNotFoundError:  # pragma: no cover - optional test harness deps
+    TestCase = absltest.TestCase
 
 
 def _create_simple_hetero_data() -> HeteroData:
@@ -388,6 +392,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
 
         assert encoder._anchor_pe_attention_bias_projection is not None
         assert encoder._pairwise_pe_attention_bias_projection is not None
+        assert encoder._pairwise_nonmissing_attention_bias is not None
 
         with torch.no_grad():
             encoder._anchor_pe_attention_bias_projection.weight.copy_(
@@ -411,6 +416,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                             ]
                         ]
                     ),
+                    "pairwise_nonmissing_mask": None,
                     "token_input": None,
                 },
             )
@@ -447,6 +453,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                         [[[1.0, 0.5], [2.0, 0.25], [3.0, 0.125]]]
                     ),
                     "pairwise_bias": None,
+                    "pairwise_nonmissing_mask": None,
                     "token_input": None,
                 },
             )
@@ -456,6 +463,45 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 9.0)
         self.assertEqual(attn_bias[0, 0, 0, 2].item(), 4.25)
         self.assertEqual(attn_bias[0, 1, 0, 2].item(), 8.5)
+
+    def test_pairwise_nonmissing_mask_adds_head_specific_bias(self) -> None:
+        encoder = self._create_encoder(
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
+        )
+
+        assert encoder._pairwise_pe_attention_bias_projection is not None
+        assert encoder._pairwise_nonmissing_attention_bias is not None
+
+        with torch.no_grad():
+            encoder._pairwise_pe_attention_bias_projection.weight.zero_()
+            encoder._pairwise_nonmissing_attention_bias.copy_(
+                torch.tensor([0.5, 1.5])
+            )
+
+            attn_bias = encoder._build_attention_bias(
+                valid_mask=torch.ones((1, 3), dtype=torch.bool),
+                sequences=torch.zeros((1, 3, 8), dtype=torch.float),
+                attention_bias_data={
+                    "anchor_bias": None,
+                    "pairwise_bias": torch.zeros((1, 3, 3, 1), dtype=torch.float),
+                    "pairwise_nonmissing_mask": torch.tensor(
+                        [
+                            [
+                                [True, True, False],
+                                [True, True, False],
+                                [False, False, True],
+                            ]
+                        ]
+                    ),
+                    "token_input": None,
+                },
+            )
+
+        self.assertEqual(attn_bias.shape, (1, 2, 3, 3))
+        self.assertEqual(attn_bias[0, 0, 0, 0].item(), 0.5)
+        self.assertEqual(attn_bias[0, 1, 0, 0].item(), 1.5)
+        self.assertEqual(attn_bias[0, 0, 0, 2].item(), 0.0)
+        self.assertEqual(attn_bias[0, 1, 1, 2].item(), 0.0)
 
     def test_sinusoidal_sequence_positional_encoding_masks_padding(self) -> None:
         encoder = self._create_encoder(

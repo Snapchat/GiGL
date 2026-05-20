@@ -11,7 +11,11 @@ from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
 )
-from tests.test_assets.test_case import TestCase
+
+try:
+    from tests.test_assets.test_case import TestCase
+except ModuleNotFoundError:  # pragma: no cover - optional test harness deps
+    TestCase = absltest.TestCase
 
 
 def create_simple_hetero_data() -> HeteroData:
@@ -252,6 +256,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertIsInstance(attention_bias_data, dict)
         self.assertIn("anchor_bias", attention_bias_data)
         self.assertIn("pairwise_bias", attention_bias_data)
+        self.assertIn("pairwise_nonmissing_mask", attention_bias_data)
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
@@ -792,6 +797,7 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         assert anchor_bias is not None
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertIsNone(attention_bias_data["pairwise_bias"])
+        self.assertIsNone(attention_bias_data["pairwise_nonmissing_mask"])
         self.assertTrue(valid_mask[0, 0].item())
 
     def test_attention_bias_outputs_include_valid_mask_and_relative_features(
@@ -817,17 +823,53 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         self.assertEqual(valid_mask.shape, (1, 4))
         anchor_bias = attention_bias_data["anchor_bias"]
         pairwise_bias = attention_bias_data["pairwise_bias"]
+        pairwise_nonmissing_mask = attention_bias_data["pairwise_nonmissing_mask"]
         assert anchor_bias is not None
         assert pairwise_bias is not None
+        assert pairwise_nonmissing_mask is not None
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
+        self.assertEqual(pairwise_nonmissing_mask.shape, (1, 4, 4))
         self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 0.0, places=5)
         self.assertAlmostEqual(anchor_bias[0, 1, 0].item(), 1.0, places=5)
         self.assertAlmostEqual(anchor_bias[0, 2, 0].item(), 3.0, places=5)
         self.assertAlmostEqual(pairwise_bias[0, 0, 0, 0].item(), 0.1, places=5)
+        self.assertTrue(torch.all(pairwise_nonmissing_mask[0, :3, :3]))
 
         invalid_pair_mask = ~(valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1))
         self.assertTrue(torch.all(pairwise_bias[..., 0][invalid_pair_mask] == 0))
+        self.assertTrue(torch.all(~pairwise_nonmissing_mask[invalid_pair_mask]))
+
+    def test_pairwise_attention_bias_attr_support_mismatch_raises(self) -> None:
+        data = _create_hetero_data_with_relative_pe()
+        pairwise_distance_sparse_mismatch = torch.tensor(
+            [
+                [0.1, 0.0, 0.3, 0.4, 0.5],
+                [0.6, 0.7, 0.0, 0.9, 1.0],
+                [1.1, 1.2, 1.3, 1.4, 1.5],
+                [1.6, 1.7, 1.8, 1.9, 2.0],
+                [2.1, 2.2, 2.3, 2.4, 2.5],
+            ]
+        )
+        data.pairwise_distance_sparse_mismatch = (
+            pairwise_distance_sparse_mismatch.to_sparse_csr()
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Pairwise attention bias attributes must share identical nonmissing support",
+        ):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=4,
+                anchor_node_type="user",
+                hop_distance=2,
+                pairwise_attention_bias_attr_names=[
+                    "pairwise_distance",
+                    "pairwise_distance_sparse_mismatch",
+                ],
+            )
 
 
 if __name__ == "__main__":

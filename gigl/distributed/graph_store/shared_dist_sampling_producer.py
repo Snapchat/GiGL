@@ -93,7 +93,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.typing import NodeType
+from graphlearn_torch.typing import EdgeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
@@ -103,7 +103,6 @@ from gigl.distributed.utils.dist_sampler import (
     SamplerRuntime,
     create_dist_sampler,
 )
-from gigl.utils.share_memory import share_memory
 
 logger = Logger()
 
@@ -339,7 +338,7 @@ def _shared_sampling_worker_loop(
     event_queue: mp.Queue,
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
 ) -> None:
     """Run one shared graph-store worker that schedules many input channels.
 
@@ -836,7 +835,7 @@ class SharedDistSamplingBackend:
         worker_options: RemoteDistSamplingWorkerOptions,
         sampling_config: SamplingConfig,
         sampler_options: SamplerOptions,
-        degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+        degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ) -> None:
         """Initialize the shared sampling backend.
 
@@ -872,10 +871,7 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
-        # Move degree tensors to shared memory so all spawned workers map the
-        # same allocation instead of each pickling a private copy.
-        self._degree_tensors: Optional[dict[NodeType, torch.Tensor]] = degree_tensors
-        share_memory(self._degree_tensors)
+        self._degree_tensors = degree_tensors
 
     def init_backend(self) -> None:
         """Initialize worker processes once for this backend.

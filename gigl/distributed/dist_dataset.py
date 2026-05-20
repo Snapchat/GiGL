@@ -80,7 +80,9 @@ class DistDataset(glt.distributed.DistDataset):
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
-        degree_tensor: Optional[dict[NodeType, torch.Tensor]] = None,
+        degree_tensor: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = None,
         max_labels_per_anchor_node: Optional[int] = None,
     ) -> None:
         """
@@ -106,7 +108,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
-            degree_tensor: Optional[dict[NodeType, torch.Tensor]]: Pre-computed degree tensor keyed by node type. Lazily computed on first access via the degree_tensor property.
+            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
             max_labels_per_anchor_node (Optional[int]): Optional cap for how many
                 labels to materialize per anchor node for ABLP label fetching.
         """
@@ -144,7 +146,9 @@ class DistDataset(glt.distributed.DistDataset):
         self._node_feature_info = node_feature_info
         self._edge_feature_info = edge_feature_info
 
-        self._degree_tensor: Optional[dict[NodeType, torch.Tensor]] = degree_tensor
+        self._degree_tensor: Optional[
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        ] = degree_tensor
         self._max_labels_per_anchor_node = max_labels_per_anchor_node
 
     # TODO (mkolodner-sc): Modify so that we don't need to rely on GLT's base variable naming (i.e. partition_idx, num_partitions) in favor of more clear
@@ -303,15 +307,13 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def degree_tensor(
         self,
-    ) -> dict[NodeType, torch.Tensor]:
+    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
         """
-        Lazily compute and return the total degree tensor per node type.
+        Lazily compute and return the degree tensor for the graph.
 
         On first access, computes node degrees from the graph partition and uses
-        all-reduce to aggregate across all machines. Degrees are summed across
-        all incident edge types per anchor node type before the all-reduce, so
-        the per-edge-type tensor is never stored. Requires torch.distributed to
-        be initialized.
+        all-reduce to aggregate across all machines. Requires torch.distributed
+        to be initialized.
 
         Over-counting correction (for processes sharing the same data on the same
         machine) is handled automatically by detecting the distributed topology.
@@ -319,9 +321,9 @@ class DistDataset(glt.distributed.DistDataset):
         The result is cached for subsequent accesses.
 
         Returns:
-            dict[NodeType, torch.Tensor]: Total degree tensors keyed by node type.
-                For homogeneous graphs the single entry uses
-                ``DEFAULT_HOMOGENEOUS_NODE_TYPE`` as its key.
+            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
+                - For homogeneous graphs: A tensor of shape [num_nodes].
+                - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
 
         Raises:
             RuntimeError: If torch.distributed is not initialized.
@@ -331,9 +333,7 @@ class DistDataset(glt.distributed.DistDataset):
             if self.graph is None:
                 raise ValueError("Dataset graph is None. Cannot compute degrees.")
 
-            self._degree_tensor = compute_and_broadcast_degree_tensor(
-                self.graph, self._edge_dir
-            )
+            self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
         return self._degree_tensor
 
     @property
@@ -499,16 +499,11 @@ class DistDataset(glt.distributed.DistDataset):
                         )
                 else:
                     train_nodes, val_nodes, test_nodes = splits
-                self._num_train = (
-                    train_nodes.numel()  # ty: ignore[unresolved-attribute]
-                )
-                self._num_val = val_nodes.numel()  # ty: ignore[unresolved-attribute]
-                self._num_test = test_nodes.numel()  # ty: ignore[unresolved-attribute]
+                self._num_train = train_nodes.numel()
+                self._num_val = val_nodes.numel()
+                self._num_test = test_nodes.numel()
                 self._node_ids = _append_non_split_node_ids(
-                    train_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    val_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    test_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    node_ids_on_machine,
+                    train_nodes, val_nodes, test_nodes, node_ids_on_machine
                 )
             else:
                 logger.info(
@@ -642,8 +637,8 @@ class DistDataset(glt.distributed.DistDataset):
                 # if it is not an edge type, since it must be one of the two.
                 assert not isinstance(node_type, EdgeType)
                 self._node_feature_info[node_type] = FeatureInfo(
-                    dim=node_features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=node_features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dim=node_features_per_node_type.size(1),
+                    dtype=node_features_per_node_type.dtype,
                 )
             logger.info(
                 f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
@@ -725,8 +720,8 @@ class DistDataset(glt.distributed.DistDataset):
             for edge_type, edge_features_per_edge_type in edge_features.items():
                 assert isinstance(edge_type, EdgeType)
                 self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dim=edge_features_per_edge_type.size(1),
+                    dtype=edge_features_per_edge_type.dtype,
                 )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
@@ -902,7 +897,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
-            Optional[dict[NodeType, torch.Tensor]]: Degree tensors keyed by node type
+            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
             Optional[int]: Optional per-anchor label cap for ABLP label fetching
         """
         # TODO (mkolodner-sc): Investigate moving share_memory calls to the build() function
@@ -1188,7 +1183,7 @@ def _rebuild_distributed_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
-        Optional[dict[NodeType, torch.Tensor]],  # Degree tensors
+        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
         Optional[int],  # Optional per-anchor label cap for ABLP label fetching
     ],
 ):
