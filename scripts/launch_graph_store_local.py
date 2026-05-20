@@ -67,6 +67,7 @@ from typing import Any, Optional, TextIO
 import yaml
 
 from gigl.distributed.utils import get_free_ports
+from gigl.env.constants import GIGL_RESOURCE_CONFIG_URI_ENV_KEY
 
 DEFAULT_JOB_ROOT = Path("/tmp/gigl")
 JOB_ID_SUFFIX_RE = re.compile(r"^(.*?)(\d+)$")
@@ -735,7 +736,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "MASTER_ADDR": args.host,
             "MASTER_PORT": str(master_port),
             "WORLD_SIZE": str(world_size),
-            "RESOURCE_CONFIG_PATH": resource_config_uri,
+            GIGL_RESOURCE_CONFIG_URI_ENV_KEY: resource_config_uri,
             "COMPUTE_CLUSTER_LOCAL_WORLD_SIZE": str(args.compute_procs_per_node),
             "PYTHONUNBUFFERED": "1",
         }
