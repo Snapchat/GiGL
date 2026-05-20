@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from gigl.nn.loss import RetrievalLoss
+from gigl.src.common.models.layers.loss import SoftmaxLoss
 from tests.test_assets.test_case import TestCase
 
 
@@ -176,3 +177,11 @@ class RetrievalLossTest(TestCase):
             scores=empty_scores, query_ids=query_ids, candidate_ids=candidate_ids
         )
         self.assert_tensor_equality(loss, expected_loss)
+
+
+class SoftmaxLossDefaultTemperatureTest(TestCase):
+    def test_default_temperature_is_one(self) -> None:
+        """SoftmaxLoss defaults softmax_temperature to 1.0 so the forward-pass
+        division scores / softmax_temperature is always well-defined.
+        """
+        self.assertEqual(SoftmaxLoss().softmax_temperature, 1.0)
