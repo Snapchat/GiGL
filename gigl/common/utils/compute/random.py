@@ -39,7 +39,7 @@ def seed_everything(
     When ``should_enable_expensive_deterministic_compute=True`` (opt-in; default False because it costs
     throughput and should not be enabled for training or for production inference - can be used for debugging purposes.
 
-    - Important: Graph Sampling currently do not follow determism outlined here.
+    - Important: Graph Sampling currently do not follow determinism outlined here.
     Example:
         >>> seed_everything(42)
         42
