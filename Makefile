@@ -27,6 +27,8 @@ CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA:=$(filter-out %.cu,$(CPP_SOURCES))
 PY_TEST_FILES?="*_test.py"
+SHARD_INDEX?=0
+TOTAL_SHARDS?=0
 # You can override GIGL_TEST_DEFAULT_RESOURCE_CONFIG by setting it in your environment i.e.
 # adding `export GIGL_TEST_DEFAULT_RESOURCE_CONFIG=your_resource_config` to your shell config (~/.bashrc, ~/.zshrc, etc.)
 GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_config.yaml
@@ -86,6 +88,14 @@ unit_test_py: clean_build_files_py build_cpp_extensions type_check
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 
+# Runs a single shard of the Python unit tests (no type checking).
+# Usage: make unit_test_py_shard SHARD_INDEX=0 TOTAL_SHARDS=4
+unit_test_py_shard: clean_build_files_py
+	uv run python -m tests.unit.main \
+		--env=test \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--test_file_pattern=$(PY_TEST_FILES) \
+		--shard_index=$(SHARD_INDEX) --total_shards=$(TOTAL_SHARDS)
 
 unit_test_scala: clean_build_files_scala
 	( cd scala; sbt test )
@@ -133,6 +143,14 @@ integration_test: build_cpp_extensions
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES) \
 
+# Runs a single shard of the integration tests.
+# Usage: make integration_test_shard SHARD_INDEX=0 TOTAL_SHARDS=4
+integration_test_shard: clean_build_files_py
+	uv run python -m tests.integration.main \
+		--env=test \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--test_file_pattern=$(PY_TEST_FILES) \
+		--shard_index=$(SHARD_INDEX) --total_shards=$(TOTAL_SHARDS)
 
 notebooks_test:
 	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m tests.config_tests.notebooks_test
