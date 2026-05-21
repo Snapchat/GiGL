@@ -1,6 +1,6 @@
 ______________________________________________________________________
 
-## description: Split a feature branch into self-contained, main-based PRs. Invoke when a branch is too large to review effectively (≈300+ LOC, mixes protos/configs/logic, spans unrelated concerns), the user says "decompose / split / break up this PR / this branch is too big", or before requesting code review on a large branch. argument-hint: "[branch-name | (empty for current branch)]"
+## description: Split a feature branch into self-contained, main-based PRs. Invoke **only when the user explicitly asks** to decompose / split / break up a branch or PR. Never auto-trigger on diff size, file count, or perceived complexity. argument-hint: "[branch-name | (empty for current branch)] [--execute]"
 
 # Decompose PR
 
@@ -13,40 +13,28 @@ tree / DAG of PRs**, plus a suggested review order — not a linear stack.
 **Core principle:** One purpose per PR. Each PR independently reviewable. Every PR's git base is `main`. Decomposition
 is the author's job, not the reviewer's.
 
-**Announce at start:** "I'm using the decompose-pr skill to split this branch into reviewable PRs."
+**Default behavior: plan only.** The skill produces the decomposition (dependency tree + per-PR breakdown) and stops at
+Step 6. Branches are not created, commits are not cherry-picked, nothing is pushed, no PRs are opened. The user reads
+the plan, workshops it (merge two PRs, split one, reorder, swap categories), and only when satisfied invokes again with
+`--execute` — or simply tells Claude "go ahead and create them" — to do the git work (Step 7). The breakdown often needs
+refinement; running the git commands too early creates branches that need to be thrown away.
+
+**Announce at start:** "I'm using the decompose-pr skill to plan a decomposition of this branch."
 
 ## Instructions
 
-When this skill is invoked with `$ARGUMENTS`, execute the following sections in order.
+When this skill is invoked with `$ARGUMENTS`, execute Steps 0–6 in order, then **stop**. Only run Step 7 if `--execute`
+was passed or the user has explicitly told you to proceed.
 
-`$ARGUMENTS` selects the branch to decompose:
+`$ARGUMENTS` parsing:
 
-- empty — operate on the current branch's diff vs `main`
-- `<branch-name>` — operate on that branch's diff vs `main`
-
-______________________________________________________________________
-
-### 1. When to use, when not to
-
-**Use this skill when** any of these hold for the branch:
-
-- Diff is ≥300 LOC, or touches ≥10 files.
-- Touches more than one category from: protos, resource/task configs, library code, trainer/inferencer wiring, tests,
-  docs.
-- Contains both refactor and feature work.
-- A reviewer has said "this is too much" or you anticipate they will.
-- You're about to request code review and the diff feels large to you.
-
-**Do NOT decompose when** the branch is a single atomic change — e.g. a one-file bug fix with its test, a one-line
-config flip, a rename plus its callers. Splitting an atomic change creates artificial PRs that are individually broken
-or meaningless. Honest is better than artificial.
-
-Reference: Google's small CL guidance — https://google.github.io/eng-practices/review/developer/small-cls.html. ≈100 LOC
-is the ideal target for a single PR; 200 LOC in one file is fine, 200 LOC across 50 files is not.
+- First positional arg (or empty) — branch to decompose. Defaults to the current branch's diff vs `main`.
+- `--execute` flag — after producing the plan, also run the git commands in Step 7 (with per-PR confirmation for
+  `gh pr create` since PRs are externally visible). Without this flag, Step 7 is skipped entirely.
 
 ______________________________________________________________________
 
-### 2. Step 0: Identify the atomic unit
+### 1. Step 0: Identify the atomic unit
 
 **Before splitting anything, name the smallest set of changes that must land together for the runtime to stay green.**
 
@@ -65,7 +53,7 @@ This step exists because Claude under deadline pressure will otherwise decompose
 
 ______________________________________________________________________
 
-### 3. Step 1: Inventory the branch
+### 2. Step 1: Inventory the branch
 
 Run, and read the output:
 
@@ -76,25 +64,33 @@ git diff --stat main...$BRANCH
 git diff --name-only main...$BRANCH | sort
 ```
 
+**On LOC as a sizing heuristic:** LOC is a rough guide, not a hard rule. A single complex algorithm of 600 LOC is fine
+as one atomic PR — splitting it artificially makes review harder, not easier. The signals that actually matter are
+"reviewer cannot hold this in their head" and "this PR has more than one purpose," not a line count.
+
+**Tests do not count toward LOC budget.** When sizing a PR, count production LOC only. Tests still ship in the same PR
+as the code they test (Step 2), but they don't push the PR over a budget line. A 100-LOC production change with 250 LOC
+of tests is a 100-LOC PR.
+
 Group every changed file into one of these categories:
 
-| Category                               | Examples                                                                                            | LOC counted toward                     |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Protos / schema                        | `proto/snapchat/research/gbml/*.proto`, generated `*_pb2.py*`                                       | Protos PR                              |
-| Resource / task configs                | `deployment/configs/*.yaml`, `examples/**/*.yaml`                                                   | Configs PR                             |
-| Pure refactor (no behavior change)     | Renamed symbols, restructured class internals, signature changes that preserve callers via defaults | Refactor PR                            |
-| New utility / infrastructure           | New module under `gigl/`, no caller yet on `main`                                                   | Orphan-code PR                         |
-| Behavioral change ("the feature")      | Code that flips a code path, adds a new pipeline stage, changes outputs                             | Feature PR                             |
-| Tests for existing code                | `tests/unit/**` that exercise code already on `main`                                                | Tests-ahead PR or fold into related PR |
-| Docs-only / docstring                  | `*.md`, docstring edits, comments                                                                   | Docs PR                                |
-| Unrelated cleanup ("while I was here") | Whatever doesn't fit above                                                                          | Always its own PR — see Red Flags      |
+| Category                               | Examples                                                                                            | LOC counted toward                        |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Protos / schema                        | `proto/snapchat/research/gbml/*.proto`, generated `*_pb2.py*`                                       | Protos PR                                 |
+| Configs (new options)                  | `deployment/configs/*.yaml`, `examples/**/*.yaml`, task configs — when introduced with new code     | Bundled with the consumer that reads them |
+| Pure refactor (no behavior change)     | Renamed symbols, restructured class internals, signature changes that preserve callers via defaults | Refactor PR                               |
+| New utility / infrastructure           | New module under `gigl/`, no caller yet on `main`                                                   | Orphan-code PR                            |
+| Behavioral change ("the feature")      | Code that flips a code path, adds a new pipeline stage, changes outputs                             | Feature PR (bundled with its new configs) |
+| Tests for existing code                | `tests/unit/**` that exercise code already on `main`                                                | Tests-ahead PR or fold into related PR    |
+| Docs-only / docstring                  | `*.md`, unrelated docstring cleanups, comments unrelated to a feature                               | Docs PR                                   |
+| Unrelated cleanup ("while I was here") | Whatever doesn't fit above                                                                          | Always its own PR — see Red Flags         |
 
 If a file straddles categories (e.g. one file has a refactor and a new behavior), note it — Step 4 covers the
 `git restore --source ... -p` escape for splitting hunks within a file.
 
 ______________________________________________________________________
 
-### 4. Step 2: Classify and slice
+### 3. Step 2: Classify and slice
 
 Walk each category in this order, applying the matching rule. Build a candidate list of PRs as you go.
 
@@ -103,19 +99,18 @@ Generated `*_pb2.py*` files ship in the same PR as the `.proto` change. Reviewer
 than reviewers for the consuming code (data team, schema owners, API stability). Cost of separation is near-zero; cost
 of bundling is that proto review blocks all consumer review.
 
-**Resource / task configs → own PR. The rule is about review concern, not runtime coupling.**\
-Runtime configs (under `deployment/configs/`) are reviewed for ops/runtime impact — memory, GPUs, regions, quotas. Task
-configs are reviewed for pipeline correctness. Either way, configs and code go separate so the runtime-concern review
-doesn't get buried inside a feature-review.
+**Configs → bundle with the consumer that reads them.**\
+When a branch introduces a new config option AND the code that reads / pipes / consumes it, all of that is **one PR**.
+The config field is inert without the consumer; the consumer is the natural review surface for evaluating "does this new
+option do what it claims." Splitting them apart creates a config-only PR that the reviewer cannot meaningfully evaluate
+("what is this for?") and a consumer PR whose feature-level review has to handwave the config.
 
-**Exception — example / demonstration configs** (under `examples/`): these are documentation, not deployment. They show
-users how a new option is used. Updates to example configs can ride with the PR that introduces the option being
-demonstrated, because the example IS the consumer's documentation. This exception does NOT extend to
-`deployment/configs/` or other runtime configs.
+This applies to all config locations: `deployment/configs/`, task configs, example configs in `examples/`. The rule is
+the same.
 
-**"Trivially coupled"** does NOT mean "the config is inert without the consumer." Inert configs still ship as their own
-(usually small, wide-shallow) PR. "Trivially coupled" means a one-line config flip that IS the only behavior change in
-the branch (e.g. `enable_feature_x: false → true` and nothing else in the diff).
+The only time a config change is its own PR is when **the config change is the only change** — e.g. an ops-tuning diff
+that adjusts memory limits, regions, or quotas with no code change. In that case the PR is trivially its own PR by
+virtue of being the only thing in the branch; no decomposition decision is needed.
 
 **Pure refactor → separate from feature PR.**\
 A refactor PR must not change behavior (Google rule). Verifiable by: existing tests pass unchanged AND the test suite is
@@ -151,7 +146,7 @@ files) can be neither; that's fine. The rule binds at scale.
 
 ______________________________________________________________________
 
-### 5. Step 3: Order via a dependency tree (not a stack)
+### 4. Step 3: Order via a dependency tree (not a stack)
 
 **Every PR's git base is `main`.** Not another PR's branch. But each PR's branch may — and should — contain code from
 its logical predecessors, so the PR builds, type-checks, and is reviewable on its own.
@@ -223,7 +218,7 @@ directions. Re-evaluate the split before forcing it through.
 
 ______________________________________________________________________
 
-### 6. Step 4: Build the PRs
+### 5. Step 4: Build the PRs
 
 **Default workflow — clean per-commit splits:**
 
@@ -281,7 +276,7 @@ and focus on the source.
 
 ______________________________________________________________________
 
-### 7. Step 5: Write each PR description
+### 6. Step 5: Write each PR description
 
 Each PR uses the project's `pull_request_template.md`. Fill it in **self-contained** — a reviewer must be able to
 evaluate the PR without reading any other PR.
@@ -349,7 +344,7 @@ what's changing and why.
 
 ______________________________________________________________________
 
-### 8. Step 6: Present the dependency tree and review order
+### 7. Step 6: Present the dependency tree and review order
 
 After sketching the PRs (or after opening them), present the user with the **dependency tree** plus a **suggested review
 order** that respects it. Make three things explicit:
@@ -385,19 +380,62 @@ sees the structure.
 
 ______________________________________________________________________
 
+### 8. Step 7: Execute (only if `--execute` or user confirmation)
+
+**Skip this section entirely if `--execute` was not passed and the user has not explicitly told you to proceed.** The
+Step 6 plan is the deliverable; the user reviews and refines it before any git work happens.
+
+When the user confirms, run the git commands per the plan. For each PR in dependency-tree order (roots first, then
+children):
+
+```bash
+git checkout main
+git pull
+git checkout -b decomp/<descriptive-name>
+
+# For a dependent PR, cherry-pick predecessor commits FIRST, then this PR's own commits:
+git cherry-pick <predecessor commit ranges>
+git cherry-pick <this PR's commit ranges>
+
+# Verify the branch builds, type-checks, and tests pass
+make type_check
+make unit_test_py PY_TEST_FILES="<relevant_test.py>"
+
+# Push the branch
+git push -u origin decomp/<descriptive-name>
+```
+
+**Confirm with the user before each `gh pr create`.** PRs are externally visible; the user should approve titles and
+descriptions before they go up. Use the format:
+
+```
+Ready to open PR for branch `decomp/<name>`:
+  Title: <title>
+  Base:  main
+  Body:  <paste the Step 5 description sketch>
+
+Proceed? (yes / edit / skip)
+```
+
+Wait for explicit confirmation per PR. Don't batch — each `gh pr create` is its own confirmation. Skipping one PR
+shouldn't block the rest; mark it deferred and move on. After all confirmed PRs are open, restate the dependency tree
+and review order from Step 6 with the actual PR numbers filled in — that's the final hand-off to the user.
+
+______________________________________________________________________
+
 ### 9. Quick Reference
 
-| Change category                                       | Strategy                                                        | Ordering                                                                       |
-| ----------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Proto / schema                                        | Own PR, includes generated files                                | First                                                                          |
-| Resource / task configs (under `deployment/configs/`) | Own PR (separate from code)                                     | Before consumer lands if inert (orphan-config), or after consumer is on `main` |
-| `examples/` configs demonstrating a new option        | May ride with the PR that introduces the option (documentation) | With the consumer                                                              |
-| Pure refactor (no behavior change)                    | Own PR; existing tests pass unchanged                           | Before the feature it enables                                                  |
-| New utility / module (no caller)                      | Own PR, orphan-code OK, ships with unit tests                   | Before the integration PR                                                      |
-| Feature integration (flips behavior)                  | Smallest PR that flips it; feature-flag default-off when risky  | Last in the chain                                                              |
-| Tests for existing code                               | Own PR if it precedes a refactor; otherwise with the code       | Before a refactor it protects                                                  |
-| Docs-only / docstring                                 | Own PR                                                          | Anytime; doesn't block anything                                                |
-| Unrelated cleanup                                     | Own PR, never bundled                                           | Anytime; doesn't block anything                                                |
+| Change category                                  | Strategy                                                       | Ordering                        |
+| ------------------------------------------------ | -------------------------------------------------------------- | ------------------------------- |
+| Proto / schema                                   | Own PR, includes generated files                               | First                           |
+| New configs (added with their consumer)          | Bundle with the consumer that reads them                       | With the consumer               |
+| Config-only changes (ops tuning, no code change) | The PR is trivially its own — config IS the change             | Anytime; doesn't block anything |
+| Pure refactor (no behavior change)               | Own PR; existing tests pass unchanged                          | Before the feature it enables   |
+| New utility / module (no caller)                 | Own PR, orphan-code OK, ships with unit tests                  | Before the integration PR       |
+| Feature integration (flips behavior)             | Smallest PR that flips it; feature-flag default-off when risky | Last in the chain               |
+| Tests for existing code                          | Own PR if it precedes a refactor; otherwise with the code      | Before a refactor it protects   |
+| Docs-only / docstring                            | Own PR                                                         | Anytime; doesn't block anything |
+| Unrelated cleanup                                | Own PR, never bundled                                          | Anytime; doesn't block anything |
 
 | Question                                        | Answer                                                                                                                                               |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -423,8 +461,7 @@ ______________________________________________________________________
 | "Companion PR" annotation is friendly context.                              | It tells the reviewer "you need to read another PR to understand this one." The PR's own description should provide that context.                                                                                                                                                                                             |
 | "Final integration PR for the X feature."                                   | Same problem — frames this PR as a chapter in a story the reviewer must follow. The PR description should describe THIS change, not the saga.                                                                                                                                                                                 |
 | "The proto change is one line, ride along with the feature."                | Proto reviewers are usually different people reviewing for different concerns (schema stability, API compatibility). Cost of separation is near-zero; cost of bundling is that proto review blocks consumer review.                                                                                                           |
-| "Config without a consumer in isolation is confusing."                      | That's what the PR description's "why" sentence is for. Reviewer-confusion isn't fixed by bundling — it's fixed by writing a clearer description.                                                                                                                                                                             |
-| "The config field is inert without the consumer, so they belong together."  | The rule is about review concern, not runtime coupling. Inert configs still ship as their own (small, wide-shallow) PR. Bundle ≠ atomic. Exception: `examples/` configs that demonstrate a new option may ride with the consumer that introduces the option — they're documentation.                                          |
+| "Configs should always be in their own PR for ops review."                  | Old rule, no longer applies. New configs ride with the consumer that reads them — a config field without a consumer is incoherent to review. The only config-only PR is one where the config change is the only change in the branch (e.g. an ops-tuning diff with no code change).                                           |
 | "The TODO needs full context so future-me understands what to do."          | The TODO needs INTENT, not scope. Future-you reads the surrounding code for context. A scope-describing TODO becomes outdated the moment the implementation drifts.                                                                                                                                                           |
 | "It's all one logical commit so I'll just split by file."                   | Splitting at file boundaries produces PRs that are individually broken at HEAD. Split by *purpose*, not by file location.                                                                                                                                                                                                     |
 | "Tests are big, I'll send them in a follow-up."                             | Direct violation of tests-with-code. Tests ship in the same PR as the new code.                                                                                                                                                                                                                                               |
@@ -448,7 +485,6 @@ ______________________________________________________________________
 - Bundle unrelated cleanup ("while I was here") into a feature PR.
 - Ship code without its tests; ship tests after their code.
 - Bundle protos with the code that consumes them.
-- Bundle resource/task configs with the feature code.
 - Make a PR that is both wide AND deep when it's also large.
 - Use this skill's "small PRs" framing to justify skipping code review on the resulting PRs.
 - Forget to name the atomic unit before splitting.
@@ -468,24 +504,27 @@ ______________________________________________________________________
 
 ### 12. Worked example
 
-**Input:** branch `feat/add-weighted-loss`, 940 LOC across 18 files. Contains: proto change, two resource-config YAMLs,
-new `WeightedLossModule` (220 LOC, 3 files), trainer wiring (160 LOC, 4 files), `DistNeighborSampler.sample()` refactor
-(190 LOC, 1 file), tests (180 LOC), unrelated `gigl/common/uri.py` docstring cleanup (~15 LOC).
+**Input:** branch `feat/add-weighted-loss`, ~760 LOC of production code (~940 LOC including tests) across 18 files.
+Contains: proto change (~30 LOC), two resource-config YAMLs (~40 LOC) read by the trainer, new `WeightedLossModule` (220
+LOC production, 3 files; plus ~90 LOC of tests), trainer wiring (160 LOC, 4 files), `DistNeighborSampler.sample()`
+refactor (190 LOC production, 1 file; plus ~90 LOC of tests), unrelated `gigl/common/uri.py` docstring cleanup (~15
+LOC).
 
-**Atomic unit (Step 0):** Trainer must import `WeightedLossModule` AND the proto must define `WeightedLossConfig` for
-the trainer-wiring PR to land. Sampler refactor is independent (default `loss_config=None` preserves behavior). Module
-is independently useful (orphan-code OK). Configs are inert until the trainer reads them.
+**Atomic unit (Step 0):** The trainer-wiring PR must include the proto field (`WeightedLossConfig`), the new
+`WeightedLossModule`, AND the resource configs that reference the new schema — the trainer reads all three. The sampler
+refactor is independent (default `loss_config=None` preserves behavior). The module is independently useful (orphan-code
+OK). Configs ride with the trainer wiring per the bundle-with-consumer rule (Step 2).
 
-**Candidate PRs — all open against `main`:**
+**Candidate PRs — all open against `main`. LOC counts are production-only; tests ship with their code but don't count
+toward the budget.**
 
-| #   | Title                                                                | Files                                                                                               | LOC                  | Wide/Deep    | Cherry-picks | Why it's its own PR                                                         |
-| --- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------- | ------------ | ------------ | --------------------------------------------------------------------------- |
-| A   | Clean up stale docstrings in `gigl/common/uri.py`                    | 1                                                                                                   | 15                   | — (trivial)  | —            | Unrelated cleanup.                                                          |
-| B   | Add `WeightedLossConfig` proto message                               | proto + generated `_pb2.py*`                                                                        | ~30 hand + generated | Wide-shallow | —            | Protos always own PR.                                                       |
-| C   | Add `WeightedLossModule` and unit tests                              | `gigl/nn/weighted_loss*.py`, `gigl/nn/__init__.py`, `tests/unit/nn/weighted_loss_test.py`           | 310                  | Deep         | B            | New utility; needs the proto symbols. Tests in same PR.                     |
-| D   | Thread optional `loss_config` through `DistNeighborSampler.sample()` | `gigl/distributed/dist_neighbor_sampler.py`, `tests/unit/distributed/dist_neighbor_sampler_test.py` | 250                  | Deep         | B            | Refactor (no behavior change when `loss_config=None`); needs proto symbols. |
-| E   | Update resource configs for weighted-loss runs                       | two YAMLs under `deployment/configs/`                                                               | 40                   | Wide-shallow | B            | Config change separated from code. References the new schema in B.          |
-| F   | Wire `WeightedLossConfig` into V2 GLT trainer                        | 4 files in `gigl/src/training/`                                                                     | 160                  | Deep         | B, C, D, E   | The integration PR. Flips behavior. Smallest possible.                      |
+| #   | Title                                                                | Files                                                                                               | LOC (prod) | Wide/Deep    | Cherry-picks | Why it's its own PR                                                                                                                      |
+| --- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| A   | Clean up stale docstrings in `gigl/common/uri.py`                    | 1                                                                                                   | 15         | — (trivial)  | —            | Unrelated cleanup.                                                                                                                       |
+| B   | Add `WeightedLossConfig` proto message                               | proto + generated `_pb2.py*`                                                                        | ~30 (+gen) | Wide-shallow | —            | Protos always own PR.                                                                                                                    |
+| C   | Add `WeightedLossModule` (+ unit tests)                              | `gigl/nn/weighted_loss*.py`, `gigl/nn/__init__.py`, `tests/unit/nn/weighted_loss_test.py`           | 220        | Deep         | B            | New utility; needs the proto symbols. Tests ship in same PR (don't count toward budget).                                                 |
+| D   | Thread optional `loss_config` through `DistNeighborSampler.sample()` | `gigl/distributed/dist_neighbor_sampler.py`, `tests/unit/distributed/dist_neighbor_sampler_test.py` | 190        | Deep         | B            | Refactor (no behavior change when `loss_config=None`); needs proto symbols.                                                              |
+| F   | Wire `WeightedLossConfig` into V2 GLT trainer (+ resource configs)   | 4 files in `gigl/src/training/`, two YAMLs in `deployment/configs/`                                 | 200        | Deep         | B, C, D      | Integration PR. Reads the new proto field, uses module + sampler, and the resource configs come along per the bundle-with-consumer rule. |
 
 The **Cherry-picks** column lists which predecessor PRs' commits each branch must cherry-pick in addition to its own
 content. F's branch construction looks like:
@@ -495,8 +534,7 @@ git checkout -b decomp/F main
 git cherry-pick <B's commits>          # proto symbols
 git cherry-pick <C's commits>          # WeightedLossModule (F imports it)
 git cherry-pick <D's commits>          # sampler refactor (F passes loss_config to sample())
-git cherry-pick <E's commits>          # resource configs (F reads them)
-git cherry-pick <F's own commits>      # trainer wiring
+git cherry-pick <F's own commits>      # trainer wiring + the two resource configs
 git push -u origin decomp/F
 gh pr create --base main --title "Wire WeightedLossConfig into V2 GLT trainer"
 ```
@@ -508,26 +546,26 @@ Dependency tree (all PRs open against main):
 
 #A — Clean up stale docstrings in gigl/common/uri.py        (root, independent)
 #B — Add WeightedLossConfig proto message                   (root)
-  ├─► #C — Add WeightedLossModule and unit tests            (cherry-picks B)
+  ├─► #C — Add WeightedLossModule (+tests)                  (cherry-picks B)
   ├─► #D — Thread optional loss_config through sampler      (cherry-picks B)
-  └─► #E — Update resource configs                          (cherry-picks B)
-        └─► #F — Wire WeightedLossConfig into trainer       (cherry-picks B, C, D, E)
+  └─► #F — Wire WeightedLossConfig into trainer (+configs)  (cherry-picks B, C, D)
 
 Suggested review order:
 1. #A — independent of everything. Review anytime.
 2. #B — root of the feature tree. Review after #A or in parallel.
-3. #C, #D, #E — all depend on #B but are independent of each other. Review in parallel after #B lands.
-4. #F — depends on #C, #D, and #E. Review last; rebase after the three land to clean the diff.
+3. #C, #D — both depend on #B but are independent of each other. Review in parallel after #B lands.
+4. #F — depends on #C and #D (and B transitively). Review last; rebase after the two land to clean the diff.
 
 After each PR merges, rebase the open dependents on origin/main before review.
 ```
 
 **What the PR descriptions do NOT say:**
 
-- No `"Depends on #B"` in C, D, E, or F. Each describes its own change.
+- No `"Depends on #B"` in C, D, or F. Each describes its own change.
 - No `"This is the final integration PR for WeightedLossConfig"` in F. F's description explains the wiring concretely:
   "Reads `WeightedLossConfig` from the gbml config; instantiates `WeightedLossModule`; passes the config to
-  `DistNeighborSampler.sample()` via the new `loss_config` arg."
+  `DistNeighborSampler.sample()` via the new `loss_config` arg. Resource configs under `deployment/configs/` are updated
+  in this PR because they reference the new schema and the trainer reads them."
 - No `"Consumers land in follow-up PRs"` in B. Instead: "Adds the proto field. No consumers in this PR — proto changes
   ship independently of consumers in this codebase. Generated via `make compile_protos`; no hand edits to `*_pb2.py*`."
 
