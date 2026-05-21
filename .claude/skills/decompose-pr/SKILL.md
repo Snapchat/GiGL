@@ -163,11 +163,16 @@ Build a dependent PR like this:
 
 ```bash
 git checkout -b decomp/B main
-git cherry-pick <PR_A's commits>       # dependency code, so PR_B builds standalone
-git cherry-pick <PR_B's own commits>   # this PR's content
+git cherry-pick <PR_A's OWN commits>   # dependency code, so PR_B builds standalone
+git cherry-pick <PR_B's OWN commits>   # this PR's content
 git push -u origin decomp/B
 gh pr create --base main --title "..." # base is main, NOT decomp/A
 ```
+
+**Always cherry-pick each PR's *own* commits — not full branch ranges.** "PR_A's own commits" means the commits authored
+for PR_A's topic, not the range `main..decomp/A` (which already includes any of A's own ancestors that A also
+cherry-picked in). Cherry-picking by full range double-applies shared ancestors and produces conflicts or empty-commit
+noise.
 
 When PR_A merges, rebase PR_B onto the updated `main`. Git detects that PR_A's commits are already in main and drops
 them from PR_B's branch — PR_B's diff against `main` now shows only PR_B's own code:
@@ -181,7 +186,9 @@ git push --force-with-lease
 
 **The output of decomposition is a dependency DAG of PRs**, not a linear stack. Roots can be reviewed in parallel.
 Interior nodes wait on their parents. Diamonds — one PR with two predecessor parents that share a common ancestor — are
-fine if the dependencies are real; each leaf's branch just cherry-picks all its ancestors' commits.
+fine if the dependencies are real; each leaf's branch cherry-picks **each ancestor PR's own commits exactly once, in
+topological order**. A shared ancestor (the top of the diamond) gets cherry-picked once total into the descendant —
+never once per parent branch the descendant joins through.
 
 ```
 PR_A (proto)            ──┐
@@ -385,17 +392,30 @@ ______________________________________________________________________
 **Skip this section entirely if `--execute` was not passed and the user has not explicitly told you to proceed.** The
 Step 6 plan is the deliverable; the user reviews and refines it before any git work happens.
 
-When the user confirms, run the git commands per the plan. For each PR in dependency-tree order (roots first, then
-children):
+**Preflight — working tree must be clean.** Before any checkout, verify there are no uncommitted local changes. A
+`git checkout` carries tracked modifications across branches and they can end up staged into a decomposition branch
+without anyone noticing:
+
+```bash
+git status --short
+# If output is non-empty, STOP. Ask the user to stash, commit, or discard the local changes
+# before proceeding with --execute. Do NOT auto-stash; the user should decide.
+```
+
+Once the working tree is clean, run the git commands per the plan. For each PR in dependency-tree order (roots first,
+then children):
 
 ```bash
 git checkout main
 git pull
 git checkout -b decomp/<descriptive-name>
 
-# For a dependent PR, cherry-pick predecessor commits FIRST, then this PR's own commits:
-git cherry-pick <predecessor commit ranges>
-git cherry-pick <this PR's commit ranges>
+# For a dependent PR, cherry-pick each predecessor PR's OWN commits (not full branch ranges)
+# in topological order — shared ancestors get cherry-picked exactly once. See Step 3.
+git cherry-pick <predecessor 1's OWN commits>
+git cherry-pick <predecessor 2's OWN commits>
+# ... each ancestor's own commits, exactly once, in topological order
+git cherry-pick <this PR's OWN commits>
 
 # Verify the branch builds, type-checks, and tests pass
 make type_check
@@ -417,9 +437,16 @@ Ready to open PR for branch `decomp/<name>`:
 Proceed? (yes / edit / skip)
 ```
 
-Wait for explicit confirmation per PR. Don't batch — each `gh pr create` is its own confirmation. Skipping one PR
-shouldn't block the rest; mark it deferred and move on. After all confirmed PRs are open, restate the dependency tree
-and review order from Step 6 with the actual PR numbers filled in — that's the final hand-off to the user.
+Wait for explicit confirmation per PR. Don't batch — each `gh pr create` is its own confirmation.
+
+**Skipping a PR may block its descendants.** If the user skips a PR that has dependents in the dependency tree, those
+dependents cannot be merged either — their content is conditioned on the skipped predecessor landing first, and the
+descendants' branches contain cherry-picked copies of the unreviewed predecessor's code. Treat a skip as deferring the
+entire subtree rooted at the skipped PR. Independent siblings (PRs with no path through the skipped one) are unaffected
+and can still proceed. Tell the user explicitly: "Skipping #<N> defers #<M> and #<K> (its dependents) too."
+
+After all confirmed PRs are open, restate the dependency tree and review order from Step 6 with the actual PR numbers
+filled in — that's the final hand-off to the user.
 
 ______________________________________________________________________
 
@@ -471,6 +498,9 @@ ______________________________________________________________________
 | "Splitting will create too many PRs and overwhelm reviewers."               | Reviewers prefer five 100-LOC PRs over one 500-LOC PR. Microsoft's 15M-PR analysis confirms throughput improves with smaller PRs even at higher count.                                                                                                                                                                        |
 | "While I was here, I fixed some docstrings — they fit in the feature PR."   | They don't. Docstring fixes are a 60-second separate PR. Bundling them pollutes the feature diff.                                                                                                                                                                                                                             |
 | "Decomposition makes review easy — we can skip the formal review subagent." | No. Decomposition makes review *fast*, not *optional*. Each PR still gets reviewed; the skill earns its keep by making each review trivial.                                                                                                                                                                                   |
+| "Cherry-pick `main..decomp/C` to include C's content in a dependent PR."    | That range includes C's predecessors (e.g. B). If B is already cherry-picked above, B's commits replay and conflict. Always cherry-pick each PR's **own commits** exactly once, in topological order — never full branch ranges.                                                                                              |
+| "Skipping a deferred PR shouldn't block the others."                        | If the skipped PR is a parent in the dependency tree, its descendants contain cherry-picked copies of unreviewed code and cannot be merged either. A skip defers the entire subtree; only independent siblings remain unblocked.                                                                                              |
+| "Working tree has a few local edits but I'll just `git checkout` anyway."   | `git checkout` carries tracked modifications across branches. They'll silently follow you into the decomposition branch and can be staged or committed by mistake. Require a clean tree (`git status --short` empty) before any `--execute` work.                                                                             |
 
 ______________________________________________________________________
 
@@ -526,15 +556,17 @@ toward the budget.**
 | D   | Thread optional `loss_config` through `DistNeighborSampler.sample()` | `gigl/distributed/dist_neighbor_sampler.py`, `tests/unit/distributed/dist_neighbor_sampler_test.py` | 190        | Deep         | B            | Refactor (no behavior change when `loss_config=None`); needs proto symbols.                                                              |
 | F   | Wire `WeightedLossConfig` into V2 GLT trainer (+ resource configs)   | 4 files in `gigl/src/training/`, two YAMLs in `deployment/configs/`                                 | 200        | Deep         | B, C, D      | Integration PR. Reads the new proto field, uses module + sampler, and the resource configs come along per the bundle-with-consumer rule. |
 
-The **Cherry-picks** column lists which predecessor PRs' commits each branch must cherry-pick in addition to its own
-content. F's branch construction looks like:
+The **Cherry-picks** column lists which predecessor PRs each branch logically depends on. F's branch construction
+cherry-picks each ancestor PR's **own commits exactly once** in topological order — never `main..decomp/C` or
+`main..decomp/D` as full ranges, since those already contain B and would replay it after we apply B directly:
 
 ```bash
 git checkout -b decomp/F main
-git cherry-pick <B's commits>          # proto symbols
-git cherry-pick <C's commits>          # WeightedLossModule (F imports it)
-git cherry-pick <D's commits>          # sampler refactor (F passes loss_config to sample())
-git cherry-pick <F's own commits>      # trainer wiring + the two resource configs
+git cherry-pick <B's OWN commits>      # proto symbols
+git cherry-pick <C's OWN commits>      # WeightedLossModule (F imports it). C's branch also contains B's commits;
+                                       # we don't re-include them here — B was already applied above.
+git cherry-pick <D's OWN commits>      # sampler refactor. Same caveat: D's branch contains B's commits; not re-included.
+git cherry-pick <F's OWN commits>      # trainer wiring + the two resource configs
 git push -u origin decomp/F
 gh pr create --base main --title "Wire WeightedLossConfig into V2 GLT trainer"
 ```
