@@ -249,11 +249,14 @@ class NodeClassificationModelingTaskSpec(
             graph_backend=self._graph_backend,
             device=device,
         )
+        assert data_loaders.train_main is not None, (
+            "train_main dataloader required for training"
+        )
         best_val_acc = 0.0
         for epoch in range(self.__num_epochs):
             logger.info(f"Batch training... for epoch {epoch}/{self.__num_epochs}")
             train_loss = self._train(
-                data_loader=data_loaders.train_main,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+                data_loader=data_loaders.train_main,
                 device=device,
             )
             train_loss_str = (

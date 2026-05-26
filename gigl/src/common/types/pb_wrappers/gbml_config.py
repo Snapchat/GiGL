@@ -7,6 +7,7 @@ from typing import Optional
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
 from gigl.src.common.types.pb_wrappers.flattened_graph_metadata import (
     FlattenedGraphMetadataPbWrapper,
@@ -23,6 +24,7 @@ from gigl.src.common.types.pb_wrappers.trained_model_metadata import (
     TrainedModelMetadataPbWrapper,
 )
 from gigl.src.common.utils.file_loader import FileLoader
+from gigl.src.data_preprocessor.lib.types import FeatureSchema
 from snapchat.research.gbml import (
     dataset_metadata_pb2,
     flattened_graph_metadata_pb2,
@@ -62,6 +64,16 @@ class GbmlConfigPbWrapper:
         SubgraphSamplingStrategyPbWrapper
     ] = field(default=None, init=False)
 
+    _node_type_to_feature_dim_map: dict[NodeType, int] = field(
+        default_factory=dict, init=False
+    )
+    _node_type_to_feature_schema_map: dict[NodeType, FeatureSchema] = field(
+        default_factory=dict, init=False
+    )
+    _edge_type_to_feature_dim_map: dict[EdgeType, int] = field(
+        default_factory=dict, init=False
+    )
+
     def __post_init__(self):
         # Populate the _preprocessed_metadata_pb_wrapper field
         self.__load_preprocessed_metadata_pb_wrapper(
@@ -80,6 +92,44 @@ class GbmlConfigPbWrapper:
         self.__load_graph_metadata_pb_wrapper(
             graph_metadata_pb=self.gbml_config_pb.graph_metadata
         )
+        # Derive typed-keyed feature maps by joining the just-populated
+        # _preprocessed_metadata_pb_wrapper (condensed-keyed) with
+        # _graph_metadata_pb_wrapper (condensed→typed lookup).
+        if hasattr(self, "_graph_metadata_pb_wrapper") and hasattr(
+            self, "_preprocessed_metadata_pb_wrapper"
+        ):
+            graph_metadata = self._graph_metadata_pb_wrapper
+            preprocessed_metadata = self._preprocessed_metadata_pb_wrapper
+            object.__setattr__(
+                self,
+                "_node_type_to_feature_dim_map",
+                {
+                    graph_metadata.condensed_node_type_to_node_type_map[
+                        condensed_node_type
+                    ]: feature_dim
+                    for condensed_node_type, feature_dim in preprocessed_metadata.condensed_node_type_to_feature_dim_map.items()
+                },
+            )
+            object.__setattr__(
+                self,
+                "_node_type_to_feature_schema_map",
+                {
+                    graph_metadata.condensed_node_type_to_node_type_map[
+                        condensed_node_type
+                    ]: feature_schema
+                    for condensed_node_type, feature_schema in preprocessed_metadata.condensed_node_type_to_feature_schema_map.items()
+                },
+            )
+            object.__setattr__(
+                self,
+                "_edge_type_to_feature_dim_map",
+                {
+                    graph_metadata.condensed_edge_type_to_edge_type_map[
+                        condensed_edge_type
+                    ]: feature_dim
+                    for condensed_edge_type, feature_dim in preprocessed_metadata.condensed_edge_type_to_feature_dim_map.items()
+                },
+            )
         # Populate the _flattened_graph_metadata_pb_wrapper field
         if self.gbml_config_pb.shared_config.HasField("flattened_graph_metadata"):
             flattened_graph_metadata_pb = (
@@ -364,6 +414,30 @@ class GbmlConfigPbWrapper:
                 uri=self.gbml_config_pb.shared_config.preprocessed_metadata_uri
             )
         return self._preprocessed_metadata_pb_wrapper
+
+    @property
+    def node_type_to_feature_dim_map(self) -> dict[NodeType, int]:
+        """
+        Returns:
+            dict[NodeType, int]: Mapping from NodeType to its input feature dimension.
+        """
+        return self._node_type_to_feature_dim_map
+
+    @property
+    def node_type_to_feature_schema_map(self) -> dict[NodeType, FeatureSchema]:
+        """
+        Returns:
+            dict[NodeType, FeatureSchema]: Mapping from NodeType to its FeatureSchema.
+        """
+        return self._node_type_to_feature_schema_map
+
+    @property
+    def edge_type_to_feature_dim_map(self) -> dict[EdgeType, int]:
+        """
+        Returns:
+            dict[EdgeType, int]: Mapping from EdgeType to its feature dimension.
+        """
+        return self._edge_type_to_feature_dim_map
 
     @property
     def trained_model_metadata_pb_wrapper(self) -> TrainedModelMetadataPbWrapper:
