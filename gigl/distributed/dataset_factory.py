@@ -66,6 +66,7 @@ def _load_and_build_partitioned_dataset(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -82,6 +83,11 @@ def _load_and_build_partitioned_dataset(
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
+        weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Name of the edge feature column to use as
+            sampling weights. The column is extracted from the feature tensor and registered separately via
+            ``DistPartitioner.register_edge_weights()``; it is removed from the feature matrix to avoid duplication.
+            Supply a single string to use the same column name for all edge types, or a per-edge-type dict.
+
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
 
@@ -104,6 +110,7 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         node_tf_dataset_options=node_tf_dataset_options,
         edge_tf_dataset_options=edge_tf_dataset_options,
+        weight_edge_feat_name=weight_edge_feat_name,
     )
 
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
@@ -175,6 +182,10 @@ def _load_and_build_partitioned_dataset(
         )
     if loaded_graph_tensors.node_labels is not None:
         partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
+    if loaded_graph_tensors.edge_weights is not None:
+        partitioner.register_edge_weights(
+            edge_weights=loaded_graph_tensors.edge_weights
+        )
     if loaded_graph_tensors.edge_features is not None:
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
@@ -196,6 +207,7 @@ def _load_and_build_partitioned_dataset(
         loaded_graph_tensors.node_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
+        loaded_graph_tensors.edge_weights,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,
         loaded_graph_tensors.node_labels,
@@ -230,6 +242,7 @@ def _build_dataset_process(
     edge_tf_dataset_options: TFDatasetOptions,
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -311,6 +324,7 @@ def _build_dataset_process(
         edge_tf_dataset_options=edge_tf_dataset_options,
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
+        weight_edge_feat_name=weight_edge_feat_name,
     )
 
     output_dict["dataset"] = output_dataset
@@ -336,6 +350,7 @@ def build_dataset(
     _dataset_building_port: Optional[
         int
     ] = None,  # WARNING: This field will be deprecated in the future
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -368,6 +383,10 @@ def build_dataset(
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
         _dataset_building_port (deprecated field - will be removed soon) (Optional[int]): Contains information about master port. Defaults to None, in which case it will
             be initialized from the current torch.distributed context.
+        weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Name of the edge feature column to use
+            as sampling weights. The column is extracted from the feature tensor and registered separately; it is
+            removed from the feature matrix to avoid memory duplication. Supply a single string to apply to all
+            edge types, or a per-edge-type dict. (default: ``None``)
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -462,6 +481,7 @@ def build_dataset(
             edge_tf_dataset_options,
             splitter,
             _ssl_positive_label_percentage,
+            weight_edge_feat_name,
         ),
     )
 

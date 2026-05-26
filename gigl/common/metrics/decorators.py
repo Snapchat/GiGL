@@ -46,7 +46,7 @@ def flushes_metrics(
                 result = func(*args, **kwargs)
             except Exception as e:
                 logger.info(
-                    f"Exception raised, will flush metrics for: {func.__name__} and re-raise exception"
+                    f"Exception raised, will flush metrics for: {getattr(func, '__name__')} and re-raise exception"
                 )
                 logger.error(f"Exception: {e}")
                 logger.error(traceback.format_exc())

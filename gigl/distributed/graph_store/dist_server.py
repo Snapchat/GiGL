@@ -425,6 +425,14 @@ class DistServer:
         """
         return self.dataset.edge_dir
 
+    def get_edge_weights_registered(self) -> bool:
+        """Return whether edge weights were registered in the dataset.
+
+        Returns:
+            True if edge weights were registered via ``DistPartitioner.register_edge_weights()``.
+        """
+        return self.dataset.has_edge_weights
+
     def get_node_ids(
         self,
         request: FetchNodesRequest,
