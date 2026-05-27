@@ -192,7 +192,6 @@ class TestLaunchCustom(TestCase):
             for key in (
                 GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
                 GIGL_TASK_CONFIG_URI_ENV_KEY,
-                GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
                 GIGL_CPU_DOCKER_URI_ENV_KEY,
                 GIGL_CUDA_DOCKER_URI_ENV_KEY,
                 GIGL_COMPONENT_ENV_KEY,

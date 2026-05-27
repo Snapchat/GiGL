@@ -135,7 +135,7 @@ integration_test: build_cpp_extensions
 
 
 notebooks_test:
-	RESOURCE_CONFIG_PATH=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m tests.config_tests.notebooks_test
+	GIGL_RESOURCE_CONFIG_URI=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} python -m tests.config_tests.notebooks_test
 
 mock_assets:
 	uv run python -m gigl.src.mocking.dataset_asset_mocking_suite --resource_config_uri="deployment/configs/e2e_cicd_resource_config.yaml" --env test
