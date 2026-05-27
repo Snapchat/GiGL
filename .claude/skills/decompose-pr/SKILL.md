@@ -1,40 +1,38 @@
 ______________________________________________________________________
 
-## description: Split a feature branch into self-contained, main-based PRs. Invoke **only when the user explicitly asks** to decompose / split / break up a branch or PR. Never auto-trigger on diff size, file count, or perceived complexity. argument-hint: "[branch-name | (empty for current branch)] [--execute]"
+## description: Use when the user explicitly asks to decompose, split, or break up a branch or PR. Never auto-trigger based on diff size, file count, or perceived complexity. Plan-only by default; `--execute` or explicit user go-ahead required for any git or PR action. argument-hint: "[branch-name | (empty for current branch)] [--execute]"
 
 # Decompose PR
 
-Split a large feature branch into a series of small, self-contained PRs whose **git base** is `main` — never another
-PR's branch — so reviewers can evaluate each one independently and the queue keeps moving. When a PR has a logical
-dependency on another, its branch contains a **cherry-picked copy** of the predecessor's code so the PR builds and is
-reviewable on its own; what stays main-based is the git merge-base, not the diff content. The output is a **dependency
-tree / DAG of PRs**, plus a suggested review order — not a linear stack.
+Split a large feature branch into a DAG of PRs that are **reviewed one wave at a time** so each PR's diff is small and
+self-contained at review time. Every PR's git base is `main` — never another PR's branch — so reviewers can evaluate it
+independently. Dependent PR branches are built locally via **cherry-pick** so they build and run CI standalone, but the
+PR is opened as a **draft** and only marked ready-for-review after its predecessors merge — at which point the rebased
+branch's diff against `main` shows only the PR's own code. Output is a dependency DAG plus a wave-based review schedule,
+not a linear stack. One purpose per PR; decomposition is the author's job, not the reviewer's.
 
-**Core principle:** One purpose per PR. Each PR independently reviewable. Every PR's git base is `main`. Decomposition
-is the author's job, not the reviewer's.
+**Default: plan only.** The skill produces the decomposition and stops at Step 6 — no branches, no commits, no PRs. The
+user reads the plan, workshops it, and only when satisfied invokes again with `--execute` or tells Claude to proceed
+(Step 7). Running git commands too early creates branches that get thrown away.
 
-**Default behavior: plan only.** The skill produces the decomposition (dependency tree + per-PR breakdown) and stops at
-Step 6. Branches are not created, commits are not cherry-picked, nothing is pushed, no PRs are opened. The user reads
-the plan, workshops it (merge two PRs, split one, reorder, swap categories), and only when satisfied invokes again with
-`--execute` — or simply tells Claude "go ahead and create them" — to do the git work (Step 7). The breakdown often needs
-refinement; running the git commands too early creates branches that need to be thrown away.
+**Default: wave-based draft opening.** Under `--execute`, all PRs are opened as drafts (`gh pr create --draft`) so CI
+runs against every branch immediately. Only the **root wave** — PRs with no unmerged predecessors — is converted to
+ready-for-review (`gh pr ready`). When a root PR merges into `main`, its dependents get rebased (predecessor commits
+drop out) and converted to ready-for-review. Repeat per wave.
 
 **Announce at start:** "I'm using the decompose-pr skill to plan a decomposition of this branch."
 
 ## Instructions
 
-When this skill is invoked with `$ARGUMENTS`, execute Steps 0–6 in order, then **stop**. Only run Step 7 if `--execute`
-was passed or the user has explicitly told you to proceed.
+Execute Steps 0–6 in order, then **stop**. Run Step 7 only if `--execute` was passed or the user has explicitly told you
+to proceed.
 
-`$ARGUMENTS` parsing:
-
-- First positional arg (or empty) — branch to decompose. Defaults to the current branch's diff vs `main`.
-- `--execute` flag — after producing the plan, also run the git commands in Step 7 (with per-PR confirmation for
-  `gh pr create` since PRs are externally visible). Without this flag, Step 7 is skipped entirely.
+`$ARGUMENTS`: first positional is the branch to decompose (default: current branch's diff vs `main`). `--execute`
+enables Step 7 with per-PR confirmation for `gh pr create`.
 
 ______________________________________________________________________
 
-### 1. Step 0: Identify the atomic unit
+### Step 0: Identify the atomic unit
 
 **Before splitting anything, name the smallest set of changes that must land together for the runtime to stay green.**
 
@@ -48,12 +46,9 @@ Record the atomic unit in a one-line note before continuing — e.g. _"Atomic un
 `WeightedLossModule` and the proto must define `WeightedLossConfig` before the trainer wiring PR can land; everything
 else is splittable."_
 
-This step exists because Claude under deadline pressure will otherwise decompose into PRs that individually break
-`main`. Naming the atomic unit up front prevents that failure mode.
-
 ______________________________________________________________________
 
-### 2. Step 1: Inventory the branch
+### Step 1: Inventory the branch
 
 Run, and read the output:
 
@@ -64,13 +59,11 @@ git diff --stat main...$BRANCH
 git diff --name-only main...$BRANCH | sort
 ```
 
-**On LOC as a sizing heuristic:** LOC is a rough guide, not a hard rule. A single complex algorithm of 600 LOC is fine
-as one atomic PR — splitting it artificially makes review harder, not easier. The signals that actually matter are
-"reviewer cannot hold this in their head" and "this PR has more than one purpose," not a line count.
+**LOC is a rough guide, not a hard rule.** The real signals are "reviewer can't hold this in their head" and "this PR
+has more than one purpose." A 600-LOC single algorithm is fine as one PR; splitting it artificially makes review harder.
 
-**Tests do not count toward LOC budget.** When sizing a PR, count production LOC only. Tests still ship in the same PR
-as the code they test (Step 2), but they don't push the PR over a budget line. A 100-LOC production change with 250 LOC
-of tests is a 100-LOC PR.
+**Tests don't count toward the LOC budget.** Count production LOC only. Tests ship in the same PR as the code they test
+(Step 2) — a 100-LOC production change with 250 LOC of tests is a 100-LOC PR.
 
 Group every changed file into one of these categories:
 
@@ -90,7 +83,7 @@ If a file straddles categories (e.g. one file has a refactor and a new behavior)
 
 ______________________________________________________________________
 
-### 3. Step 2: Classify and slice
+### Step 2: Classify and slice
 
 Walk each category in this order, applying the matching rule. Build a candidate list of PRs as you go.
 
@@ -100,17 +93,11 @@ than reviewers for the consuming code (data team, schema owners, API stability).
 of bundling is that proto review blocks all consumer review.
 
 **Configs → bundle with the consumer that reads them.**\
-When a branch introduces a new config option AND the code that reads / pipes / consumes it, all of that is **one PR**.
-The config field is inert without the consumer; the consumer is the natural review surface for evaluating "does this new
-option do what it claims." Splitting them apart creates a config-only PR that the reviewer cannot meaningfully evaluate
-("what is this for?") and a consumer PR whose feature-level review has to handwave the config.
-
-This applies to all config locations: `deployment/configs/`, task configs, example configs in `examples/`. The rule is
-the same.
-
-The only time a config change is its own PR is when **the config change is the only change** — e.g. an ops-tuning diff
-that adjusts memory limits, regions, or quotas with no code change. In that case the PR is trivially its own PR by
-virtue of being the only thing in the branch; no decomposition decision is needed.
+When a branch introduces a new config option AND the code that consumes it, all of that is **one PR**. The config field
+is inert without the consumer; the consumer is the natural review surface for "does this option do what it claims." This
+applies to all config locations: `deployment/configs/`, task configs, `examples/`. The only exception is config-only
+changes (e.g. ops-tuning diffs adjusting memory limits or quotas) — those are trivially their own PR by being the only
+thing in the branch.
 
 **Pure refactor → separate from feature PR.**\
 A refactor PR must not change behavior (Google rule). Verifiable by: existing tests pass unchanged AND the test suite is
@@ -146,18 +133,17 @@ files) can be neither; that's fine. The rule binds at scale.
 
 ______________________________________________________________________
 
-### 4. Step 3: Order via a dependency tree (not a stack)
+### Step 3: Order via a dependency tree (not a stack)
 
-**Every PR's git base is `main`.** Not another PR's branch. But each PR's branch may — and should — contain code from
-its logical predecessors, so the PR builds, type-checks, and is reviewable on its own.
-
-This is the key distinction the skill enforces:
+The key distinction:
 
 - **GitHub-stacking** (forbidden): PR_B's GitHub base is PR_A's branch. Merging PR_A is a prerequisite to merging PR_B.
   Reviewing PR_B is conditioned on PR_A's review state. The chain forces serial merge order.
 - **Main-based with logical dependency** (correct): PR_B's GitHub base is `main`. PR_B's branch contains a cherry-picked
   copy of PR_A's commits plus PR_B's own commits. PR_A and PR_B are independent merge candidates from Git's perspective.
-  Reviewers review them in dependency order, but neither blocks the other in GitHub.
+  Reviewers review them in dependency order, but neither blocks the other in GitHub. PR_B is opened as a **draft**
+  initially — CI runs against the cherry-picked-predecessor form, but reviewers are NOT pinged until PR_A merges and
+  PR_B's branch is rebased to drop A's commits.
 
 Build a dependent PR like this:
 
@@ -184,11 +170,10 @@ git rebase origin/main
 git push --force-with-lease
 ```
 
-**The output of decomposition is a dependency DAG of PRs**, not a linear stack. Roots can be reviewed in parallel.
-Interior nodes wait on their parents. Diamonds — one PR with two predecessor parents that share a common ancestor — are
-fine if the dependencies are real; each leaf's branch cherry-picks **each ancestor PR's own commits exactly once, in
-topological order**. A shared ancestor (the top of the diamond) gets cherry-picked once total into the descendant —
-never once per parent branch the descendant joins through.
+Roots can be reviewed in parallel; interior nodes wait on their parents. Diamonds — one PR with two predecessor parents
+that share a common ancestor — are fine if the dependencies are real. Each leaf's branch cherry-picks **each ancestor
+PR's own commits exactly once, in topological order**; a shared ancestor gets cherry-picked once total into the
+descendant, never once per parent.
 
 ```
 PR_A (proto)            ──┐
@@ -199,14 +184,21 @@ PR_B (docs cleanup)       │                                       ├─► PR
 PR_E (configs)            ── independent
 ```
 
-**Smells** (these are the real over-decomposition signals — note that diamonds are NOT a smell under this model):
+**Sanity-check patterns** (each can be the right shape for genuinely large work — pause and ask the question, fold only
+if the answer says fold; note that diamonds are NOT on this list under this model):
 
-- **Deep chains (>3 levels).** Leaves carry many ancestors' commits and rebase churn compounds. Fold middle nodes
-  together.
-- **High in-degree (>2 dependencies on one PR).** Means the dependent branch is huge (it cherry-picks all ancestors) and
-  the decomposition has split the wrong things. Fold ancestors into the dependent, or fold sibling ancestors together.
-- **Many roots (>4 truly independent PRs).** May be over-decomposed; the branch was probably a collection of unrelated
-  work, and some leaves may merit being their own branch entirely.
+- **Deep chains (>3 levels).** A chain may genuinely be the right shape for sequential work — proto → utility → refactor
+  → integration is four levels and reasonable. But each added level multiplies rebase churn for leaves. Ask: is each
+  middle node a distinct purpose, or could two adjacent middle nodes be the same PR? Fold only if adjacent nodes share a
+  purpose.
+- **High in-degree (>2 dependencies on one PR).** Integration PRs that wire together several independent components
+  legitimately have many parents — that's what "integration" means. Ask: are the parents actually independent of each
+  other, or did the split pull apart things that belong together? Fold only if the parents are entangled. Do not fold
+  parents into the dependent just to drive the in-degree down.
+- **Many roots (>4 independent PRs).** A branch that did several truly unrelated things will produce many roots — that's
+  correct decomposition, not over-decomposition. Ask: was this one feature or several? If several, the roots may merit
+  being their own branches/PR series rather than a single decomposition output. Folding unrelated roots together to
+  reduce root count re-creates the original mega-PR.
 
 **Escape-hatch hierarchy** when even the dependency-tree decomposition doesn't make a PR small enough to stand alone:
 
@@ -225,7 +217,7 @@ directions. Re-evaluate the split before forcing it through.
 
 ______________________________________________________________________
 
-### 5. Step 4: Build the PRs
+### Step 4: Build the PRs
 
 **Default workflow — clean per-commit splits:**
 
@@ -283,7 +275,7 @@ and focus on the source.
 
 ______________________________________________________________________
 
-### 6. Step 5: Write each PR description
+### Step 5: Write each PR description
 
 Each PR uses the project's `pull_request_template.md`. Fill it in **self-contained** — a reviewer must be able to
 evaluate the PR without reading any other PR.
@@ -351,14 +343,16 @@ what's changing and why.
 
 ______________________________________________________________________
 
-### 7. Step 6: Present the dependency tree and review order
+### Step 6: Present the dependency tree and review order
 
-After sketching the PRs (or after opening them), present the user with the **dependency tree** plus a **suggested review
-order** that respects it. Make three things explicit:
+After sketching the PRs (or after opening them as drafts), present the user with the **dependency tree** plus a
+**wave-based review schedule** that respects it. Make three things explicit:
 
 1. All PRs are open against `main` (git base) — none are GitHub-stacked.
-2. Sibling PRs in the tree (same level, same parents) can be reviewed in parallel.
-3. As earlier PRs merge, dependent ones rebase to drop the cherry-picked predecessor commits from their diffs.
+2. Sibling PRs in the tree (same level, same parents) can be marked ready-for-review in parallel once their parents
+   merge.
+3. As earlier PRs merge, dependents rebase to drop the cherry-picked predecessor commits, then convert from draft to
+   ready-for-review.
 
 Format:
 
@@ -372,13 +366,14 @@ Dependency tree (all PRs open against main):
         └─► #<F> — <title>  (cherry-picks B, C, D)
 #<E> — <title>  (root, independent)
 
-Suggested review order:
-1. #<A>, #<B>, #<E> — roots. Review in any order; can be in parallel.
-2. #<C>, #<D> — depend on #<B>. Review after #<B> lands. #<C> and #<D> are independent — review in parallel.
-3. #<F> — depends on #<C> and #<D>. Review last.
+Wave-based review schedule:
+1. #<A>, #<B>, #<E> — roots. Marked ready-for-review immediately (in any order; can be in parallel).
+2. #<C>, #<D> — depend on #<B>. Marked ready-for-review after #<B> lands. #<C> and #<D> are independent — convert in
+   parallel.
+3. #<F> — depends on #<C> and #<D>. Marked ready-for-review last, after both #<C> and #<D> land.
 
-After each merge, rebase the open dependents on origin/main before review — Git drops the merged commits from their
-diffs.
+When wave N's parents merge into `main`, rebase wave N's branches on `origin/main` (cherry-picked predecessor commits
+drop out), then convert each from draft to ready-for-review (`gh pr ready <number>`).
 ```
 
 For a flat decomposition with no dependencies, render the tree as a flat list — the format still shows the reviewer that
@@ -387,7 +382,7 @@ sees the structure.
 
 ______________________________________________________________________
 
-### 8. Step 7: Execute (only if `--execute` or user confirmation)
+### Step 7: Execute (only if `--execute` or user confirmation)
 
 **Skip this section entirely if `--execute` was not passed and the user has not explicitly told you to proceed.** The
 Step 6 plan is the deliverable; the user reviews and refines it before any git work happens.
@@ -402,8 +397,9 @@ git status --short
 # before proceeding with --execute. Do NOT auto-stash; the user should decide.
 ```
 
-Once the working tree is clean, run the git commands per the plan. For each PR in dependency-tree order (roots first,
-then children):
+Once the working tree is clean, build **every** planned branch in dependency-tree order (roots first, then children).
+Each branch must build standalone — that's what the cherry-picks are for. The branches all get pushed; the PRs all get
+opened as drafts; only the root wave is converted to ready-for-review in this same pass.
 
 ```bash
 git checkout main
@@ -425,32 +421,48 @@ make unit_test_py PY_TEST_FILES="<relevant_test.py>"
 git push -u origin decomp/<descriptive-name>
 ```
 
-**Confirm with the user before each `gh pr create`.** PRs are externally visible; the user should approve titles and
-descriptions before they go up. Use the format:
+**Confirm with the user before each `gh pr create --draft`.** PRs are externally visible; the user should approve titles
+and descriptions before they go up. Use the format:
 
 ```
-Ready to open PR for branch `decomp/<name>`:
-  Title: <title>
-  Base:  main
-  Body:  <paste the Step 5 description sketch>
+Ready to open DRAFT PR for branch `decomp/<name>`:
+  Title:  <title>
+  Base:   main
+  Status: draft (CI runs, no reviewers pinged yet)
+  Body:   <paste the Step 5 description sketch>
 
 Proceed? (yes / edit / skip)
 ```
 
-Wait for explicit confirmation per PR. Don't batch — each `gh pr create` is its own confirmation.
+Wait for explicit confirmation per PR. Don't batch — each `gh pr create --draft` is its own confirmation.
 
-**Skipping a PR may block its descendants.** If the user skips a PR that has dependents in the dependency tree, those
-dependents cannot be merged either — their content is conditioned on the skipped predecessor landing first, and the
-descendants' branches contain cherry-picked copies of the unreviewed predecessor's code. Treat a skip as deferring the
-entire subtree rooted at the skipped PR. Independent siblings (PRs with no path through the skipped one) are unaffected
-and can still proceed. Tell the user explicitly: "Skipping #<N> defers #<M> and #<K> (its dependents) too."
+**After all drafts are open, mark the root wave ready-for-review.** Roots are the PRs with no unmerged predecessors —
+they're ready to be reviewed immediately because their diffs against `main` are already clean. Confirm with the user
+before each conversion:
 
-After all confirmed PRs are open, restate the dependency tree and review order from Step 6 with the actual PR numbers
-filled in — that's the final hand-off to the user.
+```
+Ready to mark #<N> as ready-for-review (`gh pr ready <N>`)?
+Reviewers will be pinged. Proceed? (yes / skip)
+```
+
+Only convert the root wave in this pass. Dependent waves stay as drafts; they get converted later, after their
+predecessors merge.
+
+**Skipping a PR defers its entire subtree.** Descendants contain cherry-picked copies of the skipped (unreviewed)
+predecessor's code, so they cannot merge either. Independent siblings are unaffected. Tell the user explicitly:
+"Skipping #<N> defers #<M> and #<K> (its dependents) too."
+
+After the root wave is ready-for-review and all dependent PRs are open as drafts, hand off to the user:
+
+> Roots are ready for review (#<A>, #<B>, #<E>). Dependent PRs (#<C>, #<D>, #<F>) are open as drafts so CI is running.
+> Once each root merges into `main`, rebase its dependents on `origin/main` and run `gh pr ready <number>` to advance
+> them to ready-for-review. Independent subtrees can advance in parallel.
+
+Restate the dependency tree and wave-based review schedule from Step 6 with the actual PR numbers filled in.
 
 ______________________________________________________________________
 
-### 9. Quick Reference
+### Quick Reference
 
 | Change category                                  | Strategy                                                       | Ordering                        |
 | ------------------------------------------------ | -------------------------------------------------------------- | ------------------------------- |
@@ -464,47 +476,26 @@ ______________________________________________________________________
 | Docs-only / docstring                            | Own PR                                                         | Anytime; doesn't block anything |
 | Unrelated cleanup                                | Own PR, never bundled                                          | Anytime; doesn't block anything |
 
-| Question                                        | Answer                                                                                                                                               |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Can two PRs be git-based on each other?         | No. Every PR's git base is `main`; GitHub-stacking is forbidden.                                                                                     |
-| What if PR_B needs PR_A's code to build?        | Cherry-pick PR_A's commits into PR_B's branch. PR_B is still git-based on `main`. The duplicated code drops out when PR_B rebases after PR_A merges. |
-| What does the decomposition output look like?   | A dependency DAG of PRs plus a suggested review order. Roots can be reviewed in parallel; dependents wait.                                           |
-| Can I write "Depends on #N" in the description? | No. That's a forward reference.                                                                                                                      |
-| Can I write `# TODO(me): follow-up` in code?    | Yes, if it names intent only — no PR numbers, no follow-up scope.                                                                                    |
-| Can a PR be both wide and deep?                 | Not if it's large. Split it.                                                                                                                         |
-| What if the changes truly can't be split?       | Declare atomic and ship as one PR. Honest > artificial.                                                                                              |
+| Question                                        | Answer                                                                                                                                                                                                                                                   |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Can two PRs be git-based on each other?         | No. Every PR's git base is `main`; GitHub-stacking is forbidden.                                                                                                                                                                                         |
+| What if PR_B needs PR_A's code to build?        | Cherry-pick PR_A's commits into PR_B's branch so PR_B builds and CI runs standalone. Open PR_B as a **draft** (`gh pr create --draft`) with `--base main`. Convert PR_B from draft to ready-for-review only after PR_A merges and PR_B has been rebased. |
+| When does a draft PR become ready for review?   | When all of its predecessors in the dependency tree have merged into `main` and the branch has been rebased so the diff against `main` shows only the PR's own code.                                                                                     |
+| What does the decomposition output look like?   | A dependency DAG of PRs plus a wave-based review schedule. Roots are marked ready-for-review immediately; dependents stay as drafts until their predecessors merge.                                                                                      |
+| Can I write "Depends on #N" in the description? | No. That's a forward reference.                                                                                                                                                                                                                          |
+| Can I write `# TODO(me): follow-up` in code?    | Yes, if it names intent only — no PR numbers, no follow-up scope.                                                                                                                                                                                        |
+| Can a PR be both wide and deep?                 | Not if it's large. Split it.                                                                                                                                                                                                                             |
+| What if the changes truly can't be split?       | Declare atomic and ship as one PR. Honest > artificial.                                                                                                                                                                                                  |
 
 ______________________________________________________________________
 
-### 10. Common Mistakes
+### Common Mistakes
 
-| Rationalization                                                             | Reality                                                                                                                                                                                                                                                                                                                       |
-| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Stack them (git-base PR_B on PR_A) so each is independently reviewable."   | GitHub-stacking forces serial merge order and ties review state across the chain. Instead, **cherry-pick PR_A's commits into PR_B's branch while keeping PR_B's git base at `main`**. PR_B builds standalone; the duplicated code drops out on rebase after PR_A merges. Both PRs are independent merge candidates in GitHub. |
-| "PR_B can't be opened until PR_A merges, because PR_B needs PR_A's code."   | No. PR_B's branch cherry-picks PR_A's commits in addition to PR_B's own. PR_B is openable immediately, with `--base main`. When PR_A merges, rebase PR_B and the duplicated code drops out of the diff.                                                                                                                       |
-| "A diamond dependency is a smell."                                          | Under GitHub-stacking, yes. Under main-based PRs with cherry-picked predecessor code, a diamond is just a DAG — the joining PR cherry-picks both parents' commits. The actual smells are deep chains (>3 levels), high in-degree (>2 dependencies on one PR), and many independent roots (>4).                                |
-| "Depends on #N is just metadata, not a forward reference."                  | It is a forward reference. The reviewer reads `#N` and now their evaluation of this PR is conditioned on another PR. That's exactly what main-based decomposition prevents.                                                                                                                                                   |
-| "Backfill PR numbers in descriptions — it's cheap."                         | The rule isn't about timing. It's about coupling reviewer attention. Backfilled or not, the cross-link is still there.                                                                                                                                                                                                        |
-| "Companion PR" annotation is friendly context.                              | It tells the reviewer "you need to read another PR to understand this one." The PR's own description should provide that context.                                                                                                                                                                                             |
-| "Final integration PR for the X feature."                                   | Same problem — frames this PR as a chapter in a story the reviewer must follow. The PR description should describe THIS change, not the saga.                                                                                                                                                                                 |
-| "The proto change is one line, ride along with the feature."                | Proto reviewers are usually different people reviewing for different concerns (schema stability, API compatibility). Cost of separation is near-zero; cost of bundling is that proto review blocks consumer review.                                                                                                           |
-| "Configs should always be in their own PR for ops review."                  | Old rule, no longer applies. New configs ride with the consumer that reads them — a config field without a consumer is incoherent to review. The only config-only PR is one where the config change is the only change in the branch (e.g. an ops-tuning diff with no code change).                                           |
-| "The TODO needs full context so future-me understands what to do."          | The TODO needs INTENT, not scope. Future-you reads the surrounding code for context. A scope-describing TODO becomes outdated the moment the implementation drifts.                                                                                                                                                           |
-| "It's all one logical commit so I'll just split by file."                   | Splitting at file boundaries produces PRs that are individually broken at HEAD. Split by *purpose*, not by file location.                                                                                                                                                                                                     |
-| "Tests are big, I'll send them in a follow-up."                             | Direct violation of tests-with-code. Tests ship in the same PR as the new code.                                                                                                                                                                                                                                               |
-| "TODO(author) note IS a downstream reference if it says 'follow-up'."       | "Follow-up" is intent, not a reference. The line crosses when the TODO names a PR number or describes the follow-up's scope.                                                                                                                                                                                                  |
-| "Wide-and-deep is fine if the PR is overall small."                         | If it's small the rule doesn't bind. If it's not small, pick one.                                                                                                                                                                                                                                                             |
-| "I'll stack just this once because rebasing is annoying."                   | Stacking shifts the rebase cost from the author to every reviewer in the chain. The rule exists exactly to prevent that.                                                                                                                                                                                                      |
-| "Splitting will create too many PRs and overwhelm reviewers."               | Reviewers prefer five 100-LOC PRs over one 500-LOC PR. Microsoft's 15M-PR analysis confirms throughput improves with smaller PRs even at higher count.                                                                                                                                                                        |
-| "While I was here, I fixed some docstrings — they fit in the feature PR."   | They don't. Docstring fixes are a 60-second separate PR. Bundling them pollutes the feature diff.                                                                                                                                                                                                                             |
-| "Decomposition makes review easy — we can skip the formal review subagent." | No. Decomposition makes review *fast*, not *optional*. Each PR still gets reviewed; the skill earns its keep by making each review trivial.                                                                                                                                                                                   |
-| "Cherry-pick `main..decomp/C` to include C's content in a dependent PR."    | That range includes C's predecessors (e.g. B). If B is already cherry-picked above, B's commits replay and conflict. Always cherry-pick each PR's **own commits** exactly once, in topological order — never full branch ranges.                                                                                              |
-| "Skipping a deferred PR shouldn't block the others."                        | If the skipped PR is a parent in the dependency tree, its descendants contain cherry-picked copies of unreviewed code and cannot be merged either. A skip defers the entire subtree; only independent siblings remain unblocked.                                                                                              |
-| "Working tree has a few local edits but I'll just `git checkout` anyway."   | `git checkout` carries tracked modifications across branches. They'll silently follow you into the decomposition branch and can be staged or committed by mistake. Require a clean tree (`git status --short` empty) before any `--execute` work.                                                                             |
+`common-mistakes.md` next to this file pairs each common decomposition rationalization with the rule it breaks.
 
 ______________________________________________________________________
 
-### 11. Red Flags
+### Red Flags
 
 **Never:**
 
@@ -532,79 +523,8 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-### 12. Worked example
+### Worked example
 
-**Input:** branch `feat/add-weighted-loss`, ~760 LOC of production code (~940 LOC including tests) across 18 files.
-Contains: proto change (~30 LOC), two resource-config YAMLs (~40 LOC) read by the trainer, new `WeightedLossModule` (220
-LOC production, 3 files; plus ~90 LOC of tests), trainer wiring (160 LOC, 4 files), `DistNeighborSampler.sample()`
-refactor (190 LOC production, 1 file; plus ~90 LOC of tests), unrelated `gigl/common/uri.py` docstring cleanup (~15
-LOC).
-
-**Atomic unit (Step 0):** The trainer-wiring PR must include the proto field (`WeightedLossConfig`), the new
-`WeightedLossModule`, AND the resource configs that reference the new schema — the trainer reads all three. The sampler
-refactor is independent (default `loss_config=None` preserves behavior). The module is independently useful (orphan-code
-OK). Configs ride with the trainer wiring per the bundle-with-consumer rule (Step 2).
-
-**Candidate PRs — all open against `main`. LOC counts are production-only; tests ship with their code but don't count
-toward the budget.**
-
-| #   | Title                                                                | Files                                                                                               | LOC (prod) | Wide/Deep    | Cherry-picks | Why it's its own PR                                                                                                                      |
-| --- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| A   | Clean up stale docstrings in `gigl/common/uri.py`                    | 1                                                                                                   | 15         | — (trivial)  | —            | Unrelated cleanup.                                                                                                                       |
-| B   | Add `WeightedLossConfig` proto message                               | proto + generated `_pb2.py*`                                                                        | ~30 (+gen) | Wide-shallow | —            | Protos always own PR.                                                                                                                    |
-| C   | Add `WeightedLossModule` (+ unit tests)                              | `gigl/nn/weighted_loss*.py`, `gigl/nn/__init__.py`, `tests/unit/nn/weighted_loss_test.py`           | 220        | Deep         | B            | New utility; needs the proto symbols. Tests ship in same PR (don't count toward budget).                                                 |
-| D   | Thread optional `loss_config` through `DistNeighborSampler.sample()` | `gigl/distributed/dist_neighbor_sampler.py`, `tests/unit/distributed/dist_neighbor_sampler_test.py` | 190        | Deep         | B            | Refactor (no behavior change when `loss_config=None`); needs proto symbols.                                                              |
-| F   | Wire `WeightedLossConfig` into V2 GLT trainer (+ resource configs)   | 4 files in `gigl/src/training/`, two YAMLs in `deployment/configs/`                                 | 200        | Deep         | B, C, D      | Integration PR. Reads the new proto field, uses module + sampler, and the resource configs come along per the bundle-with-consumer rule. |
-
-The **Cherry-picks** column lists which predecessor PRs each branch logically depends on. F's branch construction
-cherry-picks each ancestor PR's **own commits exactly once** in topological order — never `main..decomp/C` or
-`main..decomp/D` as full ranges, since those already contain B and would replay it after we apply B directly:
-
-```bash
-git checkout -b decomp/F main
-git cherry-pick <B's OWN commits>      # proto symbols
-git cherry-pick <C's OWN commits>      # WeightedLossModule (F imports it). C's branch also contains B's commits;
-                                       # we don't re-include them here — B was already applied above.
-git cherry-pick <D's OWN commits>      # sampler refactor. Same caveat: D's branch contains B's commits; not re-included.
-git cherry-pick <F's OWN commits>      # trainer wiring + the two resource configs
-git push -u origin decomp/F
-gh pr create --base main --title "Wire WeightedLossConfig into V2 GLT trainer"
-```
-
-**Dependency tree and review order (Step 6 output):**
-
-```
-Dependency tree (all PRs open against main):
-
-#A — Clean up stale docstrings in gigl/common/uri.py        (root, independent)
-#B — Add WeightedLossConfig proto message                   (root)
-  ├─► #C — Add WeightedLossModule (+tests)                  (cherry-picks B)
-  ├─► #D — Thread optional loss_config through sampler      (cherry-picks B)
-  └─► #F — Wire WeightedLossConfig into trainer (+configs)  (cherry-picks B, C, D)
-
-Suggested review order:
-1. #A — independent of everything. Review anytime.
-2. #B — root of the feature tree. Review after #A or in parallel.
-3. #C, #D — both depend on #B but are independent of each other. Review in parallel after #B lands.
-4. #F — depends on #C and #D (and B transitively). Review last; rebase after the two land to clean the diff.
-
-After each PR merges, rebase the open dependents on origin/main before review.
-```
-
-**What the PR descriptions do NOT say:**
-
-- No `"Depends on #B"` in C, D, or F. Each describes its own change.
-- No `"This is the final integration PR for WeightedLossConfig"` in F. F's description explains the wiring concretely:
-  "Reads `WeightedLossConfig` from the gbml config; instantiates `WeightedLossModule`; passes the config to
-  `DistNeighborSampler.sample()` via the new `loss_config` arg. Resource configs under `deployment/configs/` are updated
-  in this PR because they reference the new schema and the trainer reads them."
-- No `"Consumers land in follow-up PRs"` in B. Instead: "Adds the proto field. No consumers in this PR — proto changes
-  ship independently of consumers in this codebase. Generated via `make compile_protos`; no hand edits to `*_pb2.py*`."
-
-**On the transient diff bloat:** before #B merges, #C's diff against `main` shows B's proto change plus C's module. That
-is expected — the reviewer should review #B first (smaller, simpler), and after #B merges, rebasing #C drops B's commits
-so #C's diff is just the module. The reviewer never sees more than one PR at a time anyway, in dependency order.
-
-If during PR construction you discover that, say, the sampler refactor (D) is actually behaviorally entangled with the
-trainer wiring (F), Step 3's escape-hatch hierarchy applies: prefer orphan code or a feature flag; only
-declare-atomic-and-don't-split as a last resort.
+`worked-example.md` next to this file walks one realistic feature branch through a full 4-PR decomposition — candidate
+PR table, cherry-pick commands, dependency tree, suggested review order, and notes on what the PR descriptions
+deliberately do not say.
