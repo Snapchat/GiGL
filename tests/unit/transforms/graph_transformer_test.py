@@ -7,6 +7,7 @@ import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
@@ -124,6 +125,27 @@ def create_ppr_sequence_hetero_data() -> HeteroData:
     data.hop_distance = hop_distance.to_sparse_csr()
 
     return data
+
+
+def _dense_nonmissing_mask_from_indices(
+    pairwise_nonmissing_indices: torch.Tensor | None,
+    batch_size: int,
+    seq_len: int,
+    device: torch.device,
+) -> torch.Tensor:
+    dense_mask = torch.zeros(
+        (batch_size, seq_len, seq_len),
+        dtype=torch.bool,
+        device=device,
+    )
+    if pairwise_nonmissing_indices is None or pairwise_nonmissing_indices.numel() == 0:
+        return dense_mask
+    dense_mask[
+        pairwise_nonmissing_indices[:, 0],
+        pairwise_nonmissing_indices[:, 1],
+        pairwise_nonmissing_indices[:, 2],
+    ] = True
+    return dense_mask
 
 
 class TestGetKHopNeighborsSparse(TestCase):
@@ -256,7 +278,10 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertIsInstance(attention_bias_data, dict)
         self.assertIn("anchor_bias", attention_bias_data)
         self.assertIn("pairwise_bias", attention_bias_data)
-        self.assertIn("pairwise_nonmissing_mask", attention_bias_data)
+        self.assertIn("pairwise_nonmissing_indices", attention_bias_data)
+        self.assertIn("pairwise_relation_indices", attention_bias_data)
+        self.assertIn("pairwise_edge_attr_indices", attention_bias_data)
+        self.assertIn("pairwise_edge_attr_values", attention_bias_data)
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
@@ -309,6 +334,148 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         # First position should be anchor node
         self.assertTrue(torch.allclose(sequences[0, 0], anchor_feature))
+
+    def test_pairwise_relation_indices_follow_order_direction_and_padding(self):
+        """Sparse relation indices preserve edge-type labels before homogenization."""
+        user = NodeType("user")
+        likes = EdgeType(user, Relation("likes"), user)
+        follows = EdgeType(user, Relation("follows"), user)
+        missing = EdgeType(user, Relation("missing"), user)
+
+        data = HeteroData()
+        data["user"].x = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0],
+            ]
+        )
+        data["user"].batch_size = 1
+        data[likes.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[follows.tuple_repr()].edge_index = torch.tensor([[0, 1], [1, 2]])
+
+        _, valid_mask, auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            relation_edge_types=[likes, follows, missing],
+        )
+
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+        pairwise_relation_indices = auxiliary_data["pairwise_relation_indices"]
+        self.assertIsNotNone(pairwise_relation_indices)
+        assert pairwise_relation_indices is not None
+        self.assertEqual(pairwise_relation_indices.shape[1], 4)
+        self.assertEqual(
+            {tuple(coord) for coord in pairwise_relation_indices.tolist()},
+            {
+                (0, 1, 0, 0),  # likes: source 0 -> target 1
+                (0, 1, 0, 1),  # follows: source 0 -> target 1
+                (0, 2, 1, 1),  # follows: source 1 -> target 2
+            },
+        )
+        self.assertFalse((pairwise_relation_indices[:, 1:3] == 3).any().item())
+        self.assertFalse((pairwise_relation_indices[:, 3] == 2).any().item())
+
+    def test_pairwise_edge_attr_payloads_follow_order_direction_and_padding(self):
+        """Sparse edge-attr payloads preserve relation labels and GAT direction."""
+        user = NodeType("user")
+        likes = EdgeType(user, Relation("likes"), user)
+        follows = EdgeType(user, Relation("follows"), user)
+        missing = EdgeType(user, Relation("missing"), user)
+
+        data = HeteroData()
+        data["user"].x = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0],
+            ]
+        )
+        data["user"].batch_size = 1
+        data[likes.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[likes.tuple_repr()].edge_attr = torch.tensor([[0.25, 1.25]])
+        data[follows.tuple_repr()].edge_index = torch.tensor([[0, 1], [1, 2]])
+        data[follows.tuple_repr()].edge_attr = torch.tensor([[2.0], [3.0]])
+
+        edge_attr_dim_map = {
+            likes: 2,
+            follows: 1,
+            missing: 1,
+        }
+        _, valid_mask, auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            edge_attr_edge_type_to_feat_dim_map=edge_attr_dim_map,
+        )
+
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+        edge_attr_indices = auxiliary_data["pairwise_edge_attr_indices"]
+        edge_attr_values = auxiliary_data["pairwise_edge_attr_values"]
+        self.assertIsNotNone(edge_attr_indices)
+        self.assertIsNotNone(edge_attr_values)
+        assert edge_attr_indices is not None
+        assert edge_attr_values is not None
+
+        sorted_edge_types = sorted(edge_attr_dim_map.keys())
+        likes_idx = sorted_edge_types.index(likes)
+        follows_idx = sorted_edge_types.index(follows)
+        missing_idx = sorted_edge_types.index(missing)
+
+        self.assertEqual(
+            {tuple(coord) for coord in edge_attr_indices[likes_idx].tolist()},
+            {(0, 1, 0)},  # likes: source 0 -> target 1
+        )
+        self.assertTrue(
+            torch.allclose(
+                edge_attr_values[likes_idx],
+                torch.tensor([[0.25, 1.25]]),
+            )
+        )
+        self.assertEqual(
+            {tuple(coord) for coord in edge_attr_indices[follows_idx].tolist()},
+            {
+                (0, 1, 0),  # follows: source 0 -> target 1
+                (0, 2, 1),  # follows: source 1 -> target 2
+            },
+        )
+        self.assertTrue(
+            torch.allclose(edge_attr_values[follows_idx], torch.tensor([[2.0], [3.0]]))
+        )
+        self.assertNotIn(missing_idx, edge_attr_indices)
+        self.assertFalse((edge_attr_indices[likes_idx] == 3).any().item())
+        self.assertFalse((edge_attr_indices[follows_idx] == 3).any().item())
+
+    def test_pairwise_edge_attr_payloads_missing_edge_attr_raises(self):
+        user = NodeType("user")
+        follows = EdgeType(user, Relation("follows"), user)
+
+        data = HeteroData()
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+        data["user"].batch_size = 1
+        data[follows.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires edge_attr for edge type",
+        ):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=2,
+                anchor_node_type="user",
+                hop_distance=1,
+                edge_attr_edge_type_to_feat_dim_map={follows: 1},
+            )
 
     def test_different_anchor_types(self):
         """Test with different anchor node types."""
@@ -797,7 +964,7 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         assert anchor_bias is not None
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertIsNone(attention_bias_data["pairwise_bias"])
-        self.assertIsNone(attention_bias_data["pairwise_nonmissing_mask"])
+        self.assertIsNone(attention_bias_data["pairwise_nonmissing_indices"])
         self.assertTrue(valid_mask[0, 0].item())
 
     def test_attention_bias_outputs_include_valid_mask_and_relative_features(
@@ -823,13 +990,19 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         self.assertEqual(valid_mask.shape, (1, 4))
         anchor_bias = attention_bias_data["anchor_bias"]
         pairwise_bias = attention_bias_data["pairwise_bias"]
-        pairwise_nonmissing_mask = attention_bias_data["pairwise_nonmissing_mask"]
+        pairwise_nonmissing_indices = attention_bias_data["pairwise_nonmissing_indices"]
         assert anchor_bias is not None
         assert pairwise_bias is not None
-        assert pairwise_nonmissing_mask is not None
+        assert pairwise_nonmissing_indices is not None
+        pairwise_nonmissing_mask = _dense_nonmissing_mask_from_indices(
+            pairwise_nonmissing_indices=pairwise_nonmissing_indices,
+            batch_size=1,
+            seq_len=4,
+            device=pairwise_bias.device,
+        )
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
-        self.assertEqual(pairwise_nonmissing_mask.shape, (1, 4, 4))
+        self.assertEqual(pairwise_nonmissing_indices.shape[1], 3)
         self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 0.0, places=5)
         self.assertAlmostEqual(anchor_bias[0, 1, 0].item(), 1.0, places=5)
         self.assertAlmostEqual(anchor_bias[0, 2, 0].item(), 3.0, places=5)

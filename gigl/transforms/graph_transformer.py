@@ -57,7 +57,7 @@ Example Usage:
     >>> # attention_bias_data['anchor_bias']: (batch_size, max_seq_len, 1)
 """
 
-from typing import Literal, Optional, TypedDict
+from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
 from torch import Tensor
@@ -65,17 +65,32 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
+from gigl.src.common.types.graph_data import EdgeType as GiGLEdgeType
+
 TokenInputData = dict[str, Tensor]
 
 
 class SequenceAuxiliaryData(TypedDict):
     anchor_bias: Optional[Tensor]
     pairwise_bias: Optional[Tensor]
-    pairwise_nonmissing_mask: Optional[Tensor]
+    pairwise_nonmissing_indices: Optional[Tensor]
+    pairwise_relation_indices: Optional[Tensor]
+    pairwise_edge_attr_indices: Optional[dict[int, Tensor]]
+    pairwise_edge_attr_values: Optional[dict[int, Tensor]]
     token_input: Optional[TokenInputData]
 
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
+
+
+class _TokenOccurrenceIndex(NamedTuple):
+    batch_indices: Tensor
+    positions: Tensor
+    node_indices: Tensor
+    sorted_node_indices: Tensor
+    node_sort_perm: Tensor
+    sorted_batch_node_keys: Tensor
+    batch_node_sort_perm: Tensor
 
 
 def heterodata_to_graph_transformer_input(
@@ -91,6 +106,8 @@ def heterodata_to_graph_transformer_input(
     anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
     anchor_based_input_attr_names: Optional[list[str]] = None,
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+    relation_edge_types: Optional[list[GiGLEdgeType]] = None,
+    edge_attr_edge_type_to_feat_dim_map: Optional[dict[GiGLEdgeType, int]] = None,
 ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -132,6 +149,16 @@ def heterodata_to_graph_transformer_input(
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
+        relation_edge_types: Optional ordered edge types used to materialize sparse
+            relation coordinates. Each output relation index corresponds to one
+            edge type in this list. Directed edges are stored as
+            ``(batch_idx, query_pos=dst_token, key_pos=src_token, relation_idx)``.
+        edge_attr_edge_type_to_feat_dim_map: Optional ordered-by-sorted-key edge
+            feature dimensions used to materialize sparse edge-attribute
+            attention-bias payloads. Only edge types with positive feature dim
+            contribute. Directed edges are stored as
+            ``(batch_idx, query_pos=dst_token, key_pos=src_token)`` under the
+            same relation index as the sorted edge-type order.
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -144,7 +171,17 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
-                ``"pairwise_nonmissing_mask"`` shaped ``(batch, seq, seq)`` or None
+                ``"pairwise_nonmissing_indices"`` shaped ``(num_pairs, 3)`` or None,
+                storing ``(batch_idx, row_pos, col_pos)`` coordinates for
+                nonmissing pairwise entries
+                ``"pairwise_relation_indices"`` shaped
+                ``(num_relation_edges, 4)`` or None, storing
+                ``(batch_idx, query_pos, key_pos, relation_idx)`` coordinates
+                ``"pairwise_edge_attr_indices"`` as a dict mapping relation index
+                to ``(num_edges, 3)`` sparse ``(batch_idx, query_pos, key_pos)``
+                coordinates, or None
+                ``"pairwise_edge_attr_values"`` as a dict mapping relation index
+                to ``(num_edges, edge_attr_dim)`` edge-attribute values, or None
                 ``"token_input"`` as a dict mapping attribute name to a
                 ``(batch, seq, 1)`` tensor, or None
 
@@ -206,8 +243,12 @@ def heterodata_to_graph_transformer_input(
 
     device = data[anchor_node_type].x.device
 
-    # Convert to homogeneous for easier neighborhood extraction
-    homo_data = data.to_homogeneous()
+    # Convert to homogeneous for easier neighborhood extraction. In khop mode
+    # edge attributes stay on the original hetero edge stores because different
+    # relations may have different feature dimensions.
+    homo_data = data.to_homogeneous(
+        edge_attrs=[] if sequence_construction_method == "khop" else None
+    )
     homo_x = homo_data.x  # (total_nodes, feature_dim)
 
     num_nodes = homo_data.num_nodes
@@ -308,13 +349,49 @@ def heterodata_to_graph_transformer_input(
         device=device,
     )
 
-    pairwise_feature_sequences, pairwise_nonmissing_mask = (
+    needs_token_occurrence_index = bool(relation_edge_types) or bool(
+        edge_attr_edge_type_to_feat_dim_map
+    )
+    token_occurrences = (
+        _build_token_occurrence_index(
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            num_nodes=num_nodes,
+            device=device,
+        )
+        if needs_token_occurrence_index
+        else None
+    )
+
+    pairwise_feature_sequences, pairwise_nonmissing_indices = (
         _lookup_pairwise_relative_features(
             node_index_sequences=node_index_sequences,
             valid_mask=valid_mask,
             csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
             attr_names=pairwise_bias_attr_names,
             device=device,
+        )
+    )
+    pairwise_relation_indices = _lookup_pairwise_relation_indices(
+        data=data,
+        node_index_sequences=node_index_sequences,
+        valid_mask=valid_mask,
+        relation_edge_types=relation_edge_types,
+        node_type_offsets=node_type_offsets,
+        num_nodes=num_nodes,
+        device=device,
+        token_occurrences=token_occurrences,
+    )
+    pairwise_edge_attr_indices, pairwise_edge_attr_values = (
+        _lookup_pairwise_edge_attr_payloads(
+            data=data,
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            edge_attr_edge_type_to_feat_dim_map=edge_attr_edge_type_to_feat_dim_map,
+            node_type_offsets=node_type_offsets,
+            num_nodes=num_nodes,
+            device=device,
+            token_occurrences=token_occurrences,
         )
     )
 
@@ -337,7 +414,10 @@ def heterodata_to_graph_transformer_input(
         {
             "anchor_bias": anchor_bias_features,
             "pairwise_bias": pairwise_feature_sequences,
-            "pairwise_nonmissing_mask": pairwise_nonmissing_mask,
+            "pairwise_nonmissing_indices": pairwise_nonmissing_indices,
+            "pairwise_relation_indices": pairwise_relation_indices,
+            "pairwise_edge_attr_indices": pairwise_edge_attr_indices,
+            "pairwise_edge_attr_values": pairwise_edge_attr_values,
             "token_input": token_input_features,
         },
     )
@@ -831,9 +911,10 @@ def _lookup_pairwise_relative_features(
         features: (batch_size, max_seq_len, max_seq_len, num_attrs) tensor where
             features[b, i, j, k] = csr_matrices[k][node_index_sequences[b, i], node_index_sequences[b, j]]
             for valid (i, j) pairs, 0.0 for padding positions.
-        nonmissing_mask: (batch_size, max_seq_len, max_seq_len) bool tensor
-            that is True for valid diagonal self pairs and valid sparse
-            entries, and False for missing non-self pairs and padding.
+        nonmissing_indices: (num_nonmissing_pairs, 3) long tensor containing
+            ``(batch_idx, row_pos, col_pos)`` coordinates for valid diagonal
+            self pairs and valid sparse entries. Missing non-self pairs and
+            padding are omitted.
         Returns (None, None) if csr_matrices is empty.
 
     Example:
@@ -866,46 +947,45 @@ def _lookup_pairwise_relative_features(
         dtype=torch.float,
         device=device,
     )
-    nonmissing_mask = torch.zeros(
-        (batch_size, max_seq_len, max_seq_len),
-        dtype=torch.bool,
+    (
+        valid_batch_indices,
+        valid_row_positions,
+        valid_col_positions,
+        valid_row_indices,
+        valid_col_indices,
+    ) = _build_flat_valid_pair_layout(
+        node_index_sequences=node_index_sequences,
+        valid_mask=valid_mask,
         device=device,
     )
+    if valid_batch_indices.numel() == 0:
+        return features, torch.zeros((0, 3), dtype=torch.long, device=device)
 
-    pair_valid_mask = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
-    if not pair_valid_mask.any():
-        return features, nonmissing_mask
-
-    self_pair_mask = pair_valid_mask & torch.eye(
-        max_seq_len,
-        dtype=torch.bool,
-        device=device,
-    ).unsqueeze(0)
-
-    row_indices = node_index_sequences.unsqueeze(2).expand(-1, -1, max_seq_len)
-    col_indices = node_index_sequences.unsqueeze(1).expand(-1, max_seq_len, -1)
-
-    valid_row_indices = row_indices[pair_valid_mask]
-    valid_col_indices = col_indices[pair_valid_mask]
+    self_pair_mask = valid_row_positions == valid_col_positions
 
     first_attr_name = attr_names[0] if attr_names else "attr_0"
+    nonmissing_support: Optional[Tensor] = None
     for attr_idx, pe_matrix in enumerate(csr_matrices):
         pe_values, found_mask = _lookup_csr_values_and_found(
             csr_matrix=pe_matrix,
             row_indices=valid_row_indices,
             col_indices=valid_col_indices,
         )
-        features[..., attr_idx][pair_valid_mask] = pe_values
-        attr_nonmissing_mask = torch.zeros_like(nonmissing_mask)
-        attr_nonmissing_mask[pair_valid_mask] = found_mask
-        attr_nonmissing_mask |= self_pair_mask
+        features[
+            valid_batch_indices,
+            valid_row_positions,
+            valid_col_positions,
+            attr_idx,
+        ] = pe_values
+        attr_nonmissing_support = found_mask | self_pair_mask
         if attr_idx == 0:
-            nonmissing_mask = attr_nonmissing_mask
+            nonmissing_support = attr_nonmissing_support
             continue
-        if not torch.equal(nonmissing_mask, attr_nonmissing_mask):
-            attr_name = (
-                attr_names[attr_idx] if attr_names else f"attr_{attr_idx}"
-            )
+        if nonmissing_support is None or not torch.equal(
+            nonmissing_support,
+            attr_nonmissing_support,
+        ):
+            attr_name = attr_names[attr_idx] if attr_names else f"attr_{attr_idx}"
             raise ValueError(
                 "Pairwise attention bias attributes must share identical "
                 "nonmissing support after treating valid diagonal self pairs "
@@ -913,7 +993,394 @@ def _lookup_pairwise_relative_features(
                 "differ."
             )
 
-    return features, nonmissing_mask
+    assert nonmissing_support is not None
+    pairwise_nonmissing_indices = torch.stack(
+        [
+            valid_batch_indices[nonmissing_support],
+            valid_row_positions[nonmissing_support],
+            valid_col_positions[nonmissing_support],
+        ],
+        dim=1,
+    )
+    return features, pairwise_nonmissing_indices
+
+
+def _lookup_pairwise_relation_indices(
+    data: HeteroData,
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    relation_edge_types: Optional[list[GiGLEdgeType]],
+    node_type_offsets: dict[NodeType, int],
+    num_nodes: int,
+    device: torch.device,
+    token_occurrences: Optional[_TokenOccurrenceIndex] = None,
+) -> Optional[Tensor]:
+    """Build sparse relation coordinates for valid token pairs.
+
+    For a directed edge ``source -> target``, attention uses
+    ``query=target`` and ``key=source`` so relation-aware attention follows
+    message-passing orientation.
+    """
+    if not relation_edge_types:
+        return None
+
+    if token_occurrences is None:
+        token_occurrences = _build_token_occurrence_index(
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            num_nodes=num_nodes,
+            device=device,
+        )
+    if token_occurrences.batch_indices.numel() == 0:
+        return torch.zeros((0, 4), dtype=torch.long, device=device)
+
+    relation_index_parts: list[Tensor] = []
+    for relation_idx, edge_type in enumerate(relation_edge_types):
+        edge_type_tuple = edge_type.tuple_repr()
+        if edge_type_tuple not in data.edge_types:
+            continue
+
+        edge_index = data[edge_type_tuple].edge_index.to(
+            device=device, dtype=torch.long
+        )
+        if edge_index.numel() == 0:
+            continue
+
+        src_offset = int(node_type_offsets[edge_type.src_node_type])
+        dst_offset = int(node_type_offsets[edge_type.dst_node_type])
+        source_indices = edge_index[0] + src_offset
+        target_indices = edge_index[1] + dst_offset
+        (
+            relation_batch_indices,
+            relation_query_positions,
+            relation_key_positions,
+            _,
+        ) = _match_directed_edges_to_token_pairs(
+            source_indices=source_indices,
+            target_indices=target_indices,
+            token_occurrences=token_occurrences,
+            num_nodes=num_nodes,
+            device=device,
+        )
+        if relation_batch_indices.numel() == 0:
+            continue
+
+        relation_indices = torch.stack(
+            [
+                relation_batch_indices,
+                relation_query_positions,
+                relation_key_positions,
+                torch.full(
+                    (relation_batch_indices.size(0),),
+                    relation_idx,
+                    dtype=torch.long,
+                    device=device,
+                ),
+            ],
+            dim=1,
+        )
+        relation_index_parts.append(torch.unique(relation_indices, dim=0))
+
+    if not relation_index_parts:
+        return torch.zeros((0, 4), dtype=torch.long, device=device)
+    return torch.cat(relation_index_parts, dim=0)
+
+
+def _lookup_pairwise_edge_attr_payloads(
+    data: HeteroData,
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    edge_attr_edge_type_to_feat_dim_map: Optional[dict[GiGLEdgeType, int]],
+    node_type_offsets: dict[NodeType, int],
+    num_nodes: int,
+    device: torch.device,
+    token_occurrences: Optional[_TokenOccurrenceIndex] = None,
+) -> tuple[Optional[dict[int, Tensor]], Optional[dict[int, Tensor]]]:
+    """Build sparse edge-attribute payloads for valid token pairs.
+
+    For a directed edge ``source -> target``, attention uses
+    ``query=target`` and ``key=source`` so edge-attribute bias follows the same
+    message-passing orientation as GAT.
+    """
+    if not edge_attr_edge_type_to_feat_dim_map:
+        return None, None
+
+    edge_attr_indices_by_relation: dict[int, Tensor] = {}
+    edge_attr_values_by_relation: dict[int, Tensor] = {}
+    if token_occurrences is None:
+        token_occurrences = _build_token_occurrence_index(
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            num_nodes=num_nodes,
+            device=device,
+        )
+    if token_occurrences.batch_indices.numel() == 0:
+        return edge_attr_indices_by_relation, edge_attr_values_by_relation
+
+    for relation_idx, edge_type in enumerate(
+        sorted(edge_attr_edge_type_to_feat_dim_map.keys())
+    ):
+        edge_attr_dim = int(edge_attr_edge_type_to_feat_dim_map[edge_type])
+        if edge_attr_dim <= 0:
+            continue
+
+        edge_type_tuple = edge_type.tuple_repr()
+        if edge_type_tuple not in data.edge_types:
+            continue
+
+        edge_store = data[edge_type_tuple]
+        edge_index = edge_store.edge_index.to(device=device, dtype=torch.long)
+        if edge_index.numel() == 0:
+            continue
+
+        if not hasattr(edge_store, "edge_attr") or edge_store.edge_attr is None:
+            raise ValueError(
+                "edge_attr_attention_bias_mode='sparse_linear' requires "
+                f"edge_attr for edge type {edge_type_tuple} because its "
+                f"configured feature dim is {edge_attr_dim}."
+            )
+        edge_attr = edge_store.edge_attr.to(device=device)
+        if edge_attr.dim() == 1:
+            edge_attr = edge_attr.view(-1, 1)
+        if edge_attr.dim() != 2:
+            raise ValueError(
+                f"edge_attr for edge type {edge_type_tuple} must be 1D or 2D, "
+                f"got shape {tuple(edge_attr.shape)}."
+            )
+        if edge_attr.size(0) != edge_index.size(1):
+            raise ValueError(
+                f"edge_attr for edge type {edge_type_tuple} has "
+                f"{edge_attr.size(0)} rows but edge_index has "
+                f"{edge_index.size(1)} edges."
+            )
+        if edge_attr.size(1) != edge_attr_dim:
+            raise ValueError(
+                f"edge_attr for edge type {edge_type_tuple} has dim "
+                f"{edge_attr.size(1)} but configured dim is {edge_attr_dim}."
+            )
+
+        src_offset = int(node_type_offsets[edge_type.src_node_type])
+        dst_offset = int(node_type_offsets[edge_type.dst_node_type])
+        source_indices = edge_index[0] + src_offset
+        target_indices = edge_index[1] + dst_offset
+        (
+            edge_batch_indices,
+            edge_query_positions,
+            edge_key_positions,
+            matched_edge_indices,
+        ) = _match_directed_edges_to_token_pairs(
+            source_indices=source_indices,
+            target_indices=target_indices,
+            token_occurrences=token_occurrences,
+            num_nodes=num_nodes,
+            device=device,
+        )
+        if edge_batch_indices.numel() == 0:
+            continue
+
+        edge_attr_indices_by_relation[relation_idx] = torch.stack(
+            [
+                edge_batch_indices,
+                edge_query_positions,
+                edge_key_positions,
+            ],
+            dim=1,
+        )
+        edge_attr_values_by_relation[relation_idx] = edge_attr[matched_edge_indices]
+
+    return edge_attr_indices_by_relation, edge_attr_values_by_relation
+
+
+def _build_token_occurrence_index(
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    num_nodes: int,
+    device: torch.device,
+) -> _TokenOccurrenceIndex:
+    """Index valid sequence tokens for sparse directed-edge to token matching."""
+    token_batch_indices, token_positions = torch.nonzero(
+        valid_mask,
+        as_tuple=True,
+    )
+    token_batch_indices = token_batch_indices.to(device=device, dtype=torch.long)
+    token_positions = token_positions.to(device=device, dtype=torch.long)
+    token_node_indices = node_index_sequences[token_batch_indices, token_positions].to(
+        device=device,
+        dtype=torch.long,
+    )
+
+    sorted_token_node_indices, node_sort_perm = torch.sort(token_node_indices)
+    token_batch_node_keys = token_batch_indices * num_nodes + token_node_indices
+    sorted_token_batch_node_keys, batch_node_sort_perm = torch.sort(
+        token_batch_node_keys
+    )
+
+    return _TokenOccurrenceIndex(
+        batch_indices=token_batch_indices,
+        positions=token_positions,
+        node_indices=token_node_indices,
+        sorted_node_indices=sorted_token_node_indices,
+        node_sort_perm=node_sort_perm,
+        sorted_batch_node_keys=sorted_token_batch_node_keys,
+        batch_node_sort_perm=batch_node_sort_perm,
+    )
+
+
+def _match_directed_edges_to_token_pairs(
+    source_indices: Tensor,
+    target_indices: Tensor,
+    token_occurrences: _TokenOccurrenceIndex,
+    num_nodes: int,
+    device: torch.device,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Map ``source -> target`` graph edges onto valid sequence coordinates.
+
+    The returned coordinates follow attention orientation:
+    ``query_pos=target_token`` and ``key_pos=source_token``.  The final tensor
+    contains source edge-row ids, repeated when an edge is present in multiple
+    anchor sequences.
+    """
+    empty = torch.zeros((0,), dtype=torch.long, device=device)
+    if source_indices.numel() == 0 or token_occurrences.batch_indices.numel() == 0:
+        return empty, empty, empty, empty
+
+    source_indices = source_indices.to(device=device, dtype=torch.long)
+    target_indices = target_indices.to(device=device, dtype=torch.long)
+
+    target_lower_bounds = torch.searchsorted(
+        token_occurrences.sorted_node_indices,
+        target_indices,
+        right=False,
+    )
+    target_upper_bounds = torch.searchsorted(
+        token_occurrences.sorted_node_indices,
+        target_indices,
+        right=True,
+    )
+    target_match_counts = target_upper_bounds - target_lower_bounds
+    matched_edge_mask = target_match_counts > 0
+    if not matched_edge_mask.any():
+        return empty, empty, empty, empty
+
+    matched_edge_indices = torch.nonzero(matched_edge_mask, as_tuple=True)[0]
+    matched_target_counts = target_match_counts[matched_edge_indices]
+    total_target_matches = int(matched_target_counts.sum().item())
+    repeated_target_edge_indices = torch.repeat_interleave(
+        matched_edge_indices,
+        matched_target_counts,
+    )
+    repeated_target_lower_bounds = torch.repeat_interleave(
+        target_lower_bounds[matched_edge_indices],
+        matched_target_counts,
+    )
+    target_group_start_offsets = torch.repeat_interleave(
+        torch.cumsum(matched_target_counts, dim=0) - matched_target_counts,
+        matched_target_counts,
+    )
+    target_sorted_positions = (
+        repeated_target_lower_bounds
+        + torch.arange(total_target_matches, device=device, dtype=torch.long)
+        - target_group_start_offsets
+    )
+    target_token_indices = token_occurrences.node_sort_perm[target_sorted_positions]
+    target_batch_indices = token_occurrences.batch_indices[target_token_indices]
+    target_query_positions = token_occurrences.positions[target_token_indices]
+
+    source_query_keys = (
+        target_batch_indices * num_nodes + source_indices[repeated_target_edge_indices]
+    )
+    source_lower_bounds = torch.searchsorted(
+        token_occurrences.sorted_batch_node_keys,
+        source_query_keys,
+        right=False,
+    )
+    source_upper_bounds = torch.searchsorted(
+        token_occurrences.sorted_batch_node_keys,
+        source_query_keys,
+        right=True,
+    )
+    source_match_counts = source_upper_bounds - source_lower_bounds
+    matched_target_mask = source_match_counts > 0
+    if not matched_target_mask.any():
+        return empty, empty, empty, empty
+
+    matched_target_indices = torch.nonzero(matched_target_mask, as_tuple=True)[0]
+    matched_source_counts = source_match_counts[matched_target_indices]
+    total_source_matches = int(matched_source_counts.sum().item())
+    repeated_target_indices = torch.repeat_interleave(
+        matched_target_indices,
+        matched_source_counts,
+    )
+    repeated_source_lower_bounds = torch.repeat_interleave(
+        source_lower_bounds[matched_target_indices],
+        matched_source_counts,
+    )
+    source_group_start_offsets = torch.repeat_interleave(
+        torch.cumsum(matched_source_counts, dim=0) - matched_source_counts,
+        matched_source_counts,
+    )
+    source_sorted_positions = (
+        repeated_source_lower_bounds
+        + torch.arange(total_source_matches, device=device, dtype=torch.long)
+        - source_group_start_offsets
+    )
+    source_token_indices = token_occurrences.batch_node_sort_perm[
+        source_sorted_positions
+    ]
+
+    return (
+        target_batch_indices[repeated_target_indices],
+        target_query_positions[repeated_target_indices],
+        token_occurrences.positions[source_token_indices],
+        repeated_target_edge_indices[repeated_target_indices],
+    )
+
+
+def _build_flat_valid_pair_layout(
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    device: torch.device,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Enumerate valid sequence pairs without building dense pairwise masks."""
+    batch_indices_parts: list[Tensor] = []
+    row_positions_parts: list[Tensor] = []
+    col_positions_parts: list[Tensor] = []
+    row_node_indices_parts: list[Tensor] = []
+    col_node_indices_parts: list[Tensor] = []
+
+    for batch_idx in range(valid_mask.size(0)):
+        valid_positions = torch.nonzero(valid_mask[batch_idx], as_tuple=True)[0]
+        num_valid = valid_positions.numel()
+        if num_valid == 0:
+            continue
+
+        valid_node_indices = node_index_sequences[batch_idx, valid_positions]
+        pair_count = num_valid * num_valid
+
+        batch_indices_parts.append(
+            torch.full(
+                (pair_count,),
+                batch_idx,
+                dtype=torch.long,
+                device=device,
+            )
+        )
+        row_positions_parts.append(valid_positions.repeat_interleave(num_valid))
+        col_positions_parts.append(valid_positions.repeat(num_valid))
+        row_node_indices_parts.append(valid_node_indices.repeat_interleave(num_valid))
+        col_node_indices_parts.append(valid_node_indices.repeat(num_valid))
+
+    if not batch_indices_parts:
+        empty = torch.zeros((0,), dtype=torch.long, device=device)
+        return empty, empty, empty, empty, empty
+
+    return (
+        torch.cat(batch_indices_parts, dim=0),
+        torch.cat(row_positions_parts, dim=0),
+        torch.cat(col_positions_parts, dim=0),
+        torch.cat(row_node_indices_parts, dim=0),
+        torch.cat(col_node_indices_parts, dim=0),
+    )
 
 
 def _get_k_hop_neighbors_sparse(
@@ -1039,32 +1506,35 @@ def _lookup_csr_values_and_found(
     col_indices_csr = csr_matrix.col_indices()
     values_csr = csr_matrix.values()
 
-    row_starts = crow_indices[row_indices]
-    row_ends = crow_indices[row_indices + 1]
-    row_lengths = row_ends - row_starts
-    max_row_len = row_lengths.max().item()
-
-    if max_row_len == 0:
+    if col_indices_csr.numel() == 0:
         return (
             torch.full((n,), default_value, device=device, dtype=torch.float),
             torch.zeros((n,), device=device, dtype=torch.bool),
         )
 
-    offsets = row_starts.unsqueeze(1) + torch.arange(max_row_len, device=device)
-    valid_mask = offsets < row_ends.unsqueeze(1)
+    num_rows, num_cols = csr_matrix.size()
+    row_counts = crow_indices[1:] - crow_indices[:-1]
+    csr_row_indices = torch.repeat_interleave(
+        torch.arange(num_rows, device=device),
+        row_counts,
+    )
+    # CSR stores entries grouped by row, and sparse graph features are emitted
+    # with sorted column indices per row, so linearized row-major keys remain
+    # globally sorted for searchsorted.
+    csr_keys = csr_row_indices * num_cols + col_indices_csr
+    query_keys = row_indices * num_cols + col_indices
+    match_positions = torch.searchsorted(csr_keys, query_keys)
 
-    nnz = col_indices_csr.size(0)
-    offsets_clamped = offsets.clamp(max=max(nnz - 1, 0))
-
-    cols_at_offsets = col_indices_csr[offsets_clamped]
-    col_matches = (cols_at_offsets == col_indices.unsqueeze(1)) & valid_mask
-    found = col_matches.any(dim=1)
+    candidate_mask = match_positions < csr_keys.numel()
+    found = torch.zeros((n,), device=device, dtype=torch.bool)
+    if candidate_mask.any():
+        valid_match_positions = match_positions[candidate_mask]
+        found[candidate_mask] = (
+            csr_keys[valid_match_positions] == query_keys[candidate_mask]
+        )
 
     result = torch.full((n,), default_value, device=device, dtype=torch.float)
-
     if found.any():
-        match_offsets = col_matches.float().argmax(dim=1)
-        value_indices = row_starts[found] + match_offsets[found]
-        result[found] = values_csr[value_indices].float()
+        result[found] = values_csr[match_positions[found]].float()
 
     return result, found
