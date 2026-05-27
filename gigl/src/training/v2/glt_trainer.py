@@ -61,6 +61,7 @@ class GLTTrainer:
             launch_single_pool_job(
                 vertex_ai_resource_config=resource_config.trainer_config,
                 job_name=job_name,
+                applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
                 process_command=training_process_command,
@@ -75,6 +76,7 @@ class GLTTrainer:
             launch_graph_store_enabled_job(
                 vertex_ai_graph_store_config=resource_config.trainer_config,
                 job_name=job_name,
+                applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
                 compute_commmand=training_process_command,

@@ -63,6 +63,7 @@ class GLTInferencer:
             launch_single_pool_job(
                 vertex_ai_resource_config=resource_config_wrapper.inferencer_config,
                 job_name=job_name,
+                applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
                 process_command=inference_process_command,
@@ -79,6 +80,7 @@ class GLTInferencer:
             launch_graph_store_enabled_job(
                 vertex_ai_graph_store_config=resource_config_wrapper.inferencer_config,
                 job_name=job_name,
+                applied_task_identifier=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
                 compute_commmand=inference_process_command,
