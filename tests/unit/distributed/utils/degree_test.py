@@ -7,7 +7,6 @@ from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.distributed.utils.degree import (
-    _clamp_to_int16,
     _compute_degrees_from_indptr,
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
@@ -33,7 +32,7 @@ def _compute_expected_degrees_from_edge_index(
 ) -> torch.Tensor:
     """Compute expected degrees from a COO edge index along one endpoint axis."""
     nodes = edge_index[node_axis]
-    degrees = torch.zeros(num_nodes, dtype=torch.int16)
+    degrees = torch.zeros(num_nodes, dtype=torch.int32)
     for node in nodes:
         degrees[node] += 1
     return degrees
@@ -76,7 +75,7 @@ def _compute_expected_total_degrees_by_node_type(
             anchor_node_type
         ].to(torch.int64)
         summed_degrees[: degrees.numel()] += degrees.to(torch.int64)
-        expected[anchor_node_type] = _clamp_to_int16(summed_degrees)
+        expected[anchor_node_type] = summed_degrees.to(torch.int32)
 
     return expected
 
@@ -364,7 +363,7 @@ class TestHelperFunctions(TestCase):
     def test_compute_degrees_from_indptr(self):
         """Test _compute_degrees_from_indptr helper function."""
         indptr = torch.tensor([0, 3, 5, 10, 12], dtype=torch.int64)
-        expected = torch.tensor([3, 2, 5, 2], dtype=torch.int16)
+        expected = torch.tensor([3, 2, 5, 2], dtype=torch.int32)
         result = _compute_degrees_from_indptr(indptr)
         self.assert_tensor_equality(result, expected)
 
@@ -372,7 +371,7 @@ class TestHelperFunctions(TestCase):
         """Test _compute_degrees_from_indptr with all-zero indptr (no edges)."""
         # All-zero indptr means no outgoing edges for any node
         indptr = torch.tensor([0, 0, 0, 0, 0], dtype=torch.int64)
-        expected = torch.tensor([0, 0, 0, 0], dtype=torch.int16)
+        expected = torch.tensor([0, 0, 0, 0], dtype=torch.int32)
         result = _compute_degrees_from_indptr(indptr)
         self.assert_tensor_equality(result, expected)
 
@@ -380,18 +379,10 @@ class TestHelperFunctions(TestCase):
         """Test _compute_degrees_from_indptr with empty indptr (no nodes)."""
         # indptr of [0] means 0 nodes
         indptr = torch.empty(0, dtype=torch.int64)
-        expected = torch.empty(0, dtype=torch.int16)
+        expected = torch.empty(0, dtype=torch.int32)
         result = _compute_degrees_from_indptr(indptr)
         self.assert_tensor_equality(result, expected)
         self.assertEqual(result.numel(), 0)
-
-    def test_clamp_to_int16(self):
-        """Test _clamp_to_int16 helper function."""
-        max_int16 = torch.iinfo(torch.int16).max
-        tensor = torch.tensor([1, max_int16 + 100, 5], dtype=torch.int64)
-        expected = torch.tensor([1, max_int16, 5], dtype=torch.int16)
-        result = _clamp_to_int16(tensor)
-        self.assert_tensor_equality(result, expected)
 
 
 if __name__ == "__main__":
