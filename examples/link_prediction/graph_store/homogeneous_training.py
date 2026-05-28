@@ -847,13 +847,17 @@ def _run_example_training(
     # Training Hyperparameters
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    if torch.cuda.is_available():
-        default_local_world_size = torch.cuda.device_count()
-    else:
-        default_local_world_size = 2
     local_world_size = int(
-        trainer_args.get("local_world_size", str(default_local_world_size))
+        trainer_args.get(
+            "local_world_size", str(cluster_info.num_processes_per_compute)
+        )
     )
+    if local_world_size != cluster_info.num_processes_per_compute:
+        raise ValueError(
+            f"Graph Store local_world_size={local_world_size} must match "
+            f"cluster_info.num_processes_per_compute="
+            f"{cluster_info.num_processes_per_compute}"
+        )
 
     if torch.cuda.is_available():
         if local_world_size > torch.cuda.device_count():
