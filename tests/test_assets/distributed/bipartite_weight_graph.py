@@ -86,7 +86,7 @@ def build_homogeneous_bipartite_weight_graph() -> tuple[PartitionOutput, int]:
         edge_partition_book=torch.zeros(n_edges),
         partitioned_edge_index=GraphPartitionData(
             edge_index=edge_index,
-            edge_ids=None,
+            edge_ids=torch.arange(n_edges) + 1_000,
             weights=weights,
         ),
         partitioned_node_features=FeaturePartitionData(
@@ -167,12 +167,12 @@ def build_heterogeneous_bipartite_weight_graph() -> tuple[PartitionOutput, int]:
         partitioned_edge_index={
             USER_TO_ITEM: GraphPartitionData(
                 edge_index=torch.stack([u2i_src, u2i_dst]),
-                edge_ids=None,
+                edge_ids=torch.arange(n_u2i_edges) + 1_000,
                 weights=u2i_w,
             ),
             ITEM_TO_USER: GraphPartitionData(
                 edge_index=torch.stack([gi2u_src, gi2u_dst]),
-                edge_ids=None,
+                edge_ids=torch.arange(gi2u_src.shape[0]) + 10_000,
                 weights=gi2u_w,
             ),
         },

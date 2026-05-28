@@ -18,6 +18,7 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from tests.test_assets.distributed.bipartite_weight_graph import (
@@ -163,6 +164,23 @@ class PPRWeightedSamplingTest(TestCase):
             fn=_run_ppr_weighted_correctness_homogeneous,
             args=(dataset, n_hub),
             nprocs=1,
+        )
+
+    def test_ppr_weight_lookup_uses_edge_ids_not_tensor_offsets(self) -> None:
+        """Sampled edge IDs may be non-contiguous and must resolve by ID."""
+        lookup = DistPPRNeighborSampler._build_sorted_edge_weight_lookup(
+            edge_ids=torch.tensor([42, 7, 100]),
+            edge_weights=torch.tensor([4.2, 0.7, 10.0]),
+        )
+
+        actual = DistPPRNeighborSampler._lookup_edge_weights_by_id(
+            edge_ids=torch.tensor([7, 100, 42]),
+            edge_weight_lookup=lookup,
+        )
+
+        torch.testing.assert_close(
+            actual,
+            torch.tensor([0.7, 10.0, 4.2], dtype=torch.float64),
         )
 
     def test_ppr_weighted_never_traverses_zero_weight_edges_heterogeneous(self) -> None:

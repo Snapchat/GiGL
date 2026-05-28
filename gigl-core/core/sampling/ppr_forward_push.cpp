@@ -192,7 +192,9 @@ void PPRForwardPush::pushResiduals(
             if (flatWeightsPtr != nullptr) {
                 std::vector<double> neighborWeights(count);
                 for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
-                    neighborWeights[neighborIdx] = flatWeightsPtr[offset + neighborIdx];
+                    double weight = flatWeightsPtr[offset + neighborIdx];
+                    TORCH_CHECK(weight >= 0.0, "PPR edge weights must be non-negative.");
+                    neighborWeights[neighborIdx] = weight;
                 }
                 fetchedWeights[key] = std::move(neighborWeights);
             }
@@ -391,6 +393,9 @@ void PPRForwardPush::pushResiduals(
                         TORCH_INTERNAL_ASSERT(weights.size() == neighbors.size(),
                                               "weightList and neighborList must have the same size");
                         for (int32_t i = 0; i < static_cast<int32_t>(neighbors.size()); ++i) {
+                            if (weights[i] == 0.0) {
+                                continue;
+                            }
                             int32_t neighborNodeId = neighbors[i];
                             dstNodeTypeState.residuals[neighborNodeId] +=
                                 baseResidual * weights[i] / totalFetchedWeight;

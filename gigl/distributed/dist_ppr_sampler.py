@@ -7,6 +7,7 @@ import torch
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
 from gigl_core import PPRForwardPush
+from graphlearn_torch.data import Graph
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -35,6 +36,8 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     "to",
     _PPR_HOMOGENEOUS_NODE_TYPE,
 )
+
+EdgeWeightLookup = tuple[torch.Tensor, torch.Tensor]
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
@@ -202,6 +205,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
             for nt in all_node_types
         ]
+        self._edge_weight_lookup: Optional[
+            Union[EdgeWeightLookup, dict[EdgeType, EdgeWeightLookup]]
+        ] = self._build_edge_weight_lookup()
 
     def _build_total_degree_tensors(
         self,
@@ -258,6 +264,146 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
+
+    def _build_edge_weight_lookup(
+        self,
+    ) -> Optional[Union[EdgeWeightLookup, dict[EdgeType, EdgeWeightLookup]]]:
+        """Build edge-id keyed weight lookup tables for weighted PPR residuals.
+
+        GLT's ``sample_with_edge`` returns graph edge IDs, not guaranteed local
+        tensor positions.  These lookup tables map sampled edge IDs back to the
+        aligned edge weights stored in the local graph topology.
+
+        Returns:
+            A homogeneous lookup tuple, a heterogeneous lookup dict, or ``None``
+            when weighted residuals are disabled.
+
+        Raises:
+            ValueError: If edge weights were requested but graph topology does
+                not contain aligned edge IDs and weights.
+        """
+        if self._edge_weights is None:
+            return None
+
+        graph = self.data.graph
+        if graph is None:
+            raise ValueError("Cannot build PPR edge-weight lookup without graph data.")
+
+        if self._is_homogeneous:
+            assert isinstance(graph, Graph)
+            return self._build_sorted_edge_weight_lookup_from_graph(graph)
+
+        assert isinstance(graph, dict)
+        assert isinstance(self._edge_weights, dict)
+        return {
+            edge_type: self._build_sorted_edge_weight_lookup_from_graph(
+                graph[edge_type]
+            )
+            for edge_type in self._edge_weights
+        }
+
+    @staticmethod
+    def _build_sorted_edge_weight_lookup_from_graph(
+        graph: Graph,
+    ) -> EdgeWeightLookup:
+        """Build a sorted edge-id lookup from a GLT graph's local topology."""
+        edge_ids = graph.topo.edge_ids
+        edge_weights = graph.topo.edge_weights
+        if edge_ids is None or edge_weights is None:
+            raise ValueError(
+                "Weighted PPR requires graph topology to contain both edge IDs "
+                "and edge weights."
+            )
+        return DistPPRNeighborSampler._build_sorted_edge_weight_lookup(
+            edge_ids=edge_ids,
+            edge_weights=edge_weights,
+        )
+
+    @staticmethod
+    def _build_sorted_edge_weight_lookup(
+        edge_ids: torch.Tensor,
+        edge_weights: torch.Tensor,
+    ) -> EdgeWeightLookup:
+        """Build a sorted lookup tuple from edge IDs to weights.
+
+        Args:
+            edge_ids: Edge IDs aligned with ``edge_weights``.
+            edge_weights: Per-edge weights aligned with ``edge_ids``.
+
+        Returns:
+            ``(sorted_edge_ids, sorted_weights)``.
+
+        Raises:
+            ValueError: If IDs and weights are not aligned or IDs are duplicated.
+        """
+        if edge_ids.numel() != edge_weights.numel():
+            raise ValueError(
+                f"Edge IDs and weights must have the same length, got "
+                f"{edge_ids.numel()} and {edge_weights.numel()}."
+            )
+
+        sorted_edge_ids, sort_indices = torch.sort(edge_ids.to(torch.long))
+        if (
+            sorted_edge_ids.numel() > 1
+            and (sorted_edge_ids[1:] == sorted_edge_ids[:-1]).any().item()
+        ):
+            raise ValueError("Edge IDs must be unique within each edge type.")
+
+        return sorted_edge_ids, edge_weights.to(torch.float64)[sort_indices]
+
+    @staticmethod
+    def _lookup_edge_weights_by_id(
+        edge_ids: torch.Tensor,
+        edge_weight_lookup: EdgeWeightLookup,
+    ) -> torch.Tensor:
+        """Resolve sampled edge IDs to weights without assuming local ID offsets."""
+        sorted_edge_ids, sorted_weights = edge_weight_lookup
+        if edge_ids.numel() == 0:
+            return torch.empty(0, dtype=torch.float64, device=edge_ids.device)
+        if sorted_edge_ids.numel() == 0:
+            raise ValueError("Cannot resolve non-empty edge IDs against empty weights.")
+
+        requested_edge_ids = edge_ids.to(
+            device=sorted_edge_ids.device, dtype=torch.long
+        )
+        insertion_indices = torch.searchsorted(sorted_edge_ids, requested_edge_ids)
+        clamped_indices = insertion_indices.clamp(max=sorted_edge_ids.numel() - 1)
+        found_mask = (insertion_indices < sorted_edge_ids.numel()) & (
+            sorted_edge_ids[clamped_indices] == requested_edge_ids
+        )
+        if not found_mask.all().item():
+            missing_edge_ids = requested_edge_ids[~found_mask][:10].tolist()
+            raise ValueError(
+                f"Sampled edge IDs were not found in the edge-weight lookup. "
+                f"First missing IDs: {missing_edge_ids}."
+            )
+
+        return sorted_weights[clamped_indices].to(
+            device=edge_ids.device, dtype=torch.float64
+        )
+
+    def _lookup_edge_weights(
+        self,
+        edge_ids: torch.Tensor,
+        edge_type_id: int,
+    ) -> torch.Tensor:
+        """Resolve sampled edge IDs to edge weights for one PPR edge type."""
+        if self._edge_weight_lookup is None:
+            raise ValueError("PPR edge-weight lookup is not initialized.")
+
+        if self._is_homogeneous:
+            assert isinstance(self._edge_weight_lookup, tuple)
+            return self._lookup_edge_weights_by_id(
+                edge_ids=edge_ids,
+                edge_weight_lookup=self._edge_weight_lookup,
+            )
+
+        assert isinstance(self._edge_weight_lookup, dict)
+        edge_type = self._etype_id_to_etype[edge_type_id]
+        return self._lookup_edge_weights_by_id(
+            edge_ids=edge_ids,
+            edge_weight_lookup=self._edge_weight_lookup[edge_type],
+        )
 
     async def _batch_fetch_neighbors(
         self,
@@ -325,15 +471,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     "output.edge must be set when edge_weights is provided; "
                     "ensure with_edge=True in SamplingConfig (hardcoded in create_sampling_config)."
                 )
-                if self._is_homogeneous:
-                    assert isinstance(self._edge_weights, torch.Tensor)
-                    flat_weights = self._edge_weights[output.edge].to(torch.float64)
-                else:
-                    assert isinstance(self._edge_weights, dict)
-                    etype = self._etype_id_to_etype[eid]
-                    flat_weights = self._edge_weights[etype][output.edge].to(
-                        torch.float64
-                    )
+                flat_weights = self._lookup_edge_weights(output.edge, eid)
             else:
                 flat_weights = _empty_weights
             result[eid] = (

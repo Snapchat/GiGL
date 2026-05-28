@@ -3,6 +3,8 @@
 
 using gigl::PPRForwardPush;
 
+using FetchedByEtypeId = std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>>;
+
 // Builds a single-edge-type, single-node-type PPRForwardPush.
 static PPRForwardPush makeState(
     const std::vector<int64_t>& seeds,
@@ -20,16 +22,21 @@ static PPRForwardPush makeState(
 }
 
 // Convenience wrapper: build the fetchedByEtypeId argument for pushResiduals
-// from flat vectors, keeping test call sites readable.
-static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+// from flat vectors, keeping test call sites readable.  Empty weights select
+// uniform-residual mode.
+static FetchedByEtypeId
 makeFetched(int32_t edgeTypeId,
             const std::vector<int64_t>& nodeIds,
             const std::vector<int64_t>& flatNeighborIds,
-            const std::vector<int64_t>& counts) {
+            const std::vector<int64_t>& counts,
+            const std::vector<double>& flatWeights = {}) {
+    auto weightsTensor =
+        flatWeights.empty() ? torch::empty({0}, torch::kDouble) : torch::tensor(flatWeights, torch::kDouble);
     return {{edgeTypeId,
              {torch::tensor(nodeIds, torch::kLong),
               torch::tensor(flatNeighborIds, torch::kLong),
-              torch::tensor(counts, torch::kLong)}}};
+              torch::tensor(counts, torch::kLong),
+              weightsTensor}}};
 }
 
 // After construction, drainQueue() returns the seed node under etype 0.
@@ -85,6 +92,39 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     ASSERT_EQ(counts[0].item<int64_t>(), 2);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     EXPECT_EQ(ids[1].item<int64_t>(), 1);
+    EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5F);
+    EXPECT_NEAR(weights[1].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5F);
+}
+
+// In weighted mode, zero-weight edges must not enqueue a zero-residual neighbor.
+TEST(PPRForwardPush, WeightedResidualSkipsZeroWeightNeighbor) {
+    const double alpha = 0.5;
+    auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{2, 0, 0});
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(
+        /*edgeTypeId=*/0,
+        /*nodeIds=*/{0},
+        /*flatNeighborIds=*/{1, 2},
+        /*counts=*/{2},
+        /*flatWeights=*/{0.0, 2.0}));
+
+    auto iter2 = state.drainQueue();
+    ASSERT_TRUE(iter2.has_value());
+    const auto& iter2Map = iter2.value();
+    ASSERT_NE(iter2Map.find(0), iter2Map.end());
+    ASSERT_EQ(iter2Map.at(0).size(0), 1);
+    EXPECT_EQ(iter2Map.at(0)[0].item<int64_t>(), 2);
+
+    state.pushResiduals({});
+    EXPECT_FALSE(state.drainQueue().has_value());
+
+    auto topk = state.extractTopK(10);
+    ASSERT_NE(topk.find(0), topk.end());
+    const auto& [ids, weights, counts] = topk.at(0);
+    ASSERT_EQ(counts[0].item<int64_t>(), 2);
+    EXPECT_EQ(ids[0].item<int64_t>(), 0);
+    EXPECT_EQ(ids[1].item<int64_t>(), 2);
     EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5F);
     EXPECT_NEAR(weights[1].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5F);
 }
