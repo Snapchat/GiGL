@@ -162,8 +162,8 @@ class TestVertexAILauncher(TestCase):
     def test_launch_training_graph_store_cuda(self, mock_vertex_ai_service_class):
         """Test launching a training job with graph store enabled and GPU/CUDA configuration."""
         # Define test inputs
-        job_name = "test-training-job"
-        applied_task_identifier = "test-training-task"
+        job_name = "test-training-task"
+        expected_vertex_ai_job_name = f"gigl_train_{job_name}"
         task_config_uri = Uri("gs://bucket/task_config.yaml")
         resource_config_uri = Uri("gs://bucket/resource_config.yaml")
         process_command = "python -m gigl.src.training.v2.glt_trainer"
@@ -193,7 +193,6 @@ class TestVertexAILauncher(TestCase):
         launch_graph_store_enabled_job(
             vertex_ai_graph_store_config=graph_store_config,
             job_name=job_name,
-            applied_task_identifier=applied_task_identifier,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             compute_commmand=process_command,
@@ -227,7 +226,7 @@ class TestVertexAILauncher(TestCase):
         self.assertEqual(compute_job_config.machine_type, compute_pool.machine_type)
         self.assertEqual(compute_job_config.accelerator_type, compute_pool.gpu_type)
         self.assertEqual(compute_job_config.accelerator_count, compute_pool.gpu_limit)
-        self.assertEqual(compute_job_config.job_name, job_name)
+        self.assertEqual(compute_job_config.job_name, expected_vertex_ai_job_name)
 
         # Verify compute pool command and args
         self.assertEqual(
@@ -251,6 +250,7 @@ class TestVertexAILauncher(TestCase):
         # Verify storage pool config
         self.assertEqual(storage_job_config.machine_type, storage_pool.machine_type)
         self.assertEqual(storage_job_config.container_uri, cpu_docker_uri)
+        self.assertEqual(storage_job_config.job_name, expected_vertex_ai_job_name)
         self.assertIn(
             "gigl.distributed.graph_store.storage_main",
             " ".join(storage_job_config.command),
@@ -270,7 +270,7 @@ class TestVertexAILauncher(TestCase):
         _assert_common_gigl_env_vars(
             test_case=self,
             environment_variables=compute_job_config.environment_variables,
-            applied_task_identifier=applied_task_identifier,
+            applied_task_identifier=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             cpu_docker_uri=cpu_docker_uri,
@@ -280,7 +280,7 @@ class TestVertexAILauncher(TestCase):
         _assert_common_gigl_env_vars(
             test_case=self,
             environment_variables=storage_job_config.environment_variables,
-            applied_task_identifier=applied_task_identifier,
+            applied_task_identifier=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             cpu_docker_uri=cpu_docker_uri,
@@ -300,8 +300,8 @@ class TestVertexAILauncher(TestCase):
     def test_launch_inference_single_pool_cpu(self, mock_vertex_ai_service_class):
         """Test launching an inference job with single pool and CPU-only configuration."""
         # Define test inputs
-        job_name = "test-inference-job"
-        applied_task_identifier = "test-inference-task"
+        job_name = "test-inference-task"
+        expected_vertex_ai_job_name = f"gigl_infer_{job_name}"
         task_config_uri = Uri("gs://bucket/inference_config.yaml")
         resource_config_uri = Uri("gs://bucket/resource_config.yaml")
         process_command = "python -m gigl.src.inference.v2.glt_inferencer"
@@ -335,7 +335,6 @@ class TestVertexAILauncher(TestCase):
         launch_single_pool_job(
             vertex_ai_resource_config=vertex_ai_config,
             job_name=job_name,
-            applied_task_identifier=applied_task_identifier,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             process_command=process_command,
@@ -366,7 +365,7 @@ class TestVertexAILauncher(TestCase):
         # Verify CPU execution settings
         self.assertEqual(job_config.container_uri, cpu_docker_uri)
         self.assertEqual(job_config.machine_type, vertex_ai_config.machine_type)
-        self.assertEqual(job_config.job_name, job_name)
+        self.assertEqual(job_config.job_name, expected_vertex_ai_job_name)
         self.assertEqual(job_config.accelerator_count, 0)
         self.assertEqual(job_config.accelerator_type, "")
         self.assertEqual(job_config.timeout_s, vertex_ai_config.timeout)
@@ -389,7 +388,7 @@ class TestVertexAILauncher(TestCase):
         _assert_common_gigl_env_vars(
             test_case=self,
             environment_variables=job_config.environment_variables,
-            applied_task_identifier=applied_task_identifier,
+            applied_task_identifier=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             cpu_docker_uri=cpu_docker_uri,
@@ -410,8 +409,7 @@ class TestVertexAILauncher(TestCase):
         self, mock_vertex_ai_service_class
     ):
         """Test Vertex AI env vars expose default Docker URIs when inputs are unset."""
-        job_name = "test-default-image-job"
-        applied_task_identifier = "test-default-image-task"
+        job_name = "test-default-image-task"
         task_config_uri = Uri("gs://bucket/task_config.yaml")
         resource_config_uri = Uri("gs://bucket/resource_config.yaml")
         component = GiGLComponents.Trainer
@@ -433,7 +431,6 @@ class TestVertexAILauncher(TestCase):
         launch_single_pool_job(
             vertex_ai_resource_config=vertex_ai_config,
             job_name=job_name,
-            applied_task_identifier=applied_task_identifier,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             process_command="python -m gigl.src.training.v2.glt_trainer",
@@ -449,7 +446,7 @@ class TestVertexAILauncher(TestCase):
         _assert_common_gigl_env_vars(
             test_case=self,
             environment_variables=job_config.environment_variables,
-            applied_task_identifier=applied_task_identifier,
+            applied_task_identifier=job_name,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             cpu_docker_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
