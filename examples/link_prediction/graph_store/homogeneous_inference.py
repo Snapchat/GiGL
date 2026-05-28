@@ -87,7 +87,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Union
+from typing import Optional, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -101,6 +101,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed.graph_store.compute import init_compute_process
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.nn import LinkPredictionGNN
@@ -110,7 +111,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
-from gigl.utils.sampling import parse_fanout
+from gigl.utils.sampling import parse_fanout, parse_sampler_options
 
 logger = Logger()
 
@@ -143,6 +144,7 @@ class InferenceProcessArgs:
         inference_batch_size (int): Batch size to use for inference.
         num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
             where the ith item corresponds to the number of items to sample for the ith hop.
+        sampler_options (Optional[SamplerOptions]): Sampler variant. None uses k-hop sampling.
         sampling_workers_per_inference_process (int): Number of sampling workers per inference
             process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
@@ -169,6 +171,7 @@ class InferenceProcessArgs:
     # Inference configuration
     inference_batch_size: int
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
+    sampler_options: Optional[SamplerOptions]
     sampling_workers_per_inference_process: int
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
@@ -242,6 +245,7 @@ def _inference_process(
         # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
         # don't compete for memory during initialization, causing OOM
         process_start_gap_seconds=0,
+        sampler_options=args.sampler_options,
     )
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
@@ -494,6 +498,7 @@ def _run_example_inference(
     # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified
     # as a string of a list of integers, such as "[10, 10]".
     num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
+    sampler_options = parse_sampler_options(inferencer_args)
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be
     # between `2` and `4`, this may need some tuning depending on the pipeline. We default this
@@ -516,6 +521,14 @@ def _run_example_inference(
 
     log_every_n_batch = int(inferencer_args.get("log_every_n_batch", "50"))
 
+    logger.info(
+        f"Got inference args local_world_size={local_world_size}, "
+        f"num_neighbors={num_neighbors}, sampler_options={sampler_options}, "
+        f"sampling_workers_per_inference_process={sampling_workers_per_inference_process}, "
+        f"sampling_worker_shared_channel_size={sampling_worker_shared_channel_size}, "
+        f"log_every_n_batch={log_every_n_batch}"
+    )
+
     # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
     inference_args = InferenceProcessArgs(
         local_world_size=local_world_size,
@@ -528,6 +541,7 @@ def _run_example_inference(
         edge_feature_dim=edge_feature_dim,
         inference_batch_size=inference_batch_size,
         num_neighbors=num_neighbors,
+        sampler_options=sampler_options,
         sampling_workers_per_inference_process=sampling_workers_per_inference_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         log_every_n_batch=log_every_n_batch,

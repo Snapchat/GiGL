@@ -143,6 +143,7 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils import get_available_device, get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.nn import LinkPredictionGNN, RetrievalLoss
@@ -158,7 +159,7 @@ from gigl.src.common.types.model_eval_metrics import (
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
-from gigl.utils.sampling import parse_fanout
+from gigl.utils.sampling import parse_fanout, parse_sampler_options
 
 logger = Logger()
 
@@ -191,6 +192,7 @@ def _setup_dataloaders(
     split: Literal["train", "val", "test"],
     cluster_info: GraphStoreInfo,
     num_neighbors: list[int] | dict[EdgeType, list[int]],
+    sampler_options: Optional[SamplerOptions],
     sampling_workers_per_process: int,
     main_batch_size: int,
     random_batch_size: int,
@@ -205,6 +207,7 @@ def _setup_dataloaders(
         split (Literal["train", "val", "test"]): The current split which we are loading data for.
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode.
         num_neighbors: Fanout for subgraph sampling.
+        sampler_options (Optional[SamplerOptions]): Sampler variant. None uses k-hop sampling.
         sampling_workers_per_process (int): Number of sampling workers per training/testing process.
         main_batch_size (int): Batch size for main dataloader with query and labeled nodes.
         random_batch_size (int): Batch size for random negative dataloader.
@@ -240,6 +243,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        sampler_options=sampler_options,
     )
 
     logger.info(f"---Rank {rank} finished setting up main loader for split={split}")
@@ -266,6 +270,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        sampler_options=sampler_options,
     )
 
     logger.info(
@@ -375,6 +380,7 @@ class TrainingProcessArgs:
         sampling_workers_per_process (int): Number of sampling workers per training/testing process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size for the channel during sampling.
         process_start_gap_seconds (int): Time to sleep between dataloader initializations.
+        sampler_options (Optional[SamplerOptions]): Sampler variant. None uses k-hop sampling.
         main_batch_size (int): Batch size for main dataloader.
         random_batch_size (int): Batch size for random negative dataloader.
         learning_rate (float): Learning rate for the optimizer.
@@ -400,6 +406,7 @@ class TrainingProcessArgs:
 
     # Sampling config
     num_neighbors: list[int] | dict[EdgeType, list[int]]
+    sampler_options: Optional[SamplerOptions]
     sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     process_start_gap_seconds: int
@@ -463,6 +470,7 @@ def _training_process(
             split="train",
             cluster_info=args.cluster_info,
             num_neighbors=args.num_neighbors,
+            sampler_options=args.sampler_options,
             sampling_workers_per_process=args.sampling_workers_per_process,
             main_batch_size=args.main_batch_size,
             random_batch_size=args.random_batch_size,
@@ -481,6 +489,7 @@ def _training_process(
             split="val",
             cluster_info=args.cluster_info,
             num_neighbors=args.num_neighbors,
+            sampler_options=args.sampler_options,
             sampling_workers_per_process=args.sampling_workers_per_process,
             main_batch_size=args.main_batch_size,
             random_batch_size=args.random_batch_size,
@@ -637,6 +646,7 @@ def _training_process(
         split="test",
         cluster_info=args.cluster_info,
         num_neighbors=args.num_neighbors,
+        sampler_options=args.sampler_options,
         sampling_workers_per_process=args.sampling_workers_per_process,
         main_batch_size=args.main_batch_size,
         random_batch_size=args.random_batch_size,
@@ -853,6 +863,7 @@ def _run_example_training(
 
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
+    sampler_options = parse_sampler_options(trainer_args)
 
     sampling_workers_per_process: int = int(
         trainer_args.get("sampling_workers_per_process", "4")
@@ -880,6 +891,7 @@ def _run_example_training(
     logger.info(
         f"Got training args local_world_size={local_world_size}, \
         num_neighbors={num_neighbors}, \
+        sampler_options={sampler_options}, \
         sampling_workers_per_process={sampling_workers_per_process}, \
         main_batch_size={main_batch_size}, \
         random_batch_size={random_batch_size}, \
@@ -931,6 +943,7 @@ def _run_example_training(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
         num_neighbors=num_neighbors,
+        sampler_options=sampler_options,
         sampling_workers_per_process=sampling_workers_per_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,

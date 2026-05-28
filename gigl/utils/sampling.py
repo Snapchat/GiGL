@@ -1,10 +1,12 @@
 import ast
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
 import torch
 
 from gigl.common.logger import Logger
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 
 logger = Logger()
@@ -86,6 +88,45 @@ def parse_fanout(fanout_str: str) -> Union[list[int], dict[EdgeType, list[int]]]
         raise ValueError(
             f"Fanout must be parsed as either a dictionary or a list, got {loaded_fanout} of type {type(loaded_fanout)}"
         )
+
+
+def _parse_optional_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"", "none", "null"}:
+        return None
+    return int(value)
+
+
+def parse_sampler_options(args: Mapping[str, str]) -> Optional[SamplerOptions]:
+    sampler_type = args.get("sampler_type", "khop").strip().lower().replace("-", "_")
+    if sampler_type == "":
+        sampler_type = "khop"
+
+    if sampler_type in {"khop", "k_hop", "neighbor", "neighbor_sampler"}:
+        return None
+
+    if sampler_type != "ppr":
+        raise ValueError(
+            f"Unsupported sampler_type={sampler_type}. Expected one of: khop, ppr."
+        )
+
+    max_ppr_nodes = args.get("ppr_max_nodes")
+    if max_ppr_nodes is None:
+        max_ppr_nodes = args.get("ppr_max_ppr_nodes", "50")
+
+    num_neighbors_per_hop = args.get("ppr_neighbors_per_hop")
+    if num_neighbors_per_hop is None:
+        num_neighbors_per_hop = args.get("ppr_num_neighbors_per_hop", "1000")
+
+    return PPRSamplerOptions(
+        alpha=float(args.get("ppr_alpha", "0.5")),
+        eps=float(args.get("ppr_eps", "0.0001")),
+        max_ppr_nodes=int(max_ppr_nodes),
+        num_neighbors_per_hop=int(num_neighbors_per_hop),
+        max_fetch_iterations=_parse_optional_int(args.get("ppr_max_fetch_iterations")),
+    )
 
 
 @dataclass(frozen=True)
