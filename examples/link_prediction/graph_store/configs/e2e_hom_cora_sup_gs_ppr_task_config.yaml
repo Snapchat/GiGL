@@ -23,7 +23,7 @@ trainerConfig:
     ppr_max_nodes: "20"
     ppr_neighbors_per_hop: "100"
     ppr_max_fetch_iterations: "2"
-    sampling_workers_per_process: "1"
+    sampling_workers_per_process: "2"
     main_batch_size: "8"
     random_batch_size: "8"
     num_max_train_batches: "4"
@@ -53,7 +53,7 @@ inferencerConfig:
     ppr_max_nodes: "20"
     ppr_neighbors_per_hop: "100"
     ppr_max_fetch_iterations: "2"
-    sampling_workers_per_inference_process: "1"
+    sampling_workers_per_inference_process: "2"
   inferenceBatchSize: 256
   command: python -m examples.link_prediction.graph_store.homogeneous_inference
   graphStoreStorageConfig:
