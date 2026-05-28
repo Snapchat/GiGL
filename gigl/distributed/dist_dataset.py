@@ -879,7 +879,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+        Optional[dict[NodeType, torch.Tensor]],
         Optional[int],
     ]:
         """

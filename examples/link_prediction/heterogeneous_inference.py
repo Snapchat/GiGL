@@ -23,7 +23,7 @@ import argparse
 import gc
 import time
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 import torch.distributed
@@ -154,6 +154,9 @@ def _inference_process(
     ] = args.dataset.node_ids
     assert isinstance(node_type_to_input_node_ids, dict), (
         f"Node IDs must be a dictionary for heterogeneous inference, got {type(node_type_to_input_node_ids)}"
+    )
+    node_type_to_input_node_ids = cast(
+        dict[NodeType, torch.Tensor], node_type_to_input_node_ids
     )
     input_node_ids: torch.Tensor = node_type_to_input_node_ids[args.inference_node_type]
 

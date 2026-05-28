@@ -364,8 +364,8 @@ def _shared_sampling_worker_loop(
         sampler_options: GiGL sampler configuration (e.g. ``PPRSamplerOptions``
             for PPR-based sampling).
         degree_tensors: Pre-computed degree tensors for PPR sampling, or
-            ``None`` for non-PPR samplers.  Materialized once in the parent
-            process by ``_prepare_degree_tensors`` and shared across workers.
+            ``None`` for non-PPR samplers.  Materialized once in the parent via
+            ``DistDataset.degree_tensor`` and shared across workers.
 
     Algorithm:
         1. Initialize RPC, sampler infrastructure, and signal the parent via barrier.

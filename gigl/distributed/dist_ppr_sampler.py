@@ -76,8 +76,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int16, capped at
             int16 max), keyed by NodeType.  Must be pre-computed by the caller
-            (e.g. via :func:`build_ppr_total_degree_tensors`) so that workers
-            share a single allocation rather than recomputing per-worker.
+            through ``DistDataset.degree_tensor`` so that workers share a single
+            allocation rather than recomputing per-worker.
     """
 
     def __init__(
@@ -130,10 +130,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             self._is_homogeneous = True
 
         # Total-degree tensors keyed by NodeType, pre-computed by the caller.
-        # Callers (create_mp_producer for colocated, SharedDistSamplingBackend
-        # for graph-store) run build_ppr_total_degree_tensors once in the parent
-        # process and place the result in shared memory so all worker processes
-        # map the same allocation.
+        # Callers compute DistDataset.degree_tensor once in the parent process
+        # and place the result in shared memory so all worker processes map the
+        # same allocation.
         self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = degree_tensors
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
