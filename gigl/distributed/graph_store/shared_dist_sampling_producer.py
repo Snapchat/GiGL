@@ -873,7 +873,9 @@ class SharedDistSamplingBackend:
             set
         )
         # Move degree tensors to shared memory so all spawned workers map the
-        # same allocation instead of each pickling a private copy.
+        # same allocation instead of each pickling a private copy. DistDataset
+        # also shares cached degree tensors through IPC, but graph-store PPR can
+        # compute them lazily when this backend is created.
         self._degree_tensors: Optional[
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         ] = degree_tensors

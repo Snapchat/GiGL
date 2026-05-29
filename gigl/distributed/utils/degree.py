@@ -27,9 +27,10 @@ Heterogeneous partitioned graphs are expected to materialize all registered
 non-label edge types on every rank, even when a rank has no local edges for a
 type. This keeps the per-node-type all-reduce order consistent across ranks.
 
-Degree tensors are stored as int32 to match the PPR sampler's needs while
-keeping memory usage low. This assumes individual node degrees stay below the
-int32 maximum, which is far above expected node degrees.
+Degree tensors are stored as int32 because the PPR C++ sampler expects standard
+int32/int64 integer tensors; int32 keeps memory usage lower than int64. This
+assumes individual node degrees stay below the int32 maximum, which is far
+above expected node degrees.
 """
 
 from collections import Counter
