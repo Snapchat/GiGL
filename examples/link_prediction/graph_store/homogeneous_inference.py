@@ -82,8 +82,8 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_gs_test`
 """
 
 import argparse
+import ast
 import gc
-import json
 import os
 import sys
 import time
@@ -494,7 +494,7 @@ def _run_example_inference(
     sampler_options: Optional[SamplerOptions] = None
     sampler_options_args = inferencer_args.get("ppr_sampler_options")
     if sampler_options_args is not None and sampler_options_args.strip():
-        sampler_options = PPRSamplerOptions(**json.loads(sampler_options_args))
+        sampler_options = PPRSamplerOptions(**ast.literal_eval(sampler_options_args))
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be
     # between `2` and `4`, this may need some tuning depending on the pipeline. We default this

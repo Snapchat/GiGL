@@ -17,6 +17,10 @@ trainerConfig:
   trainerArgs:
     log_every_n_batch: "1"
     num_neighbors: "[10, 10]"
+    # Parsed in the graph-store training entrypoint and passed directly as
+    # kwargs to PPRSamplerOptions in gigl/distributed/sampler_options.py.
+    # Presence of ppr_sampler_options selects PPR; otherwise this example uses
+    # k-hop sampling configured by num_neighbors.
     ppr_sampler_options: >-
       {
         "alpha": 0.5,
@@ -49,6 +53,10 @@ inferencerConfig:
   inferencerArgs:
     log_every_n_batch: "1"
     num_neighbors: "[10, 10]"
+    # Parsed in the graph-store inference entrypoint and passed directly as
+    # kwargs to PPRSamplerOptions in gigl/distributed/sampler_options.py.
+    # Presence of ppr_sampler_options selects PPR; otherwise this example uses
+    # k-hop sampling configured by num_neighbors.
     ppr_sampler_options: >-
       {
         "alpha": 0.5,

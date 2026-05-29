@@ -118,8 +118,8 @@ GiGL root.
 """
 
 import argparse
+import ast
 import gc
-import json
 import os
 import statistics
 import sys
@@ -871,7 +871,7 @@ def _run_example_training(
     sampler_options: Optional[SamplerOptions] = None
     sampler_options_args = trainer_args.get("ppr_sampler_options")
     if sampler_options_args is not None and sampler_options_args.strip():
-        sampler_options = PPRSamplerOptions(**json.loads(sampler_options_args))
+        sampler_options = PPRSamplerOptions(**ast.literal_eval(sampler_options_args))
 
     sampling_workers_per_process: int = int(
         trainer_args.get("sampling_workers_per_process", "4")
