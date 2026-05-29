@@ -583,25 +583,32 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
 
         else:
-            if isinstance(nodes_to_sample, dict):
+            if isinstance(nodes_to_sample, torch.Tensor):
+                homogeneous_nodes_to_sample = nodes_to_sample
+            elif isinstance(nodes_to_sample, dict):
                 node_types = set(nodes_to_sample.keys())
                 if node_types != {DEFAULT_HOMOGENEOUS_NODE_TYPE}:
                     raise ValueError(
                         f"Expected only {DEFAULT_HOMOGENEOUS_NODE_TYPE} for homogeneous PPR sampling, "
                         f"received node types: {node_types}"
                     )
-                nodes_to_sample = nodes_to_sample[DEFAULT_HOMOGENEOUS_NODE_TYPE]
-            assert isinstance(nodes_to_sample, torch.Tensor)
+                homogeneous_nodes_to_sample = nodes_to_sample[
+                    DEFAULT_HOMOGENEOUS_NODE_TYPE
+                ]
+            else:
+                raise TypeError(
+                    f"Expected Tensor or node-type mapping for homogeneous PPR sampling, got {type(nodes_to_sample)}"
+                )
 
             # Register seeds; local indices 0..N-1 are assigned internally.
             # srcs holds their global IDs (same values as nodes_to_sample).
-            srcs = inducer.init_node(nodes_to_sample)
+            srcs = inducer.init_node(homogeneous_nodes_to_sample)
 
             (
                 homo_flat_ids,
                 homo_flat_weights,
                 homo_valid_counts,
-            ) = await self._compute_ppr_scores(nodes_to_sample, None)
+            ) = await self._compute_ppr_scores(homogeneous_nodes_to_sample, None)
             assert isinstance(homo_flat_ids, torch.Tensor)
             assert isinstance(homo_flat_weights, torch.Tensor)
             assert isinstance(homo_valid_counts, torch.Tensor)
