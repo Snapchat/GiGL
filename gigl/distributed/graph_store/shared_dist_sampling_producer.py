@@ -339,7 +339,7 @@ def _shared_sampling_worker_loop(
     event_queue: mp.Queue,
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ) -> None:
     """Run one shared graph-store worker that schedules many input channels.
 
@@ -836,7 +836,7 @@ class SharedDistSamplingBackend:
         worker_options: RemoteDistSamplingWorkerOptions,
         sampling_config: SamplingConfig,
         sampler_options: SamplerOptions,
-        degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+        degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
     ) -> None:
         """Initialize the shared sampling backend.
 
@@ -874,7 +874,20 @@ class SharedDistSamplingBackend:
         )
         # Move degree tensors to shared memory so all spawned workers map the
         # same allocation instead of each pickling a private copy.
-        self._degree_tensors: Optional[dict[NodeType, torch.Tensor]] = degree_tensors
+        self._degree_tensors: Optional[
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ] = degree_tensors
+        if degree_tensors is not None:
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across "
+                    f"{len(degree_tensors)} node types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with "
+                    f"{degree_tensors.size(0)} nodes."
+                )
         share_memory(self._degree_tensors)
 
     def init_backend(self) -> None:

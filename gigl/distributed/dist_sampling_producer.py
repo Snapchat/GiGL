@@ -55,7 +55,7 @@ def _sampling_worker_loop(
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ):
     dist_sampler = None
     try:
@@ -180,7 +180,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
         worker_options: MpDistSamplingWorkerOptions,
         channel: ChannelBase,
         sampler_options: SamplerOptions,
-        degree_tensors: Optional[dict[NodeType, torch.Tensor]] = None,
+        degree_tensors: Optional[
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ] = None,
     ):
         super().__init__(data, sampler_input, sampling_config, worker_options, channel)
         self._sampler_options = sampler_options

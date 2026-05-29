@@ -74,10 +74,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
-        degree_tensors: Pre-computed total-degree tensors (int32), keyed by NodeType.
-            Must be pre-computed by the caller through
-            ``DistDataset.degree_tensor`` so that workers share a single
-            allocation rather than recomputing per-worker.
+        degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
+            graphs use a single tensor; heterogeneous graphs use tensors keyed
+            by NodeType. Must be pre-computed by the caller through
+            ``DistDataset.degree_tensor`` so workers share a single allocation
+            rather than recomputing per-worker.
     """
 
     def __init__(
@@ -87,7 +88,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         num_neighbors_per_hop: int = 100_000,
-        degree_tensors: dict[NodeType, torch.Tensor],
+        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
         **kwargs,
     ):
@@ -129,11 +130,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        # Total-degree tensors keyed by NodeType, pre-computed by the caller.
-        # Callers compute DistDataset.degree_tensor once in the parent process
-        # and place the result in shared memory so all worker processes map the
-        # same allocation.
-        self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = degree_tensors
+        # Normalize the public homogeneous/heterogeneous degree-tensor shape to
+        # the node-type keyed form used internally by PPR.
+        self._node_type_to_total_degree = self._normalize_degree_tensors(degree_tensors)
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
         # NodeType / EdgeType keys are only used at the Python boundary
@@ -182,6 +181,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
             for nt in all_node_types
         ]
+
+    def _normalize_degree_tensors(
+        self,
+        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    ) -> dict[NodeType, torch.Tensor]:
+        """Normalize degree tensors to the node-type keyed shape PPR uses."""
+        if isinstance(degree_tensors, torch.Tensor):
+            if not self._is_homogeneous:
+                raise ValueError(
+                    "Expected degree tensors keyed by node type for heterogeneous PPR sampling."
+                )
+            return {DEFAULT_HOMOGENEOUS_NODE_TYPE: degree_tensors}
+
+        missing_anchor_types = set(self._node_type_to_edge_types.keys()) - set(
+            degree_tensors.keys()
+        )
+        if missing_anchor_types:
+            raise ValueError(
+                f"Missing PPR degree tensors for node types: {missing_anchor_types}"
+            )
+        return degree_tensors
 
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""

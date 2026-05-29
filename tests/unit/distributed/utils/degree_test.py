@@ -12,7 +12,6 @@ from gigl.distributed.utils.degree import (
     compute_and_broadcast_degree_tensor,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -107,10 +106,10 @@ class TestDegreeComputation(TestCase):
         assert dataset.graph is not None
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
-        self.assertEqual(set(result.keys()), {DEFAULT_HOMOGENEOUS_NODE_TYPE})
+        assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assertEqual(result[DEFAULT_HOMOGENEOUS_NODE_TYPE].shape[0], num_nodes)
-        self.assert_tensor_equality(result[DEFAULT_HOMOGENEOUS_NODE_TYPE], expected)
+        self.assertEqual(result.shape[0], num_nodes)
+        self.assert_tensor_equality(result, expected)
 
     def test_heterogeneous_graph(self):
         """Test degree computation for a heterogeneous graph."""
@@ -120,6 +119,7 @@ class TestDegreeComputation(TestCase):
         assert dataset.graph is not None
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
+        assert not isinstance(result, torch.Tensor)
         expected = _compute_expected_total_degrees_by_node_type(
             edge_indices=edge_indices,
             edge_dir=dataset.edge_dir,
@@ -161,6 +161,7 @@ class TestDegreeComputation(TestCase):
 
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
+        assert not isinstance(result, torch.Tensor)
         expected_node_types = {
             _get_anchor_node_type(edge_type, dataset.edge_dir)
             for edge_type in edge_types
@@ -189,7 +190,7 @@ def _run_local_world_size_correction_homogeneous(
     world_size: int,
     init_method: str,
     edge_index: torch.Tensor,
-    expected_degrees: dict[NodeType, torch.Tensor],
+    expected_degrees: torch.Tensor,
 ) -> None:
     """Worker function for multi-process local_world_size correction test (homogeneous)."""
     dist.init_process_group(
@@ -203,9 +204,8 @@ def _run_local_world_size_correction_homogeneous(
         assert dataset.graph is not None
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
-        assert set(result.keys()) == set(expected_degrees.keys())
-        for node_type, expected in expected_degrees.items():
-            assert_tensor_equality(result[node_type], expected)
+        assert isinstance(result, torch.Tensor)
+        assert_tensor_equality(result, expected_degrees)
     finally:
         dist.destroy_process_group()
 
@@ -229,6 +229,7 @@ def _run_local_world_size_correction_heterogeneous(
         assert dataset.graph is not None
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
+        assert not isinstance(result, torch.Tensor)
         assert set(result.keys()) == set(expected_degrees.keys())
         for node_type, expected in expected_degrees.items():
             assert_tensor_equality(result[node_type], expected)
@@ -250,9 +251,7 @@ class TestLocalWorldSizeCorrection(TestCase):
         num_nodes = int(edge_index.max().item() + 1)
 
         raw_degrees = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        expected_degrees = {
-            DEFAULT_HOMOGENEOUS_NODE_TYPE: raw_degrees
-        }  # After correction: (2*raw) / 2 = raw
+        expected_degrees = raw_degrees  # After correction: (2*raw) / 2 = raw
 
         init_method = get_process_group_init_method()
         mp.spawn(
@@ -300,9 +299,9 @@ class TestDatasetDegreeProperty(TestCase):
         dataset = create_homogeneous_dataset(edge_index=edge_index)
         result = dataset.degree_tensor
 
-        self.assertEqual(set(result.keys()), {DEFAULT_HOMOGENEOUS_NODE_TYPE})
+        assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assert_tensor_equality(result[DEFAULT_HOMOGENEOUS_NODE_TYPE], expected)
+        self.assert_tensor_equality(result, expected)
 
     def test_degree_tensor_caches_result(self):
         """Test that degree_tensor property caches the result."""
@@ -320,6 +319,7 @@ class TestDatasetDegreeProperty(TestCase):
 
         result = dataset.degree_tensor
 
+        assert not isinstance(result, torch.Tensor)
         expected = _compute_expected_total_degrees_by_node_type(
             edge_indices=edge_indices,
             edge_dir=dataset.edge_dir,
