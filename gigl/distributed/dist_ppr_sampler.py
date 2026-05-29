@@ -576,6 +576,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
 
         else:
+            if isinstance(nodes_to_sample, dict):
+                node_types = set(nodes_to_sample.keys())
+                if node_types != {DEFAULT_HOMOGENEOUS_NODE_TYPE}:
+                    raise ValueError(
+                        f"Expected only {DEFAULT_HOMOGENEOUS_NODE_TYPE} for homogeneous PPR sampling, "
+                        f"received node types: {node_types}"
+                    )
+                nodes_to_sample = nodes_to_sample[DEFAULT_HOMOGENEOUS_NODE_TYPE]
             assert isinstance(nodes_to_sample, torch.Tensor)
 
             # Register seeds; local indices 0..N-1 are assigned internally.

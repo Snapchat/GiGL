@@ -41,6 +41,10 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+)
 from tests.test_assets.distributed.test_dataset import (
     STORY,
     STORY_TO_USER,
@@ -589,6 +593,52 @@ def _run_ppr_ablp_loader_correctness_check(
     shutdown_rpc()
 
 
+def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
+    """Verify PPR works for labeled homogeneous DistABLPLoader inputs."""
+    create_test_process_group()
+
+    dataset = create_heterogeneous_dataset_for_ablp(
+        positive_labels={0: [1], 1: [2], 2: [0]},
+        negative_labels={0: [2], 1: [0], 2: [1]},
+        train_node_ids=[0, 1],
+        val_node_ids=[2],
+        test_node_ids=[],
+        edge_indices={DEFAULT_HOMOGENEOUS_EDGE_TYPE: _TEST_EDGE_INDEX},
+        src_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+        dst_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+        supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+        edge_dir="out",
+    )
+
+    train_node_ids = dataset.train_node_ids
+    assert isinstance(train_node_ids, dict)
+
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[],
+        input_nodes=train_node_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    datum = next(iter(loader))
+    assert isinstance(datum, Data)
+    assert hasattr(datum, "edge_index"), "Missing PPR edge_index on Data"
+    assert hasattr(datum, "edge_attr"), "Missing PPR edge_attr on Data"
+    assert hasattr(datum, "y_positive"), "Missing y_positive on Data"
+    assert hasattr(datum, "y_negative"), "Missing y_negative on Data"
+    assert datum.edge_index.dim() == 2
+    assert datum.edge_index.size(0) == 2
+    assert datum.edge_index.size(1) == datum.edge_attr.numel()
+
+    shutdown_rpc()
+
+
 # ---------------------------------------------------------------------------
 # Bug regression runners
 # ---------------------------------------------------------------------------
@@ -757,6 +807,10 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
         """Verify ABLP label edges are excluded from anchor-seed PPR walks."""
         mp.spawn(fn=_run_ppr_ablp_label_edges_do_not_affect_anchor_ppr, args=())
+
+    def test_ppr_sampler_homogeneous_ablp(self) -> None:
+        """Verify PPR handles homogeneous ABLP seed dictionaries."""
+        mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
 
 if __name__ == "__main__":
