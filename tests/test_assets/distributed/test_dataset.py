@@ -67,6 +67,7 @@ def create_homogeneous_dataset(
     node_features: Optional[torch.Tensor] = None,
     edge_features: Optional[torch.Tensor] = None,
     node_labels: Optional[torch.Tensor] = None,
+    edge_weights: Optional[torch.Tensor] = None,
     rank: int = 0,
     world_size: int = 1,
     edge_dir: Literal["in", "out"] = "out",
@@ -74,13 +75,14 @@ def create_homogeneous_dataset(
     """Create a homogeneous test dataset.
 
     Creates a single-partition DistDataset with the specified edge index, node features,
-    edge features, and node labels.
+    edge features, node labels, and optional per-edge sampling weights.
 
     Args:
         edge_index: COO format edge index [2, num_edges].
         node_features: Node feature tensor [num_nodes, feature_dim], or None.
         edge_features: Edge feature tensor [num_edges, feature_dim], or None.
         node_labels: Node label tensor [num_nodes, label_dim], or None.
+        edge_weights: 1D per-edge sampling weight tensor [num_edges], or None.
         rank: Rank of the current process. Defaults to 0.
         world_size: Total number of processes. Defaults to 1.
         edge_dir: Edge direction ("in" or "out"). Defaults to "out".
@@ -129,6 +131,7 @@ def create_homogeneous_dataset(
         partitioned_edge_index=GraphPartitionData(
             edge_index=edge_index,
             edge_ids=None,
+            weights=edge_weights,
         ),
         partitioned_node_features=partitioned_node_features,
         partitioned_edge_features=partitioned_edge_features,

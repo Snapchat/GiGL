@@ -5,6 +5,10 @@ from typing import Optional
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.env.constants import (
+    GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
+    read_resource_config_uri_from_env,
+)
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
@@ -55,8 +59,9 @@ def get_resource_config(
     Args:
         resource_config_uri: Optional[Uri] = None
             The URI of the resource config file. If None, the function will try to load the resource config from the
-            command-line argument --resource_config_uri or the environment variable RESOURCE_CONFIG_PATH. If these are
-            not set, the function will try to load the resource config from the pipeline options.
+            command-line argument --resource_config_uri or the environment variable GIGL_RESOURCE_CONFIG_URI (the
+            deprecated RESOURCE_CONFIG_PATH is still read as a fallback, with a one-time warning). If these are not
+            set, the function will try to load the resource config from the pipeline options.
 
     Returns:
         resource_config: GiglResourceConfigWrapper
@@ -77,8 +82,8 @@ def get_resource_config(
             required=False,
         )
         args, _ = parser.parse_known_args()
-        resource_config_str = args.resource_config_uri or os.getenv(
-            "RESOURCE_CONFIG_PATH"
+        resource_config_str = (
+            args.resource_config_uri or read_resource_config_uri_from_env()
         )
 
         if resource_config_str is None:
@@ -90,7 +95,7 @@ def get_resource_config(
                     "No resource config provided, either via command-line argument or environment variable."
                 )
 
-    os.environ["RESOURCE_CONFIG_PATH"] = resource_config_str
+    os.environ[GIGL_RESOURCE_CONFIG_URI_ENV_KEY] = resource_config_str
     resource_config_path = UriFactory.create_uri(uri=resource_config_str)
 
     from gigl.common.utils.proto_utils import ProtoUtils

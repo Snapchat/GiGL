@@ -1,11 +1,10 @@
 import argparse
-import os
 from dataclasses import dataclass
 from typing import Optional, Union
 
-import gigl.src.common.constants.resource_config as resource_config_constants
 from gigl.common import GcsUri, UriFactory
 from gigl.common.logger import Logger
+from gigl.env.constants import read_resource_config_uri_from_env
 from gigl.src.common.constants.components import GiGLComponents
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
     CustomLauncherConfig,
@@ -108,8 +107,8 @@ class GiglResourceConfigWrapper:
         )
         args, _ = parser.parse_known_args()
 
-        resource_config_path = args.resource_config_uri or os.getenv(
-            resource_config_constants.RESOURCE_CONFIG_OS_ENV
+        resource_config_path = (
+            args.resource_config_uri or read_resource_config_uri_from_env()
         )
 
         return str(resource_config_path)

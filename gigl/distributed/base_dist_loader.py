@@ -334,12 +334,49 @@ class BaseDistLoader(DistLoader):
             )
 
     @staticmethod
+    def validate_for_weighted_sampling(
+        with_weight: bool,
+        dataset: Union[DistDataset, RemoteDistDataset],
+        sampler_options: SamplerOptions,
+    ) -> None:
+        """Validates the ``with_weight`` parameter against the dataset and sampler.
+
+        Args:
+            with_weight: Whether weighted sampling was requested.
+            dataset: The dataset being sampled from.
+            sampler_options: The sampler to be used.
+
+        Raises:
+            ValueError: If ``with_weight=True`` but no edge weights are registered.
+            NotImplementedError: If ``with_weight=True`` and a PPR sampler is requested.
+        """
+        if not with_weight:
+            return
+        has_edge_weights = (
+            dataset.has_edge_weights
+            if isinstance(dataset, DistDataset)
+            else dataset.fetch_edge_weights_registered()
+        )
+        if not has_edge_weights:
+            raise ValueError(
+                "with_weight=True requires edge weights to be registered in the dataset. "
+                "Pass weight_edge_feat_name to build_dataset() to register edge weights."
+            )
+        # TODO(mkolodner-sc): Implement weight-proportional residual propagation for PPR.
+        if with_weight and isinstance(sampler_options, PPRSamplerOptions):
+            raise NotImplementedError(
+                "Weighted sampling is not yet supported with PPRSamplerOptions. "
+                "Weight-proportional residual propagation for PPR is planned but not implemented."
+            )
+
+    @staticmethod
     def create_sampling_config(
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         dataset_schema: DatasetSchema,
         batch_size: int = 1,
         shuffle: bool = False,
         drop_last: bool = False,
+        with_weight: bool = False,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -352,6 +389,9 @@ class BaseDistLoader(DistLoader):
             batch_size: How many samples per batch.
             shuffle: Whether to shuffle input nodes.
             drop_last: Whether to drop the last incomplete batch.
+            with_weight: Whether to use edge weights for sampling. Requires that
+                edge weights were registered during dataset construction via
+                ``DistPartitioner.register_edge_weights()``.
 
         Returns:
             A fully configured SamplingConfig.
@@ -369,7 +409,7 @@ class BaseDistLoader(DistLoader):
             with_edge=True,
             collect_features=True,
             with_neg=False,
-            with_weight=False,
+            with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
             seed=None,
         )
