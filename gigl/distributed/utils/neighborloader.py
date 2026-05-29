@@ -357,6 +357,18 @@ def attach_ppr_outputs(
         f"PPR edge index and weight edge types must match, "
         f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
     )
+    if isinstance(data, Data):
+        if len(ppr_edge_indices) > 1:
+            raise ValueError(
+                "Expected at most one PPR edge type for homogeneous Data output, "
+                f"got {set(ppr_edge_indices.keys())}"
+            )
+        if ppr_edge_indices:
+            edge_type = next(iter(ppr_edge_indices))
+            data.edge_index = ppr_edge_indices[edge_type]
+            data.edge_attr = ppr_weights[edge_type]
+        return
+
     for edge_type, edge_index in ppr_edge_indices.items():
         data[edge_type].edge_index = edge_index
         data[edge_type].edge_attr = ppr_weights[edge_type]

@@ -234,8 +234,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 self._sample_one_hop(
                     srcs=nodes_by_etype_id[eid].to(device),
                     num_nbr=self._num_neighbors_per_hop,
-                    # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
-                    etype=None if etype == _PPR_HOMOGENEOUS_EDGE_TYPE else etype,
+                    # _sample_one_hop expects None only for true homogeneous graphs.
+                    # Labeled homogeneous ABLP graphs are hetero-backed because label
+                    # edges are represented as separate edge types, so they still need
+                    # the explicit default edge type here.
+                    etype=(
+                        None
+                        if self._is_homogeneous and etype == _PPR_HOMOGENEOUS_EDGE_TYPE
+                        else etype
+                    ),
                 )
             )
         outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)

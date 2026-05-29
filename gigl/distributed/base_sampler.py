@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -213,11 +214,15 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         Copied from ``graphlearn_torch.distributed.DistNeighborSampler._send_adapter``
         (GLT 0.2.4) with the single change of ``_colloate_fn`` → ``_collate_fn``.
         """
-        sampler_output = await async_func(*args, **kwargs)
-        res = await self._collate_fn(sampler_output)
-        if self.channel is None:
-            return res
-        self.channel.send(res)
+        try:
+            sampler_output = await async_func(*args, **kwargs)
+            res = await self._collate_fn(sampler_output)
+            if self.channel is None:
+                return res
+            self.channel.send(res)
+        except Exception:
+            logging.exception("sampler task failed")
+            raise
         return None
 
     async def _collate_fn(
