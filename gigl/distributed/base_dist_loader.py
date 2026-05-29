@@ -466,6 +466,16 @@ class BaseDistLoader(DistLoader):
         channel = BaseDistLoader.create_colocated_channel(worker_options)
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across "
+                    f"{len(degree_tensors)} node types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with "
+                    f"{degree_tensors.size(0)} nodes."
+                )
         else:
             degree_tensors = None
         return DistSamplingProducer(

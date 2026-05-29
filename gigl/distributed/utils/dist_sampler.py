@@ -35,7 +35,7 @@ def create_dist_sampler(
     worker_options: Union[MpDistSamplingWorkerOptions, RemoteDistSamplingWorkerOptions],
     channel: ChannelBase,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[dict[NodeType, torch.Tensor]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
     current_device: torch.device,
 ) -> SamplerRuntime:
     """Create a GiGL sampler runtime for one channel on one worker.
