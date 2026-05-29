@@ -237,7 +237,6 @@ class TestDatasetDegreeProperty(TestCase):
 
         assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        self.assertTrue(result.is_shared())
         self.assert_tensor_equality(result, expected)
 
     def test_degree_tensor_caches_result(self):
@@ -264,7 +263,6 @@ class TestDatasetDegreeProperty(TestCase):
         self.assertEqual(set(result.keys()), set(expected.keys()))
 
         for node_type, expected_degrees in expected.items():
-            self.assertTrue(result[node_type].is_shared())
             self.assert_tensor_equality(result[node_type], expected_degrees)
 
 

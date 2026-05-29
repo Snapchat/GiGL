@@ -54,6 +54,7 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from gigl.utils.share_memory import share_memory
 
 logger = Logger()
 
@@ -466,6 +467,7 @@ class BaseDistLoader(DistLoader):
         channel = BaseDistLoader.create_colocated_channel(worker_options)
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
+            share_memory(degree_tensors)
             if isinstance(degree_tensors, dict):
                 logger.info(
                     f"Pre-computed degree tensors for PPR sampling across "

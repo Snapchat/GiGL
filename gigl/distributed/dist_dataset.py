@@ -330,9 +330,6 @@ class DistDataset(glt.distributed.DistDataset):
 
         The result is cached for subsequent accesses.
 
-        The cached degree tensor is moved to shared memory before being returned,
-        so spawned workers can share a single allocation.
-
         Returns:
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]: Degree tensor for
                 homogeneous graphs, or total degree tensors keyed by node type
@@ -349,7 +346,6 @@ class DistDataset(glt.distributed.DistDataset):
             self._degree_tensor = compute_and_broadcast_degree_tensor(
                 self.graph, self._edge_dir
             )
-        share_memory(entity=self._degree_tensor)
         return self._degree_tensor
 
     @property

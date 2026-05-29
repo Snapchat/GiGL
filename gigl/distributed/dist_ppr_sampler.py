@@ -76,9 +76,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
-            by NodeType. Must be pre-computed by the caller through
-            ``DistDataset.degree_tensor`` so workers share a single allocation
-            rather than recomputing per-worker.
+            by NodeType. The colocated and graph-store loader paths retrieve
+            these through ``DistDataset.degree_tensor`` and move them to shared
+            memory before worker handoff.
     """
 
     def __init__(
