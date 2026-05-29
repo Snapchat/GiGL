@@ -25,7 +25,7 @@ detecting how many processes share the same machine (and thus the same data).
 """
 
 from collections import Counter
-from typing import Union
+from typing import Union, overload
 
 import torch
 from graphlearn_torch.data import Graph
@@ -85,7 +85,7 @@ def compute_and_broadcast_degree_tensor(
             raise ValueError("Topology/indptr not available for graph.")
 
         # Homogeneous graphs keep the usual GiGL shape: a single tensor.
-        result = _all_reduce_degree_tensor(_compute_degrees_from_indptr(topo.indptr))
+        result = _all_reduce_degrees(_compute_degrees_from_indptr(topo.indptr))
         if result.numel() > 0:
             logger.info(
                 f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
@@ -190,15 +190,19 @@ def _all_reduce_single_degree_tensor(
     return (padded // local_world_size).to(torch.int32).cpu()
 
 
-def _all_reduce_degree_tensor(tensor: torch.Tensor) -> torch.Tensor:
-    """All-reduce a homogeneous degree tensor across ranks."""
-    local_world_size, device = _get_degree_reduce_context()
-    return _all_reduce_single_degree_tensor(tensor, local_world_size, device)
+@overload
+def _all_reduce_degrees(
+    local_degrees: dict[NodeType, torch.Tensor],
+) -> dict[NodeType, torch.Tensor]: ...
+
+
+@overload
+def _all_reduce_degrees(local_degrees: torch.Tensor) -> torch.Tensor: ...
 
 
 def _all_reduce_degrees(
-    local_degrees: dict[NodeType, torch.Tensor],
-) -> dict[NodeType, torch.Tensor]:
+    local_degrees: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks.
 
     Moves tensors to GPU for the all-reduce if using NCCL backend (which
@@ -225,15 +229,19 @@ def _all_reduce_degrees(
         over-counting.
 
     Args:
-        local_degrees: Dict mapping NodeType to local degree tensors.
+        local_degrees: Either a homogeneous degree tensor or a dict mapping
+            NodeType to local degree tensors.
 
     Returns:
-        Aggregated degree tensors keyed by NodeType.
+        Aggregated degree tensors matching the input shape.
 
     Raises:
         RuntimeError: If torch.distributed is not initialized.
     """
     local_world_size, device = _get_degree_reduce_context()
+
+    if isinstance(local_degrees, torch.Tensor):
+        return _all_reduce_single_degree_tensor(local_degrees, local_world_size, device)
 
     # Heterogeneous case: all-reduce each node type in deterministic order.
     result: dict[NodeType, torch.Tensor] = {}
