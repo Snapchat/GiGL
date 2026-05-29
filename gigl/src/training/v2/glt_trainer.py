@@ -55,12 +55,10 @@ class GLTTrainer:
             gbml_config_pb_wrapper.trainer_config.trainer_args
         )
 
-        job_name = f"gigl_train_{applied_task_identifier}"
-
         if isinstance(resource_config.trainer_config, VertexAiResourceConfig):
             launch_single_pool_job(
                 vertex_ai_resource_config=resource_config.trainer_config,
-                job_name=job_name,
+                job_name=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
                 process_command=training_process_command,
@@ -74,7 +72,7 @@ class GLTTrainer:
         elif isinstance(resource_config.trainer_config, VertexAiGraphStoreConfig):
             launch_graph_store_enabled_job(
                 vertex_ai_graph_store_config=resource_config.trainer_config,
-                job_name=job_name,
+                job_name=applied_task_identifier,
                 task_config_uri=task_config_uri,
                 resource_config_uri=resource_config_uri,
                 compute_commmand=training_process_command,
