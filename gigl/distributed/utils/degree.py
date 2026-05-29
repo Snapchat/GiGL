@@ -78,10 +78,13 @@ def compute_and_broadcast_degree_tensor(
             "compute_and_broadcast_degree_tensor requires torch.distributed to be initialized."
         )
 
+    # Compute local degrees from graph topology.
     if isinstance(graph, Graph):
         topo = graph.topo
         if topo is None or topo.indptr is None:
             raise ValueError("Topology/indptr not available for graph.")
+
+        # Homogeneous graphs keep the usual GiGL shape: a single tensor.
         result = _all_reduce_degree_tensor(_compute_degrees_from_indptr(topo.indptr))
         if result.numel() > 0:
             logger.info(
@@ -93,6 +96,8 @@ def compute_and_broadcast_degree_tensor(
 
     local_dict: dict[NodeType, torch.Tensor] = {}
     for edge_type, edge_graph in graph.items():
+        # Label edge types are supervision edges and should not contribute to
+        # node degree for traversal algorithms like PPR.
         if is_label_edge_type(edge_type):
             continue
         anchor_type: NodeType = edge_type[-1] if edge_dir == "in" else edge_type[0]
@@ -114,6 +119,7 @@ def compute_and_broadcast_degree_tensor(
         else:
             local_dict[anchor_type] = degrees
 
+    # All-reduce across ranks after local per-node-type aggregation.
     result = _all_reduce_degrees(local_dict)
     for node_type, degrees in result.items():
         if degrees.numel() > 0:
@@ -153,10 +159,13 @@ def _get_degree_reduce_context() -> tuple[int, torch.device]:
             "_all_reduce_degrees requires torch.distributed to be initialized."
         )
 
+    # Compute local_world_size: number of processes on the same machine sharing data.
     all_ips = get_internal_ip_from_all_ranks()
     my_rank = torch.distributed.get_rank()
     my_ip = all_ips[my_rank]
     local_world_size = Counter(all_ips)[my_ip]
+
+    # NCCL backend requires CUDA tensors; Gloo works with CPU.
     device = get_device_from_process_group()
     return local_world_size, device
 
@@ -167,13 +176,17 @@ def _all_reduce_single_degree_tensor(
     device: torch.device,
 ) -> torch.Tensor:
     """All-reduce a single tensor with size sync and over-counting correction."""
+    # Synchronize max size across all ranks.
     local_size = torch.tensor([tensor.size(0)], dtype=torch.long, device=device)
     torch.distributed.all_reduce(local_size, op=torch.distributed.ReduceOp.MAX)
     max_size = int(local_size.item())
 
+    # Pad, convert to int64 for all_reduce, and move to the process-group device.
     padded = _pad_to_size(tensor, max_size).to(torch.int64).to(device)
     torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
+    # Correct for over-counting and move back to CPU. We keep int32 so high-degree
+    # nodes do not saturate at int16.
     return (padded // local_world_size).to(torch.int32).cpu()
 
 
@@ -222,6 +235,7 @@ def _all_reduce_degrees(
     """
     local_world_size, device = _get_degree_reduce_context()
 
+    # Heterogeneous case: all-reduce each node type in deterministic order.
     result: dict[NodeType, torch.Tensor] = {}
     for node_type in sorted(local_degrees.keys()):
         result[node_type] = _all_reduce_single_degree_tensor(
