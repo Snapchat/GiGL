@@ -83,6 +83,7 @@ You can run this example in a full pipeline with `make run_hom_cora_sup_gs_test`
 
 import argparse
 import gc
+import json
 import os
 import sys
 import time
@@ -101,7 +102,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.distributed.graph_store.compute import init_compute_process
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils import get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.nn import LinkPredictionGNN
@@ -111,7 +112,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
-from gigl.utils.sampling import parse_fanout, parse_sampler_options
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
@@ -490,7 +491,10 @@ def _run_example_inference(
     # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified
     # as a string of a list of integers, such as "[10, 10]".
     num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
-    sampler_options = parse_sampler_options(inferencer_args)
+    sampler_options: Optional[SamplerOptions] = None
+    sampler_options_args = inferencer_args.get("ppr_sampler_options")
+    if sampler_options_args is not None and sampler_options_args.strip():
+        sampler_options = PPRSamplerOptions(**json.loads(sampler_options_args))
 
     # While the ideal value for `sampling_workers_per_inference_process` has been identified to be
     # between `2` and `4`, this may need some tuning depending on the pipeline. We default this

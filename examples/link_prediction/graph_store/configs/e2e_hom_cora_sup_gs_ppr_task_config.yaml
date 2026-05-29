@@ -17,12 +17,14 @@ trainerConfig:
   trainerArgs:
     log_every_n_batch: "1"
     num_neighbors: "[10, 10]"
-    sampler_type: "ppr"
-    ppr_alpha: "0.5"
-    ppr_eps: "0.0001"
-    ppr_max_nodes: "20"
-    ppr_neighbors_per_hop: "100"
-    ppr_max_fetch_iterations: "2"
+    ppr_sampler_options: >-
+      {
+        "alpha": 0.5,
+        "eps": 0.0001,
+        "max_ppr_nodes": 20,
+        "num_neighbors_per_hop": 100,
+        "max_fetch_iterations": 2
+      }
     sampling_workers_per_process: "2"
     main_batch_size: "8"
     random_batch_size: "8"
@@ -47,12 +49,14 @@ inferencerConfig:
   inferencerArgs:
     log_every_n_batch: "1"
     num_neighbors: "[10, 10]"
-    sampler_type: "ppr"
-    ppr_alpha: "0.5"
-    ppr_eps: "0.0001"
-    ppr_max_nodes: "20"
-    ppr_neighbors_per_hop: "100"
-    ppr_max_fetch_iterations: "2"
+    ppr_sampler_options: >-
+      {
+        "alpha": 0.5,
+        "eps": 0.0001,
+        "max_ppr_nodes": 20,
+        "num_neighbors_per_hop": 100,
+        "max_fetch_iterations": 2
+      }
     sampling_workers_per_inference_process: "2"
   inferenceBatchSize: 256
   command: python -m examples.link_prediction.graph_store.homogeneous_inference

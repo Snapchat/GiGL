@@ -119,6 +119,7 @@ GiGL root.
 
 import argparse
 import gc
+import json
 import os
 import statistics
 import sys
@@ -143,7 +144,7 @@ from gigl.distributed.graph_store.compute import (
     shutdown_compute_process,
 )
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils import get_available_device, get_graph_store_info
 from gigl.env.distributed import GraphStoreInfo
 from gigl.nn import LinkPredictionGNN, RetrievalLoss
@@ -159,7 +160,7 @@ from gigl.src.common.types.model_eval_metrics import (
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.model import load_state_dict_from_uri, save_state_dict
 from gigl.utils.iterator import InfiniteIterator
-from gigl.utils.sampling import parse_fanout, parse_sampler_options
+from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
@@ -867,7 +868,10 @@ def _run_example_training(
 
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
-    sampler_options = parse_sampler_options(trainer_args)
+    sampler_options: Optional[SamplerOptions] = None
+    sampler_options_args = trainer_args.get("ppr_sampler_options")
+    if sampler_options_args is not None and sampler_options_args.strip():
+        sampler_options = PPRSamplerOptions(**json.loads(sampler_options_args))
 
     sampling_workers_per_process: int = int(
         trainer_args.get("sampling_workers_per_process", "4")
