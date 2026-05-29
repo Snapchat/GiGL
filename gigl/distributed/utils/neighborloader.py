@@ -338,12 +338,11 @@ def attach_ppr_outputs(
     ppr_edge_indices: dict[EdgeType, torch.Tensor],
     ppr_weights: dict[EdgeType, torch.Tensor],
 ) -> None:
-    """Attach PPR edge indices and weights onto a HeteroData object.
+    """Attach PPR edge indices and weights onto a Data/HeteroData object.
 
     For each PPR edge type, sets ``data[edge_type].edge_index`` and
     ``data[edge_type].edge_attr`` in-place.  Called from the loader's
-    ``_collate_fn`` only when a PPR sampler is active; the function is a
-    no-op if both dicts are empty.
+    ``_collate_fn`` only when a PPR sampler is active.
 
     Args:
         data: The Data or HeteroData object to attach outputs to.
@@ -352,21 +351,21 @@ def attach_ppr_outputs(
 
     Raises:
         AssertionError: If ``ppr_edge_indices`` and ``ppr_weights`` have different edge-type keys.
+        ValueError: If homogeneous ``Data`` does not have exactly one PPR edge type.
     """
     assert ppr_edge_indices.keys() == ppr_weights.keys(), (
         f"PPR edge index and weight edge types must match, "
         f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
     )
     if isinstance(data, Data):
-        if len(ppr_edge_indices) > 1:
+        if len(ppr_edge_indices) != 1:
             raise ValueError(
-                "Expected at most one PPR edge type for homogeneous Data output, "
+                "Expected exactly one PPR edge type for homogeneous Data output, "
                 f"got {set(ppr_edge_indices.keys())}"
             )
-        if ppr_edge_indices:
-            edge_type = next(iter(ppr_edge_indices))
-            data.edge_index = ppr_edge_indices[edge_type]
-            data.edge_attr = ppr_weights[edge_type]
+        edge_type = next(iter(ppr_edge_indices))
+        data.edge_index = ppr_edge_indices[edge_type]
+        data.edge_attr = ppr_weights[edge_type]
         # Homogeneous Data has no per-edge-type stores; the PPR edges are attached.
         return
 
