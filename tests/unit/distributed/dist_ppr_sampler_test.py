@@ -28,7 +28,7 @@ reversal is needed since both follow the original edge direction.
 
 import heapq
 from collections import defaultdict
-from typing import Literal
+from typing import Literal, TypeGuard
 
 import networkx as nx
 import torch
@@ -93,6 +93,14 @@ _NUM_TEST_STORIES = 3
 _TEST_ALPHA = 0.5
 _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
+
+
+def _is_node_type_to_tensor_map(
+    value: object,
+) -> TypeGuard[dict[str, torch.Tensor]]:
+    return isinstance(value, dict) and all(
+        isinstance(node_ids, torch.Tensor) for node_ids in value.values()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -508,12 +516,15 @@ def _run_ppr_ablp_loader_correctness_check(
     )
 
     train_node_ids = dataset.train_node_ids
-    assert isinstance(train_node_ids, dict)
+    if not _is_node_type_to_tensor_map(train_node_ids):
+        raise TypeError(
+            f"Expected train_node_ids to be a dictionary, got {type(train_node_ids)}"
+        )
 
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[],  # Unused by PPR sampler; required by interface
-        input_nodes=(USER, train_node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(USER, train_node_ids[USER]),
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
@@ -611,7 +622,10 @@ def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
     )
 
     train_node_ids = dataset.train_node_ids
-    assert isinstance(train_node_ids, dict)
+    if not _is_node_type_to_tensor_map(train_node_ids):
+        raise TypeError(
+            f"Expected train_node_ids to be a dictionary, got {type(train_node_ids)}"
+        )
 
     loader = DistABLPLoader(
         dataset=dataset,

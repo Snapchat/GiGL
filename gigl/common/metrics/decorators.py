@@ -22,7 +22,6 @@ def __safely_flush_metrics(
         Callable[[], Optional[OpsMetricPublisher]]
     ],
 ) -> None:
-    metrics_instance = None
     if get_metrics_service_instance_fn is not None:
         metrics_instance = get_metrics_service_instance_fn()
     if metrics_instance is not None:
@@ -46,9 +45,8 @@ def flushes_metrics(
             try:
                 result = func(*args, **kwargs)
             except Exception as e:
-                func_name = getattr(func, "__name__", repr(func))
                 logger.info(
-                    f"Exception raised, will flush metrics for: {func_name} and re-raise exception"
+                    f"Exception raised, will flush metrics for: {getattr(func, '__name__')} and re-raise exception"
                 )
                 logger.error(f"Exception: {e}")
                 logger.error(traceback.format_exc())

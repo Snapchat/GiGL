@@ -113,18 +113,14 @@ class TranslatorTestCase(TestCase):
             expected_entity_types=graph_metadata_pb_wrapper.node_types,
         )
 
-        if isinstance(serialized_graph_metadata.node_entity_info, abc.Mapping):
-            serialized_node_info_iterable = cast(
-                list[SerializedTFRecordInfo],
-                list(serialized_graph_metadata.node_entity_info.values()),
-            )
+        if isinstance(
+            serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
+        ):
+            serialized_node_info_iterable = [serialized_graph_metadata.node_entity_info]
         else:
-            serialized_node_info_iterable = [
-                cast(
-                    SerializedTFRecordInfo,
-                    serialized_graph_metadata.node_entity_info,
-                )
-            ]
+            serialized_node_info_iterable = list(
+                serialized_graph_metadata.node_entity_info.values()
+            )
 
         self.assertEqual(
             len(graph_metadata_pb_wrapper.node_types),
@@ -194,18 +190,14 @@ class TranslatorTestCase(TestCase):
             expected_entity_types=graph_metadata_pb_wrapper.edge_types,
         )
 
-        if isinstance(serialized_graph_metadata.edge_entity_info, abc.Mapping):
-            serialized_edge_info_iterable = cast(
-                list[SerializedTFRecordInfo],
-                list(serialized_graph_metadata.edge_entity_info.values()),
-            )
+        if isinstance(
+            serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo
+        ):
+            serialized_edge_info_iterable = [serialized_graph_metadata.edge_entity_info]
         else:
-            serialized_edge_info_iterable = [
-                cast(
-                    SerializedTFRecordInfo,
-                    serialized_graph_metadata.edge_entity_info,
-                )
-            ]
+            serialized_edge_info_iterable = list(
+                serialized_graph_metadata.edge_entity_info.values()
+            )
 
         self.assertEqual(
             len(graph_metadata_pb_wrapper.edge_types),
