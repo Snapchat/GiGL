@@ -27,9 +27,12 @@ Heterogeneous partitioned graphs are expected to materialize all registered
 non-label edge types on every rank, even when a rank has no local edges for a
 type. This keeps the per-node-type all-reduce order consistent across ranks.
 
-Degree tensors are stored as int32 because the PPR C++ sampler expects standard
-int32/int64 integer tensors; int32 keeps memory usage lower than int64. Values
-above the int32 maximum are clamped before casting to avoid wraparound.
+Degree tensors are stored as int32 to stay aligned with the PPR C++ sampler's
+total-degree tensor requirement while keeping memory lower than int64. We avoid
+int16 because it has caused compatibility issues in this path: during the C++
+PPR sampler migration, ``torch.distributed.all_reduce`` on an int16 tensor
+produced ``RuntimeError: Invalid scalar type``. Values above the int32 maximum
+are clamped before casting to avoid wraparound.
 """
 
 from collections import Counter
