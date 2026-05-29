@@ -130,9 +130,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        # Normalize the public homogeneous/heterogeneous degree-tensor shape to
+        # Convert the public homogeneous/heterogeneous degree-tensor shape to
         # the node-type keyed form used internally by PPR.
-        self._node_type_to_total_degree = self._normalize_degree_tensors(degree_tensors)
+        self._node_type_to_total_degree = self._convert_degree_tensors_to_dict(
+            degree_tensors
+        )
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
         # NodeType / EdgeType keys are only used at the Python boundary
@@ -182,11 +184,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for nt in all_node_types
         ]
 
-    def _normalize_degree_tensors(
+    def _convert_degree_tensors_to_dict(
         self,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
     ) -> dict[NodeType, torch.Tensor]:
-        """Normalize degree tensors to the node-type keyed shape PPR uses."""
+        """Convert degree tensors to the node-type keyed shape PPR uses."""
         if isinstance(degree_tensors, torch.Tensor):
             if not self._is_homogeneous:
                 raise ValueError(

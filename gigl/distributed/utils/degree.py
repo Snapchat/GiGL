@@ -27,13 +27,13 @@ Heterogeneous partitioned graphs are expected to materialize all registered
 non-label edge types on every rank, even when a rank has no local edges for a
 type. This keeps the per-node-type all-reduce order consistent across ranks.
 
-Degree tensors are stored as int32 to match the PPR sampler's needs while
-keeping memory usage low. This assumes individual node degrees stay below the
-int32 maximum, which is far above expected node degrees.
+Degree tensors are stored as int32 because the PPR C++ sampler expects standard
+int32/int64 integer tensors; int32 keeps memory usage lower than int64. Values
+above the int32 maximum are clamped before casting to avoid wraparound.
 """
 
 from collections import Counter
-from typing import Union, overload
+from typing import Final, Union, overload
 
 import torch
 from graphlearn_torch.data import Graph
@@ -46,6 +46,8 @@ from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
 from gigl.types.graph import is_label_edge_type
 
 logger = Logger()
+
+_INT32_MAX: Final[int] = torch.iinfo(torch.int32).max
 
 
 def compute_and_broadcast_degree_tensor(
@@ -123,7 +125,7 @@ def compute_and_broadcast_degree_tensor(
             max_len = max(len(existing), len(degrees))
             summed = _pad_to_size(existing, max_len).to(torch.int64)
             summed[: len(degrees)] += degrees.to(torch.int64)
-            local_dict[anchor_type] = summed.to(torch.int32)
+            local_dict[anchor_type] = _clamp_to_int32(summed)
         else:
             local_dict[anchor_type] = degrees
 
@@ -155,9 +157,14 @@ def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
     return torch.cat([tensor, padding])
 
 
+def _clamp_to_int32(tensor: torch.Tensor) -> torch.Tensor:
+    """Clamp degree values to int32 range before converting dtype."""
+    return tensor.clamp(max=_INT32_MAX).to(torch.int32)
+
+
 def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     """Compute degrees from CSR row pointers: degree[i] = indptr[i+1] - indptr[i]."""
-    return (indptr[1:] - indptr[:-1]).to(torch.int32)
+    return _clamp_to_int32(indptr[1:] - indptr[:-1])
 
 
 def _get_degree_reduce_context() -> tuple[int, torch.device]:
@@ -193,9 +200,9 @@ def _all_reduce_single_degree_tensor(
     padded = _pad_to_size(tensor, max_size).to(torch.int64).to(device)
     torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
-    # Correct for over-counting and move back to CPU. We keep int32 so high-degree
-    # nodes do not saturate at int16.
-    return (padded // local_world_size).to(torch.int32).cpu()
+    # Correct for over-counting and move back to CPU. Clamp before casting so
+    # high-degree nodes saturate instead of wrapping.
+    return _clamp_to_int32(padded // local_world_size).cpu()
 
 
 @overload

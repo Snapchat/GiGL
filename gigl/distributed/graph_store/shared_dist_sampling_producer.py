@@ -103,7 +103,6 @@ from gigl.distributed.utils.dist_sampler import (
     SamplerRuntime,
     create_dist_sampler,
 )
-from gigl.utils.share_memory import share_memory
 
 logger = Logger()
 
@@ -872,8 +871,6 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
-        # Move degree tensors to shared memory so all spawned workers map the
-        # same allocation instead of each pickling a private copy.
         self._degree_tensors: Optional[
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         ] = degree_tensors
@@ -888,7 +885,6 @@ class SharedDistSamplingBackend:
                     f"Pre-computed degree tensor for PPR sampling with "
                     f"{degree_tensors.size(0)} nodes."
                 )
-        share_memory(self._degree_tensors)
 
     def init_backend(self) -> None:
         """Initialize worker processes once for this backend.

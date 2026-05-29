@@ -367,6 +367,7 @@ def attach_ppr_outputs(
             edge_type = next(iter(ppr_edge_indices))
             data.edge_index = ppr_edge_indices[edge_type]
             data.edge_attr = ppr_weights[edge_type]
+        # Homogeneous Data has no per-edge-type stores; the PPR edges are attached.
         return
 
     for edge_type, edge_index in ppr_edge_indices.items():

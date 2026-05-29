@@ -1,5 +1,3 @@
-from typing import Literal
-
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -7,6 +5,7 @@ from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.distributed.utils.degree import (
+    _clamp_to_int32,
     _compute_degrees_from_indptr,
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
@@ -15,6 +14,10 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+    STORY,
+    STORY_TO_USER,
+    USER,
+    USER_TO_STORY,
     create_heterogeneous_dataset,
     create_homogeneous_dataset,
 )
@@ -35,48 +38,6 @@ def _compute_expected_degrees_from_edge_index(
     for node in nodes:
         degrees[node] += 1
     return degrees
-
-
-def _get_anchor_node_type(
-    edge_type: EdgeType, edge_dir: Literal["in", "out"]
-) -> NodeType:
-    """Return the node type whose CSR rows define traversable degrees."""
-    return edge_type.dst_node_type if edge_dir == "in" else edge_type.src_node_type
-
-
-def _compute_expected_total_degrees_by_node_type(
-    edge_indices: dict[EdgeType, torch.Tensor],
-    edge_dir: Literal["in", "out"],
-) -> dict[NodeType, torch.Tensor]:
-    """Compute total degrees keyed by anchor node type."""
-    node_axis = 1 if edge_dir == "in" else 0
-    expected: dict[NodeType, torch.Tensor] = {}
-    for edge_type, edge_index in edge_indices.items():
-        anchor_node_type = _get_anchor_node_type(edge_type, edge_dir)
-        num_nodes = (
-            int(edge_index[node_axis].max().item() + 1)
-            if edge_index.shape[1] > 0
-            else 0
-        )
-        degrees = _compute_expected_degrees_from_edge_index(
-            edge_index=edge_index,
-            num_nodes=num_nodes,
-            node_axis=node_axis,
-        )
-
-        if anchor_node_type not in expected:
-            expected[anchor_node_type] = degrees
-            continue
-
-        max_len = max(expected[anchor_node_type].numel(), degrees.numel())
-        summed_degrees = torch.zeros(max_len, dtype=torch.int64)
-        summed_degrees[: expected[anchor_node_type].numel()] += expected[
-            anchor_node_type
-        ].to(torch.int64)
-        summed_degrees[: degrees.numel()] += degrees.to(torch.int64)
-        expected[anchor_node_type] = summed_degrees.to(torch.int32)
-
-    return expected
 
 
 class TestDegreeComputation(TestCase):
@@ -120,10 +81,10 @@ class TestDegreeComputation(TestCase):
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
         assert not isinstance(result, torch.Tensor)
-        expected = _compute_expected_total_degrees_by_node_type(
-            edge_indices=edge_indices,
-            edge_dir=dataset.edge_dir,
-        )
+        expected = {
+            USER: torch.ones(5, dtype=torch.int32),
+            STORY: torch.ones(5, dtype=torch.int32),
+        }
         self.assertEqual(set(result.keys()), set(expected.keys()))
 
         for node_type, expected_degrees in expected.items():
@@ -142,47 +103,22 @@ class TestDegreeComputation(TestCase):
         assert dataset.graph is not None
         assert isinstance(dataset.graph, dict)
 
-        # Get edge types from the dataset
-        edge_types = list(dataset.graph.keys())
-
-        edge_type_with_topo = edge_types[0]
-        edge_type_without_topo = edge_types[1]
-
-        # Save the original topology for computing expected degrees
-        original_graph = dataset.graph[edge_type_with_topo]
+        original_graph = dataset.graph[USER_TO_STORY]
         assert original_graph.topo is not None
-        expected_degrees = _compute_expected_total_degrees_by_node_type(
-            edge_indices={edge_type_with_topo: edge_indices[edge_type_with_topo]},
-            edge_dir=dataset.edge_dir,
-        )
 
         # Manually set one graph's topology to None to test the edge case
-        dataset.graph[edge_type_without_topo].topo = None
+        dataset.graph[STORY_TO_USER].topo = None
 
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
         assert not isinstance(result, torch.Tensor)
-        expected_node_types = {
-            _get_anchor_node_type(edge_type, dataset.edge_dir)
-            for edge_type in edge_types
-        }
-        self.assertEqual(set(result.keys()), expected_node_types)
+        self.assertEqual(set(result.keys()), {USER, STORY})
 
         # Edge type with topology should have computed degrees
-        node_type_with_topo = _get_anchor_node_type(
-            edge_type=edge_type_with_topo,
-            edge_dir=dataset.edge_dir,
-        )
-        self.assert_tensor_equality(
-            result[node_type_with_topo], expected_degrees[node_type_with_topo]
-        )
+        self.assert_tensor_equality(result[USER], torch.ones(5, dtype=torch.int32))
 
         # Edge type without topology should have empty tensor
-        node_type_without_topo = _get_anchor_node_type(
-            edge_type=edge_type_without_topo,
-            edge_dir=dataset.edge_dir,
-        )
-        self.assertEqual(result[node_type_without_topo].numel(), 0)
+        self.assertEqual(result[STORY].numel(), 0)
 
 
 def _run_local_world_size_correction_homogeneous(
@@ -264,10 +200,10 @@ class TestLocalWorldSizeCorrection(TestCase):
         """Test over-counting correction for heterogeneous graphs with 2 processes."""
         edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
 
-        expected_degrees = _compute_expected_total_degrees_by_node_type(
-            edge_indices=edge_indices,
-            edge_dir="out",
-        )
+        expected_degrees = {
+            USER: torch.ones(5, dtype=torch.int32),
+            STORY: torch.ones(5, dtype=torch.int32),
+        }
 
         init_method = get_process_group_init_method()
         mp.spawn(
@@ -301,6 +237,7 @@ class TestDatasetDegreeProperty(TestCase):
 
         assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+        self.assertTrue(result.is_shared())
         self.assert_tensor_equality(result, expected)
 
     def test_degree_tensor_caches_result(self):
@@ -320,13 +257,14 @@ class TestDatasetDegreeProperty(TestCase):
         result = dataset.degree_tensor
 
         assert not isinstance(result, torch.Tensor)
-        expected = _compute_expected_total_degrees_by_node_type(
-            edge_indices=edge_indices,
-            edge_dir=dataset.edge_dir,
-        )
+        expected = {
+            USER: torch.ones(5, dtype=torch.int32),
+            STORY: torch.ones(5, dtype=torch.int32),
+        }
         self.assertEqual(set(result.keys()), set(expected.keys()))
 
         for node_type, expected_degrees in expected.items():
+            self.assertTrue(result[node_type].is_shared())
             self.assert_tensor_equality(result[node_type], expected_degrees)
 
 
@@ -365,6 +303,16 @@ class TestHelperFunctions(TestCase):
         indptr = torch.tensor([0, 3, 5, 10, 12], dtype=torch.int64)
         expected = torch.tensor([3, 2, 5, 2], dtype=torch.int32)
         result = _compute_degrees_from_indptr(indptr)
+        self.assert_tensor_equality(result, expected)
+
+    def test_clamp_to_int32(self):
+        """Test that large degree values clamp before conversion."""
+        int32_max = torch.iinfo(torch.int32).max
+        tensor = torch.tensor([0, int32_max, int32_max + 1], dtype=torch.int64)
+        expected = torch.tensor([0, int32_max, int32_max], dtype=torch.int32)
+
+        result = _clamp_to_int32(tensor)
+
         self.assert_tensor_equality(result, expected)
 
     def test_compute_degrees_from_indptr_all_zeros(self):
