@@ -22,6 +22,14 @@ Access dataset.degree_tensor to lazily compute and cache the degree tensor.
 
 Over-counting correction is handled automatically in _all_reduce_degrees by
 detecting how many processes share the same machine (and thus the same data).
+
+Heterogeneous partitioned graphs are expected to materialize all registered
+non-label edge types on every rank, even when a rank has no local edges for a
+type. This keeps the per-node-type all-reduce order consistent across ranks.
+
+Degree tensors are stored as int32 to match the PPR sampler's needs while
+keeping memory usage low. This assumes individual node degrees stay below the
+int32 maximum, which is far above expected node degrees.
 """
 
 from collections import Counter
