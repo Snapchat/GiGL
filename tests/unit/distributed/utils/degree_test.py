@@ -5,6 +5,7 @@ from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.distributed.utils.degree import (
+    _clamp_to_int32,
     _compute_degrees_from_indptr,
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
@@ -236,6 +237,7 @@ class TestDatasetDegreeProperty(TestCase):
 
         assert isinstance(result, torch.Tensor)
         expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
+        self.assertTrue(result.is_shared())
         self.assert_tensor_equality(result, expected)
 
     def test_degree_tensor_caches_result(self):
@@ -262,6 +264,7 @@ class TestDatasetDegreeProperty(TestCase):
         self.assertEqual(set(result.keys()), set(expected.keys()))
 
         for node_type, expected_degrees in expected.items():
+            self.assertTrue(result[node_type].is_shared())
             self.assert_tensor_equality(result[node_type], expected_degrees)
 
 
@@ -300,6 +303,16 @@ class TestHelperFunctions(TestCase):
         indptr = torch.tensor([0, 3, 5, 10, 12], dtype=torch.int64)
         expected = torch.tensor([3, 2, 5, 2], dtype=torch.int32)
         result = _compute_degrees_from_indptr(indptr)
+        self.assert_tensor_equality(result, expected)
+
+    def test_clamp_to_int32(self):
+        """Test that large degree values clamp before conversion."""
+        int32_max = torch.iinfo(torch.int32).max
+        tensor = torch.tensor([0, int32_max, int32_max + 1], dtype=torch.int64)
+        expected = torch.tensor([0, int32_max, int32_max], dtype=torch.int32)
+
+        result = _clamp_to_int32(tensor)
+
         self.assert_tensor_equality(result, expected)
 
     def test_compute_degrees_from_indptr_all_zeros(self):
