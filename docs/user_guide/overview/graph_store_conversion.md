@@ -139,10 +139,10 @@ In graph-store mode, compute processes fetch the input from storage:
 
 ```mermaid
 flowchart LR
-    fetchTrain["fetch_ablp_input(split='train', ...)"] --> remoteAblp["DistABLPLoader"]
-    fetchVal["fetch_ablp_input(split='val', ...)"] --> remoteAblp
-    fetchTest["fetch_ablp_input(split='test', ...)"] --> remoteAblp
-    fetchNodes["fetch_node_ids(...)"] --> remoteNeighbor["DistNeighborLoader"]
+    fetchTrain["dataset.fetch_ablp_input(split='train', ...)"] --> remoteAblp["DistABLPLoader"]
+    fetchVal["dataset.fetch_ablp_input(split='val', ...)"] --> remoteAblp
+    fetchTest["dataset.fetch_ablp_input(split='test', ...)"] --> remoteAblp
+    fetchNodes["dataset.fetch_node_ids(...)"] --> remoteNeighbor["DistNeighborLoader"]
 ```
 
 For anchor-based link prediction, fetch the main batch input from storage:
