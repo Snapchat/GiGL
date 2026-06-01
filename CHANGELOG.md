@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Enable C++-based PPR sampling, which changes GiGL wheel builds to include the new `gigl-core` C++/CUDA extension
+  package by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/558 and
+  https://github.com/Snapchat/GiGL/pull/556
 - Replace mypy with [ty](https://github.com/astral-sh/ty) for static type checking and migrate formatting to Ruff by
   @svij-sc in https://github.com/Snapchat/GiGL/pull/585 and https://github.com/Snapchat/GiGL/pull/583
 - Consolidate distributed loader and sampler abstractions, including `BaseDistLoader`, `BaseDistNeighborSampler`,
@@ -37,7 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Add graph store support across storage and compute, including custom storage definitions, GiGL-owned `DistServer`,
+- Enable graph store mode across storage and compute, including custom storage definitions, GiGL-owned `DistServer`,
   `RemoteDistDataset` ABLP inputs, `DistABLPLoader` graph store mode, multiple graph store loaders, partition-book
   fetching on compute nodes, and local graph store launch scripts by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/459, https://github.com/Snapchat/GiGL/pull/471,
@@ -47,9 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add graph store examples for heterogeneous inference, homogeneous training, and heterogeneous training by
   @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/452, https://github.com/Snapchat/GiGL/pull/514, and
   https://github.com/Snapchat/GiGL/pull/526
-- Add distributed PPR sampling, PPR sequence generation, C++ infrastructure, and C++ PPR sampling by @mkolodner-sc and
-  @yliu2-sc in https://github.com/Snapchat/GiGL/pull/538, https://github.com/Snapchat/GiGL/pull/560,
-  https://github.com/Snapchat/GiGL/pull/558, and https://github.com/Snapchat/GiGL/pull/556
+- Add distributed PPR sampling and PPR sequence generation by @mkolodner-sc and @yliu2-sc in
+  https://github.com/Snapchat/GiGL/pull/538 and https://github.com/Snapchat/GiGL/pull/560
 - Add shared multi-channel graph store sampling backend, remote channels with pinned-memory bulk transfer, and two-phase
   sampling APIs by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/577,
   https://github.com/Snapchat/GiGL/pull/565, and https://github.com/Snapchat/GiGL/pull/578
