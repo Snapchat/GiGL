@@ -18,7 +18,7 @@ def initialize_gigl_runtime(
     component: GiGLComponents,
     cpu_docker_uri: Optional[str] = None,
     cuda_docker_uri: Optional[str] = None,
-) -> bool:
+) -> None:
     """Initialize GiGL runtime environment and metrics for a component.
 
     Args:
@@ -29,9 +29,6 @@ def initialize_gigl_runtime(
         component: GiGL component being initialized.
         cpu_docker_uri: CPU source image URI. Defaults to the release CPU image.
         cuda_docker_uri: CUDA source image URI. Defaults to the release CUDA image.
-
-    Returns:
-        The result of metrics initialization.
     """
     os.environ.update(
         get_gigl_runtime_env_vars(
@@ -43,6 +40,4 @@ def initialize_gigl_runtime(
             cuda_docker_uri=cuda_docker_uri,
         )
     )
-    return initialize_metrics(
-        task_config_uri=task_config_uri, service_name=service_name
-    )
+    initialize_metrics(task_config_uri=task_config_uri, service_name=service_name)

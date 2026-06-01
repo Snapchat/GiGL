@@ -89,7 +89,7 @@ class GiGLRuntimeTest(TestCase):
         task_config_uri = self._write_task_config(gbml_config_pb2.GbmlConfig())
 
         with patch.dict(os.environ, {}, clear=False):
-            result = initialize_gigl_runtime(
+            initialize_gigl_runtime(
                 applied_task_identifier="job-42",
                 task_config_uri=task_config_uri,
                 resource_config_uri=Uri("gs://bucket/resource.yaml"),
@@ -99,7 +99,6 @@ class GiGLRuntimeTest(TestCase):
                 cuda_docker_uri="gcr.io/p/cuda:tag",
             )
 
-            self.assertTrue(result)
             self.assertEqual(
                 os.environ[GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY],
                 "job-42",
