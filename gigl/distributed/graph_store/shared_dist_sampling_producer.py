@@ -364,7 +364,8 @@ def _shared_sampling_worker_loop(
             for PPR-based sampling).
         degree_tensors: Pre-computed degree tensors for PPR sampling, or
             ``None`` for non-PPR samplers.  Materialized once in the parent via
-            ``DistDataset.degree_tensor`` and shared across workers.
+            ``DistDataset.degree_tensor`` and moved to shared memory before
+            backend construction.
 
     Algorithm:
         1. Initialize RPC, sampler infrastructure, and signal the parent via barrier.

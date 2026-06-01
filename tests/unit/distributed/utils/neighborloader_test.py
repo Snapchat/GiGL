@@ -11,6 +11,7 @@ from gigl.distributed.sampler import (
     POSITIVE_LABEL_METADATA_KEY,
 )
 from gigl.distributed.utils.neighborloader import (
+    attach_ppr_outputs,
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
@@ -249,6 +250,10 @@ class LoaderUtilsTest(TestCase):
         self.assertNotIn(_REV_EDGE_TYPE, result.edge_types)
         self.assertIn(_PPR_U2I, result.edge_types)
         self.assertIn(_PPR_U2U, result.edge_types)
+
+    def test_attach_ppr_outputs_requires_one_homogeneous_edge_type(self):
+        with self.assertRaises(ValueError):
+            attach_ppr_outputs(Data(), {}, {})
 
     @parameterized.expand(
         [

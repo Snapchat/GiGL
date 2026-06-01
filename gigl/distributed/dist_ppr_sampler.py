@@ -76,9 +76,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
-            by NodeType. Must be pre-computed by the caller through
-            ``DistDataset.degree_tensor`` so workers share a single allocation
-            rather than recomputing per-worker.
+            by NodeType. The colocated and graph-store loader paths retrieve
+            these through ``DistDataset.degree_tensor`` and move them to shared
+            memory before worker handoff.
     """
 
     def __init__(
@@ -649,8 +649,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
             ppr_edge_index = torch.stack([rows, cols])
 
-            metadata["edge_index"] = ppr_edge_index
-            metadata["edge_attr"] = homo_flat_weights
+            homo_ppr_edge_type = (
+                DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                "ppr",
+                DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            )
+            etype_str = repr(homo_ppr_edge_type)
+            metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = ppr_edge_index
+            metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = homo_flat_weights
 
             sample_output = SamplerOutput(
                 node=all_nodes,
