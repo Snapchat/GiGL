@@ -303,7 +303,7 @@ select = ["F401", "I"]
 known-first-party = ["gigl", "tests", "snapchat", "scripts"]
 
 [tool.ty.environment]
-python-version = "0.3.0"
+python-version = "3.11"
 
 [tool.ty.src]
 exclude = ["*_pb2.py", "*_pb2.pyi", "**/*.ipynb"]
