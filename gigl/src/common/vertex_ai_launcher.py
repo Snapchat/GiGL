@@ -17,19 +17,12 @@ from gigl.common.constants import (
 )
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
-from gigl.env.constants import (
-    GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
-    GIGL_COMPONENT_ENV_KEY,
-    GIGL_CPU_DOCKER_URI_ENV_KEY,
-    GIGL_CUDA_DOCKER_URI_ENV_KEY,
-    GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
-    GIGL_TASK_CONFIG_URI_ENV_KEY,
-)
 from gigl.env.distributed import COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
+from gigl.src.common.utils.gigl_env import get_gigl_runtime_env_vars
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
     VertexAiGraphStoreConfig,
     VertexAiReservationAffinity,
@@ -379,18 +372,15 @@ def _build_common_gigl_env_vars(
         Environment variables carrying shared GiGL launcher context.
     """
     return [
-        env_var.EnvVar(
-            name=GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
-            value=str(applied_task_identifier),
-        ),
-        env_var.EnvVar(name=GIGL_TASK_CONFIG_URI_ENV_KEY, value=str(task_config_uri)),
-        env_var.EnvVar(
-            name=GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
-            value=str(resource_config_uri),
-        ),
-        env_var.EnvVar(name=GIGL_COMPONENT_ENV_KEY, value=component.name),
-        env_var.EnvVar(name=GIGL_CPU_DOCKER_URI_ENV_KEY, value=cpu_docker_uri),
-        env_var.EnvVar(name=GIGL_CUDA_DOCKER_URI_ENV_KEY, value=cuda_docker_uri),
+        env_var.EnvVar(name=name, value=value)
+        for name, value in get_gigl_runtime_env_vars(
+            applied_task_identifier=applied_task_identifier,
+            task_config_uri=task_config_uri,
+            resource_config_uri=resource_config_uri,
+            component=component,
+            cpu_docker_uri=cpu_docker_uri,
+            cuda_docker_uri=cuda_docker_uri,
+        ).items()
     ]
 
 
