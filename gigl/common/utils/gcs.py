@@ -84,6 +84,10 @@ class GcsUtils:
             project (Optional[str]): The GCP project ID. Defaults to None.
         """
         self.__storage_client = storage.Client(project=project)
+        assert isinstance(self.__storage_client.project, str), (
+            f"Expected storage client project to be a str, got {type(self.__storage_client.project)}"
+        )
+        self.__project: str = self.__storage_client.project
 
     def upload_from_string(self, gcs_path: GcsUri, content: str) -> None:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
@@ -133,7 +137,7 @@ class GcsUtils:
         """
         if parallel:
             _upload_files_to_gcs_parallel(
-                project=self.__storage_client.project,  # ty: ignore[invalid-argument-type]
+                project=self.__project,
                 local_file_path_to_gcs_path_map=local_file_path_to_gcs_path_map,
             )
         else:
@@ -144,7 +148,7 @@ class GcsUtils:
                 _upload_file_to_gcs(
                     source_file_path=source_file_path,
                     dest_gcs_path=dest_gcs_path,
-                    project=self.__storage_client.project,
+                    project=self.__project,
                     gcs_utils_client=self.__storage_client,
                 )
 

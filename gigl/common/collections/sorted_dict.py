@@ -39,8 +39,9 @@ class SortedDict(Mapping[KT, VT]):
             *args: Positional arguments passed to dict constructor
             **kwargs: Keyword arguments passed to dict constructor
         """
-        # ty cannot resolve dict() constructor overloads with generic TypeVars
-        self.__dict: dict[KT, VT] = dict(*args, **kwargs)  # ty: ignore[invalid-assignment]
+        self.__dict: dict[KT, VT] = {}
+        if args or kwargs:
+            self.__dict.update(*args, **kwargs)
         self.__needs_memoization: bool = True
         self.__sort_dict_if_needed()
 
@@ -82,10 +83,11 @@ class SortedDict(Mapping[KT, VT]):
         if len(self) != len(other):
             return False
 
+        other_items: dict[Any, Any] = dict(other.items())
         for self_key, self_val in self.items():
-            if self_key not in other:
+            if self_key not in other_items:
                 return False
-            if self_val != other[self_key]:  # ty: ignore[invalid-argument-type]
+            if self_val != other_items[self_key]:
                 return False
         return True
 

@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import TypeVar
+from typing import Any, TypeVar
 
 KT = TypeVar("KT")
 VT = TypeVar("VT")
@@ -42,10 +42,11 @@ class FrozenDict(Mapping[KT, VT]):
         if len(self) != len(other):
             return False
 
+        other_items: dict[Any, Any] = dict(other.items())
         for self_key, self_val in self.items():
-            if self_key not in other:
+            if self_key not in other_items:
                 return False
-            if self_val != other[self_key]:  # ty: ignore[invalid-argument-type]
+            if self_val != other_items[self_key]:
                 return False
         return True
 
