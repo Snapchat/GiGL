@@ -1384,10 +1384,10 @@ class TestCallFuncOnServer(RemoteDistDatasetTestBase):
         result = _call_func_on_server(DistServer.get_edge_dir)
         self.assertEqual(result, "out")
 
-    def test_non_callable_returns_none(self):
-        """Test that _call_func_on_server returns None for non-callable input."""
-        result: None = _call_func_on_server("not_a_function")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-        self.assertIsNone(result)
+    def test_non_callable_raises(self):
+        """Test that _call_func_on_server raises TypeError for non-callable input."""
+        with self.assertRaises(TypeError):
+            _call_func_on_server("not_a_function")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]  # intentional: test verifies non-callable rejection
 
     def test_falls_back_for_non_server_function(self):
         """Test that _call_func_on_server falls back to calling func directly for functions not on the server."""

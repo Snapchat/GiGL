@@ -1203,10 +1203,9 @@ def wait_and_shutdown_server() -> None:
 def _call_func_on_server(func: Callable[..., R], *args: Any, **kwargs: Any) -> R:
     r"""A callee entry for remote requests on the server side."""
     if not callable(func):
-        logger.warning(
-            f"'_call_func_on_server': receive a non-callable function target {func}"
+        raise TypeError(
+            f"_call_func_on_server: expected callable, got {type(func).__name__}"
         )
-        return None  # type: ignore[return-value]  # ty: ignore[invalid-return-type]
 
     server = get_server()
     func_name = getattr(func, "__name__", None)

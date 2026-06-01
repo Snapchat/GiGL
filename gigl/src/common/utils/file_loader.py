@@ -2,7 +2,18 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper
-from typing import IO, AnyStr, Optional, Sequence, Tuple, Type, Union, cast
+from typing import (
+    IO,
+    AnyStr,
+    BinaryIO,
+    Optional,
+    Sequence,
+    TextIO,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -214,13 +225,13 @@ class FileLoader:
             if isinstance(first, bytes):
                 with open(uri.uri, "wb") as dest:
                     shutil.copyfileobj(
-                        filelike,  # ty: ignore[invalid-argument-type]
+                        cast(BinaryIO, filelike),  # ty#1475 workaround
                         dest,
                     )
             else:
                 with open(uri.uri, "w", encoding="utf-8") as dest:
                     shutil.copyfileobj(
-                        filelike,  # ty: ignore[invalid-argument-type]
+                        cast(TextIO, filelike),  # ty#1475 workaround
                         dest,
                     )
 

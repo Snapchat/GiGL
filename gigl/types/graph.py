@@ -1,7 +1,7 @@
 import gc
 from collections import abc
 from dataclasses import dataclass
-from typing import Literal, Optional, TypeVar, Union, overload
+from typing import Literal, Optional, TypeVar, Union, cast, overload
 
 import torch
 from graphlearn_torch.partition import PartitionBook
@@ -278,7 +278,7 @@ def message_passing_to_positive_label(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
-        return edge_type  # ty: ignore[invalid-return-type]
+        return cast(_EdgeType, edge_type)  # ty#483 workaround
 
 
 def message_passing_to_negative_label(
@@ -302,7 +302,7 @@ def message_passing_to_negative_label(
             NodeType(edge_type[0]), Relation(edge_type[1]), NodeType(edge_type[2])
         )
     else:
-        return edge_type  # ty: ignore[invalid-return-type]
+        return cast(_EdgeType, edge_type)  # ty#483 workaround
 
 
 def is_label_edge_type(
@@ -339,11 +339,9 @@ def label_edge_type_to_message_passing_edge_type(
     if isinstance(label_edge_type, EdgeType):
         return EdgeType(label_edge_type[0], Relation(relation), label_edge_type[2])
     else:
-        return (
-            label_edge_type[0],
-            relation,
-            label_edge_type[2],
-        )  # ty: ignore[invalid-return-type]
+        return cast(
+            _EdgeType, (label_edge_type[0], relation, label_edge_type[2])
+        )  # ty#483 workaround
 
 
 def select_label_edge_types(
@@ -425,7 +423,7 @@ def to_heterogeneous_node(
     if x is None:
         return None
     if isinstance(x, dict):
-        return x  # ty: ignore[invalid-return-type]
+        return cast(dict[NodeType, _GraphEntity], x)  # ty#483 workaround
     return {DEFAULT_HOMOGENEOUS_NODE_TYPE: x}
 
 
@@ -457,7 +455,7 @@ def to_heterogeneous_edge(
     if x is None:
         return None
     if isinstance(x, dict):
-        return x  # ty: ignore[invalid-return-type]
+        return cast(dict[EdgeType, _GraphEntity], x)  # ty#483 workaround
     return {DEFAULT_HOMOGENEOUS_EDGE_TYPE: x}
 
 
@@ -506,7 +504,7 @@ def to_homogeneous(
                 f"Expected a single value in the dictionary, but got multiple keys: {x.keys()}"
             )
         n = next(iter(x.values()))
-        return n  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+        return cast(_GraphEntity, n)  # ty#483 workaround
     return x
 
 
@@ -521,8 +519,6 @@ def reverse_edge_type(edge_type: _EdgeType) -> _EdgeType:
     if isinstance(edge_type, EdgeType):
         return EdgeType(edge_type[2], edge_type[1], edge_type[0])
     else:
-        return (
-            edge_type[2],
-            edge_type[1],
-            edge_type[0],
-        )  # ty: ignore[invalid-return-type]
+        return cast(
+            _EdgeType, (edge_type[2], edge_type[1], edge_type[0])
+        )  # ty#483 workaround
