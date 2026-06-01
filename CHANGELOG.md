@@ -6,6 +6,107 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - Jun 1, 2026
+
+### Deprecations
+
+- Deprecate `ShardStrategy` and default distributed sharding to `CONTIGUOUS` by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/582 and https://github.com/Snapchat/GiGL/pull/545
+- Migrate `RESOURCE_CONFIG_PATH` to `GIGL_RESOURCE_CONFIG_URI` by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/648
+
+### Changed
+
+- Replace mypy with [ty](https://github.com/astral-sh/ty) for static type checking and migrate formatting to Ruff by
+  @svij-sc in https://github.com/Snapchat/GiGL/pull/585 and https://github.com/Snapchat/GiGL/pull/583
+- Consolidate distributed loader and sampler abstractions, including `BaseDistLoader`, `BaseDistNeighborSampler`,
+  sampler factory helpers, two-phase loader initialization, and shared sampling options by @mkolodner-sc and
+  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/495, https://github.com/Snapchat/GiGL/pull/532,
+  https://github.com/Snapchat/GiGL/pull/536, https://github.com/Snapchat/GiGL/pull/570,
+  https://github.com/Snapchat/GiGL/pull/576, https://github.com/Snapchat/GiGL/pull/579, and
+  https://github.com/Snapchat/GiGL/pull/561
+- Update `RemoteDistDataset` APIs and graph store internals for per-rank inputs, `fetch_` method naming, RPC message
+  dataclasses, and graph store server consolidation by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/511,
+  https://github.com/Snapchat/GiGL/pull/539, https://github.com/Snapchat/GiGL/pull/557, and
+  https://github.com/Snapchat/GiGL/pull/506
+- Move Graph Transformer code into `gigl.nn` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/598
+- Merge `testing/` into `tests/`, migrate tests to GiGL test case utilities, and improve graph store integration test
+  coverage by @kmontemayor2-sc and @svij-sc in https://github.com/Snapchat/GiGL/pull/494,
+  https://github.com/Snapchat/GiGL/pull/479, https://github.com/Snapchat/GiGL/pull/480,
+  https://github.com/Snapchat/GiGL/pull/515, and https://github.com/Snapchat/GiGL/pull/547
+
+### Added
+
+- Add graph store support across storage and compute, including custom storage definitions, GiGL-owned `DistServer`,
+  `RemoteDistDataset` ABLP inputs, `DistABLPLoader` graph store mode, multiple graph store loaders, partition-book
+  fetching on compute nodes, and local graph store launch scripts by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/459, https://github.com/Snapchat/GiGL/pull/471,
+  https://github.com/Snapchat/GiGL/pull/476, https://github.com/Snapchat/GiGL/pull/485,
+  https://github.com/Snapchat/GiGL/pull/493, https://github.com/Snapchat/GiGL/pull/510, and
+  https://github.com/Snapchat/GiGL/pull/587
+- Add graph store examples for heterogeneous inference, homogeneous training, and heterogeneous training by
+  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/452, https://github.com/Snapchat/GiGL/pull/514, and
+  https://github.com/Snapchat/GiGL/pull/526
+- Add distributed PPR sampling, PPR sequence generation, C++ infrastructure, and C++ PPR sampling by @mkolodner-sc and
+  @yliu2-sc in https://github.com/Snapchat/GiGL/pull/538, https://github.com/Snapchat/GiGL/pull/560,
+  https://github.com/Snapchat/GiGL/pull/558, and https://github.com/Snapchat/GiGL/pull/556
+- Add shared multi-channel graph store sampling backend, remote channels with pinned-memory bulk transfer, and two-phase
+  sampling APIs by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/577,
+  https://github.com/Snapchat/GiGL/pull/565, and https://github.com/Snapchat/GiGL/pull/578
+- Add weighted sampling, positional encoding transforms, Graph Transformer encoder, degree tensor computation for
+  `DistDataset`, and max-label-per-anchor support in the data splitter by @mkolodner-sc and @yliu2-sc in
+  https://github.com/Snapchat/GiGL/pull/635, https://github.com/Snapchat/GiGL/pull/509,
+  https://github.com/Snapchat/GiGL/pull/537, https://github.com/Snapchat/GiGL/pull/517, and
+  https://github.com/Snapchat/GiGL/pull/589
+- Add `CustomResourceConfig` shell-command launchers, custom launcher subprocess dispatch, and GiGL env var propagation
+  for custom and Vertex AI launchers by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/625,
+  https://github.com/Snapchat/GiGL/pull/626, https://github.com/Snapchat/GiGL/pull/642, and
+  https://github.com/Snapchat/GiGL/pull/653
+- Add Vertex AI boot disk, reservation, and Data Preprocessor timeout controls by @zfan3-sc, @kmontemayor2-sc, and
+  @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/521, https://github.com/Snapchat/GiGL/pull/590, and
+  https://github.com/Snapchat/GiGL/pull/524
+- Add GBML config wrapper maps for node and edge type metadata, unified metadata extraction, BigQuery latest-table
+  utility, and SNC example code by @svij-sc, @mkolodner-sc, and @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/643, https://github.com/Snapchat/GiGL/pull/544,
+  https://github.com/Snapchat/GiGL/pull/516, and https://github.com/Snapchat/GiGL/pull/641
+
+### Fixed
+
+- Improve graph store startup, shutdown, and sampling reliability, including storage-node counts, free-port allocation,
+  global-lock removal, homogeneous graphs with labeled edges, leader election, RPC staggering, empty-input shared-memory
+  channels, teardown protocol, inactive-server shutdown, and labeled homogeneous ABLP memory fixes by @kmontemayor2-sc
+  and @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/474, https://github.com/Snapchat/GiGL/pull/481,
+  https://github.com/Snapchat/GiGL/pull/497, https://github.com/Snapchat/GiGL/pull/507,
+  https://github.com/Snapchat/GiGL/pull/535, https://github.com/Snapchat/GiGL/pull/540,
+  https://github.com/Snapchat/GiGL/pull/592, https://github.com/Snapchat/GiGL/pull/594,
+  https://github.com/Snapchat/GiGL/pull/616, and https://github.com/Snapchat/GiGL/pull/645
+- Fix PPR sampler output edges and memory behavior by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/562,
+  https://github.com/Snapchat/GiGL/pull/566, and https://github.com/Snapchat/GiGL/pull/645
+- Fix dataloading of multiple labels, missing anchor-node labels, dataset factory parallel tensor loading, test dataset
+  edge direction, and `PreprocessedMetadataPbWrapper` `LocalUri` kwargs by @mkolodner-sc, @kmontemayor2-sc, and @svij-sc
+  in https://github.com/Snapchat/GiGL/pull/612, https://github.com/Snapchat/GiGL/pull/571,
+  https://github.com/Snapchat/GiGL/pull/606, https://github.com/Snapchat/GiGL/pull/552, and
+  https://github.com/Snapchat/GiGL/pull/639
+- Fix launcher image selection for graph store storage pools, default `should_use_glt_backend`, C++ installation, SBT
+  dependency resolution, and types-protobuf v7 `ParseDict` compatibility by @kmontemayor2-sc, @mkolodner-sc, and
+  @svij-sc in https://github.com/Snapchat/GiGL/pull/615, https://github.com/Snapchat/GiGL/pull/609,
+  https://github.com/Snapchat/GiGL/pull/619, https://github.com/Snapchat/GiGL/pull/631, and
+  https://github.com/Snapchat/GiGL/pull/638
+- Make metric exporters fall back to NoOp when initialization fails and fix seeding utility behavior by @mkolodner-sc
+  and @svij-sc in https://github.com/Snapchat/GiGL/pull/550 and https://github.com/Snapchat/GiGL/pull/644
+
+### Misc
+
+- Add and refine agent/development guidance, including `CLAUDE.md`, `AGENTS.md`, `/all_test`, `/codex-review`, and
+  `/watch-action` workflow support by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/498,
+  https://github.com/Snapchat/GiGL/pull/504, https://github.com/Snapchat/GiGL/pull/543,
+  https://github.com/Snapchat/GiGL/pull/508, https://github.com/Snapchat/GiGL/pull/528, and
+  https://github.com/Snapchat/GiGL/pull/563
+- Update graph store and in-memory SGS documentation, supervision-edge direction docs, Vertex AI Agent Platform links,
+  and presubmit whitespace checks by @mkolodner-sc and @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/553,
+  https://github.com/Snapchat/GiGL/pull/593, https://github.com/Snapchat/GiGL/pull/595,
+  https://github.com/Snapchat/GiGL/pull/608, and https://github.com/Snapchat/GiGL/pull/607
+
 ## [0.2.0] - Jan 30, 2025
 
 ### Added
