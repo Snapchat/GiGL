@@ -29,7 +29,7 @@ from typing import Optional
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.src.common.constants.components import GiGLComponents
-from gigl.src.common.utils.gigl_runtime import get_gigl_runtime_env_vars
+from gigl.src.common.utils.gigl_env import get_gigl_runtime_env_vars
 from snapchat.research.gbml.gigl_resource_config_pb2 import CustomLauncherConfig
 
 logger = Logger()

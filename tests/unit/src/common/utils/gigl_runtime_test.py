@@ -19,10 +19,8 @@ from gigl.env.constants import (
 )
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.utils import metrics_service_provider
-from gigl.src.common.utils.gigl_runtime import (
-    get_gigl_runtime_env_vars,
-    initialize_gigl_runtime,
-)
+from gigl.src.common.utils.gigl_env import get_gigl_runtime_env_vars
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     JOB_NAME_GROUPING_ENV_KEY,
     get_metrics_service_instance,
