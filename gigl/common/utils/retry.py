@@ -34,7 +34,7 @@ def retry(
     Decorator that can be added around a function to retry incase it fails i.e. throws some exceptions
 
     Args:
-        exception_to_check (Union[Type, Tuple[Type, ...]]): the exception to check. Could also be a tuple of
+        exception_to_check (Union[Type[Exception], Tuple[Type[Exception], ...]]): the exception to check. Could also be a tuple of
         exceptions to check. Defaults to Exception. i.e. catches everything
         tries (Optional[int]): [description]. number of times to try (not retry) before giving up. Defaults to 5.
         delay_s (Optional[int]): [description]. initial delay between retries in seconds. Defaults to 3.
