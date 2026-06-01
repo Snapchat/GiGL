@@ -30,12 +30,21 @@ class SupervisedNodeClassificationSample(NamedTuple):
 class NodeAnchorBasedLinkPredictionSample:
     @dataclass
     class SampleSupervisionEdgeData:
+        """Per-edge-type supervision data for a single root node.
+
+        Attributes:
+            pos_nodes (list[NodeId]): Target nodes for positive edges.
+            hard_neg_nodes (list[NodeId]): Target nodes for hard negative edges.
+            pos_edge_features (Optional[torch.Tensor]): Features for positive
+                edges. Expected dtype: ``torch.float32``.
+            hard_neg_edge_features (Optional[torch.Tensor]): Features for hard
+                negative edges. Expected dtype: ``torch.float32``.
+        """
+
         pos_nodes: list[NodeId]  # target nodes for pos edges
         hard_neg_nodes: list[NodeId]  # target nodes for hard neg edges
-        pos_edge_features: Optional[torch.FloatTensor]  # features for pos edges
-        hard_neg_edge_features: Optional[
-            torch.FloatTensor
-        ]  # features for hard neg edges
+        pos_edge_features: Optional[torch.Tensor]  # features for pos edges
+        hard_neg_edge_features: Optional[torch.Tensor]  # features for hard neg edges
 
     root_node: Node  # root node for this sample
     subgraph: GbmlGraphDataProtocol  # subgraph with features used for message passing
@@ -94,10 +103,10 @@ class TrainingSamplesProtosTranslator:
                 CondensedEdgeType, list[NodeId]
             ] = defaultdict(list)
             condensed_supervision_edge_type_to_pos_edge_feats: dict[
-                CondensedEdgeType, list[torch.FloatTensor]
+                CondensedEdgeType, list[torch.Tensor]
             ] = defaultdict(list)
             condensed_supervision_edge_type_to_hard_neg_edge_feats: dict[
-                CondensedEdgeType, list[torch.FloatTensor]
+                CondensedEdgeType, list[torch.Tensor]
             ] = defaultdict(list)
             condensed_edge_type_to_supervision_edge_data: dict[
                 CondensedEdgeType,
@@ -139,9 +148,14 @@ class TrainingSamplesProtosTranslator:
                 if preprocessed_metadata_pb_wrapper.has_pos_edge_features(
                     condensed_edge_type
                 ):
+                    pos_edge_features = pos_edge[1]
+                    assert pos_edge_features is not None, (
+                        "Pos edge features were declared in preprocessed metadata "
+                        f"but missing on the edge for {condensed_edge_type}."
+                    )
                     condensed_supervision_edge_type_to_pos_edge_feats[
                         condensed_edge_type
-                    ].append(pos_edge[1])  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    ].append(pos_edge_features)
 
             for hard_neg_edge_pb in sample.hard_neg_edges:
                 hard_neg_edge: Tuple[Edge, Optional[torch.Tensor]] = (
@@ -163,9 +177,14 @@ class TrainingSamplesProtosTranslator:
                 if preprocessed_metadata_pb_wrapper.has_hard_neg_edge_features(
                     condensed_edge_type
                 ):
+                    hard_neg_edge_features = hard_neg_edge[1]
+                    assert hard_neg_edge_features is not None, (
+                        "Hard neg edge features were declared in preprocessed metadata "
+                        f"but missing on the edge for {condensed_edge_type}."
+                    )
                     condensed_supervision_edge_type_to_hard_neg_edge_feats[
                         condensed_edge_type
-                    ].append(hard_neg_edge[1])  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                    ].append(hard_neg_edge_features)
 
             for condensed_edge_type in graph_metadata_pb_wrapper.condensed_edge_types:
                 condensed_edge_type_to_supervision_edge_data[condensed_edge_type] = (
@@ -180,7 +199,7 @@ class TrainingSamplesProtosTranslator:
                             torch.stack(
                                 condensed_supervision_edge_type_to_pos_edge_feats[
                                     condensed_edge_type
-                                ]  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+                                ]
                             )
                             if len(
                                 condensed_supervision_edge_type_to_pos_edge_feats[
@@ -189,12 +208,12 @@ class TrainingSamplesProtosTranslator:
                             )
                             > 0
                             else None
-                        ),  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+                        ),
                         hard_neg_edge_features=(
                             torch.stack(
                                 condensed_supervision_edge_type_to_hard_neg_edge_feats[
                                     condensed_edge_type
-                                ]  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+                                ]
                             )
                             if len(
                                 condensed_supervision_edge_type_to_hard_neg_edge_feats[
@@ -203,7 +222,7 @@ class TrainingSamplesProtosTranslator:
                             )
                             > 0
                             else None
-                        ),  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+                        ),
                     )
                 )
 

@@ -517,9 +517,9 @@ class GraphSageTemplateTrainerSpec(
                     mrr = 1.0 / pos_rank.float()
 
                     hit_rates = hit_rate_at_k(
-                        pos_scores=pos_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
-                        neg_scores=neg_scores,  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
-                        ks=torch.tensor(ks, device=device, dtype=torch.long),  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+                        pos_scores=pos_scores,
+                        neg_scores=neg_scores,
+                        ks=torch.tensor(ks, device=device, dtype=torch.long),
                     )
 
                     total_mrr += mrr.mean().item()

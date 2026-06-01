@@ -191,19 +191,32 @@ def build_k_hop_subgraphs_from_pyg_heterodata(
 
 
 def _get_random_negative_samples_for_pos_edges(
-    edge_index: torch.LongTensor,
+    edge_index: torch.Tensor,
     num_nodes: int,
     num_negative_samples_per_pos_edge: int = 1,
-) -> torch.LongTensor:
-    """
-    Given an "positive" edge index (edges which exist), we return a "negative" edge
-    index (edges which likely don't) of an equal size.  We effectively sample the
-    endpoints of these negative edges randomly from the node-set.
+) -> torch.Tensor:
+    """Sample random negative edges for a given positive edge index.
+
+    Given a positive edge index (edges which exist), we return a negative edge
+    index (edges which likely don't) of an equal size. We effectively sample
+    the endpoints of these negative edges randomly from the node-set.
+
+    Args:
+        edge_index (torch.Tensor): Positive edge index of shape ``[2, num_edges]``.
+            Expected dtype: ``torch.int64``.
+        num_nodes (int): Total number of nodes to sample negatives from.
+        num_negative_samples_per_pos_edge (int): How many negatives to sample
+            per positive edge.
+
+    Returns:
+        torch.Tensor: Negative edge index of shape
+        ``[2, num_edges * num_negative_samples_per_pos_edge]``.
+        Expected dtype: ``torch.int64``.
     """
 
     pos_node_ids = edge_index[0].repeat(num_negative_samples_per_pos_edge)
     neg_node_ids = torch.randint(low=0, high=num_nodes, size=[pos_node_ids.numel()])
-    return torch.vstack((pos_node_ids, neg_node_ids))  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+    return torch.vstack((pos_node_ids, neg_node_ids))
 
 
 def _build_rooted_node_neighborhood_samples_from_subgraphs(

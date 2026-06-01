@@ -55,9 +55,11 @@ class CountMinSketch(object):
             self.__table[i][hashed_value % self.__width] += delta
         self.__total += delta
 
-    def add_torch_long_tensor(self, tensor: torch.LongTensor) -> None:
-        """
-        Add all items in a torch long tensor to the sketch
+    def add_torch_long_tensor(self, tensor: torch.Tensor) -> None:
+        """Add all items in a torch long tensor to the sketch.
+
+        Args:
+            tensor (torch.Tensor): Items to add. Expected dtype: ``torch.int64``.
         """
         tensor_cpu = tensor.cpu().numpy()
         for item in tensor_cpu:
@@ -79,15 +81,20 @@ class CountMinSketch(object):
             for i, hashed_value in enumerate(hashed_values)
         )
 
-    def estimate_torch_long_tensor(self, tensor: torch.LongTensor) -> torch.LongTensor:
-        """
-        Return the estimated count of all items in a torch long tensor
+    def estimate_torch_long_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Return the estimated count of all items in a torch long tensor.
+
+        Args:
+            tensor (torch.Tensor): Items to look up. Expected dtype: ``torch.int64``.
+
+        Returns:
+            torch.Tensor: Estimated counts with ``dtype=torch.int64``.
         """
         tensor_cpu = tensor.cpu().numpy()
         return torch.tensor(
             [self.estimate(item) for item in tensor_cpu],
             dtype=torch.long,
-        )  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+        )
 
     def get_table(self) -> np.ndarray:
         """
@@ -97,24 +104,37 @@ class CountMinSketch(object):
 
 
 def calculate_in_batch_candidate_sampling_probability(
-    frequency_tensor: torch.LongTensor, total_cnt: int, batch_size: int
+    frequency_tensor: torch.Tensor, total_cnt: int, batch_size: int
 ) -> torch.Tensor:
-    """
-    Calculate in batch negative sampling rate given the frequency tensor, total count and batch size.
-    Please see https://www.tensorflow.org/extras/candidate_sampling.pdf for more details
-    Here we estimate the negative sampling probability Q(y|x)
+    """Calculate in-batch negative sampling rate given a frequency tensor, total count, and batch size.
+
+    Please see https://www.tensorflow.org/extras/candidate_sampling.pdf for more details.
+    Here we estimate the negative sampling probability Q(y|x):
+
     P(candidate in batch | x) ~= P(candidate in batch)
                                = 1 - P(candidate not in batch)
                                = 1 - P(candidate not in any position in batch)
                                ~= 1 - (1 - frequency / total_cnt) ^ batch_size
                                ~= 1 - (1 - batch_size * frequency / total_cnt)
                                = batch_size * frequency / total_cnt
-    Where the approximation only holds when frequency / total_cnt << 1, which may not be true at the very beginning of training
-    Thus, we cap the probability to be at most 1.0
-    Note that the estimation for positive and hard negatives may be less accurate than for random negatives
-    because there is a larger error in P(candidate in batch | x) ~= P(candidate in batch)
+
+    The approximation only holds when ``frequency / total_cnt << 1``, which may
+    not be true at the very beginning of training. Thus, we cap the probability
+    to be at most 1.0.
+
+    Note that the estimation for positive and hard negatives may be less
+    accurate than for random negatives because there is a larger error in
+    ``P(candidate in batch | x) ~= P(candidate in batch)``.
+
+    Args:
+        frequency_tensor (torch.Tensor): Per-candidate frequency counts.
+            Expected dtype: ``torch.int64``.
+        total_cnt (int): Total number of observed candidates.
+        batch_size (int): In-batch sample size.
+
+    Returns:
+        torch.Tensor: Per-candidate sampling probability clamped to ``<= 1.0``.
+        Expected dtype: ``torch.float32``.
     """
-    estimated_prob: torch.FloatTensor = (
-        batch_size * frequency_tensor.float() / total_cnt
-    )  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+    estimated_prob: torch.Tensor = batch_size * frequency_tensor.float() / total_cnt
     return estimated_prob.clamp(max=1.0)

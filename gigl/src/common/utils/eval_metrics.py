@@ -2,17 +2,21 @@ import torch
 
 
 def hit_rate_at_k(
-    pos_scores: torch.FloatTensor, neg_scores: torch.FloatTensor, ks: torch.LongTensor
-) -> torch.FloatTensor:
+    pos_scores: torch.Tensor, neg_scores: torch.Tensor, ks: torch.Tensor
+) -> torch.Tensor:
     """Computes Hit Rate @ K metrics for various Ks, evaluating 1+ positives against 1+ negatives.
 
     Args:
-        pos_scores (torch.FloatTensor): Contains 1 or more positive sample scores.
-        neg_scores (torch.FloatTensor): Contains 1 or more negative sample scores.
-        ks (torch.LongTensor): k-values for which to compute hits.
+        pos_scores (torch.Tensor): Contains 1 or more positive sample scores.
+            Expected dtype: ``torch.float32``.
+        neg_scores (torch.Tensor): Contains 1 or more negative sample scores.
+            Expected dtype: ``torch.float32``.
+        ks (torch.Tensor): k-values for which to compute hits.
+            Expected dtype: ``torch.int64``.
 
     Returns:
-        torch.FloatTensor: Hit rates corresponding to the requested ks.
+        torch.Tensor: Hit rates corresponding to the requested ks.
+        Expected dtype: ``torch.float32``.
     """
     max_k_requested = int(torch.max(ks).item())
     max_viable_k = 1 + neg_scores.numel()
@@ -43,20 +47,22 @@ def hit_rate_at_k(
     )
     ks_adjusted = ks - 1  # subtract 1 since indices are 0-indexed
     hits_at_ks = torch.gather(input=hit_rates_padded, dim=0, index=ks_adjusted)
-    return hits_at_ks  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+    return hits_at_ks
 
 
 def mean_reciprocal_rank(
-    pos_scores: torch.FloatTensor, neg_scores: torch.FloatTensor
-) -> torch.FloatTensor:
+    pos_scores: torch.Tensor, neg_scores: torch.Tensor
+) -> torch.Tensor:
     """Computes Mean Reciprocal Rank (MRR), evaluating 1+ positives against 1+ negatives.
 
     Args:
-        pos_scores (torch.FloatTensor): Contains 1 or more positive sample scores.
-        neg_scores (torch.FloatTensor): Contains 1 or more negative sample scores.
+        pos_scores (torch.Tensor): Contains 1 or more positive sample scores.
+            Expected dtype: ``torch.float32``.
+        neg_scores (torch.Tensor): Contains 1 or more negative sample scores.
+            Expected dtype: ``torch.float32``.
 
     Returns:
-        torch.FloatTensor: Computed MRR score.
+        torch.Tensor: Computed MRR score. Expected dtype: ``torch.float32``.
     """
     pos_scores_reshaped = pos_scores.view(-1, 1)
     neg_scores_reshaped = neg_scores.view(1, -1)
@@ -68,4 +74,4 @@ def mean_reciprocal_rank(
     adjusted_ranks = unadjusted_ranks + 1  # +1 since ranks are 0-indexed here
     reciprocal_ranks = 1.0 / adjusted_ranks  # compute reciprocal
     mrr = torch.mean(reciprocal_ranks)
-    return mrr  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+    return mrr

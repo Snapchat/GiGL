@@ -19,32 +19,80 @@ class InputBatch:
     random_neg_batch: RootedNodeNeighborhoodBatch
 
 
-# Returns the embeddings after being forward through encoder model
 @dataclass
 class BatchEmbeddings:
-    query_embeddings: torch.FloatTensor
-    repeated_query_embeddings: dict[CondensedEdgeType, torch.FloatTensor]
-    pos_embeddings: dict[CondensedEdgeType, torch.FloatTensor]
-    hard_neg_embeddings: dict[CondensedEdgeType, torch.FloatTensor]
-    random_neg_embeddings: dict[CondensedNodeType, torch.FloatTensor]
+    """Embeddings produced by forwarding a batch through the encoder model.
+
+    Attributes:
+        query_embeddings (torch.Tensor): Anchor node embeddings.
+            Expected dtype: ``torch.float32``.
+        repeated_query_embeddings (dict[CondensedEdgeType, torch.Tensor]):
+            Per-edge-type anchor embeddings repeated to align with their
+            positive supervision targets. Expected dtype: ``torch.float32``.
+        pos_embeddings (dict[CondensedEdgeType, torch.Tensor]): Per-edge-type
+            positive target embeddings. Expected dtype: ``torch.float32``.
+        hard_neg_embeddings (dict[CondensedEdgeType, torch.Tensor]):
+            Per-edge-type hard negative target embeddings.
+            Expected dtype: ``torch.float32``.
+        random_neg_embeddings (dict[CondensedNodeType, torch.Tensor]):
+            Per-node-type random negative embeddings.
+            Expected dtype: ``torch.float32``.
+    """
+
+    query_embeddings: torch.Tensor
+    repeated_query_embeddings: dict[CondensedEdgeType, torch.Tensor]
+    pos_embeddings: dict[CondensedEdgeType, torch.Tensor]
+    hard_neg_embeddings: dict[CondensedEdgeType, torch.Tensor]
+    random_neg_embeddings: dict[CondensedNodeType, torch.Tensor]
 
 
-# Returns scores for a single anchor node
 @dataclass
 class BatchScores:
-    pos_scores: torch.FloatTensor
-    hard_neg_scores: torch.FloatTensor
-    random_neg_scores: torch.FloatTensor
+    """Decoder scores for a single anchor node.
+
+    Attributes:
+        pos_scores (torch.Tensor): Scores for positive supervision targets.
+            Expected dtype: ``torch.float32``.
+        hard_neg_scores (torch.Tensor): Scores for hard negative targets.
+            Expected dtype: ``torch.float32``.
+        random_neg_scores (torch.Tensor): Scores for random negative targets.
+            Expected dtype: ``torch.float32``.
+    """
+
+    pos_scores: torch.Tensor
+    hard_neg_scores: torch.Tensor
+    random_neg_scores: torch.Tensor
 
 
-# Returns combined scores across all anchor nodes with repeated anchor node embeddings for each positive supervision edge
 @dataclass
 class BatchCombinedScores:
-    repeated_candidate_scores: torch.FloatTensor
-    positive_ids: torch.LongTensor
-    hard_neg_ids: torch.LongTensor
-    random_neg_ids: torch.LongTensor
-    repeated_query_ids: Optional[torch.LongTensor]
+    """Combined decoder scores across all anchor nodes with repeated anchor embeddings.
+
+    Used to avoid redundant calculation for retrieval-style losses.
+
+    Attributes:
+        repeated_candidate_scores (torch.Tensor): Scores between repeated
+            anchor embeddings and the combined candidate set
+            (positives + hard negatives + random negatives).
+            Expected dtype: ``torch.float32``.
+        positive_ids (torch.Tensor): Global node ids of positive targets.
+            Expected dtype: ``torch.int64``.
+        hard_neg_ids (torch.Tensor): Global node ids of hard negative targets.
+            Expected dtype: ``torch.int64``.
+        random_neg_ids (torch.Tensor): Global node ids of random negative
+            targets. Expected dtype: ``torch.int64``.
+        repeated_query_ids (Optional[torch.Tensor]): Global node ids of the
+            anchors repeated to align with ``repeated_candidate_scores``.
+            Expected dtype: ``torch.int64``.
+        num_unique_query_ids (Optional[int]): Number of unique anchors before
+            repetition.
+    """
+
+    repeated_candidate_scores: torch.Tensor
+    positive_ids: torch.Tensor
+    hard_neg_ids: torch.Tensor
+    random_neg_ids: torch.Tensor
+    repeated_query_ids: Optional[torch.Tensor]
     num_unique_query_ids: Optional[int]
 
 
