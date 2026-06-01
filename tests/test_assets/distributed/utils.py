@@ -91,9 +91,12 @@ class MockGraphStoreInfo(GraphStoreInfo):
         >>> mock_info.compute_node_rank  # Returns 0 instead of reading from env
     """
 
+    _real_info: GraphStoreInfo
+    _compute_node_rank: int
+
     def __init__(self, real_info: GraphStoreInfo, compute_node_rank: int):
-        self._real_info = real_info  # ty: ignore[invalid-assignment]
-        self._compute_node_rank = compute_node_rank  # ty: ignore[invalid-assignment]
+        object.__setattr__(self, "_real_info", real_info)
+        object.__setattr__(self, "_compute_node_rank", compute_node_rank)
 
     @property
     def num_storage_nodes(self) -> int:

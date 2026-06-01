@@ -203,46 +203,51 @@ class DistSamplingProducerTest(TestCase):
         ) -> None:
             recorded.append((worker_rank, command, payload))
 
-        backend._enqueue_worker_command = _record_command  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-
         channel = MagicMock()
         input_tensor = torch.arange(6, dtype=torch.long)
-        backend.register_input(
-            channel_id=1,
-            worker_key="loader_a_compute_rank_0",
-            sampler_input=NodeSamplerInput(node=input_tensor.clone()),
-            sampling_config=_make_sampling_config(shuffle=True),
-            channel=channel,
-        )
-        backend.register_input(
-            channel_id=2,
-            worker_key="loader_b_compute_rank_0",
-            sampler_input=NodeSamplerInput(node=input_tensor.clone()),
-            sampling_config=_make_sampling_config(shuffle=True),
-            channel=channel,
-        )
 
-        def _collect_epoch_indices(channel_id: int, epoch: int) -> torch.Tensor:
-            recorded.clear()
-            backend.start_new_epoch_sampling(channel_id, epoch)
-            worker_payloads = {
-                worker_rank: cast(StartEpochCmd, payload).seeds_index
-                for worker_rank, command, payload in recorded
-                if command == SharedMpCommand.START_EPOCH
-            }
-            assert all(
-                seed_index is not None for seed_index in worker_payloads.values()
+        with patch.object(
+            backend,
+            "_enqueue_worker_command",
+            autospec=True,
+            side_effect=_record_command,
+        ):
+            backend.register_input(
+                channel_id=1,
+                worker_key="loader_a_compute_rank_0",
+                sampler_input=NodeSamplerInput(node=input_tensor.clone()),
+                sampling_config=_make_sampling_config(shuffle=True),
+                channel=channel,
             )
-            return torch.cat(
-                [
-                    cast(torch.Tensor, worker_payloads[worker_rank])
-                    for worker_rank in sorted(worker_payloads)
-                ]
+            backend.register_input(
+                channel_id=2,
+                worker_key="loader_b_compute_rank_0",
+                sampler_input=NodeSamplerInput(node=input_tensor.clone()),
+                sampling_config=_make_sampling_config(shuffle=True),
+                channel=channel,
             )
 
-        channel_1_epoch_0 = _collect_epoch_indices(1, 0)
-        channel_2_epoch_0 = _collect_epoch_indices(2, 0)
-        channel_1_epoch_1 = _collect_epoch_indices(1, 1)
+            def _collect_epoch_indices(channel_id: int, epoch: int) -> torch.Tensor:
+                recorded.clear()
+                backend.start_new_epoch_sampling(channel_id, epoch)
+                worker_payloads = {
+                    worker_rank: cast(StartEpochCmd, payload).seeds_index
+                    for worker_rank, command, payload in recorded
+                    if command == SharedMpCommand.START_EPOCH
+                }
+                assert all(
+                    seed_index is not None for seed_index in worker_payloads.values()
+                )
+                return torch.cat(
+                    [
+                        cast(torch.Tensor, worker_payloads[worker_rank])
+                        for worker_rank in sorted(worker_payloads)
+                    ]
+                )
+
+            channel_1_epoch_0 = _collect_epoch_indices(1, 0)
+            channel_2_epoch_0 = _collect_epoch_indices(2, 0)
+            channel_1_epoch_1 = _collect_epoch_indices(1, 1)
 
         self.assert_tensor_equality(channel_1_epoch_0, channel_2_epoch_0)
         self.assertNotEqual(
@@ -301,10 +306,14 @@ class DistSamplingProducerTest(TestCase):
         ) -> None:
             commands.append((worker_rank, command, payload))
 
-        backend._enqueue_worker_command = enqueue_worker_command  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
-
         # Returns without any worker acknowledgement: there is no sync wait.
-        backend.unregister_input(1)
+        with patch.object(
+            backend,
+            "_enqueue_worker_command",
+            autospec=True,
+            side_effect=enqueue_worker_command,
+        ):
+            backend.unregister_input(1)
 
         self.assertEqual(
             commands,

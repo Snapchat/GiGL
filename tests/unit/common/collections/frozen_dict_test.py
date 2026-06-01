@@ -7,7 +7,7 @@ class FrozenDictTest(TestCase):
         frozen_dict: FrozenDict[int, int] = FrozenDict()
 
         def assign_dict_value():
-            frozen_dict[10] = 20  # type: ignore[index]  # ty: ignore[invalid-assignment]
+            frozen_dict[10] = 20  # type: ignore[index]  # ty: ignore[invalid-assignment]  # intentional: test verifies Mapping has no __setitem__
 
         self.assertRaises(Exception, assign_dict_value)
 
