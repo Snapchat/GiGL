@@ -27,20 +27,9 @@ import subprocess
 from typing import Optional
 
 from gigl.common import Uri
-from gigl.common.constants import (
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
-)
 from gigl.common.logger import Logger
-from gigl.env.constants import (
-    GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
-    GIGL_COMPONENT_ENV_KEY,
-    GIGL_CPU_DOCKER_URI_ENV_KEY,
-    GIGL_CUDA_DOCKER_URI_ENV_KEY,
-    GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
-    GIGL_TASK_CONFIG_URI_ENV_KEY,
-)
 from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.utils.gigl_runtime import get_gigl_runtime_env_vars
 from snapchat.research.gbml.gigl_resource_config_pb2 import CustomLauncherConfig
 
 logger = Logger()
@@ -114,15 +103,15 @@ def launch_custom(
     args: list[str] = list(custom_launcher_config.args)
 
     env: dict[str, str] = os.environ.copy()
-    env[GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY] = applied_task_identifier
-    env[GIGL_TASK_CONFIG_URI_ENV_KEY] = str(task_config_uri)
-    env[GIGL_RESOURCE_CONFIG_URI_ENV_KEY] = str(resource_config_uri)
-    env[GIGL_COMPONENT_ENV_KEY] = component.name
-    env[GIGL_CPU_DOCKER_URI_ENV_KEY] = (
-        cpu_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
-    )
-    env[GIGL_CUDA_DOCKER_URI_ENV_KEY] = (
-        cuda_docker_uri or DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA
+    env.update(
+        get_gigl_runtime_env_vars(
+            applied_task_identifier=applied_task_identifier,
+            task_config_uri=task_config_uri,
+            resource_config_uri=resource_config_uri,
+            component=component,
+            cpu_docker_uri=cpu_docker_uri,
+            cuda_docker_uri=cuda_docker_uri,
+        )
     )
 
     shell_line = " ".join([command, *(shlex.quote(a) for a in args)])

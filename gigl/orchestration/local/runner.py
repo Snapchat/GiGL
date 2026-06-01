@@ -8,6 +8,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import initialize_metrics
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
@@ -134,6 +135,15 @@ class Runner:
     @staticmethod
     def run_data_preprocessor(pipeline_config: PipelineConfig) -> None:
         logger.info("Running Data Preprocessor...")
+        initialize_gigl_runtime(
+            applied_task_identifier=pipeline_config.applied_task_identifier,
+            task_config_uri=pipeline_config.task_config_uri,
+            resource_config_uri=pipeline_config.resource_config_uri,
+            service_name=pipeline_config.applied_task_identifier,
+            component=GiGLComponents.DataPreprocessor,
+            cpu_docker_uri=pipeline_config.custom_cpu_docker_uri,
+            cuda_docker_uri=pipeline_config.custom_cuda_docker_uri,
+        )
         data_preprocessor = DataPreprocessor()
         data_preprocessor.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,

@@ -1,7 +1,8 @@
 """Environment-variable keys used across GiGL.
 
-Most of these keys are set on subprocess env (never on the parent
-``os.environ``) by ``gigl.src.common.custom_launcher.launch_custom`` so that
+These keys are set either on component-process ``os.environ`` by
+``gigl.src.common.utils.gigl_runtime.initialize_gigl_runtime`` or on a
+subprocess env by ``gigl.src.common.custom_launcher.launch_custom`` so that
 receiving CLIs can ``os.environ.get(...)`` their runtime context.
 
 ``GIGL_RESOURCE_CONFIG_URI`` is also written to the parent ``os.environ`` by
