@@ -18,8 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - Enable C++-based PPR sampling, which changes GiGL wheel builds to include the new `gigl-core` C++/CUDA extension
-  package by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/558 and
-  https://github.com/Snapchat/GiGL/pull/556
+  package by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/558 and https://github.com/Snapchat/GiGL/pull/556
 - Replace mypy with [ty](https://github.com/astral-sh/ty) for static type checking and migrate formatting to Ruff by
   @svij-sc in https://github.com/Snapchat/GiGL/pull/585 and https://github.com/Snapchat/GiGL/pull/583
 - Consolidate distributed loader and sampler abstractions, including `BaseDistLoader`, `BaseDistNeighborSampler`,
