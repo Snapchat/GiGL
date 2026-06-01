@@ -1,9 +1,21 @@
-from typing import Union
+from typing import Union, overload
 
 import torch
 from torch.nn import functional as F
 
 from gigl.src.common.types.graph_data import NodeType
+
+
+@overload
+def l2_normalize_embeddings(
+    node_typed_embeddings: torch.Tensor,
+) -> torch.Tensor: ...
+
+
+@overload
+def l2_normalize_embeddings(
+    node_typed_embeddings: dict[NodeType, torch.Tensor],
+) -> dict[NodeType, torch.Tensor]: ...
 
 
 def l2_normalize_embeddings(
