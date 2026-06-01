@@ -17,8 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Enable C++-based PPR sampling, which changes GiGL wheel builds to include the new `gigl-core` C++/CUDA extension
-  package by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/558 and https://github.com/Snapchat/GiGL/pull/556
 - Replace mypy with [ty](https://github.com/astral-sh/ty) for static type checking and migrate formatting to Ruff by
   @svij-sc in https://github.com/Snapchat/GiGL/pull/585 and https://github.com/Snapchat/GiGL/pull/583
 - Consolidate distributed loader and sampler abstractions, including `BaseDistLoader`, `BaseDistNeighborSampler`,
@@ -27,11 +25,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   https://github.com/Snapchat/GiGL/pull/536, https://github.com/Snapchat/GiGL/pull/570,
   https://github.com/Snapchat/GiGL/pull/576, https://github.com/Snapchat/GiGL/pull/579, and
   https://github.com/Snapchat/GiGL/pull/561
-- Update `RemoteDistDataset` APIs and graph store internals for per-rank inputs, `fetch_` method naming, RPC message
-  dataclasses, and graph store server consolidation by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/511,
-  https://github.com/Snapchat/GiGL/pull/539, https://github.com/Snapchat/GiGL/pull/557, and
-  https://github.com/Snapchat/GiGL/pull/506
-- Move Graph Transformer code into `gigl.nn` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/598
 - Merge `testing/` into `tests/`, migrate tests to GiGL test case utilities, and improve graph store integration test
   coverage by @kmontemayor2-sc and @svij-sc in https://github.com/Snapchat/GiGL/pull/494,
   https://github.com/Snapchat/GiGL/pull/479, https://github.com/Snapchat/GiGL/pull/480,
@@ -39,16 +32,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Enable graph store mode across storage and compute, including custom storage definitions, GiGL-owned `DistServer`,
-  `RemoteDistDataset` ABLP inputs, `DistABLPLoader` graph store mode, multiple graph store loaders, partition-book
-  fetching on compute nodes, and local graph store launch scripts by @kmontemayor2-sc in
-  https://github.com/Snapchat/GiGL/pull/459, https://github.com/Snapchat/GiGL/pull/471,
+- Enable GraphStore mode across storage and compute, including GiGL-owned `DistServer`, `DistABLPLoader` GraphStore
+  mode, multiple GraphStore loaders, and homogeneous and heterogeneous examples by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/476, https://github.com/Snapchat/GiGL/pull/485,
-  https://github.com/Snapchat/GiGL/pull/493, https://github.com/Snapchat/GiGL/pull/510, and
-  https://github.com/Snapchat/GiGL/pull/587
-- Add graph store examples for heterogeneous inference, homogeneous training, and heterogeneous training by
-  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/452, https://github.com/Snapchat/GiGL/pull/514, and
+  https://github.com/Snapchat/GiGL/pull/493, https://github.com/Snapchat/GiGL/pull/514, and
   https://github.com/Snapchat/GiGL/pull/526
+- Add C++-based PPR sampling, which changes GiGL wheel builds to include the new `gigl-core` C++/CUDA extension package
+  by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/558 and https://github.com/Snapchat/GiGL/pull/556
 - Add distributed PPR sampling and PPR sequence generation by @mkolodner-sc and @yliu2-sc in
   https://github.com/Snapchat/GiGL/pull/538 and https://github.com/Snapchat/GiGL/pull/560
 - Add shared multi-channel graph store sampling backend, remote channels with pinned-memory bulk transfer, and two-phase
@@ -73,14 +63,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Improve graph store startup, shutdown, and sampling reliability, including storage-node counts, free-port allocation,
-  global-lock removal, homogeneous graphs with labeled edges, leader election, RPC staggering, empty-input shared-memory
-  channels, teardown protocol, inactive-server shutdown, and labeled homogeneous ABLP memory fixes by @kmontemayor2-sc
-  and @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/474, https://github.com/Snapchat/GiGL/pull/481,
-  https://github.com/Snapchat/GiGL/pull/497, https://github.com/Snapchat/GiGL/pull/507,
-  https://github.com/Snapchat/GiGL/pull/535, https://github.com/Snapchat/GiGL/pull/540,
-  https://github.com/Snapchat/GiGL/pull/592, https://github.com/Snapchat/GiGL/pull/594,
-  https://github.com/Snapchat/GiGL/pull/616, and https://github.com/Snapchat/GiGL/pull/645
 - Fix PPR sampler output edges and memory behavior by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/562,
   https://github.com/Snapchat/GiGL/pull/566, and https://github.com/Snapchat/GiGL/pull/645
 - Fix dataloading of multiple labels, missing anchor-node labels, dataset factory parallel tensor loading, test dataset
