@@ -15,7 +15,11 @@ from gigl.common.utils.torch_training import (
     is_distributed_available_and_initialized,
 )
 from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
-from gigl.src.common.types.graph_data import CondensedEdgeType, CondensedNodeType
+from gigl.src.common.types.graph_data import (
+    CondensedEdgeType,
+    CondensedNodeType,
+    NodeId,
+)
 from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.types.model_eval_metrics import (
     EvalMetric,
@@ -339,7 +343,7 @@ class GraphSageTemplateTrainerSpec(
 
             pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[
                 CondensedEdgeType(0)
-            ].root_node_to_target_node_id[root_node.item()]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            ].root_node_to_target_node_id[NodeId(int(root_node.item()))]
 
             if pos_nodes.numel():
                 pos_scores = torch.mm(
@@ -349,7 +353,7 @@ class GraphSageTemplateTrainerSpec(
             hard_neg_nodes: torch.LongTensor = (
                 main_batch.hard_neg_supervision_edge_data[
                     CondensedEdgeType(0)
-                ].root_node_to_target_node_id[root_node.item()]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                ].root_node_to_target_node_id[NodeId(int(root_node.item()))]
             )  # shape=[num_hard_neg_nodes]
 
             if hard_neg_nodes.numel():

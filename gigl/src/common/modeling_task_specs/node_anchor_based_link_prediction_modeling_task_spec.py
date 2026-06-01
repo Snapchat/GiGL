@@ -308,7 +308,6 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
             model.load_state_dict(state_dict)
 
         self.model = model
-        self.tasks = model.tasks
         self._graph_backend = model.graph_backend
 
         return self.model

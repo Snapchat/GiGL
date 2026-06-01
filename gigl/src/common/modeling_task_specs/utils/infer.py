@@ -1,12 +1,11 @@
 from collections import defaultdict
-from typing import Set, Union
+from typing import Callable, Set, Union
 
 import torch
 import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.data.hetero_data import HeteroData
 
-from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.loss import ModelResultType
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,
@@ -130,17 +129,22 @@ def infer_task_inputs(
     # Populate main_batch and RNN task inputs field
     input_batch = InputBatch(main_batch=main_batch, random_neg_batch=random_neg_batch)
 
+    # Local import to avoid circular dependency with task.py.
+    from gigl.src.common.models.pyg.link_prediction import LinkPredictionGNN
+
     batch_result_types: Set[ModelResultType]
-    decoder: LinkPredictionDecoder
+    decoder: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     # Unwrap any DDP layers
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        decoder = model.module.decode
-        batch_result_types = model.module.tasks.result_types
+        inner_model = model.module
     else:
-        decoder = model.decode  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        batch_result_types = (
-            model.tasks.result_types  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        )  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+        inner_model = model
+    assert isinstance(inner_model, LinkPredictionGNN), (
+        f"Expected LinkPredictionGNN, got {type(inner_model)}"
+    )
+    decoder = inner_model.decode  # https://github.com/Snapchat/GiGL/issues/408
+    assert inner_model.tasks is not None, "Model tasks must be provided for inference."
+    batch_result_types = inner_model.tasks.result_types
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.
@@ -247,14 +251,16 @@ def infer_task_inputs(
             ) = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_condensed_node_types[
                 condensed_supervision_edge_type
             ]
-            pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            pos_nodes: torch.LongTensor = main_batch.pos_supervision_edge_data[
                 condensed_supervision_edge_type
-            ].root_node_to_target_node_id[root_node.item()]  # shape=[num_pos_nodes]
+            ].root_node_to_target_node_id[
+                NodeId(int(root_node.item()))
+            ]  # shape=[num_pos_nodes]
 
             hard_neg_nodes: torch.LongTensor = (
                 main_batch.hard_neg_supervision_edge_data[
                     condensed_supervision_edge_type
-                ].root_node_to_target_node_id[root_node.item()]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                ].root_node_to_target_node_id[NodeId(int(root_node.item()))]
             )  # shape=[num_hard_neg_nodes]
 
             repeated_anchor_count[condensed_supervision_edge_type].append(

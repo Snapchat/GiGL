@@ -47,13 +47,33 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
         self.num_edge_types = model_config.num_edge_types
         self.node_emb_dim = model_config.node_embedding_dim
-        self.training_sampling_config = model_config.training_sampling
-        self.validation_sampling_config = model_config.validation_sampling
-        self.testing_sampling_config = model_config.testing_sampling
+
+        training_sampling = model_config.training_sampling
+        validation_sampling = model_config.validation_sampling
+        testing_sampling = model_config.testing_sampling
+        assert training_sampling is not None, "training_sampling must be provided"
+        assert validation_sampling is not None, "validation_sampling must be provided"
+        assert testing_sampling is not None, "testing_sampling must be provided"
+
+        for sampling_config in (
+            training_sampling,
+            validation_sampling,
+            testing_sampling,
+        ):
+            assert sampling_config.positive_edge_batch_size > 0, (
+                "Positive edge batch size must be greater than 0."
+            )
+            assert (
+                sampling_config.num_inbatch_negatives_per_edge
+                + sampling_config.num_random_negatives_per_edge
+                > 0
+            ), "At least one type of negative sampling must be specified."
+
+        self.training_sampling_config: SamplingConfig = training_sampling
+        self.validation_sampling_config: SamplingConfig = validation_sampling
+        self.testing_sampling_config: SamplingConfig = testing_sampling
         self.similarity_type = model_config.embedding_similarity_type
         self._phase: ModelPhase = ModelPhase.TRAIN
-
-        self._assert_sampling_config_is_valid()
 
         # Define the embedding layers.
         assert model_config.embeddings_config is not None, (
@@ -76,30 +96,14 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
         logger.info(f"Initialized model with: {self.__dict__}")
 
-    def _assert_sampling_config_is_valid(self):
-        for sampling_config in (
-            self.training_sampling_config,
-            self.validation_sampling_config,
-            self.testing_sampling_config,
-        ):
-            assert sampling_config is not None, "Sampling config must be provided."
-            assert sampling_config.positive_edge_batch_size > 0, (
-                "Positive edge batch size must be greater than 0."
-            )
-            assert (
-                sampling_config.num_inbatch_negatives_per_edge
-                + sampling_config.num_random_negatives_per_edge
-                > 0
-            ), "At least one type of negative sampling must be specified."
-
     @property
     def active_sampling_config(self) -> SamplingConfig:
         if self.phase == ModelPhase.TRAIN:
-            return self.training_sampling_config  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+            return self.training_sampling_config
         elif self.phase == ModelPhase.VAL:
-            return self.validation_sampling_config  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+            return self.validation_sampling_config
         elif self.phase == ModelPhase.TEST:
-            return self.testing_sampling_config  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+            return self.testing_sampling_config
         elif (
             self.phase == ModelPhase.INFERENCE_SRC
             or self.phase == ModelPhase.INFERENCE_DST

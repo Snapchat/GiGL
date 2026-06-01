@@ -139,7 +139,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
         return FrozenDict(global_node_to_features_map)
 
     def get_global_edge_features_dict(self) -> FrozenDict[Edge, torch.Tensor]:
-        global_edge_to_features_map: dict[Edge, torch.Tensor] = {}
+        global_edge_to_features_map: dict[Edge, Optional[torch.Tensor]] = {}
 
         is_graph_data_in_global_space: bool = (
             not self.subgraph_node_to_global_node_mapping
@@ -193,7 +193,7 @@ class PygGraphData(HeteroData, GbmlGraphDataProtocol):
                     edge_feature = (
                         edge_attr[edge_number] if edge_attr is not None else None
                     )
-                    global_edge_to_features_map[edge] = edge_feature  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+                    global_edge_to_features_map[edge] = edge_feature
 
         return FrozenDict(global_edge_to_features_map)
 

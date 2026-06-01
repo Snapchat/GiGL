@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Callable, Generic, Iterable, Iterator, TypeVar
 
 import numpy as np
@@ -114,7 +115,7 @@ class LoopyIterableDataset(torch.utils.data.IterableDataset, Generic[T]):
 class CombinedIterableDatasets(torch.utils.data.IterableDataset, Generic[T]):
     def __init__(
         self,
-        iterable_dataset_map: dict[
+        iterable_dataset_map: Mapping[
             NodeType,
             torch.utils.data.IterableDataset[T],
         ],

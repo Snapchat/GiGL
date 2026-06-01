@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from gigl.common import Uri
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU
@@ -89,7 +89,7 @@ class Runner:
         else:
             Runner.config_check(start_at, pipeline_config)
 
-        component_map: OrderedDict[GiGLComponents, Callable] = OrderedDict(  # ty: ignore[invalid-assignment]
+        component_map: OrderedDict[str, Callable[..., Any]] = OrderedDict(
             {
                 GiGLComponents.ConfigPopulator.value: Runner.run_config_populator,
                 GiGLComponents.DataPreprocessor.value: Runner.run_data_preprocessor,

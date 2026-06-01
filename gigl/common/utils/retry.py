@@ -21,7 +21,7 @@ class __RetriableTimeoutException(Exception):
 
 
 def retry(
-    exception_to_check: Union[Type, Tuple[Type, ...]] = Exception,
+    exception_to_check: Union[Type[Exception], Tuple[Type[Exception], ...]] = Exception,
     tries: int = 5,
     delay_s: int = 3,
     backoff: int = 2,
@@ -65,7 +65,7 @@ def retry(
                     return timeout_individual_fn_call_decorator(f)(*args, **kwargs)
                 return f(*args, **kwargs)
 
-            acceptable_exceptions: Tuple[Type[Exception], ...] = (  # ty: ignore[invalid-assignment]
+            acceptable_exceptions: Tuple[Type[Exception], ...] = (
                 exception_to_check
                 if isinstance(exception_to_check, tuple)
                 else (exception_to_check,)
