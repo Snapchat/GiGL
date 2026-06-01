@@ -28,7 +28,7 @@ reversal is needed since both follow the original edge direction.
 
 import heapq
 from collections import defaultdict
-from typing import Literal
+from typing import Literal, cast
 
 import networkx as nx
 import torch
@@ -41,6 +41,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.src.common.types.graph_data import NodeType
 from tests.test_assets.distributed.test_dataset import (
     STORY,
     STORY_TO_USER,
@@ -417,10 +418,11 @@ def _run_ppr_hetero_loader_correctness_check(
 
     node_ids = dataset.node_ids
     assert isinstance(node_ids, dict)
+    node_ids_dict = cast("dict[NodeType, torch.Tensor]", node_ids)  # ty#2374 workaround
 
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(USER, node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(USER, node_ids_dict[USER]),
         num_neighbors=[],  # Unused by PPR sampler; required by interface
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
@@ -505,11 +507,14 @@ def _run_ppr_ablp_loader_correctness_check(
 
     train_node_ids = dataset.train_node_ids
     assert isinstance(train_node_ids, dict)
+    train_node_ids_dict = cast(
+        "dict[NodeType, torch.Tensor]", train_node_ids
+    )  # ty#2374 workaround
 
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[],  # Unused by PPR sampler; required by interface
-        input_nodes=(USER, train_node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(USER, train_node_ids_dict[USER]),
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
@@ -665,11 +670,14 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
 
     train_node_ids = dataset.train_node_ids
     assert isinstance(train_node_ids, dict)
+    train_node_ids_dict = cast(
+        "dict[NodeType, torch.Tensor]", train_node_ids
+    )  # ty#2374 workaround
 
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[],
-        input_nodes=(USER, train_node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(USER, train_node_ids_dict[USER]),
         supervision_edge_type=USER_TO_STORY,
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,

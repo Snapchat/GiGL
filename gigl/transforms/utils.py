@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union, cast
 
 import torch
 from torch import Tensor
@@ -33,10 +33,11 @@ def add_node_attr(
     """
     # If values is a dictionary, directly assign to each node type
     if isinstance(values, dict):
-        for node_type, value in values.items():
+        values_dict = cast("Dict[str, Tensor]", values)  # ty#2374 workaround
+        for node_type, value in values_dict.items():
             if node_type not in data.node_types:
                 continue
-            _set_node_attr_for_type(data, node_type, value, attr_name)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+            _set_node_attr_for_type(data, node_type, value, attr_name)
         return data
 
     # Otherwise, values is a tensor in homogeneous order - split by node type
@@ -110,10 +111,11 @@ def add_edge_attr(
     """
     # If values is a dictionary, directly assign to each edge type
     if isinstance(values, dict):
-        for edge_type, value in values.items():
+        values_dict = cast("Dict[EdgeType, Tensor]", values)  # ty#2374 workaround
+        for edge_type, value in values_dict.items():
             if edge_type not in data.edge_types:
                 continue
-            _set_edge_attr_for_type(data, edge_type, value, attr_name)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+            _set_edge_attr_for_type(data, edge_type, value, attr_name)
         return data
 
     # Otherwise, values is a tensor in homogeneous order - split by edge type

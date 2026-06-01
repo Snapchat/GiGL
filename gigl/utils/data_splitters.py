@@ -10,6 +10,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    cast,
     overload,
     runtime_checkable,
 )
@@ -500,9 +501,12 @@ class DistNodeSplitter:
                 f"Splitter requires a Torch distributed process group, but none was found. "
                 "Please initialize a process group (`torch.distributed.init_process_group`) before using this splitter."
             )
+        node_ids_dict: Mapping[NodeType, torch.Tensor]
         if isinstance(node_ids, Mapping):
             is_heterogeneous = True
-            node_ids_dict = node_ids
+            node_ids_dict = cast(
+                "Mapping[NodeType, torch.Tensor]", node_ids
+            )  # ty#2374 workaround
         else:
             is_heterogeneous = False
             node_ids_dict = {DEFAULT_HOMOGENEOUS_NODE_TYPE: node_ids}
@@ -510,21 +514,19 @@ class DistNodeSplitter:
         splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
 
         for node_type, nodes_to_split in node_ids_dict.items():
-            _check_node_ids(nodes_to_split)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            _check_node_ids(nodes_to_split)
 
-            hash_values = self._hash_function(
-                nodes_to_split  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-            )  # 1 x M
+            hash_values = self._hash_function(nodes_to_split)  # 1 x M
 
             # Create train, val, test splits using distributed coordination
             train, val, test = _create_distributed_splits_from_hash(
-                nodes_to_split,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                nodes_to_split,
                 hash_values,
                 self._num_val,
                 self._num_test,
             )
 
-            splits[node_type] = (train, val, test)  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+            splits[node_type] = (train, val, test)
 
             # Clean up memory
             del hash_values

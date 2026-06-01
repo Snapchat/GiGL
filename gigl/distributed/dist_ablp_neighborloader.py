@@ -1,6 +1,6 @@
 from collections import abc, defaultdict
 from itertools import count
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -324,6 +324,9 @@ class DistABLPLoader(BaseDistLoader):
                     f"dict[int, ABLPInputNodes], "
                     f"received {type(input_nodes)}"
                 )
+            input_nodes_dict = cast(
+                "dict[int, ABLPInputNodes]", input_nodes
+            )  # ty#2374 workaround
             if prefetch_size is None:
                 logger.info(f"prefetch_size is not provided, using default of 4")
                 prefetch_size = 4
@@ -333,7 +336,7 @@ class DistABLPLoader(BaseDistLoader):
                 dataset_schema,
                 backend_key,
             ) = self._setup_for_graph_store(
-                input_nodes=input_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                input_nodes=input_nodes_dict,
                 dataset=dataset,
                 num_workers=num_workers,
                 worker_concurrency=worker_concurrency,

@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import cast
 
 import torch
 from graphlearn_torch.sampler import NodeSamplerInput
@@ -182,9 +183,12 @@ class TestBaseGiGLSamplerPreparation(TestCase):
 
         nodes_to_sample = sample_loop_inputs.nodes_to_sample
         assert isinstance(nodes_to_sample, Mapping)
-        self.assertEqual(set(nodes_to_sample.keys()), {_USER})
+        nodes_to_sample_dict = cast(
+            "Mapping[NodeType, torch.Tensor]", nodes_to_sample
+        )  # ty#2374 workaround
+        self.assertEqual(set(nodes_to_sample_dict.keys()), {_USER})
         self.assert_tensor_equality(
-            nodes_to_sample[_USER],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            nodes_to_sample_dict[_USER],
             torch.tensor([10, 11, 12, 13, 14]),
         )
         self.assert_tensor_equality(
@@ -221,13 +225,16 @@ class TestBaseGiGLSamplerPreparation(TestCase):
 
         nodes_to_sample = sample_loop_inputs.nodes_to_sample
         assert isinstance(nodes_to_sample, Mapping)
-        self.assertEqual(set(nodes_to_sample.keys()), {_USER, _ITEM})
+        nodes_to_sample_dict = cast(
+            "Mapping[NodeType, torch.Tensor]", nodes_to_sample
+        )  # ty#2374 workaround
+        self.assertEqual(set(nodes_to_sample_dict.keys()), {_USER, _ITEM})
         self.assert_tensor_equality(
-            nodes_to_sample[_USER],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            nodes_to_sample_dict[_USER],
             torch.tensor([4, 5]),
         )
         self.assert_tensor_equality(
-            nodes_to_sample[_ITEM],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            nodes_to_sample_dict[_ITEM],
             torch.tensor([20, 21, 22]),
         )
 
@@ -258,6 +265,9 @@ class TestBaseGiGLSamplerPreparation(TestCase):
 
         self.assertIsInstance(result, SampleLoopInputs)
         assert isinstance(result.nodes_to_sample, Mapping)
-        self.assertEqual(set(result.nodes_to_sample.keys()), {_USER})
-        self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        nodes_to_sample_dict = cast(
+            "Mapping[NodeType, torch.Tensor]", result.nodes_to_sample
+        )  # ty#2374 workaround
+        self.assertEqual(set(nodes_to_sample_dict.keys()), {_USER})
+        self.assert_tensor_equality(nodes_to_sample_dict[_USER], torch.tensor([1, 2]))
         self.assertEqual(result.metadata, {})

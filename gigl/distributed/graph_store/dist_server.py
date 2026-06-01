@@ -71,7 +71,7 @@ import threading
 import time
 from collections import abc
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional, TypeVar, Union
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, cast
 
 import graphlearn_torch.distributed.dist_server as glt_dist_server
 import torch
@@ -506,7 +506,10 @@ class DistServer:
                     f"node_type was provided as {node_type}, so node ids must be a dict[NodeType, torch.Tensor] "
                     f"(e.g. a heterogeneous dataset), got {type(nodes)}"
                 )
-            nodes = nodes[node_type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            nodes_mapping = cast(
+                "abc.Mapping[NodeType, torch.Tensor]", nodes
+            )  # ty#2374 workaround
+            nodes = nodes_mapping[node_type]
         elif not isinstance(nodes, torch.Tensor):
             raise ValueError(
                 f"node_type was not provided, so node ids must be a torch.Tensor (e.g. a homogeneous dataset), got {type(nodes)}."

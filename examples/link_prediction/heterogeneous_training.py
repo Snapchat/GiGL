@@ -32,7 +32,7 @@ import statistics
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, cast
 
 import torch
 import torch.distributed
@@ -129,11 +129,14 @@ def _setup_dataloaders(
     labeled_node_type = supervision_edge_type.dst_node_type
 
     assert isinstance(main_input_nodes, Mapping)
+    main_input_nodes_mapping = cast(
+        "Mapping[NodeType, torch.Tensor]", main_input_nodes
+    )  # ty#2374 workaround
 
     main_loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(query_node_type, main_input_nodes[query_node_type]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(query_node_type, main_input_nodes_mapping[query_node_type]),
         supervision_edge_type=supervision_edge_type,
         num_workers=sampling_workers_per_process,
         batch_size=main_batch_size,
@@ -152,11 +155,14 @@ def _setup_dataloaders(
     torch.distributed.barrier()
 
     assert isinstance(dataset.node_ids, Mapping)
+    dataset_node_ids = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.node_ids
+    )  # ty#2374 workaround
 
     random_negative_loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(labeled_node_type, dataset.node_ids[labeled_node_type]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(labeled_node_type, dataset_node_ids[labeled_node_type]),
         num_workers=sampling_workers_per_process,
         batch_size=random_batch_size,
         pin_memory_device=device,

@@ -6,7 +6,7 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 import time
 from collections.abc import Mapping
 from distutils.util import strtobool
-from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
+from typing import Literal, MutableMapping, Optional, Tuple, Type, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -124,6 +124,9 @@ def _load_and_build_partitioned_dataset(
             )
         positive_label_edges: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         if isinstance(loaded_graph_tensors.edge_index, Mapping):
+            edge_index_mapping = cast(
+                "Mapping[EdgeType, torch.Tensor]", loaded_graph_tensors.edge_index
+            )  # ty#2374 workaround
             # This assert is required while `select_ssl_positive_label_edges` exists out of any splitter. Once this is in transductive splitter,
             # we can remove this assert.
             assert isinstance(splitter, DistNodeAnchorLinkSplitter), (
@@ -133,9 +136,7 @@ def _load_and_build_partitioned_dataset(
             for supervision_edge_type in splitter._supervision_edge_types:
                 positive_label_edges[supervision_edge_type] = (
                     select_ssl_positive_label_edges(
-                        edge_index=loaded_graph_tensors.edge_index[  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                            supervision_edge_type
-                        ],
+                        edge_index=edge_index_mapping[supervision_edge_type],
                         positive_label_percentage=_ssl_positive_label_percentage,
                     )
                 )

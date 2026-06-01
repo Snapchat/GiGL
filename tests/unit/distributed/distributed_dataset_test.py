@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Any, Optional, Type, Union
+from typing import Any, Optional, Type, Union, cast
 
 import torch
 from absl.testing import absltest
@@ -88,9 +88,15 @@ class DistributedDatasetTestCase(TestCase):
         if type(actual) != type(expected):
             self.fail(f"Expected type {type(expected)} but got {type(actual)}")
         if isinstance(actual, dict) and isinstance(expected, dict):
-            self.assertEqual(actual.keys(), expected.keys())
-            for key in actual.keys():
-                assert_close(actual[key], expected[key], atol=0, rtol=0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            actual_dict = cast(
+                "Mapping[Any, torch.Tensor]", actual
+            )  # ty#2374 workaround
+            expected_dict = cast(
+                "Mapping[Any, torch.Tensor]", expected
+            )  # ty#2374 workaround
+            self.assertEqual(actual_dict.keys(), expected_dict.keys())
+            for key in actual_dict.keys():
+                assert_close(actual_dict[key], expected_dict[key], atol=0, rtol=0)
         elif isinstance(actual, torch.Tensor) and isinstance(expected, torch.Tensor):
             assert_close(actual, expected, atol=0, rtol=0)
 

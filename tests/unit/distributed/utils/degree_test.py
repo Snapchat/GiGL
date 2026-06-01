@@ -1,7 +1,10 @@
+from typing import cast
+
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
+from graphlearn_torch.typing import EdgeType
 from parameterized import param, parameterized
 
 from gigl.distributed.utils.degree import (
@@ -76,12 +79,13 @@ class TestDegreeComputation(TestCase):
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
-        self.assertEqual(set(result.keys()), set(edge_indices.keys()))
+        result_dict = cast("dict[EdgeType, torch.Tensor]", result)  # ty#2374 workaround
+        self.assertEqual(set(result_dict.keys()), set(edge_indices.keys()))
 
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assert_tensor_equality(result[edge_type], expected)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            self.assert_tensor_equality(result_dict[edge_type], expected)
 
     def test_heterogeneous_graph_with_missing_topology(self):
         """Test that edge types with missing topology get empty tensors.
@@ -116,13 +120,14 @@ class TestDegreeComputation(TestCase):
         result = compute_and_broadcast_degree_tensor(dataset.graph)
 
         assert isinstance(result, dict)
-        self.assertEqual(set(result.keys()), set(edge_types))
+        result_dict = cast("dict[EdgeType, torch.Tensor]", result)  # ty#2374 workaround
+        self.assertEqual(set(result_dict.keys()), set(edge_types))
 
         # Edge type with topology should have computed degrees
-        self.assert_tensor_equality(result[edge_type_with_topo], expected_degrees)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assert_tensor_equality(result_dict[edge_type_with_topo], expected_degrees)
 
         # Edge type without topology should have empty tensor
-        self.assertEqual(result[edge_type_without_topo].numel(), 0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(result_dict[edge_type_without_topo].numel(), 0)
 
 
 def _run_local_world_size_correction_homogeneous(
@@ -263,12 +268,13 @@ class TestDatasetDegreeProperty(TestCase):
         result = dataset.degree_tensor
 
         assert isinstance(result, dict)
-        self.assertEqual(set(result.keys()), set(edge_indices.keys()))
+        result_dict = cast("dict[EdgeType, torch.Tensor]", result)  # ty#2374 workaround
+        self.assertEqual(set(result_dict.keys()), set(edge_indices.keys()))
 
         for edge_type, edge_index in edge_indices.items():
             num_nodes = int(edge_index[0].max().item() + 1)
             expected = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-            self.assert_tensor_equality(result[edge_type], expected)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            self.assert_tensor_equality(result_dict[edge_type], expected)
 
 
 class TestHelperFunctions(TestCase):

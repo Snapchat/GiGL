@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -83,9 +83,12 @@ class TestLinkPredictionGNN(TestCase):
         output_node_types = [NodeType("type1"), NodeType("type2")]
         result = model.forward(data, self.device, output_node_types)
         assert isinstance(result, dict)
-        self.assertEqual(set(result.keys()), set(output_node_types))
+        result_dict = cast("dict[NodeType, torch.Tensor]", result)  # ty#2374 workaround
+        self.assertEqual(set(result_dict.keys()), set(output_node_types))
         for node_type in output_node_types:
-            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            self.assert_tensor_equality(
+                result_dict[node_type], torch.tensor([1.0, 2.0])
+            )
 
     def test_forward_heterogeneous_missing_node_types(self):
         encoder = DummyEncoder()

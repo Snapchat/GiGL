@@ -38,7 +38,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 import argparse
 from collections.abc import Iterable, Mapping
 from distutils.util import strtobool
-from typing import Literal
+from typing import Literal, cast
 
 import torch
 from torch.nn.parallel import DistributedDataParallel
@@ -118,13 +118,22 @@ def get_data_loader(
     node_type = QUERY_NODE_TYPE
     if split == "train":
         assert isinstance(dataset.train_node_ids, Mapping)
-        input_nodes = (node_type, dataset.train_node_ids[node_type])  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        train_node_ids = cast(
+            "Mapping[NodeType, torch.Tensor]", dataset.train_node_ids
+        )  # ty#2374 workaround
+        input_nodes = (node_type, train_node_ids[node_type])
     elif split == "val":
         assert isinstance(dataset.val_node_ids, Mapping)
-        input_nodes = (node_type, dataset.val_node_ids[node_type])  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        val_node_ids = cast(
+            "Mapping[NodeType, torch.Tensor]", dataset.val_node_ids
+        )  # ty#2374 workaround
+        input_nodes = (node_type, val_node_ids[node_type])
     elif split == "test":
         assert isinstance(dataset.test_node_ids, Mapping)
-        input_nodes = (node_type, dataset.test_node_ids[node_type])  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        test_node_ids = cast(
+            "Mapping[NodeType, torch.Tensor]", dataset.test_node_ids
+        )  # ty#2374 workaround
+        input_nodes = (node_type, test_node_ids[node_type])
     else:
         raise ValueError(f"Unknown split: {split}")
 
@@ -251,18 +260,27 @@ if __name__ == "__main__":
         _tfrecord_uri_pattern=".*tfrecord",
     )
     assert isinstance(dataset.train_node_ids, Mapping)
+    train_node_ids_mapping = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.train_node_ids
+    )  # ty#2374 workaround
     process_count = int(args.process_count)
-    for node_type, node_ids in dataset.train_node_ids.items():
-        logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        max_training_batches = node_ids.size(0) // (  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+    for node_type, node_ids in train_node_ids_mapping.items():
+        logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")
+        max_training_batches = node_ids.size(0) // (
             int(args.batch_size) * torch.distributed.get_world_size() * process_count
         )
     assert isinstance(dataset.val_node_ids, Mapping)
-    for node_type, node_ids in dataset.val_node_ids.items():
-        logger.info(f"Validation node type {node_type} has {node_ids.size(0)} nodes.")  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+    val_node_ids_mapping = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.val_node_ids
+    )  # ty#2374 workaround
+    for node_type, node_ids in val_node_ids_mapping.items():
+        logger.info(f"Validation node type {node_type} has {node_ids.size(0)} nodes.")
     assert isinstance(dataset.test_node_ids, Mapping)
-    for node_type, node_ids in dataset.test_node_ids.items():
-        logger.info(f"Test node type {node_type} has {node_ids.size(0)} nodes.")  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+    test_node_ids_mapping = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.test_node_ids
+    )  # ty#2374 workaround
+    for node_type, node_ids in test_node_ids_mapping.items():
+        logger.info(f"Test node type {node_type} has {node_ids.size(0)} nodes.")
     training_process_port = get_free_port()
     logger.info(f"Will train for {max_training_batches} batches.")
     if strtobool(args.use_local_saved_model):

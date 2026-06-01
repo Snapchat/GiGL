@@ -1,6 +1,6 @@
 import unittest
 from collections import defaultdict
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -208,13 +208,16 @@ def _run_dblp_supervised(
     supervision_node_type = supervision_edge_type.dst_node_type
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
+    train_node_ids = cast(
+        "dict[NodeType, torch.Tensor]", dataset.train_node_ids
+    )  # ty#2374 workaround
     fanout = [2, 2]
     num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
     create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(anchor_node_type, train_node_ids[anchor_node_type]),
         supervision_edge_type=supervision_edge_type,
         pin_memory_device=torch.device("cpu"),
     )
@@ -230,7 +233,7 @@ def _run_dblp_supervised(
                 local_positive_nodes < len(datum[supervision_node_type].node)
             )
         count += 1
-    assert count == dataset.train_node_ids[anchor_node_type].size(0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+    assert count == train_node_ids[anchor_node_type].size(0)
 
     shutdown_rpc()
 
@@ -249,6 +252,9 @@ def _run_toy_heterogeneous_ablp(
     supervision_edge_type = supervision_edge_types[0]
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
+    train_node_ids = cast(
+        "dict[NodeType, torch.Tensor]", dataset.train_node_ids
+    )  # ty#2374 workaround
     labeled_edge_type = EdgeType(
         supervision_node_type, Relation("to_gigl_positive"), anchor_node_type
     )
@@ -259,7 +265,7 @@ def _run_toy_heterogeneous_ablp(
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=fanout,
-        input_nodes=(anchor_node_type, dataset.train_node_ids[anchor_node_type]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(anchor_node_type, train_node_ids[anchor_node_type]),
         supervision_edge_type=supervision_edge_type,
         # We set the batch size to the number of "user" nodes in the heterogeneous toy graph to guarantee that the dataloader completes an epoch in 1 batch
         batch_size=15,
@@ -275,12 +281,11 @@ def _run_toy_heterogeneous_ablp(
 
     # Ensure that the node ids we should be fanout from are all found in the batch
     assert_tensor_equality(
-        dataset.train_node_ids[anchor_node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        train_node_ids[anchor_node_type],
         datum[anchor_node_type].batch,
     )
     assert (
-        dataset.train_node_ids[anchor_node_type].size(0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        == datum[anchor_node_type].batch_size
+        train_node_ids[anchor_node_type].size(0) == datum[anchor_node_type].batch_size
     )
 
     global_anchor_nodes = []

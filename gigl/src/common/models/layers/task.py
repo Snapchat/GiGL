@@ -1,6 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
-from typing import Optional, Set, Tuple
+from typing import Optional, Set, Tuple, cast
 
 import torch
 import torch.nn as nn
@@ -707,10 +707,12 @@ class NodeAnchorBasedLinkPredictionTasks:
     ) -> list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]]:
         tasks_list: list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]] = []
         for task in list(self._task_to_weights_map.keys()):
-            fn = self._task_to_fn_map[task]
+            fn = cast(
+                "NodeAnchorBasedLinkPredictionBaseTask", self._task_to_fn_map[task]
+            )  # ty#2374 workaround
             weight = self._task_to_weights_map[task]
             tasks_list.append(
-                (fn, weight)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+                (fn, weight)
             )  # https://github.com/Snapchat/GiGL/issues/408
         return tasks_list
 

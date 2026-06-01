@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping
+from typing import cast
 
 import torch
 import torch.multiprocessing as mp
@@ -143,9 +144,12 @@ def _run_distributed_heterogeneous_neighbor_loader(
 ):
     create_test_process_group()
     assert isinstance(dataset.node_ids, Mapping)
+    node_ids = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.node_ids
+    )  # ty#2374 workaround
     loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(NodeType("author"), node_ids[NodeType("author")]),
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
     )
@@ -237,10 +241,13 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
     create_test_process_group()
 
     assert isinstance(dataset.node_ids, Mapping)
+    node_ids = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.node_ids
+    )  # ty#2374 workaround
 
     user_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(_USER, node_ids[_USER]),
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
@@ -248,7 +255,7 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
 
     story_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_STORY, dataset.node_ids[_STORY]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(_STORY, node_ids[_STORY]),
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
@@ -315,10 +322,13 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
     create_test_process_group()
 
     assert isinstance(dataset.node_ids, Mapping)
+    node_ids = cast(
+        "Mapping[NodeType, torch.Tensor]", dataset.node_ids
+    )  # ty#2374 workaround
 
     user_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(_USER, node_ids[_USER]),
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,
@@ -326,7 +336,7 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
 
     story_loader = DistNeighborLoader(
         dataset=dataset,
-        input_nodes=(_STORY, dataset.node_ids[_STORY]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        input_nodes=(_STORY, node_ids[_STORY]),
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
         batch_size=batch_size,

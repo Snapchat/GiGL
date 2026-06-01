@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, cast
 
 import torch
 from torch.nn import functional as F
@@ -10,16 +10,19 @@ def l2_normalize_embeddings(
     node_typed_embeddings: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
 ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
     if isinstance(node_typed_embeddings, dict):
-        for node_type in node_typed_embeddings:
-            node_typed_embeddings[node_type] = F.normalize(
-                node_typed_embeddings[node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        node_typed_embeddings_dict = cast(
+            "dict[NodeType, torch.Tensor]", node_typed_embeddings
+        )  # ty#2374 workaround
+        for node_type in node_typed_embeddings_dict:
+            node_typed_embeddings_dict[node_type] = F.normalize(
+                node_typed_embeddings_dict[node_type],
                 p=2,
                 dim=-1,
-            )  # ty: ignore[invalid-assignment] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            )
+        return node_typed_embeddings_dict
     elif isinstance(node_typed_embeddings, torch.Tensor):
-        node_typed_embeddings = F.normalize(node_typed_embeddings, p=2, dim=-1)
+        return F.normalize(node_typed_embeddings, p=2, dim=-1)
     else:
         raise ValueError(
             f"Expected type torch.Tensor or dict[NodeType, torch.Tensor], got type {type(node_typed_embeddings)}"
         )
-    return node_typed_embeddings

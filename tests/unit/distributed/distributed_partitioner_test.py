@@ -561,7 +561,10 @@ class DistRandomPartitionerTestCase(TestCase):
             assert isinstance(output_labeled_edge_index, abc.Mapping), (
                 "Homogeneous output detected from labels for heterogeneous input"
             )
-            entity_iterable = list(output_labeled_edge_index.items())  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+            output_labeled_edge_index_mapping = cast(
+                "abc.Mapping[EdgeType, torch.Tensor]", output_labeled_edge_index
+            )  # ty#2374 workaround
+            entity_iterable = list(output_labeled_edge_index_mapping.items())
         else:
             assert isinstance(output_labeled_edge_index, torch.Tensor), (
                 "Heterogeneous output detected from labels for homogeneous input"

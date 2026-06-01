@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union, overload
+from typing import Literal, Optional, Tuple, TypeVar, Union, cast, overload
 
 import graphlearn_torch as glt
 import torch
@@ -514,26 +514,33 @@ class DistDataset(glt.distributed.DistDataset):
             if splits is not None:
                 logger.info("Using node ids that we got from the splitter.")
                 if not isinstance(splits, tuple):
-                    if len(splits) == 1:
+                    splits_mapping = cast(
+                        "Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]",
+                        splits,
+                    )  # ty#2374 workaround
+                    if len(splits_mapping) == 1:
                         logger.warning(
-                            f"Got splits as a mapping, which is intended for heterogeneous graphs. We recieved the node types: {splits.keys()}. Since we only got one key, we will use it as the node type."
+                            f"Got splits as a mapping, which is intended for heterogeneous graphs. We recieved the node types: {splits_mapping.keys()}. Since we only got one key, we will use it as the node type."
                         )
-                        train_nodes, val_nodes, test_nodes = next(iter(splits.values()))
+                        train_nodes, val_nodes, test_nodes = next(
+                            iter(splits_mapping.values())
+                        )
                     else:
                         raise ValueError(
-                            f"Got splits as a mapping, which is intended for heterogeneous graphs. We recieved the node types: {splits.keys()}. Please use a splitter that returns a tuple of tensors."
+                            f"Got splits as a mapping, which is intended for heterogeneous graphs. We recieved the node types: {splits_mapping.keys()}. Please use a splitter that returns a tuple of tensors."
                         )
                 else:
-                    train_nodes, val_nodes, test_nodes = splits
-                self._num_train = (
-                    train_nodes.numel()  # ty: ignore[unresolved-attribute]
-                )
-                self._num_val = val_nodes.numel()  # ty: ignore[unresolved-attribute]
-                self._num_test = test_nodes.numel()  # ty: ignore[unresolved-attribute]
+                    splits_tuple = cast(
+                        "Tuple[torch.Tensor, torch.Tensor, torch.Tensor]", splits
+                    )  # ty#2374 workaround
+                    train_nodes, val_nodes, test_nodes = splits_tuple
+                self._num_train = train_nodes.numel()
+                self._num_val = val_nodes.numel()
+                self._num_test = test_nodes.numel()
                 self._node_ids = _append_non_split_node_ids(
-                    train_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    val_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    test_nodes,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    train_nodes,
+                    val_nodes,
+                    test_nodes,
                     node_ids_on_machine,
                 )
             else:
@@ -700,17 +707,20 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(node_features, Mapping):
+            node_features_mapping = cast(
+                "Mapping[NodeType, torch.Tensor]", node_features
+            )  # ty#2374 workaround
             self._node_feature_info = {}
-            for node_type, node_features_per_node_type in node_features.items():
+            for node_type, node_features_per_node_type in node_features_mapping.items():
                 # We cannot make isinstance checks with NodeType, so we check
                 # if it is not an edge type, since it must be one of the two.
                 assert not isinstance(node_type, EdgeType)
                 self._node_feature_info[node_type] = FeatureInfo(
-                    dim=node_features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=node_features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dim=node_features_per_node_type.size(1),
+                    dtype=node_features_per_node_type.dtype,
                 )
             logger.info(
-                f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
+                f"Initialized node features for heterogeneous graph to dataset with node types: {node_features_mapping.keys()}"
             )
         else:
             self._node_feature_info = FeatureInfo(
@@ -785,12 +795,15 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(edge_features, Mapping):
+            edge_features_mapping = cast(
+                "Mapping[EdgeType, torch.Tensor]", edge_features
+            )  # ty#2374 workaround
             self._edge_feature_info = {}
-            for edge_type, edge_features_per_edge_type in edge_features.items():
+            for edge_type, edge_features_per_edge_type in edge_features_mapping.items():
                 assert isinstance(edge_type, EdgeType)
                 self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dim=edge_features_per_edge_type.size(1),
+                    dtype=edge_features_per_edge_type.dtype,
                 )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"

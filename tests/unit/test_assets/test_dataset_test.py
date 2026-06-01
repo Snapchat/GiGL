@@ -1,5 +1,7 @@
 """Unit tests for test_dataset factory functions."""
 
+from typing import cast
+
 import torch
 from absl.testing import absltest
 
@@ -84,8 +86,11 @@ class TestCreateHeterogeneousDataset(TestCase):
         # Verify node counts (5 users, 5 stories in default graph)
         node_ids = dataset.node_ids
         assert isinstance(node_ids, dict)
-        self.assertEqual(node_ids[USER].shape[0], 5)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        self.assertEqual(node_ids[STORY].shape[0], 5)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        node_ids_dict = cast(
+            "dict[NodeType, torch.Tensor]", node_ids
+        )  # ty#2374 workaround
+        self.assertEqual(node_ids_dict[USER].shape[0], 5)
+        self.assertEqual(node_ids_dict[STORY].shape[0], 5)
 
         # Verify feature info is None when no features provided
         self.assertIsNone(dataset.node_feature_info)
@@ -119,8 +124,11 @@ class TestCreateHeterogeneousDataset(TestCase):
         # Verify node counts from custom edge indices
         node_ids = dataset.node_ids
         assert isinstance(node_ids, dict)
-        self.assertEqual(node_ids[USER].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        self.assertEqual(node_ids[STORY].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        node_ids_dict = cast(
+            "dict[NodeType, torch.Tensor]", node_ids
+        )  # ty#2374 workaround
+        self.assertEqual(node_ids_dict[USER].shape[0], 3)
+        self.assertEqual(node_ids_dict[STORY].shape[0], 3)
 
         # Verify feature dimension from custom features
         expected_feature_info = {
@@ -183,11 +191,20 @@ class TestCreateHeterogeneousDatasetWithLabels(TestCase):
         assert isinstance(train_node_ids, dict)
         assert isinstance(val_node_ids, dict)
         assert isinstance(test_node_ids, dict)
+        train_node_ids_dict = cast(
+            "dict[NodeType, torch.Tensor]", train_node_ids
+        )  # ty#2374 workaround
+        val_node_ids_dict = cast(
+            "dict[NodeType, torch.Tensor]", val_node_ids
+        )  # ty#2374 workaround
+        test_node_ids_dict = cast(
+            "dict[NodeType, torch.Tensor]", test_node_ids
+        )  # ty#2374 workaround
 
         # Verify split sizes
-        self.assertEqual(train_node_ids[USER].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        self.assertEqual(val_node_ids[USER].shape[0], 1)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        self.assertEqual(test_node_ids[USER].shape[0], 1)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(train_node_ids_dict[USER].shape[0], 3)
+        self.assertEqual(val_node_ids_dict[USER].shape[0], 1)
+        self.assertEqual(test_node_ids_dict[USER].shape[0], 1)
 
     def test_missing_positive_labels_raises_error(self) -> None:
         """Test that missing positive labels for split nodes raises an error."""

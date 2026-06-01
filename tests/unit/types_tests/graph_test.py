@@ -1,4 +1,4 @@
-from typing import Literal, Union
+from typing import Literal, Union, cast
 
 import torch
 from absl.testing import absltest
@@ -300,10 +300,13 @@ class GraphTypesTyest(TestCase):
         self.assertIsNone(graph_tensors.positive_label)
         self.assertIsNone(graph_tensors.negative_label)
         assert isinstance(graph_tensors.edge_index, dict)
-        self.assertEqual(graph_tensors.edge_index.keys(), expected_edge_index.keys())
+        edge_index_dict = cast(
+            "dict[EdgeType, torch.Tensor]", graph_tensors.edge_index
+        )  # ty#2374 workaround
+        self.assertEqual(edge_index_dict.keys(), expected_edge_index.keys())
         for edge_type, expected_tensor in expected_edge_index.items():
             torch.testing.assert_close(
-                graph_tensors.edge_index[edge_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                edge_index_dict[edge_type],
                 expected_tensor,
             )
 

@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 
@@ -515,11 +515,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if is_hetero:
             assert isinstance(nodes_to_sample, dict)
             assert input_type is not None
+            nodes_to_sample_dict = cast(
+                "dict[NodeType, torch.Tensor]", nodes_to_sample
+            )  # ty#2374 workaround
 
             # Register all seeds (anchors + supervision nodes for ABLP) with the
             # inducer first, so they occupy the lowest local indices.  src_dict maps
             # NodeType -> global IDs (same values as nodes_to_sample).
-            src_dict = inducer.init_node(nodes_to_sample)
+            src_dict = inducer.init_node(nodes_to_sample_dict)
 
             # Compute PPR for all seed types concurrently, collecting flat global
             # neighbor IDs, weights, and per-seed counts.  Build nbr_dict for a
@@ -534,10 +537,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # Running them with asyncio.gather allows their fetch phases to overlap,
             # which is most beneficial when there are 2+ distinct seed node types
             # (e.g. cross-type supervision edges like user→story).
-            seed_types = list(nodes_to_sample.keys())
+            seed_types = list(nodes_to_sample_dict.keys())
             ppr_results = await asyncio.gather(
                 *[
-                    self._compute_ppr_scores(nodes_to_sample[seed_type], seed_type)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    self._compute_ppr_scores(nodes_to_sample_dict[seed_type], seed_type)
                     for seed_type in seed_types
                 ]
             )
@@ -553,23 +556,32 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 assert isinstance(ntype_to_flat_ids, dict)
                 assert isinstance(ntype_to_flat_weights, dict)
                 assert isinstance(ntype_to_valid_counts, dict)
+                ntype_to_flat_ids_dict = cast(
+                    "dict[NodeType, torch.Tensor]", ntype_to_flat_ids
+                )  # ty#2374 workaround
+                ntype_to_flat_weights_dict = cast(
+                    "dict[NodeType, torch.Tensor]", ntype_to_flat_weights
+                )  # ty#2374 workaround
+                ntype_to_valid_counts_dict = cast(
+                    "dict[NodeType, torch.Tensor]", ntype_to_valid_counts
+                )  # ty#2374 workaround
 
-                for ntype, flat_ids in ntype_to_flat_ids.items():
+                for ntype, flat_ids in ntype_to_flat_ids_dict.items():
                     ppr_edge_type: EdgeType = (seed_type, "ppr", ntype)
-                    valid_counts = ntype_to_valid_counts[ntype]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    valid_counts = ntype_to_valid_counts_dict[ntype]
                     ppr_edge_type_to_flat_weights[ppr_edge_type] = (
-                        ntype_to_flat_weights[ntype]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                        ntype_to_flat_weights_dict[ntype]
                     )
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
                     # gets one consistent local index in node_dict[ntype].
-                    if flat_ids.numel() > 0:  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    if flat_ids.numel() > 0:
                         nbr_dict[ppr_edge_type] = [
                             src_dict[seed_type],
                             flat_ids,
                             valid_counts,
-                        ]  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+                        ]
 
             # induce_next processes all PPR edge types in nbr_dict in one
             # pass, assigning local indices to neighbors not yet registered and

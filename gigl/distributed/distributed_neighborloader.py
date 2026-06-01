@@ -1,7 +1,7 @@
 import sys
 from collections import abc
 from itertools import count
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -482,13 +482,16 @@ class DistNeighborLoader(BaseDistLoader):
             else:
                 node_type = None
         else:
-            node_type, node_ids = input_nodes
+            input_nodes_tuple = cast(
+                "Tuple[NodeType, torch.Tensor]", input_nodes
+            )  # ty#2374 workaround
+            node_type, node_ids = input_nodes_tuple
             assert isinstance(dataset.node_ids, abc.Mapping), (
                 "Dataset must be heterogeneous if provided input nodes are a tuple."
             )
 
         curr_process_nodes = shard_nodes_by_process(
-            input_nodes=node_ids,  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            input_nodes=node_ids,
             local_process_rank=local_rank,
             local_process_world_size=local_world_size,
         )
