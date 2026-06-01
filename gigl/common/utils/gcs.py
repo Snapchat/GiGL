@@ -84,10 +84,12 @@ class GcsUtils:
             project (Optional[str]): The GCP project ID. Defaults to None.
         """
         self.__storage_client = storage.Client(project=project)
-        assert isinstance(self.__storage_client.project, str), (
-            f"Expected storage client project to be a str, got {type(self.__storage_client.project)}"
-        )
-        self.__project: str = self.__storage_client.project
+        project = self.__storage_client.project
+        if not isinstance(project, str):
+            raise TypeError(
+                f"Expected storage client project to be a str, got {type(project).__name__}"
+            )
+        self.__project: str = project
 
     def upload_from_string(self, gcs_path: GcsUri, content: str) -> None:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)

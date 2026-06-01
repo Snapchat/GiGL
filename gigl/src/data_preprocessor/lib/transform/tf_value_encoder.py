@@ -71,7 +71,7 @@ class TFValueEncoder:
         # prepare value
         if value is None:
             value = TFValueEncoder.get_value_to_impute(dtype=dtype)
-        value_list: list = value if isinstance(value, list) else [value]
+        value_list: list[Any] = value if isinstance(value, list) else [value]
 
         # encode value
         if dtype.is_integer or dtype.is_bool:
