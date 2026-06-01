@@ -81,7 +81,7 @@ class DistDataset(glt.distributed.DistDataset):
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ] = None,
         degree_tensor: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         ] = None,
         max_labels_per_anchor_node: Optional[int] = None,
         edge_weights: Optional[
@@ -111,7 +111,7 @@ class DistDataset(glt.distributed.DistDataset):
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
-            degree_tensor: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
+            degree_tensor: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
             max_labels_per_anchor_node (Optional[int]): Optional cap for how many
                 labels to materialize per anchor node for ABLP label fetching.
             edge_weights: Per-edge sampling weights for this rank's partition.
@@ -152,7 +152,7 @@ class DistDataset(glt.distributed.DistDataset):
         self._edge_feature_info = edge_feature_info
 
         self._degree_tensor: Optional[
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         ] = degree_tensor
         self._max_labels_per_anchor_node = max_labels_per_anchor_node
         self._edge_weights: Optional[
@@ -315,13 +315,15 @@ class DistDataset(glt.distributed.DistDataset):
     @property
     def degree_tensor(
         self,
-    ) -> Union[torch.Tensor, dict[EdgeType, torch.Tensor]]:
+    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
         """
-        Lazily compute and return the degree tensor for the graph.
+        Lazily compute and return degree tensors for the graph.
 
         On first access, computes node degrees from the graph partition and uses
-        all-reduce to aggregate across all machines. Requires torch.distributed
-        to be initialized.
+        all-reduce to aggregate across all machines. For heterogeneous graphs,
+        degrees are summed across all incident edge types per anchor node type
+        before the all-reduce, so the per-edge-type tensor is never stored.
+        Requires torch.distributed to be initialized.
 
         Over-counting correction (for processes sharing the same data on the same
         machine) is handled automatically by detecting the distributed topology.
@@ -329,9 +331,9 @@ class DistDataset(glt.distributed.DistDataset):
         The result is cached for subsequent accesses.
 
         Returns:
-            Union[torch.Tensor, dict[EdgeType, torch.Tensor]]: The aggregated degree tensor.
-                - For homogeneous graphs: A tensor of shape [num_nodes].
-                - For heterogeneous graphs: A dict mapping EdgeType to degree tensors.
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]: Degree tensor for
+                homogeneous graphs, or total degree tensors keyed by node type
+                for heterogeneous graphs.
 
         Raises:
             RuntimeError: If torch.distributed is not initialized.
@@ -341,7 +343,9 @@ class DistDataset(glt.distributed.DistDataset):
             if self.graph is None:
                 raise ValueError("Dataset graph is None. Cannot compute degrees.")
 
-            self._degree_tensor = compute_and_broadcast_degree_tensor(self.graph)
+            self._degree_tensor = compute_and_broadcast_degree_tensor(
+                self.graph, self._edge_dir
+            )
         return self._degree_tensor
 
     @property
@@ -943,7 +947,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
         Optional[int],
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     ]:
@@ -967,7 +971,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
-            Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Degree tensors, will be a dict if heterogeneous
+            Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Degree tensors
             Optional[int]: Optional per-anchor label cap for ABLP label fetching
             Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]: Per-edge sampling weights for this rank's partition
         """
@@ -1256,7 +1260,7 @@ def _rebuild_distributed_dataset(
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type
-        Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # Degree tensors
+        Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],  # Degree tensors
         Optional[int],  # Optional per-anchor label cap for ABLP label fetching
         Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],  # edge_weights
     ],

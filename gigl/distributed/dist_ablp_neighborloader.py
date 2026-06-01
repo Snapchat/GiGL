@@ -16,10 +16,6 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_ppr_sampler import (
-    PPR_EDGE_INDEX_METADATA_KEY,
-    PPR_WEIGHT_METADATA_KEY,
-)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler import (
@@ -28,21 +24,18 @@ from gigl.distributed.sampler import (
     ABLPNodeSamplerInput,
 )
 from gigl.distributed.sampler_options import (
-    PPRSamplerOptions,
     SamplerOptions,
     resolve_sampler_options,
 )
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
-    attach_ppr_outputs,
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
-    strip_non_ppr_edge_types,
 )
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -882,16 +875,7 @@ class DistABLPLoader(BaseDistLoader):
 
         data = self._set_labels(data, positive_labels, negative_labels)
 
-        if isinstance(self._sampler_options, PPRSamplerOptions):
-            matched_ppr, metadata = extract_edge_type_metadata(
-                metadata=metadata,
-                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
-            )
-            ppr_edge_indices = matched_ppr[PPR_EDGE_INDEX_METADATA_KEY]
-            ppr_weights = matched_ppr[PPR_WEIGHT_METADATA_KEY]
-            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
-            if isinstance(data, HeteroData):
-                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
+        data, metadata = self._apply_ppr_outputs(data, metadata)
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.
