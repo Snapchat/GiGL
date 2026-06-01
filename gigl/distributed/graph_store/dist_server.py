@@ -96,6 +96,7 @@ from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.share_memory import share_memory
 
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
 r""" Interval (in seconds) to check exit status of server.
@@ -603,6 +604,10 @@ class DistServer:
             else:
                 backend_id = self._next_backend_id
                 self._next_backend_id += 1
+                degree_tensors = None
+                if isinstance(opts.sampler_options, PPRSamplerOptions):
+                    degree_tensors = self.dataset.degree_tensor
+                    share_memory(degree_tensors)
                 backend_state = SamplingBackendState(
                     backend_id=backend_id,
                     backend_key=opts.backend_key,
@@ -612,9 +617,7 @@ class DistServer:
                         sampling_config=opts.sampling_config,
                         sampler_options=opts.sampler_options,
                         # We only need degree tensor for PPR sampling
-                        degree_tensors=self.dataset.degree_tensor
-                        if isinstance(opts.sampler_options, PPRSamplerOptions)
-                        else None,
+                        degree_tensors=degree_tensors,
                     ),
                 )
                 self._backend_id_by_backend_key[opts.backend_key] = backend_id

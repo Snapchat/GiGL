@@ -17,7 +17,7 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
-from gigl.types.graph import is_label_edge_type
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
 # write metadata keys (f"{KEY}{repr(edge_type)}" → e.g. "ppr_edge_index.('user', 'to', 'story')")
@@ -26,14 +26,14 @@ from gigl.types.graph import is_label_edge_type
 PPR_EDGE_INDEX_METADATA_KEY = "ppr_edge_index."
 PPR_WEIGHT_METADATA_KEY = "ppr_weight."
 
-# Sentinel type names for homogeneous graphs.  The PPR algorithm uses
-# dict[NodeType, ...] internally for both homo and hetero graphs; these
-# sentinels let the homogeneous path reuse the same dict-based code.
-_PPR_HOMOGENEOUS_NODE_TYPE = "ppr_homogeneous_node_type"
+# Sentinel edge type for homogeneous graphs.  The PPR algorithm uses
+# dict[NodeType, ...] internally for both homo and hetero graphs; the
+# DEFAULT_HOMOGENEOUS_NODE_TYPE sentinel lets the homogeneous path reuse
+# the same dict-based code.
 _PPR_HOMOGENEOUS_EDGE_TYPE = (
-    _PPR_HOMOGENEOUS_NODE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     "to",
-    _PPR_HOMOGENEOUS_NODE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
 
@@ -74,10 +74,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
-        total_degree_dtype: Dtype for precomputed total-degree tensors. Defaults
-            to ``torch.int32``. Use a larger dtype if nodes have exceptionally high
-            aggregate degrees.
-        degree_tensors: Pre-computed degree tensors from the dataset.
+        degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
+            graphs use a single tensor; heterogeneous graphs use tensors keyed
+            by NodeType. The colocated and graph-store loader paths retrieve
+            these through ``DistDataset.degree_tensor`` and move them to shared
+            memory before worker handoff.
     """
 
     def __init__(
@@ -87,8 +88,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
         num_neighbors_per_hop: int = 100_000,
-        total_degree_dtype: torch.dtype = torch.int32,
-        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
+        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
         **kwargs,
     ):
@@ -125,22 +125,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
                 self._node_type_to_edge_types[anchor_type].append(etype)
         else:
-            self._node_type_to_edge_types[_PPR_HOMOGENEOUS_NODE_TYPE] = [
+            self._node_type_to_edge_types[DEFAULT_HOMOGENEOUS_NODE_TYPE] = [
                 _PPR_HOMOGENEOUS_EDGE_TYPE
             ]
             self._is_homogeneous = True
 
-        # Precompute total degree per node type: the sum of degrees across all
-        # edge types traversable from that node type.  This is a graph-level
-        # property used on every PPR iteration, so computing it once at init
-        # avoids per-node summation and cache lookups in the hot loop.
-        # TODO (mkolodner-sc): This trades memory for throughput — we
-        # materialize a tensor per node type to avoid recomputing total degree
-        # on every neighbor during sampling.  Computing it here (rather than in
-        # the dataset) also keeps the door open for edge-specific degree
-        # strategies.  If memory becomes a bottleneck, revisit this.
-        self._node_type_to_total_degree: dict[NodeType, torch.Tensor] = (
-            self._build_total_degree_tensors(degree_tensors, total_degree_dtype)
+        # Convert the public homogeneous/heterogeneous degree-tensor shape to
+        # the node-type keyed form used internally by PPR.
+        self._node_type_to_total_degree = self._convert_degree_tensors_to_dict(
+            degree_tensors
         )
 
         # Build integer ID mappings for the C++ forward-push kernel.  String
@@ -191,57 +184,26 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for nt in all_node_types
         ]
 
-    def _build_total_degree_tensors(
+    def _convert_degree_tensors_to_dict(
         self,
-        degree_tensors: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
-        dtype: torch.dtype,
+        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
     ) -> dict[NodeType, torch.Tensor]:
-        """Build total-degree tensors by summing per-edge-type degrees for each node type.
+        """Convert degree tensors to the node-type keyed shape PPR uses."""
+        if isinstance(degree_tensors, torch.Tensor):
+            if not self._is_homogeneous:
+                raise ValueError(
+                    "Expected degree tensors keyed by node type for heterogeneous PPR sampling."
+                )
+            return {DEFAULT_HOMOGENEOUS_NODE_TYPE: degree_tensors}
 
-        For homogeneous graphs, the total degree is just the single degree tensor.
-        For heterogeneous graphs, it sums degree tensors across all edge types
-        traversable from each node type, padding shorter tensors with zeros.
-
-        Args:
-            degree_tensors: Per-edge-type degree tensors from the dataset.
-            dtype: Dtype for the output tensors.
-
-        Returns:
-            Dict mapping node type to a 1-D tensor of total degrees.
-        """
-        result: dict[NodeType, torch.Tensor] = {}
-
-        if self._is_homogeneous:
-            assert isinstance(degree_tensors, torch.Tensor)
-            # Single edge type: degree values fit directly in the target dtype.
-            result[_PPR_HOMOGENEOUS_NODE_TYPE] = degree_tensors.to(dtype)
-        else:
-            assert isinstance(degree_tensors, dict)
-            dtype_max = torch.iinfo(dtype).max
-            for node_type, edge_types in self._node_type_to_edge_types.items():
-                max_len = 0
-                for et in edge_types:
-                    if et not in degree_tensors:
-                        raise ValueError(
-                            f"Edge type {et} not found in degree tensors. "
-                            f"Available: {list(degree_tensors.keys())}"
-                        )
-                    max_len = max(max_len, len(degree_tensors[et]))
-
-                # Each degree tensor is indexed by node ID (derived from CSR
-                # indptr), so index i in every edge type's tensor refers to
-                # the same node.  Element-wise summation gives the total degree
-                # per node across all edge types.  Shorter tensors are padded
-                # implicitly (only the first len(et_degrees) entries are added).
-                # Sum in int64: aggregate degrees are bounded by partition size
-                # and fit comfortably within int64 range in practice.
-                summed = torch.zeros(max_len, dtype=torch.int64)
-                for et in edge_types:
-                    et_degrees = degree_tensors[et]
-                    summed[: len(et_degrees)] += et_degrees.to(torch.int64)
-                result[node_type] = summed.clamp(max=dtype_max).to(dtype)
-
-        return result
+        missing_anchor_types = set(self._node_type_to_edge_types.keys()) - set(
+            degree_tensors.keys()
+        )
+        if missing_anchor_types:
+            raise ValueError(
+                f"Missing PPR degree tensors for node types: {missing_anchor_types}"
+            )
+        return degree_tensors
 
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""
@@ -294,8 +256,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 self._sample_one_hop(
                     srcs=nodes_by_etype_id[eid].to(device),
                     num_nbr=self._num_neighbors_per_hop,
-                    # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
-                    etype=None if etype == _PPR_HOMOGENEOUS_EDGE_TYPE else etype,
+                    # _sample_one_hop expects None only for true homogeneous graphs.
+                    # Labeled homogeneous ABLP graphs are hetero-backed because label
+                    # edges are represented as separate edge types, so they still need
+                    # the explicit default edge type here.
+                    etype=(
+                        None
+                        if self._is_homogeneous and etype == _PPR_HOMOGENEOUS_EDGE_TYPE
+                        else etype
+                    ),
                 )
             )
         outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
@@ -362,7 +331,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             valid_counts      = tensor([1,  3,   2,   0])
         """
         if seed_node_type is None:
-            seed_node_type = _PPR_HOMOGENEOUS_NODE_TYPE
+            seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
 
         ppr_state = PPRForwardPush(
@@ -422,12 +391,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if self._is_homogeneous:
             assert (
                 len(ntype_to_flat_ids) == 1
-                and _PPR_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
+                and DEFAULT_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
             )
             return (
-                ntype_to_flat_ids[_PPR_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_flat_weights[_PPR_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_valid_counts[_PPR_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
             )
         else:
             return (
@@ -636,17 +605,32 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
 
         else:
-            assert isinstance(nodes_to_sample, torch.Tensor)
+            if isinstance(nodes_to_sample, torch.Tensor):
+                homogeneous_nodes_to_sample = nodes_to_sample
+            elif isinstance(nodes_to_sample, dict):
+                node_types = set(nodes_to_sample.keys())
+                if node_types != {DEFAULT_HOMOGENEOUS_NODE_TYPE}:
+                    raise ValueError(
+                        f"Expected only {DEFAULT_HOMOGENEOUS_NODE_TYPE} for homogeneous PPR sampling, "
+                        f"received node types: {node_types}"
+                    )
+                homogeneous_nodes_to_sample = nodes_to_sample[
+                    DEFAULT_HOMOGENEOUS_NODE_TYPE
+                ]
+            else:
+                raise TypeError(
+                    f"Expected Tensor or node-type mapping for homogeneous PPR sampling, got {type(nodes_to_sample)}"
+                )
 
             # Register seeds; local indices 0..N-1 are assigned internally.
             # srcs holds their global IDs (same values as nodes_to_sample).
-            srcs = inducer.init_node(nodes_to_sample)
+            srcs = inducer.init_node(homogeneous_nodes_to_sample)
 
             (
                 homo_flat_ids,
                 homo_flat_weights,
                 homo_valid_counts,
-            ) = await self._compute_ppr_scores(nodes_to_sample, None)
+            ) = await self._compute_ppr_scores(homogeneous_nodes_to_sample, None)
             assert isinstance(homo_flat_ids, torch.Tensor)
             assert isinstance(homo_flat_weights, torch.Tensor)
             assert isinstance(homo_valid_counts, torch.Tensor)

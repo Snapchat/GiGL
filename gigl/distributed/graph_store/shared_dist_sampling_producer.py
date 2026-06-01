@@ -93,7 +93,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.typing import EdgeType
+from graphlearn_torch.typing import NodeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
@@ -338,7 +338,7 @@ def _shared_sampling_worker_loop(
     event_queue: mp.Queue,
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
-    degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ) -> None:
     """Run one shared graph-store worker that schedules many input channels.
 
@@ -363,8 +363,9 @@ def _shared_sampling_worker_loop(
         sampler_options: GiGL sampler configuration (e.g. ``PPRSamplerOptions``
             for PPR-based sampling).
         degree_tensors: Pre-computed degree tensors for PPR sampling, or
-            ``None`` for non-PPR samplers.  Materialized once in the parent
-            process by ``_prepare_degree_tensors`` and shared across workers.
+            ``None`` for non-PPR samplers.  Materialized once in the parent via
+            ``DistDataset.degree_tensor`` and moved to shared memory before
+            backend construction.
 
     Algorithm:
         1. Initialize RPC, sampler infrastructure, and signal the parent via barrier.
@@ -835,7 +836,7 @@ class SharedDistSamplingBackend:
         worker_options: RemoteDistSamplingWorkerOptions,
         sampling_config: SamplingConfig,
         sampler_options: SamplerOptions,
-        degree_tensors: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+        degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
     ) -> None:
         """Initialize the shared sampling backend.
 
@@ -871,7 +872,20 @@ class SharedDistSamplingBackend:
         self._completed_workers: defaultdict[tuple[int, int], set[int]] = defaultdict(
             set
         )
-        self._degree_tensors = degree_tensors
+        self._degree_tensors: Optional[
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ] = degree_tensors
+        if degree_tensors is not None:
+            if isinstance(degree_tensors, dict):
+                logger.info(
+                    f"Pre-computed degree tensors for PPR sampling across "
+                    f"{len(degree_tensors)} node types."
+                )
+            else:
+                logger.info(
+                    f"Pre-computed degree tensor for PPR sampling with "
+                    f"{degree_tensors.size(0)} nodes."
+                )
 
     def init_backend(self) -> None:
         """Initialize worker processes once for this backend.
