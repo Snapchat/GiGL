@@ -18,8 +18,13 @@ __all__ = [
     "shutdown_compute_process",
 ]
 
+from gigl.distributed.graph_store.compute import (
+    init_compute_process,
+    shutdown_compute_process,
+)
+from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.graph_store.storage_utils import (
+    build_storage_dataset,
+    run_storage_server,
+)
 from gigl.distributed.utils import GraphStoreInfo, get_graph_store_info
-
-from .compute import init_compute_process, shutdown_compute_process
-from .remote_dist_dataset import RemoteDistDataset
-from .storage_utils import build_storage_dataset, run_storage_server
