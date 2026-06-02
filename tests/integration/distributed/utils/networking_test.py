@@ -1,10 +1,12 @@
 import uuid
 from textwrap import dedent
 
+from google.cloud.aiplatform_v1.types import env_var
 from parameterized import param, parameterized
 
 from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.env.constants import GIGL_RESOURCE_CONFIG_URI_ENV_KEY
 from gigl.env.pipelines_config import get_resource_config
 from tests.test_assets.test_case import TestCase
 
@@ -63,12 +65,23 @@ class NetworkingUtlsIntegrationTest(TestCase):
                 """
             ),
         ]
+        # get_graph_store_info() calls get_resource_config() (to build the readiness
+        # URI), so the launched workers need GIGL_RESOURCE_CONFIG_URI in their env.
+        # launch_graph_store_job propagates the compute pool's environment_variables
+        # to both the compute and storage container specs.
+        resource_config_env_vars = [
+            env_var.EnvVar(
+                name=GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
+                value=self._resource_config.get_resource_config_uri,
+            )
+        ]
         compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
             replica_count=compute_nodes,
             command=command,
             machine_type="n2-standard-8",
+            environment_variables=resource_config_env_vars,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
