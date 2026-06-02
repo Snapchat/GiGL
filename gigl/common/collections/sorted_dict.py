@@ -1,5 +1,5 @@
 from collections.abc import Iterator, Mapping
-from typing import Any, Protocol, Self, TypeVar
+from typing import Any, Protocol, Self, TypeVar, cast
 
 
 class _Comparable(Protocol):
@@ -83,11 +83,13 @@ class SortedDict(Mapping[KT, VT]):
         if len(self) != len(other):
             return False
 
-        other_items: dict[Any, Any] = dict(other.items())
+        # isinstance(other, Mapping) loses generic params; narrow to an
+        # indexable Mapping[Any, Any] so `other_mapping[self_key]` type-checks.
+        other_mapping = cast(Mapping[Any, Any], other)
         for self_key, self_val in self.items():
-            if self_key not in other_items:
+            if self_key not in other_mapping:
                 return False
-            if self_val != other_items[self_key]:
+            if self_val != other_mapping[self_key]:
                 return False
         return True
 
