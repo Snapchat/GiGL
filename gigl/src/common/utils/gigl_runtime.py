@@ -10,7 +10,6 @@ from gigl.src.common.utils.metrics_service_provider import initialize_metrics
 
 
 def initialize_gigl_runtime(
-    *,
     applied_task_identifier: str,
     task_config_uri: Uri,
     resource_config_uri: Uri,
