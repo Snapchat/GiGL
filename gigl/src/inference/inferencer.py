@@ -4,12 +4,13 @@ from typing import Optional
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
-from gigl.src.common.utils.metrics_service_provider import initialize_metrics
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.src.inference.v1.gnn_inferencer import InferencerV1
 from gigl.src.inference.v2.glt_inferencer import GLTInferencer
@@ -111,9 +112,17 @@ if __name__ == "__main__":
     cpu_docker_uri = args.cpu_docker_uri
     cuda_docker_uri = args.cuda_docker_uri
 
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
-
     applied_task_identifier = AppliedTaskIdentifier(args.job_name)
+    initialize_gigl_runtime(
+        applied_task_identifier=applied_task_identifier,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.Inferencer,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
+
     inferencer = Inferencer()
     inferencer.run(
         applied_task_identifier=applied_task_identifier,

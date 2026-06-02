@@ -12,6 +12,7 @@ from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_CONFIG_POPULATOR_S
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.dataset_split import DatasetSplit
@@ -19,9 +20,9 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
-    initialize_metrics,
 )
 from snapchat.research.gbml import (
     dataset_metadata_pb2,
@@ -628,8 +629,12 @@ class ConfigPopulator:
         Returns:
             GcsUri: The URI of the frozen GbmlConfig.
         """
-        initialize_metrics(
-            task_config_uri=task_config_uri, service_name=applied_task_identifier
+        initialize_gigl_runtime(
+            applied_task_identifier=applied_task_identifier,
+            task_config_uri=task_config_uri,
+            resource_config_uri=resource_config_uri,
+            service_name=applied_task_identifier,
+            component=GiGLComponents.ConfigPopulator,
         )
 
         resource_config = get_resource_config(resource_config_uri=resource_config_uri)

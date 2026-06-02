@@ -8,6 +8,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import initialize_metrics
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
@@ -78,11 +79,6 @@ class Runner:
             f"dataflow_docker_uri: {pipeline_config.dataflow_docker_uri}"
         )
 
-        initialize_metrics(
-            task_config_uri=pipeline_config.task_config_uri,
-            service_name=pipeline_config.applied_task_identifier,
-        )
-
         if start_at == GiGLComponents.ConfigPopulator.value:
             frozen_config_uri = Runner.run_config_populator(pipeline_config)
             pipeline_config.task_config_uri = frozen_config_uri
@@ -106,6 +102,28 @@ class Runner:
                 started = True
             if started:
                 method(pipeline_config)
+
+    @staticmethod
+    def _initialize_component_runtime(
+        pipeline_config: PipelineConfig,
+        component: GiGLComponents,
+    ) -> None:
+        if component in {GiGLComponents.SubgraphSampler, GiGLComponents.SplitGenerator}:
+            initialize_metrics(
+                task_config_uri=pipeline_config.task_config_uri,
+                service_name=pipeline_config.applied_task_identifier,
+            )
+            return
+
+        initialize_gigl_runtime(
+            applied_task_identifier=pipeline_config.applied_task_identifier,
+            task_config_uri=pipeline_config.task_config_uri,
+            resource_config_uri=pipeline_config.resource_config_uri,
+            service_name=pipeline_config.applied_task_identifier,
+            component=component,
+            cpu_docker_uri=pipeline_config.custom_cpu_docker_uri,
+            cuda_docker_uri=pipeline_config.custom_cuda_docker_uri,
+        )
 
     @staticmethod
     def config_check(start_at: str, pipeline_config: PipelineConfig):
@@ -134,6 +152,10 @@ class Runner:
     @staticmethod
     def run_data_preprocessor(pipeline_config: PipelineConfig) -> None:
         logger.info("Running Data Preprocessor...")
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.DataPreprocessor,
+        )
         data_preprocessor = DataPreprocessor()
         data_preprocessor.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,
@@ -145,6 +167,10 @@ class Runner:
     @staticmethod
     def run_subgraph_sampler(pipeline_config: PipelineConfig) -> None:
         logger.info("Running Subgraph Sampler...")
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.SubgraphSampler,
+        )
         subgraph_sampler = SubgraphSampler()
         subgraph_sampler.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,
@@ -155,6 +181,10 @@ class Runner:
     @staticmethod
     def run_split_generator(pipeline_config: PipelineConfig) -> None:
         logger.info("Running Split Generator...")
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.SplitGenerator,
+        )
         split_generator = SplitGenerator()
         split_generator.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,
@@ -165,6 +195,10 @@ class Runner:
     @staticmethod
     def run_trainer(pipeline_config: PipelineConfig) -> None:
         logger.info("Running Trainer...")
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.Trainer,
+        )
         trainer = Trainer()
         trainer.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,
@@ -177,6 +211,10 @@ class Runner:
     @staticmethod
     def run_inferencer(pipeline_config: PipelineConfig) -> None:
         logger.info("Running Inferencer...")
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.Inferencer,
+        )
         inferencer = Inferencer()
         inferencer.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,

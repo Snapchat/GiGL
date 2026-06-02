@@ -25,6 +25,7 @@ from gigl.common.utils.torch_training import (
     is_distributed_available_and_initialized,
     should_distribute,
 )
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import (
     TIMER_TRAINER_CLEANUP_ENV_S,
     TIMER_TRAINER_EXPORT_INFERENCE_ASSETS_S,
@@ -42,9 +43,9 @@ from gigl.src.common.types.model_eval_metrics import EvalMetricsCollection
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.common.utils.file_loader import FileLoader
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
-    initialize_metrics,
 )
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.common.utils.time import current_formatted_datetime
@@ -408,6 +409,18 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        help="User Specified or KFP compiled Docker Image for CPU training",
+        required=False,
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        help="User Specified or KFP compiled Docker Image for GPU training",
+        required=False,
+    )
     args = parser.parse_args()
 
     if not args.job_name or not args.task_config_uri or not args.resource_config_uri:
@@ -420,12 +433,22 @@ if __name__ == "__main__":
     logger.info(f"Starting training with device: {device}")
 
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
+    resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
+    cpu_docker_uri, cuda_docker_uri = args.cpu_docker_uri, args.cuda_docker_uri
     logger.info(f"Will use the following config for training: {task_config_uri}")
     logger.info(
         f"World Size: {torch_training.get_world_size()}, Rank: {torch_training.get_rank()}, Should Distribute: {torch_training.should_distribute()}"
     )
 
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
+    initialize_gigl_runtime(
+        applied_task_identifier=args.job_name,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.Trainer,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
 
     training_process = GnnTrainingProcess()
     training_process.run(task_config_uri=task_config_uri, device=device)

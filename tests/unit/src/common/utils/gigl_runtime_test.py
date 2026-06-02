@@ -128,3 +128,33 @@ class GiGLRuntimeTest(TestCase):
                 "data-preprocessor-service",
             )
             self.assertIsInstance(get_metrics_service_instance(), NopMetricsPublisher)
+
+    def test_initialize_gigl_runtime_preserves_existing_image_env_when_args_omitted(
+        self,
+    ) -> None:
+        task_config_uri = self._write_task_config(gbml_config_pb2.GbmlConfig())
+
+        with patch.dict(
+            os.environ,
+            {
+                GIGL_CPU_DOCKER_URI_ENV_KEY: "gcr.io/env/cpu:tag",
+                GIGL_CUDA_DOCKER_URI_ENV_KEY: "gcr.io/env/cuda:tag",
+            },
+            clear=False,
+        ):
+            initialize_gigl_runtime(
+                applied_task_identifier="job-42",
+                task_config_uri=task_config_uri,
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                service_name="trainer-service",
+                component=GiGLComponents.Trainer,
+            )
+
+            self.assertEqual(
+                os.environ[GIGL_CPU_DOCKER_URI_ENV_KEY],
+                "gcr.io/env/cpu:tag",
+            )
+            self.assertEqual(
+                os.environ[GIGL_CUDA_DOCKER_URI_ENV_KEY],
+                "gcr.io/env/cuda:tag",
+            )

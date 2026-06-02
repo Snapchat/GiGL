@@ -4,6 +4,10 @@ import os
 from typing import Optional
 
 from gigl.common import Uri
+from gigl.env.constants import (
+    GIGL_CPU_DOCKER_URI_ENV_KEY,
+    GIGL_CUDA_DOCKER_URI_ENV_KEY,
+)
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.utils.gigl_env import get_gigl_runtime_env_vars
 from gigl.src.common.utils.metrics_service_provider import initialize_metrics
@@ -29,14 +33,24 @@ def initialize_gigl_runtime(
         cpu_docker_uri: CPU source image URI. Defaults to the release CPU image.
         cuda_docker_uri: CUDA source image URI. Defaults to the release CUDA image.
     """
+    resolved_cpu_docker_uri = (
+        os.environ.get(GIGL_CPU_DOCKER_URI_ENV_KEY)
+        if cpu_docker_uri is None
+        else cpu_docker_uri
+    )
+    resolved_cuda_docker_uri = (
+        os.environ.get(GIGL_CUDA_DOCKER_URI_ENV_KEY)
+        if cuda_docker_uri is None
+        else cuda_docker_uri
+    )
     os.environ.update(
         get_gigl_runtime_env_vars(
             applied_task_identifier=applied_task_identifier,
             task_config_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
             component=component,
-            cpu_docker_uri=cpu_docker_uri,
-            cuda_docker_uri=cuda_docker_uri,
+            cpu_docker_uri=resolved_cpu_docker_uri,
+            cuda_docker_uri=resolved_cuda_docker_uri,
         )
     )
     initialize_metrics(task_config_uri=task_config_uri, service_name=service_name)
