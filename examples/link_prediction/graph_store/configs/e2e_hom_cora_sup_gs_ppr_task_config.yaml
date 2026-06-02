@@ -1,0 +1,87 @@
+# This config runs homogeneous CORA supervised training and inference in Graph Store mode
+# with PPR sampling. It intentionally reuses the standard graph-store training/inference
+# entrypoints, changing only the sampler args and keeping the loop short for E2E coverage.
+graphMetadata:
+  edgeTypes:
+  - dstNodeType: paper
+    relation: cites
+    srcNodeType: paper
+  nodeTypes:
+  - paper
+datasetConfig:
+  dataPreprocessorConfig:
+    dataPreprocessorConfigClsPath: gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets
+    dataPreprocessorArgs:
+      mocked_dataset_name: 'cora_homogeneous_node_anchor_edge_features_user_defined_labels'
+trainerConfig:
+  trainerArgs:
+    log_every_n_batch: "1"
+    num_neighbors: "[10, 10]"
+    # Parsed in the graph-store training entrypoint and passed directly as
+    # kwargs to PPRSamplerOptions in gigl/distributed/sampler_options.py.
+    # Presence of ppr_sampler_options selects PPR; otherwise this example uses
+    # k-hop sampling configured by num_neighbors.
+    ppr_sampler_options: >-
+      {
+        "alpha": 0.5,
+        "eps": 0.0001,
+        "max_ppr_nodes": 20,
+        "num_neighbors_per_hop": 100,
+        "max_fetch_iterations": 2
+      }
+    sampling_workers_per_process: "2"
+    main_batch_size: "8"
+    random_batch_size: "8"
+    num_max_train_batches: "4"
+    num_val_batches: "4"
+    val_every_n_batch: "1"
+  command: python -m examples.link_prediction.graph_store.homogeneous_training
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
+      splitter_kwargs: >-
+        {
+          "sampling_direction": "in",
+          "should_convert_labels_to_edges": True,
+          "num_val": 0.25,
+          "num_test": 0.25
+        }
+      num_server_sessions: "1"
+inferencerConfig:
+  inferencerArgs:
+    log_every_n_batch: "1"
+    num_neighbors: "[10, 10]"
+    # Parsed in the graph-store inference entrypoint and passed directly as
+    # kwargs to PPRSamplerOptions in gigl/distributed/sampler_options.py.
+    # Presence of ppr_sampler_options selects PPR; otherwise this example uses
+    # k-hop sampling configured by num_neighbors.
+    ppr_sampler_options: >-
+      {
+        "alpha": 0.5,
+        "eps": 0.0001,
+        "max_ppr_nodes": 20,
+        "num_neighbors_per_hop": 100,
+        "max_fetch_iterations": 2
+      }
+    sampling_workers_per_inference_process: "2"
+  inferenceBatchSize: 256
+  command: python -m examples.link_prediction.graph_store.homogeneous_inference
+  graphStoreStorageConfig:
+    command: python -m examples.link_prediction.graph_store.storage_main
+    storageArgs:
+      sample_edge_direction: "in"
+      num_server_sessions: "1"
+sharedConfig:
+  shouldSkipInference: false
+  shouldSkipModelEvaluation: true
+taskMetadata:
+  nodeAnchorBasedLinkPredictionTaskMetadata:
+    supervisionEdgeTypes:
+    - dstNodeType: paper
+      relation: cites
+      srcNodeType: paper
+featureFlags:
+  should_run_glt_backend: 'True'
+  data_preprocessor_num_shards: '2'
