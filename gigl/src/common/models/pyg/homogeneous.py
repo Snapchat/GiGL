@@ -146,11 +146,11 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         if self.should_l2_normalize_embedding_layer_output:
             x = l2_normalize_embeddings(node_typed_embeddings=x)
         if self.return_emb:
-            return x  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+            return x
         if self.linear_layer:
             x = self.linear(x)
 
-        return x  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+        return x
 
     def init_conv_layers(
         self,
