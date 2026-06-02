@@ -19,7 +19,6 @@ from gigl.src.common.constants.components import GiGLComponents
 
 
 def get_gigl_runtime_env_vars(
-    *,
     applied_task_identifier: str,
     task_config_uri: Uri,
     resource_config_uri: Uri,
