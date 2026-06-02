@@ -16,7 +16,6 @@ class TestGcsUtils(TestCase):
     def test_upload_from_filelike(self, mock_storage_client):
         # Mock the GCS client, bucket, and blob
         mock_client = MagicMock(spec=Client)
-        mock_client.project = "test-project"
         mock_bucket = MagicMock(spec=Bucket)
         mock_blob = MagicMock(spec=Blob)
 
@@ -44,7 +43,6 @@ class TestGcsUtils(TestCase):
     def test_delete_files_in_bucket_dir(self):
         # Mock the GCS client, bucket, and blob
         mock_client = MagicMock(spec=Client)
-        mock_client.project = "test-project"
         mock_bucket = MagicMock(spec=Bucket)
 
         non_existent_bucket = "test-bucket"
