@@ -37,10 +37,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   https://github.com/Snapchat/GiGL/pull/476, https://github.com/Snapchat/GiGL/pull/485,
   https://github.com/Snapchat/GiGL/pull/493, https://github.com/Snapchat/GiGL/pull/514, and
   https://github.com/Snapchat/GiGL/pull/526
-- Add C++-based PPR sampling, which changes GiGL wheel builds to include the new `gigl-core` C++/CUDA extension package
-  by @mkolodner-sc in https://github.com/Snapchat/GiGL/pull/558 and https://github.com/Snapchat/GiGL/pull/556
-- Add distributed PPR sampling and PPR sequence generation by @mkolodner-sc and @yliu2-sc in
-  https://github.com/Snapchat/GiGL/pull/538 and https://github.com/Snapchat/GiGL/pull/560
+- Add distributed and C++-based PPR sampling, including PPR sequence generation and new GiGL wheel builds with the
+  `gigl-core` C++/CUDA extension package, by @mkolodner-sc and @yliu2-sc in https://github.com/Snapchat/GiGL/pull/538,
+  https://github.com/Snapchat/GiGL/pull/560, https://github.com/Snapchat/GiGL/pull/558, and
+  https://github.com/Snapchat/GiGL/pull/556
 - Add shared multi-channel graph store sampling backend, remote channels with pinned-memory bulk transfer, and two-phase
   sampling APIs by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/577,
   https://github.com/Snapchat/GiGL/pull/565, and https://github.com/Snapchat/GiGL/pull/578
