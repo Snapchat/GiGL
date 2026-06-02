@@ -99,10 +99,12 @@ from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.distributed.graph_store.compute import init_compute_process
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.utils import get_graph_store_info
-from gigl.env.distributed import GraphStoreInfo
+from gigl.distributed.graph_store import (
+    GraphStoreInfo,
+    RemoteDistDataset,
+    get_graph_store_info,
+    init_compute_process,
+)
 from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType
