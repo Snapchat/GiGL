@@ -138,13 +138,14 @@ from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.graph_store.compute import (
+from gigl.distributed.graph_store import (
+    GraphStoreInfo,
+    RemoteDistDataset,
+    get_graph_store_info,
     init_compute_process,
     shutdown_compute_process,
 )
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.utils import get_available_device, get_graph_store_info
-from gigl.env.distributed import GraphStoreInfo
+from gigl.distributed.utils import get_available_device
 from gigl.nn import LinkPredictionGNN, RetrievalLoss
 from gigl.src.common.translators.model_eval_metrics_translator import (
     write_eval_metrics_to_uri,

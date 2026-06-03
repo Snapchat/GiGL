@@ -3,6 +3,7 @@ GLT Distributed Classes implemented in GiGL
 """
 
 __all__ = [
+    "DistABLPLoader",
     "DistNeighborLoader",
     "DistDataset",
     "DistributedContext",
