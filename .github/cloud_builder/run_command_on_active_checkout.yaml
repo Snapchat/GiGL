@@ -3,7 +3,7 @@ substitutions:
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:6db83bdc98b2da65ac80243ce08cd8b37b3ee85f.110.1
+  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:7d3182eeb6446ce3e35910babba990c8e003879d.109.1
     entrypoint: /bin/bash
     # Route sbt through Google's Maven Central mirror to avoid 429 rate limits from repo1.maven.org.
     # Intentionally set here (CI env) rather than in scala/.sbtopts or scala_spark35/.sbtopts to avoid
