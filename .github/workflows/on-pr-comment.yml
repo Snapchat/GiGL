@@ -135,7 +135,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
+        pr_number: 668
         # should_leave_progress_comments: "true"
         descriptive_workflow_name: "Smoke Test"
         setup_gcloud: "true"
