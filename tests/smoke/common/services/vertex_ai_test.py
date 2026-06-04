@@ -8,10 +8,33 @@ from google.cloud.aiplatform_v1.types import env_var
 from parameterized import param, parameterized
 
 from gigl.common import UriFactory
-from gigl.common.constants import DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.env.constants import GIGL_CPU_DOCKER_URI_ENV_KEY
 from gigl.env.pipelines_config import get_resource_config
 from tests.test_assets.test_case import TestCase
+
+# Short timeout so a broken image fails fast instead of hanging CI until the outer
+# Cloud Build timeout. launch_graph_store_job passes this through to Vertex AI
+# directly (it does not apply the 24h launch_job default).
+_SMOKE_JOB_TIMEOUT_S = 30 * 60
+
+
+def _assert_machine_cpu_count(expected_cpu_count: int) -> None:
+    """Worker entrypoint: assert the provisioned VM exposes the expected vCPU count.
+
+    Invoked on a smoke-test worker via a thin ``python -c`` import+call (the freshly
+    built ``src-cpu`` image contains this module). ``os.cpu_count()`` reflects the
+    machine_type's vCPUs on Vertex AI's dedicated VMs. An ``AssertionError`` exits the
+    worker non-zero, failing the job — surfaced back in the test by the launch's
+    blocking wait.
+
+    Args:
+        expected_cpu_count: vCPU count the machine_type should provision.
+    """
+    num_cpus = os.cpu_count()
+    assert num_cpus == expected_cpu_count, (
+        f"Expected {expected_cpu_count} CPUs, but got {num_cpus}"
+    )
 
 
 @kfp.dsl.component
@@ -34,7 +57,7 @@ def division_by_zero(a: int) -> float:  # This is meant to fail
     return a / 0
 
 
-@kfp.dsl.pipeline(name="kfp-integration-test")
+@kfp.dsl.pipeline(name="kfp-smoke-test")
 def get_pipeline() -> int:
     source_task = source()
     double_task = doubler(a=source_task.output)
@@ -42,15 +65,19 @@ def get_pipeline() -> int:
     return adder_task.output
 
 
-@kfp.dsl.pipeline(name="kfp-integration-test-that-fails")
+@kfp.dsl.pipeline(name="kfp-smoke-test-that-fails")
 def get_pipeline_that_fails() -> float:
     source_task = source()
     fails_task = division_by_zero(a=source_task.output)  # This is meant to fail
     return fails_task.output
 
 
-class VertexAIPipelineIntegrationTest(TestCase):
+class VertexAIPipelineSmokeTest(TestCase):
     def setUp(self):
+        # Read the fresh-source image first, before any cloud work, so a misconfigured
+        # run (no GIGL_CPU_DOCKER_URI) fails fast.
+        self._src_cpu_image_uri = os.environ[GIGL_CPU_DOCKER_URI_ENV_KEY]
+
         self._resource_config = get_resource_config()
         self._project = self._resource_config.project
         self._location = self._resource_config.region
@@ -70,15 +97,20 @@ class VertexAIPipelineIntegrationTest(TestCase):
         super().tearDown()
 
     def test_launch_job(self):
-        job_name = f"GiGL-Integration-Test-{uuid.uuid4()}"
-        container_uri = "condaforge/miniforge3:25.3.0-1"
-        command = ["python", "-c", "import logging; logging.info('Hello, World!')"]
-
+        job_name = f"GiGL-Smoke-Test-{uuid.uuid4()}"
+        command = [
+            "python",
+            "-c",
+            "from tests.smoke.common.services.vertex_ai_test import _assert_machine_cpu_count; "
+            "_assert_machine_cpu_count(4)",  # n1-standard-4
+        ]
         job_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri=container_uri,
+            container_uri=self._src_cpu_image_uri,
             command=command,
+            machine_type="n1-standard-4",
             environment_variables=[env_var.EnvVar(name="FOO", value="BAR")],
+            timeout_s=_SMOKE_JOB_TIMEOUT_S,
         )
 
         job = self._vertex_ai_service.launch_job(job_config)
@@ -89,80 +121,70 @@ class VertexAIPipelineIntegrationTest(TestCase):
 
     @parameterized.expand(
         [
-            param(
-                "one compute, one storage",
-                num_compute=1,
-                num_storage=1,
-                expected_worker_pool_specs=[
-                    {
-                        "machine_type": "n1-standard-4",
-                        "num_replicas": 1,
-                        "image_uri": "condaforge/miniforge3:25.3.0-1",
-                    },
-                    {},
-                    {
-                        "machine_type": "n2-standard-8",
-                        "num_replicas": 1,
-                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-                    },
-                ],
-            ),
-            param(
-                "two compute, one storage",
-                num_compute=2,
-                num_storage=1,
-                expected_worker_pool_specs=[
-                    {
-                        "machine_type": "n1-standard-4",
-                        "num_replicas": 1,
-                        "image_uri": "condaforge/miniforge3:25.3.0-1",
-                    },
-                    {
-                        "machine_type": "n1-standard-4",
-                        "num_replicas": 1,
-                        "image_uri": "condaforge/miniforge3:25.3.0-1",
-                    },
-                    {
-                        "machine_type": "n2-standard-8",
-                        "num_replicas": 1,
-                        "image_uri": DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
-                    },
-                ],
-            ),
+            param("one compute, one storage", num_compute=1, num_storage=1),
+            param("two compute, one storage", num_compute=2, num_storage=1),
         ]
     )
-    def test_launch_graph_store_job(
-        self,
-        _,
-        num_compute,
-        num_storage,
-        expected_worker_pool_specs,
-    ):
-        # Tests that the env variables are set correctly.
-        # If they are not populated, then the job will fail.
-        command = [
-            "python",
-            "-c",
-            f"import os; import logging; logging.info('Hello, World!')",
-        ]
-        job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
+    def test_launch_graph_store_job(self, _, num_compute, num_storage):
+        job_name = f"GiGL-Smoke-Test-Graph-Store-{uuid.uuid4()}"
+        # Deliberately different machine shapes per pool, so the CPU check verifies
+        # each shape actually provisioned as requested.
         compute_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri="condaforge/miniforge3:25.3.0-1",  # different images for storage and compute
+            container_uri=self._src_cpu_image_uri,
             replica_count=num_compute,
-            machine_type="n1-standard-4",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
-            command=command,
+            machine_type="n1-standard-4",
+            command=[
+                "python",
+                "-c",
+                "from tests.smoke.common.services.vertex_ai_test import _assert_machine_cpu_count; "
+                "_assert_machine_cpu_count(4)",  # n1-standard-4
+            ],
+            timeout_s=_SMOKE_JOB_TIMEOUT_S,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
-            container_uri=DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,  # different image for storage and compute
+            container_uri=self._src_cpu_image_uri,
             replica_count=num_storage,
-            command=command,
-            machine_type="n2-standard-8",  # Different machine shapes - ideally we would test with GPU too but want to save on costs
+            machine_type="n2-standard-8",
+            command=[
+                "python",
+                "-c",
+                "from tests.smoke.common.services.vertex_ai_test import _assert_machine_cpu_count; "
+                "_assert_machine_cpu_count(8)",  # n2-standard-8
+            ],
+            timeout_s=_SMOKE_JOB_TIMEOUT_S,
         )
 
         job = self._vertex_ai_service.launch_graph_store_job(
             compute_cluster_config, storage_cluster_config
+        )
+
+        # Built here (not in the @parameterized.expand decorator, which evaluates at
+        # import time) since the image is read from the environment in setUp.
+        expected_worker_pool_specs: list[dict] = [
+            {
+                "machine_type": "n1-standard-4",
+                "num_replicas": 1,
+                "image_uri": self._src_cpu_image_uri,
+            },
+        ]
+        if num_compute > 1:
+            expected_worker_pool_specs.append(
+                {
+                    "machine_type": "n1-standard-4",
+                    "num_replicas": num_compute - 1,
+                    "image_uri": self._src_cpu_image_uri,
+                }
+            )
+        else:
+            expected_worker_pool_specs.append({})
+        expected_worker_pool_specs.append(
+            {
+                "machine_type": "n2-standard-8",
+                "num_replicas": num_storage,
+                "image_uri": self._src_cpu_image_uri,
+            }
         )
 
         self.assertEqual(
@@ -189,11 +211,11 @@ class VertexAIPipelineIntegrationTest(TestCase):
             pipeline_def = os.path.join(tmpdir, "pipeline.yaml")
             kfp.compiler.Compiler().compile(get_pipeline, pipeline_def)
             job = self._vertex_ai_service.run_pipeline(
-                display_name="integration-test-pipeline",
+                display_name="smoke-test-pipeline",
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
-                experiment="gigl-integration-tests",
-                labels={"gigl-integration-test": "true"},
+                experiment="gigl-smoke-tests",
+                labels={"gigl-smoke-test": "true"},
             )
             # Wait for the run to complete, 30 minutes is probably too long but
             # we don't want this test to be flaky.
@@ -204,18 +226,18 @@ class VertexAIPipelineIntegrationTest(TestCase):
             # Also verify that we can fetch a pipeline.
             run = self._vertex_ai_service.get_pipeline_job_from_job_name(job.name)
             self.assertEqual(run.resource_name, job.resource_name)
-            self.assertEqual(run.labels["gigl-integration-test"], "true")
+            self.assertEqual(run.labels["gigl-smoke-test"], "true")
 
     def test_run_pipeline_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pipeline_def = os.path.join(tmpdir, "pipeline_that_fails.yaml")
             kfp.compiler.Compiler().compile(get_pipeline_that_fails, pipeline_def)
             job = self._vertex_ai_service.run_pipeline(
-                display_name="integration-test-pipeline-that-fails",
+                display_name="smoke-test-pipeline-that-fails",
                 template_path=UriFactory.create_uri(pipeline_def),
                 run_keyword_args={},
-                experiment="gigl-integration-tests",
-                labels={"gigl-integration-test": "true"},
+                experiment="gigl-smoke-tests",
+                labels={"gigl-smoke-test": "true"},
             )
             with self.assertRaises(RuntimeError):
                 self._vertex_ai_service.wait_for_run_completion(

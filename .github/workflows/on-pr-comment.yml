@@ -124,6 +124,28 @@ jobs:
         command: |
             make integration_test
 
+  smoke-test:
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/smoke_test') || contains(github.event.comment.body, '/all_test')) }}
+    runs-on: ubuntu-latest
+    # TODO(kmonte): Reduce this :(
+    timeout-minutes: 120
+    steps:
+    - name: Run Smoke Tests
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Smoke Test"
+        setup_gcloud: "true"
+        use_cloud_run: "true"
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: |
+            # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
+            make smoke_test SMOKE_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
+
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
