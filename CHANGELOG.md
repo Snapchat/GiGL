@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - Jun 4, 2026
+
+### Fixed
+
+- Pass the resource config URI to graph store networking integration test workers so they can resolve graph store
+  readiness paths by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/666
+
 ## [0.3.0] - Jun 1, 2026
 
 ### Deprecations
