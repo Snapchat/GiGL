@@ -199,10 +199,10 @@ Use `tests.test_assets.test_case.TestCase` as the base class, **NOT** `unittest.
 
 - **Unit tests**: `tests/unit/` - Fast, isolated tests
 - **Integration tests**: `tests/integration/` - Component interaction tests, require cloud resources
-- **Smoke tests**: `tests/smoke/` - Tests that launch real Vertex AI jobs. Run via `make smoke_test`,
-  which first builds a fresh `src-cpu` image from current source and points the tests that run GiGL
-  code on the workers at it (via `GIGL_CPU_DOCKER_URI`). This catches breakages in worker-side source
-  that `make integration_test` (which uses the pinned release image) would miss until a release.
+- **Smoke tests**: `tests/smoke/` - Tests that launch real Vertex AI jobs. Run via `make smoke_test`, which first builds
+  a fresh `src-cpu` image from current source and points the tests that run GiGL code on the workers at it (via
+  `GIGL_CPU_DOCKER_URI`). This catches breakages in worker-side source that `make integration_test` (which uses the
+  pinned release image) would miss until a release.
 - **E2E tests**: Defined in `tests/e2e_tests/e2e_tests.yaml`
 - **Test assets**: `tests/test_assets/` (configs in `configs/`, test graphs in `small_graph/`)
 
