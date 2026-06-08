@@ -14,6 +14,7 @@ from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
 from gigl.env.pipelines_config import get_resource_config
 from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
+from gigl.orchestration.kubeflow.utils.glt_backend import resolve_should_use_glt_backend
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.file_loader import FileLoader
@@ -148,6 +149,9 @@ class KfpOrchestrator:
             "start_at": start_at,
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
+            "should_use_glt_backend": resolve_should_use_glt_backend(
+                task_config_uri=task_config_uri
+            ),
         }
         # We need to provide *some* notification emails, other wise the cleanup component will fail.
         # Ideally, we'd be able to provide None and have it handle it, but for whatever reason

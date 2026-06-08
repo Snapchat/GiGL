@@ -14,9 +14,6 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
-from gigl.orchestration.kubeflow.utils.glt_backend import (
-    check_glt_backend_eligibility_component,
-)
 from gigl.orchestration.kubeflow.utils.log_metrics import log_metrics_to_ui
 from gigl.orchestration.kubeflow.utils.resource import add_task_resource_requirements
 from gigl.src.common.constants.components import GiGLComponents
@@ -135,6 +132,7 @@ def _generate_component_tasks(
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     start_at: Optional[str] = None,
     stop_after: Optional[str] = None,
+    should_use_glt_backend: bool = False,
 ):
     validation_check_task = _generate_component_task(
         component=GiGLComponents.ConfigValidator,
@@ -145,10 +143,6 @@ def _generate_component_tasks(
         resource_config_uri=resource_config_uri,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
-    should_use_glt = check_glt_backend_eligibility_component(
-        task_config_uri=template_or_frozen_config_uri,
-        base_image=common_pipeline_component_configs.cpu_container_image,
-    )
 
     with kfp.dsl.Condition(start_at == GiGLComponents.ConfigPopulator.value):
         config_populator_task = _create_config_populator_task_op(
@@ -156,7 +150,7 @@ def _generate_component_tasks(
             task_config_uri=template_or_frozen_config_uri,
             resource_config_uri=resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
-            should_use_glt_runtime_param=should_use_glt,
+            should_use_glt_runtime_param=should_use_glt_backend,
             stop_after=stop_after,
         )
         config_populator_task.after(validation_check_task)
@@ -168,7 +162,7 @@ def _generate_component_tasks(
             resource_config_uri=resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
-            should_use_glt_runtime_param=should_use_glt,
+            should_use_glt_runtime_param=should_use_glt_backend,
         )
         data_preprocessor_task.after(validation_check_task)
 
@@ -248,6 +242,7 @@ def generate_pipeline(
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
         notification_emails: Optional[List[str]] = None,
+        should_use_glt_backend: bool = False,
     ):
         with kfp.dsl.ExitHandler(
             VertexNotificationEmailOp(recipients=notification_emails),
@@ -260,6 +255,7 @@ def generate_pipeline(
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 start_at=start_at,
                 stop_after=stop_after,
+                should_use_glt_backend=should_use_glt_backend,
             )
 
     return pipeline
