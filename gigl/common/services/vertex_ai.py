@@ -62,7 +62,7 @@ print(f"{job.name=}") # job.name='get-pipeline-20250226170755' # NOTE: by defaul
 import datetime
 import time
 from dataclasses import dataclass
-from typing import Final, Optional, Sequence, Union, cast
+from typing import Any, Final, Optional, Sequence, Union, cast
 
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
@@ -370,7 +370,7 @@ class VertexAIService:
         self,
         display_name: str,
         template_path: Uri,
-        run_keyword_args: dict[str, str],
+        run_keyword_args: dict[str, Any],
         job_id: Optional[str] = None,
         labels: Optional[dict[str, str]] = None,
         experiment: Optional[str] = None,
@@ -383,7 +383,7 @@ class VertexAIService:
         Args:
             display_name (str): The display of the pipeline.
             template_path (Uri): The path to the compiled pipeline YAML.
-            run_keyword_args (dict[str, str]): Runtime arguements passed to your pipeline.
+            run_keyword_args (dict[str, Any]): Runtime arguements passed to your pipeline.
             job_id (Optional[str]): The ID of the job. If not provided will be the *pipeline_name* + datetime.
                                     Note: The pipeline_name and display_name are *not* the same.
                                     Note: pipeline_name comes is defined in the `template_path` and ultimately comes from Python pipeline definition.
