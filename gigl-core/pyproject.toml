@@ -2,7 +2,7 @@
 name            = "gigl-core"
 description     = "GiGL C++/CUDA kernels (pybind11 extensions)"
 readme          = "README.md"
-version         = "0.3.1"
+version         = "0.3.1.dev20260609195011"
 requires-python = "==3.11.*"
 # Torch is resolved from the ambient environment. gigl-core wheels are ABI-bound
 # to the torch variant they were built against (cpu or cu128). The parent `gigl`
