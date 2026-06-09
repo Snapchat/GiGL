@@ -24,6 +24,10 @@ def initialize_gigl_runtime(
 ) -> None:
     """Initialize GiGL runtime environment and metrics for a component.
 
+    For ``SubgraphSampler`` and ``SplitGenerator`` only metrics are initialized;
+    runtime env vars are not set, since these legacy (Scala/Spark) components do
+    not consume the GiGL Python runtime.
+
     Args:
         applied_task_identifier: Unique identifier for the GiGL job.
         task_config_uri: URI to the task config YAML file.
@@ -33,6 +37,10 @@ def initialize_gigl_runtime(
         cpu_docker_uri: CPU source image URI. Defaults to the release CPU image.
         cuda_docker_uri: CUDA source image URI. Defaults to the release CUDA image.
     """
+    if component in {GiGLComponents.SubgraphSampler, GiGLComponents.SplitGenerator}:
+        initialize_metrics(task_config_uri=task_config_uri, service_name=service_name)
+        return
+
     resolved_cpu_docker_uri = (
         os.environ.get(GIGL_CPU_DOCKER_URI_ENV_KEY)
         if cpu_docker_uri is None

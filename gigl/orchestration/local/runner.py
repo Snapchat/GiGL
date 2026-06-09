@@ -9,7 +9,6 @@ from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
-from gigl.src.common.utils.metrics_service_provider import initialize_metrics
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
 from gigl.src.inference.inferencer import Inferencer
@@ -108,13 +107,6 @@ class Runner:
         pipeline_config: PipelineConfig,
         component: GiGLComponents,
     ) -> None:
-        if component in {GiGLComponents.SubgraphSampler, GiGLComponents.SplitGenerator}:
-            initialize_metrics(
-                task_config_uri=pipeline_config.task_config_uri,
-                service_name=pipeline_config.applied_task_identifier,
-            )
-            return
-
         initialize_gigl_runtime(
             applied_task_identifier=pipeline_config.applied_task_identifier,
             task_config_uri=pipeline_config.task_config_uri,
