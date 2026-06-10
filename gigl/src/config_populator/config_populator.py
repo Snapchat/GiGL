@@ -617,6 +617,8 @@ class ConfigPopulator:
         applied_task_identifier: AppliedTaskIdentifier,
         task_config_uri: Uri,
         resource_config_uri: Uri,
+        cpu_docker_uri: Optional[str] = None,
+        cuda_docker_uri: Optional[str] = None,
     ) -> GcsUri:
         """
         Runs the ConfigPopulator; given an input GbmlConfig file, produces a frozen one.
@@ -625,6 +627,8 @@ class ConfigPopulator:
             applied_task_identifier (AppliedTaskIdentifier): The job name.
             task_config_uri (Uri): Template GbmlConfig URI.
             resource_config_uri: GiGL resource config Uri
+            cpu_docker_uri (Optional[str]): CPU source image URI. Defaults to the release CPU image.
+            cuda_docker_uri (Optional[str]): CUDA source image URI. Defaults to the release CUDA image.
 
         Returns:
             GcsUri: The URI of the frozen GbmlConfig.
@@ -635,6 +639,8 @@ class ConfigPopulator:
             resource_config_uri=resource_config_uri,
             service_name=applied_task_identifier,
             component=GiGLComponents.ConfigPopulator,
+            cpu_docker_uri=cpu_docker_uri,
+            cuda_docker_uri=cuda_docker_uri,
         )
 
         resource_config = get_resource_config(resource_config_uri=resource_config_uri)
@@ -678,6 +684,18 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for cpu at runtime",
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for gpu at runtime",
+    )
 
     args = parser.parse_args()
 
@@ -693,6 +711,8 @@ if __name__ == "__main__":
         applied_task_identifier=ati,
         task_config_uri=template_uri,
         resource_config_uri=resource_config_uri,
+        cpu_docker_uri=args.cpu_docker_uri,
+        cuda_docker_uri=args.cuda_docker_uri,
     )
 
     # Write fozen_gbml_config_uri to file where it can be read by subsequent components

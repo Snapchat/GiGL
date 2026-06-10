@@ -384,6 +384,18 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for cpu at runtime",
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for gpu at runtime",
+    )
     args = parser.parse_args()
 
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
@@ -395,6 +407,8 @@ if __name__ == "__main__":
         resource_config_uri=resource_config_uri,
         service_name=args.job_name,
         component=GiGLComponents.ConfigValidator,
+        cpu_docker_uri=args.cpu_docker_uri,
+        cuda_docker_uri=args.cuda_docker_uri,
     )
 
     kfp_validation_checks(

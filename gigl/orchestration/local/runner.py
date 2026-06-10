@@ -119,6 +119,10 @@ class Runner:
 
     @staticmethod
     def config_check(start_at: str, pipeline_config: PipelineConfig):
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.ConfigValidator,
+        )
         proto_utils = ProtoUtils()
         gbml_config_pb: gbml_config_pb2.GbmlConfig = proto_utils.read_proto_from_yaml(
             uri=pipeline_config.task_config_uri, proto_cls=gbml_config_pb2.GbmlConfig
@@ -133,12 +137,18 @@ class Runner:
     @staticmethod
     def run_config_populator(pipeline_config: PipelineConfig) -> Uri:
         logger.info("Running Config Populator...")
+        Runner._initialize_component_runtime(
+            pipeline_config=pipeline_config,
+            component=GiGLComponents.ConfigPopulator,
+        )
         config_populator = ConfigPopulator()
 
         return config_populator.run(
             applied_task_identifier=pipeline_config.applied_task_identifier,
             task_config_uri=pipeline_config.task_config_uri,
             resource_config_uri=pipeline_config.resource_config_uri,
+            cpu_docker_uri=pipeline_config.custom_cpu_docker_uri,
+            cuda_docker_uri=pipeline_config.custom_cuda_docker_uri,
         )
 
     @staticmethod

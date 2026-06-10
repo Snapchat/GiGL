@@ -66,6 +66,8 @@ def _generate_component_task(
             job_name=job_name,
             template_uri=task_config_uri,
             resource_config_uri=resource_config_uri,
+            cpu_docker_uri=common_pipeline_component_configs.cpu_container_image,
+            cuda_docker_uri=common_pipeline_component_configs.cuda_container_image,
             **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
 
@@ -76,6 +78,8 @@ def _generate_component_task(
             start_at=start_at,
             resource_config_uri=resource_config_uri,
             stop_after=stop_after,
+            cpu_docker_uri=common_pipeline_component_configs.cpu_container_image,
+            cuda_docker_uri=common_pipeline_component_configs.cuda_container_image,
             **common_pipeline_component_configs.additional_job_args.get(component, {}),
         )
     elif component == GiGLComponents.SubgraphSampler:
