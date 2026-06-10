@@ -41,6 +41,10 @@ def initialize_gigl_runtime(
         initialize_metrics(task_config_uri=task_config_uri, service_name=service_name)
         return
 
+    # TODO(kmonte): Also expose the dataflow docker URI (used as custom_worker_image_uri by
+    # DataPreprocessor/Inferencer) as a GIGL_DATAFLOW_DOCKER_URI env var for parity with the
+    # CPU/CUDA docker URIs. Requires a new key in gigl/env/constants.py and threading it
+    # through get_gigl_runtime_env_vars.
     resolved_cpu_docker_uri = (
         os.environ.get(GIGL_CPU_DOCKER_URI_ENV_KEY)
         if cpu_docker_uri is None
