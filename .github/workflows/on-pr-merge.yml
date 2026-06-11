@@ -100,14 +100,8 @@ jobs:
     - name: Run Integration Tests
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make integration_test"
-        service_account:  ${{ secrets.gcp_service_account_email }}
-        project:  ${{ vars.GCP_PROJECT_ID }}
-    - name: Run Smoke Tests on fresh source image
-      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
-      with:
         # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
-        cmd: "make smoke_test SMOKE_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}"
+        cmd: "make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
