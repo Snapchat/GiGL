@@ -30,7 +30,7 @@ _BLOB_BATCH_SIZE = 80
 def _upload_file_to_gcs(
     source_file_path: LocalUri,
     dest_gcs_path: GcsUri,
-    project: str,
+    project: Optional[str],
     gcs_utils_client: Optional[storage.Client] = None,
 ):
     (
@@ -45,7 +45,9 @@ def _upload_file_to_gcs(
     blob.upload_from_filename(source_file_path.uri)
 
 
-def _pickling_safe_upload_file_to_gcs(obj: Tuple[Tuple[LocalUri, GcsUri], str]):
+def _pickling_safe_upload_file_to_gcs(
+    obj: Tuple[Tuple[LocalUri, GcsUri], Optional[str]],
+):
     file_paths, project = obj
     source_file_path, dest_gcs_path = file_paths
     storage_client = storage.Client(project=project)
@@ -58,7 +60,7 @@ def _pickling_safe_upload_file_to_gcs(obj: Tuple[Tuple[LocalUri, GcsUri], str]):
 
 
 def _upload_files_to_gcs_parallel(
-    project: str, local_file_path_to_gcs_path_map: dict[LocalUri, GcsUri]
+    project: Optional[str], local_file_path_to_gcs_path_map: dict[LocalUri, GcsUri]
 ):
     with ProcessPoolExecutor(max_workers=None) as executor:
         results = executor.map(
@@ -84,6 +86,9 @@ class GcsUtils:
             project (Optional[str]): The GCP project ID. Defaults to None.
         """
         self.__storage_client = storage.Client(project=project)
+        # Passing project=None explicitly puts storage.Client in "no project"
+        # mode where client.project is None — a valid, common configuration.
+        self.__project: Optional[str] = self.__storage_client.project
 
     def upload_from_string(self, gcs_path: GcsUri, content: str) -> None:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
@@ -133,7 +138,7 @@ class GcsUtils:
         """
         if parallel:
             _upload_files_to_gcs_parallel(
-                project=self.__storage_client.project,  # ty: ignore[invalid-argument-type]
+                project=self.__project,
                 local_file_path_to_gcs_path_map=local_file_path_to_gcs_path_map,
             )
         else:
@@ -144,7 +149,7 @@ class GcsUtils:
                 _upload_file_to_gcs(
                     source_file_path=source_file_path,
                     dest_gcs_path=dest_gcs_path,
-                    project=self.__storage_client.project,
+                    project=self.__project,
                     gcs_utils_client=self.__storage_client,
                 )
 
