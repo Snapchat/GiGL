@@ -41,6 +41,19 @@ class TestGcsUtils(TestCase):
             filelike, content_type="application/octet-stream"
         )
 
+    def test_init_succeeds_when_client_has_no_project(self):
+        # storage.Client(project=None) with an explicit None is a documented
+        # "no project" mode where client.project is None. GcsUtils must still
+        # be constructible in that mode (it is the default code path, e.g.
+        # FileLoader() with no project).
+        mock_client = MagicMock(spec=Client)
+        mock_client.project = None
+
+        with patch("gigl.common.utils.gcs.storage.Client", return_value=mock_client):
+            gcs_utils = GcsUtils()
+
+        self.assertIsNotNone(gcs_utils)
+
     def test_delete_files_in_bucket_dir(self):
         # Mock the GCS client, bucket, and blob
         mock_client = MagicMock(spec=Client)
