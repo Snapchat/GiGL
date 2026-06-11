@@ -21,13 +21,13 @@ DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
-# Image built and used by `make smoke_test`. The tag defaults to ${DATE} for local
-# runs; CI overrides SMOKE_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
+# Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
+# runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
 # ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
-# other's tag. `?=` keeps SMOKE_TEST_CPU_IMAGE lazily expanded so a CLI override of
+# other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
 # the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
-SMOKE_TEST_CPU_IMAGE_TAG?=${DATE}
-SMOKE_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${SMOKE_TEST_CPU_IMAGE_TAG}
+INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
+INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
@@ -135,20 +135,13 @@ check_format: check_format_py check_format_cpp check_format_scala check_format_m
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
 # By default, runs all tests under tests/integration.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
+# Builds a fresh src-cpu image from current source so Vertex-AI-launching integration
+# tests run against current code. CI passes an immutable INTEGRATION_TEST_CPU_IMAGE_TAG;
+# see the var definition above.
 integration_test: build_cpp_extensions
+	uv run python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${INTEGRATION_TEST_CPU_IMAGE}
+	GIGL_CPU_DOCKER_URI=${INTEGRATION_TEST_CPU_IMAGE} \
 	uv run python -m tests.integration.main \
-		--env=test \
-		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
-		--test_file_pattern=$(PY_TEST_FILES) \
-
-# Builds a fresh src-cpu image from the current source and runs the smoke suite
-# (tests/smoke/ — all non-e2e tests that launch real Vertex AI jobs) against it,
-# verifying current source actually builds and runs on real Vertex AI infra.
-# CI passes an immutable SMOKE_TEST_CPU_IMAGE_TAG; see the var definition above.
-smoke_test: build_cpp_extensions
-	uv run python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${SMOKE_TEST_CPU_IMAGE}
-	GIGL_CPU_DOCKER_URI=${SMOKE_TEST_CPU_IMAGE} \
-	uv run python -m tests.smoke.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES)
