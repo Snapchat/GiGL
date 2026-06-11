@@ -39,6 +39,10 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.compute import async_request_server
 from gigl.distributed.graph_store.dist_server import DistServer
@@ -51,9 +55,13 @@ from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
+    attach_ppr_outputs,
+    extract_edge_type_metadata,
     patch_fanout_for_sampling,
+    strip_non_ppr_edge_types,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from gigl.utils.share_memory import share_memory
 
 logger = Logger()
 
@@ -466,10 +474,11 @@ class BaseDistLoader(DistLoader):
         channel = BaseDistLoader.create_colocated_channel(worker_options)
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
+            share_memory(degree_tensors)
             if isinstance(degree_tensors, dict):
                 logger.info(
                     f"Pre-computed degree tensors for PPR sampling across "
-                    f"{len(degree_tensors)} edge types."
+                    f"{len(degree_tensors)} node types."
                 )
             else:
                 logger.info(
@@ -915,6 +924,49 @@ class BaseDistLoader(DistLoader):
                 f"total_elapsed={total_elapsed:.2f}s"
             )
         self._shutdowned = True
+
+    def _apply_ppr_outputs(
+        self,
+        data: Union[Data, HeteroData],
+        metadata: dict[str, torch.Tensor],
+    ) -> tuple[Union[Data, HeteroData], dict[str, torch.Tensor]]:
+        """Attach PPR edge outputs from metadata onto the data object.
+
+        For pure homogeneous graphs the PPR sampler writes plain ``"edge_index"``
+        and ``"edge_attr"`` keys.  For heterogeneous graphs (including
+        labeled-homogeneous graphs that have been converted to ``Data`` by
+        ``labeled_to_homogeneous``) it writes prefixed edge-type keys that are
+        parsed by ``extract_edge_type_metadata``.
+
+        A no-op when the active sampler is not ``PPRSamplerOptions``.
+
+        Args:
+            data: The Data or HeteroData object to attach PPR outputs to.
+            metadata: Remaining metadata dict; consumed entries are removed.
+
+        Returns:
+            Updated ``(data, metadata)`` tuple.
+        """
+        if not isinstance(self._sampler_options, PPRSamplerOptions):
+            return data, metadata
+
+        if not self._is_homogeneous_with_labeled_edge_type and isinstance(data, Data):
+            # Pure homogeneous PPR: sampler writes plain "edge_index"/"edge_attr".
+            data.edge_index = metadata.pop("edge_index")
+            data.edge_attr = metadata.pop("edge_attr")
+        else:
+            # Hetero PPR (including labeled-homogeneous): prefixed edge-type keys.
+            matched, metadata = extract_edge_type_metadata(
+                metadata=metadata,
+                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+            )
+            ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
+            ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
+            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
+            if isinstance(data, HeteroData):
+                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
+
+        return data, metadata
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         """Override GLT's _collate_fn to optionally batch-transfer tensors with non_blocking=True.

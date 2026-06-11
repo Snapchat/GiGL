@@ -10,6 +10,7 @@ from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.src.common.constants import gcs as gcs_constants
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_POST_PROCESSOR_S
 from gigl.src.common.translators.model_eval_metrics_translator import (
     EvalMetricsCollectionTranslator,
@@ -18,9 +19,9 @@ from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.model_eval_metrics import EvalMetricsCollection
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
-    initialize_metrics,
 )
 from gigl.src.post_process.lib.base_post_processor import BasePostProcessor
 from gigl.src.post_process.utils.unenumeration import unenumerate_all_inferred_bq_assets
@@ -184,12 +185,34 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        help="User Specified or KFP compiled Docker Image for CPU execution",
+        required=False,
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        help="User Specified or KFP compiled Docker Image for GPU execution",
+        required=False,
+    )
     args = parser.parse_args()
 
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
     applied_task_identifier = AppliedTaskIdentifier(args.job_name)
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
+    cpu_docker_uri = args.cpu_docker_uri
+    cuda_docker_uri = args.cuda_docker_uri
+    initialize_gigl_runtime(
+        applied_task_identifier=applied_task_identifier,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.PostProcessor,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
 
     post_processor = PostProcessor()
     post_processor.run(

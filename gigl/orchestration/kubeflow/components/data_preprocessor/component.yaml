@@ -5,6 +5,8 @@ inputs:
 - {name: task_config_uri, type: String, description: 'Frozen GBML config uri'}
 - {name: resource_config_uri, type: String, description: 'Runtine argument for resource and env specifications of each component'}
 - {name: custom_worker_image_uri, type: String, description: "Docker image to use for the worker harness in dataflow "}
+- {name: cpu_docker_uri, type: String, description: "Uri to dockerized source code compiled for cpu execution at runtime"}
+- {name: cuda_docker_uri, type: String, description: "Uri to dockerized source code compiled for gpu execution at runtime"}
 outputs:
 
 implementation:
@@ -16,4 +18,6 @@ implementation:
       --task_config_uri, {inputValue: task_config_uri},
       --resource_config_uri, {inputValue: resource_config_uri},
       --custom_worker_image_uri, {inputValue: custom_worker_image_uri},
+      --cpu_docker_uri, {inputValue: cpu_docker_uri},
+      --cuda_docker_uri, {inputValue: cuda_docker_uri},
     ]

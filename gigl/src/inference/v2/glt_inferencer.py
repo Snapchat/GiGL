@@ -10,7 +10,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
-from gigl.src.common.utils.metrics_service_provider import initialize_metrics
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.vertex_ai_launcher import (
     launch_graph_store_enabled_job,
     launch_single_pool_job,
@@ -170,7 +170,15 @@ if __name__ == "__main__":
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
     cpu_docker_uri, cuda_docker_uri = args.cpu_docker_uri, args.cuda_docker_uri
 
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
+    initialize_gigl_runtime(
+        applied_task_identifier=applied_task_identifier,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.Inferencer,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
 
     glt_inferencer = GLTInferencer()
     glt_inferencer.run(
