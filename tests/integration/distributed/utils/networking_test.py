@@ -19,17 +19,16 @@ from tests.test_assets.test_case import TestCase
 # Short timeout so a broken fresh image fails fast instead of hanging CI until the
 # outer Cloud Build timeout. launch_graph_store_job passes this through to Vertex AI
 # directly (it does not apply the 24h launch_job default).
-_SMOKE_JOB_TIMEOUT_S = 30 * 60
+_INTEGRATION_JOB_TIMEOUT_S = 30 * 60
 
 
 def _assert_graph_store_info(num_storage_nodes: int, num_compute_nodes: int) -> None:
     """Worker entrypoint for ``test_get_graph_store_info``.
 
     Runs on every node of the launched Vertex AI graph-store cluster (invoked via a
-    thin ``python -c`` import+call, since ``make smoke_test`` rebuilds the image from
-    the current source so this module is importable on the workers). Initializes the
-    cluster-wide process group, fetches the graph-store info, and asserts the derived
-    topology matches the expected node counts.
+    thin ``python -c`` import+call; the freshly built ``src-cpu`` image contains this
+    module). Initializes the cluster-wide process group, fetches the graph-store info,
+    and asserts the derived topology matches the expected node counts.
 
     An ``AssertionError`` here exits the worker non-zero, which fails the Vertex AI
     job — surfaced back in the test by ``launch_graph_store_job``'s blocking wait.
@@ -65,8 +64,8 @@ def _assert_graph_store_info(num_storage_nodes: int, num_compute_nodes: int) -> 
     )
 
 
-class NetworkingUtilsSmokeTest(TestCase):
-    def setUp(self):
+class NetworkingUtilsIntegrationTest(TestCase):
+    def setUp(self) -> None:
         # Read the fresh-source image first, before any cloud work, so a misconfigured
         # run (no GIGL_CPU_DOCKER_URI) fails fast without leaving GCS side effects
         # (unittest skips tearDown when setUp raises).
@@ -96,7 +95,7 @@ class NetworkingUtilsSmokeTest(TestCase):
         self._remote_resource_config_uri = (
             self._resource_config.temp_assets_regional_bucket_path
             / "gigl"
-            / "smoke_tests"
+            / "integration_tests"
             / "networking"
             / f"resource_config_{uuid.uuid4()}.yaml"
         )
@@ -106,7 +105,7 @@ class NetworkingUtilsSmokeTest(TestCase):
         )
         super().setUp()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._file_loader.delete_files([self._remote_resource_config_uri])
         super().tearDown()
 
@@ -125,15 +124,15 @@ class NetworkingUtilsSmokeTest(TestCase):
         ]
     )
     def test_get_graph_store_info(self, _, storage_nodes, compute_nodes):
-        job_name = f"GiGL-Smoke-Test-Graph-Store-{uuid.uuid4()}"
+        job_name = f"GiGL-Integration-Test-Graph-Store-{uuid.uuid4()}"
         # Thin import+call of the real worker function defined above. The freshly-built
-        # image (see make smoke_test) contains this module, so it is importable on the
-        # workers. storage_nodes/compute_nodes are test-controlled ints, so interpolating
-        # them into the call is safe.
+        # ``src-cpu`` image contains this module, so it is importable on the workers.
+        # storage_nodes/compute_nodes are test-controlled ints, so
+        # interpolating them into the call is safe.
         command = [
             "python",
             "-c",
-            f"from tests.smoke.distributed.utils.networking_test import _assert_graph_store_info; "
+            f"from tests.integration.distributed.utils.networking_test import _assert_graph_store_info; "
             f"_assert_graph_store_info(num_storage_nodes={storage_nodes}, num_compute_nodes={compute_nodes})",
         ]
         # launch_graph_store_job propagates the compute pool's environment_variables
@@ -152,7 +151,7 @@ class NetworkingUtilsSmokeTest(TestCase):
             command=command,
             machine_type="n2-standard-8",
             environment_variables=resource_config_env_vars,
-            timeout_s=_SMOKE_JOB_TIMEOUT_S,
+            timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
@@ -160,7 +159,7 @@ class NetworkingUtilsSmokeTest(TestCase):
             replica_count=storage_nodes,
             machine_type="n1-standard-4",
             command=command,
-            timeout_s=_SMOKE_JOB_TIMEOUT_S,
+            timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
         )
 
         self._vertex_ai_service.launch_graph_store_job(
