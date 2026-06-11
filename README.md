@@ -151,12 +151,6 @@ Run all integration tests:
 /integration_test
 ```
 
-Run all smoke tests (tests that launch real Vertex AI jobs, against a freshly-built source image):
-
-```
-/smoke_test
-```
-
 Run all end-to-end tests:
 
 ```
@@ -247,6 +241,10 @@ make integration_test
 
 Note: These tests may take a while to run!
 
+`make integration_test` builds a fresh `src-cpu` image from the current source and points the tests that launch GiGL
+workers at it (via `GIGL_CPU_DOCKER_URI`), so worker-side source changes are validated against current code rather than
+only after a release.
+
 <details>
 <summary>More Commands and Details</summary>
 
@@ -260,20 +258,6 @@ All integration tests are organized in `tests/integration` folder with the pytho
 `tests/integration/main.py`
 
 </details>
-
-##### Smoke Tests
-
-Smoke tests (`tests/smoke/`, entry point `tests/smoke/main.py`) are the tests that launch real Vertex AI jobs. Run them
-with:
-
-```bash
-make smoke_test
-```
-
-Unlike `make integration_test` (which uses the pinned release `src-cpu` image), `make smoke_test` first builds a fresh
-`src-cpu` image from the current source and points the tests that run GiGL code on the workers at it (via
-`GIGL_CPU_DOCKER_URI`), so worker-side source changes are validated on the PR rather than only after a release. You can
-also trigger it on an open PR with the `/smoke_test` comment command.
 
 ##### Cloud Integration Test (end-to-end)
 
