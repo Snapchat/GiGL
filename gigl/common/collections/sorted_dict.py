@@ -1,5 +1,5 @@
 from collections.abc import Iterator, Mapping
-from typing import Any, Protocol, Self, TypeVar
+from typing import Any, Protocol, Self, TypeVar, cast
 
 
 class _Comparable(Protocol):
@@ -39,8 +39,9 @@ class SortedDict(Mapping[KT, VT]):
             *args: Positional arguments passed to dict constructor
             **kwargs: Keyword arguments passed to dict constructor
         """
-        # ty cannot resolve dict() constructor overloads with generic TypeVars
-        self.__dict: dict[KT, VT] = dict(*args, **kwargs)  # ty: ignore[invalid-assignment]
+        self.__dict: dict[KT, VT] = {}
+        if args or kwargs:
+            self.__dict.update(*args, **kwargs)
         self.__needs_memoization: bool = True
         self.__sort_dict_if_needed()
 
@@ -82,10 +83,13 @@ class SortedDict(Mapping[KT, VT]):
         if len(self) != len(other):
             return False
 
+        # isinstance(other, Mapping) loses generic params; narrow to an
+        # indexable Mapping[Any, Any] so `other_mapping[self_key]` type-checks.
+        other_mapping = cast(Mapping[Any, Any], other)
         for self_key, self_val in self.items():
-            if self_key not in other:
+            if self_key not in other_mapping:
                 return False
-            if self_val != other[self_key]:  # ty: ignore[invalid-argument-type]
+            if self_val != other_mapping[self_key]:
                 return False
         return True
 
