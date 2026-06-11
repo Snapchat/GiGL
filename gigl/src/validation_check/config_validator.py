@@ -9,6 +9,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.validation_check.libs.frozen_config_path_checks import (
     assert_preprocessed_metadata_exists,
     assert_split_generator_output_exists,
@@ -383,12 +384,37 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for cpu at runtime",
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for gpu at runtime",
+    )
     args = parser.parse_args()
+
+    task_config_uri = UriFactory.create_uri(args.task_config_uri)
+    resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
+
+    initialize_gigl_runtime(
+        applied_task_identifier=args.job_name,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.ConfigValidator,
+        cpu_docker_uri=args.cpu_docker_uri,
+        cuda_docker_uri=args.cuda_docker_uri,
+    )
 
     kfp_validation_checks(
         job_name=args.job_name,
-        task_config_uri=UriFactory.create_uri(args.task_config_uri),
+        task_config_uri=task_config_uri,
         start_at=args.start_at,
-        resource_config_uri=UriFactory.create_uri(args.resource_config_uri),
+        resource_config_uri=resource_config_uri,
         stop_after=args.stop_after,
     )

@@ -36,9 +36,9 @@ from gigl.src.common.types.graph_data import (
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
-    initialize_metrics,
 )
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
     DataPreprocessorConfig,
@@ -998,14 +998,36 @@ if __name__ == "__main__":
         help="Docker image to use for the worker harness in dataflow",
         required=False,
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        help="User Specified or KFP compiled Docker Image for CPU execution",
+        required=False,
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        help="User Specified or KFP compiled Docker Image for GPU execution",
+        required=False,
+    )
     args = parser.parse_args()
 
     ati = AppliedTaskIdentifier(args.job_name)
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
     custom_worker_image_uri = args.custom_worker_image_uri
+    cpu_docker_uri = args.cpu_docker_uri
+    cuda_docker_uri = args.cuda_docker_uri
 
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
+    initialize_gigl_runtime(
+        applied_task_identifier=ati,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.DataPreprocessor,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
 
     data_preprocessor = DataPreprocessor()
     data_preprocessor.run(
