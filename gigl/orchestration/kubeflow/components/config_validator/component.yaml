@@ -6,6 +6,8 @@ inputs:
 - {name: start_at, type: String, description: 'Start component'}
 - {name: resource_config_uri, type: String, description: 'Runtine argument for resource and env specifications of each component'}
 - {name: stop_after, type: String, description: 'Stop component'}
+- {name: cpu_docker_uri, type: String, description: "Uri to dockerized source code compiled for cpu at runtime"}
+- {name: cuda_docker_uri, type: String, description: "Uri to dockerized source code compiled for gpu at runtime"}
 outputs:
 
 implementation:
@@ -17,5 +19,7 @@ implementation:
       --task_config_uri, {inputValue: task_config_uri},
       --start_at, {inputValue: start_at},
       --resource_config_uri, {inputValue: resource_config_uri},
-      --stop_after, {inputValue: stop_after}
+      --stop_after, {inputValue: stop_after},
+      --cpu_docker_uri, {inputValue: cpu_docker_uri},
+      --cuda_docker_uri, {inputValue: cuda_docker_uri}
     ]

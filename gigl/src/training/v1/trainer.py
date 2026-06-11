@@ -14,7 +14,8 @@ from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.metrics_service_provider import initialize_metrics
+from gigl.src.common.utils.gigl_env import get_gigl_runtime_env_vars
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.training.v1.lib.training_process import GnnTrainingProcess
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
     LocalResourceConfig,
@@ -48,11 +49,24 @@ class Trainer:
             container_uri = cpu_docker_uri if is_cpu_training else cuda_docker_uri
             environment_variables: list[env_var.EnvVar] = [
                 env_var.EnvVar(name="TF_CPP_MIN_LOG_LEVEL", value="3"),
+                *[
+                    env_var.EnvVar(name=name, value=value)
+                    for name, value in get_gigl_runtime_env_vars(
+                        applied_task_identifier=applied_task_identifier,
+                        task_config_uri=task_config_uri,
+                        resource_config_uri=resource_config_uri,
+                        component=GiGLComponents.Trainer,
+                        cpu_docker_uri=cpu_docker_uri,
+                        cuda_docker_uri=cuda_docker_uri,
+                    ).items()
+                ],
             ]
             job_args = [
                 f"--job_name={applied_task_identifier}",
                 f"--task_config_uri={task_config_uri}",
                 f"--resource_config_uri={resource_config_uri}",
+                f"--cpu_docker_uri={cpu_docker_uri}",
+                f"--cuda_docker_uri={cuda_docker_uri}",
             ] + ([] if is_cpu_training else ["--use_cuda"])
 
             job_config = VertexAiJobConfig(
@@ -151,7 +165,15 @@ if __name__ == "__main__":
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
     cpu_docker_uri, cuda_docker_uri = args.cpu_docker_uri, args.cuda_docker_uri
 
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
+    initialize_gigl_runtime(
+        applied_task_identifier=applied_task_identifier,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.Trainer,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
 
     trainer = Trainer()
     trainer.run(
