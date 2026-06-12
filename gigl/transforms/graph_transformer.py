@@ -71,6 +71,7 @@ TokenInputData = dict[str, Tensor]
 class SequenceAuxiliaryData(TypedDict):
     anchor_bias: Optional[Tensor]
     pairwise_bias: Optional[Tensor]
+    pairwise_nonmissing_indices: Optional[Tensor]
     token_input: Optional[TokenInputData]
 
 
@@ -143,6 +144,9 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
+                ``"pairwise_nonmissing_indices"`` shaped ``(num_pairs, 3)`` or None,
+                storing ``(batch_idx, row_pos, col_pos)`` coordinates for
+                nonmissing pairwise entries
                 ``"token_input"`` as a dict mapping attribute name to a
                 ``(batch, seq, 1)`` tensor, or None
 
@@ -306,11 +310,14 @@ def heterodata_to_graph_transformer_input(
         device=device,
     )
 
-    pairwise_feature_sequences = _lookup_pairwise_relative_features(
-        node_index_sequences=node_index_sequences,
-        valid_mask=valid_mask,
-        csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
-        device=device,
+    pairwise_feature_sequences, pairwise_nonmissing_indices = (
+        _lookup_pairwise_relative_features(
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
+            attr_names=pairwise_bias_attr_names,
+            device=device,
+        )
     )
 
     anchor_bias_features = _compose_anchor_feature_tensor(
@@ -332,6 +339,7 @@ def heterodata_to_graph_transformer_input(
         {
             "anchor_bias": anchor_bias_features,
             "pairwise_bias": pairwise_feature_sequences,
+            "pairwise_nonmissing_indices": pairwise_nonmissing_indices,
             "token_input": token_input_features,
         },
     )
@@ -798,8 +806,9 @@ def _lookup_pairwise_relative_features(
     node_index_sequences: Tensor,
     valid_mask: Tensor,
     csr_matrices: Optional[list[Tensor]],
+    attr_names: Optional[list[str]],
     device: torch.device,
-) -> Optional[Tensor]:
+) -> tuple[Optional[Tensor], Optional[Tensor]]:
     """
     Look up pairwise sparse values for each valid token pair in the sequence.
 
@@ -815,13 +824,20 @@ def _lookup_pairwise_relative_features(
         node_index_sequences: (batch_size, max_seq_len) node indices for each sequence position
         valid_mask: (batch_size, max_seq_len) bool tensor indicating valid positions
         csr_matrices: List of sparse CSR matrices, each (num_nodes, num_nodes)
+        attr_names: Optional names for the pairwise attributes. Used only to
+            produce clearer error messages when multiple attrs disagree on
+            sparse support.
         device: Device for output tensor
 
     Returns:
         features: (batch_size, max_seq_len, max_seq_len, num_attrs) tensor where
             features[b, i, j, k] = csr_matrices[k][node_index_sequences[b, i], node_index_sequences[b, j]]
             for valid (i, j) pairs, 0.0 for padding positions.
-        Returns None if csr_matrices is empty.
+        nonmissing_indices: (num_nonmissing_pairs, 3) long tensor containing
+            ``(batch_idx, row_pos, col_pos)`` coordinates for valid diagonal
+            self pairs and valid sparse entries. Missing non-self pairs and
+            padding are omitted.
+        Returns (None, None) if csr_matrices is empty.
 
     Example:
         # batch_size=2, max_seq_len=3, num_attrs=1 (e.g., random_walk_se)
@@ -844,7 +860,7 @@ def _lookup_pairwise_relative_features(
         # (pad)   [0.0,       0.0,      0.0]
     """
     if not csr_matrices:
-        return None
+        return None, None
 
     batch_size, max_seq_len = node_index_sequences.shape
     num_attrs = len(csr_matrices)
@@ -856,23 +872,62 @@ def _lookup_pairwise_relative_features(
 
     pair_valid_mask = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
     if not pair_valid_mask.any():
-        return features
+        return features, torch.zeros((0, 3), dtype=torch.long, device=device)
 
-    row_indices = node_index_sequences.unsqueeze(2).expand(-1, -1, max_seq_len)
-    col_indices = node_index_sequences.unsqueeze(1).expand(-1, max_seq_len, -1)
+    valid_batch_indices, valid_row_positions, valid_col_positions = torch.nonzero(
+        pair_valid_mask,
+        as_tuple=True,
+    )
+    valid_row_indices = node_index_sequences[
+        valid_batch_indices,
+        valid_row_positions,
+    ]
+    valid_col_indices = node_index_sequences[
+        valid_batch_indices,
+        valid_col_positions,
+    ]
+    self_pair_mask = valid_row_positions == valid_col_positions
 
-    valid_row_indices = row_indices[pair_valid_mask]
-    valid_col_indices = col_indices[pair_valid_mask]
-
+    first_attr_name = attr_names[0] if attr_names else "attr_0"
+    nonmissing_support: Optional[Tensor] = None
     for attr_idx, pe_matrix in enumerate(csr_matrices):
-        pe_values = _lookup_csr_values(
+        pe_values, found_mask = _lookup_csr_values_and_found(
             csr_matrix=pe_matrix,
             row_indices=valid_row_indices,
             col_indices=valid_col_indices,
         )
-        features[..., attr_idx][pair_valid_mask] = pe_values
+        features[
+            valid_batch_indices,
+            valid_row_positions,
+            valid_col_positions,
+            attr_idx,
+        ] = pe_values
+        attr_nonmissing_support = found_mask | self_pair_mask
+        if attr_idx == 0:
+            nonmissing_support = attr_nonmissing_support
+            continue
+        if nonmissing_support is None or not torch.equal(
+            nonmissing_support,
+            attr_nonmissing_support,
+        ):
+            attr_name = attr_names[attr_idx] if attr_names else f"attr_{attr_idx}"
+            raise ValueError(
+                "Pairwise attention bias attributes must share identical "
+                "nonmissing support after treating valid diagonal self pairs "
+                f"as nonmissing, but '{first_attr_name}' and '{attr_name}' "
+                "differ."
+            )
 
-    return features
+    assert nonmissing_support is not None
+    pairwise_nonmissing_indices = torch.stack(
+        [
+            valid_batch_indices[nonmissing_support],
+            valid_row_positions[nonmissing_support],
+            valid_col_positions[nonmissing_support],
+        ],
+        dim=1,
+    )
+    return features, pairwise_nonmissing_indices
 
 
 def _get_k_hop_neighbors_sparse(
@@ -964,11 +1019,35 @@ def _lookup_csr_values(
     Returns:
         (n,) values from csr_matrix[row, col], or default_value if not present
     """
+    values, _ = _lookup_csr_values_and_found(
+        csr_matrix=csr_matrix,
+        row_indices=row_indices,
+        col_indices=col_indices,
+        default_value=default_value,
+    )
+    return values
+
+
+def _lookup_csr_values_and_found(
+    csr_matrix: Tensor,
+    row_indices: Tensor,
+    col_indices: Tensor,
+    default_value: float = 0.0,
+) -> tuple[Tensor, Tensor]:
+    """
+    Look up values in a CSR sparse matrix and report which entries were present.
+
+    Returns both the looked-up values and a boolean found-mask so callers can
+    distinguish missing sparse entries from explicit zero-valued entries.
+    """
     n = row_indices.size(0)
     device = row_indices.device
 
     if n == 0:
-        return torch.zeros(0, device=device, dtype=torch.float)
+        return (
+            torch.zeros(0, device=device, dtype=torch.float),
+            torch.zeros(0, device=device, dtype=torch.bool),
+        )
 
     crow_indices = csr_matrix.crow_indices()
     col_indices_csr = csr_matrix.col_indices()
@@ -981,7 +1060,10 @@ def _lookup_csr_values(
     max_row_len = row_lengths.max().item()
 
     if max_row_len == 0:
-        return torch.full((n,), default_value, device=device, dtype=torch.float)
+        return (
+            torch.full((n,), default_value, device=device, dtype=torch.float),
+            torch.zeros((n,), device=device, dtype=torch.bool),
+        )
 
     # Build offset matrix: (n, max_row_len)
     offsets = row_starts.unsqueeze(1) + torch.arange(max_row_len, device=device)
@@ -1007,4 +1089,4 @@ def _lookup_csr_values(
         value_indices = row_starts[found] + match_offsets[found]
         result[found] = values_csr[value_indices].float()
 
-    return result
+    return result, found
