@@ -231,17 +231,31 @@ class GraphTransformerEncoderLayer(nn.Module):
     Adapted from RelGT's EncoderLayer.
 
     Args:
-        model_dim: Model dimension (d_model).
-        num_heads: Number of attention heads. Must evenly divide model_dim.
+        model_dim: Input model dimension (d_model).
+        num_heads: Number of attention heads. Must evenly divide ``output_dim``.
         feedforward_dim: Inner dimension of the feed-forward network.
+        output_dim: Optional output model dimension. When omitted, the layer is
+            width-preserving.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
         activation: Activation function for the feed-forward network.
             Supported values: "gelu" (default), "relu", "silu", "tanh",
             "geglu", "swiglu", "reglu".
+        relation_attention_mode: Optional relation-aware augmentation strategy
+            for attention scores. ``"none"`` preserves the default shared
+            self-attention path. ``"edge_type_bilinear"`` adds a learned
+            per-edge-type bilinear term for sampled directed graph edges. This
+            changes attention weights, not value/message content.
+        relation_value_mode: Optional relation-aware value augmentation strategy.
+            ``"sparse_residual_gate"`` adds a zero-initialized sparse residual
+            message path from relation-indexed source values to target queries.
+            This changes relation-specific message content without replacing
+            the main SDPA attention implementation.
+        num_relations: Number of relation channels expected in
+            ``pairwise_relation_indices`` when a relation-aware mode is enabled.
 
     Raises:
-        ValueError: If model_dim is not divisible by num_heads.
+        ValueError: If output_dim is not divisible by num_heads.
     """
 
     def __init__(
@@ -249,31 +263,88 @@ class GraphTransformerEncoderLayer(nn.Module):
         model_dim: int,
         num_heads: int,
         feedforward_dim: int,
+        output_dim: Optional[int] = None,
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         activation: str = "gelu",
+        relation_attention_mode: Literal["none", "edge_type_bilinear"] = "none",
+        relation_value_mode: Literal["none", "sparse_residual_gate"] = "none",
+        num_relations: int = 0,
     ) -> None:
         super().__init__()
-        if model_dim % num_heads != 0:
+        output_dim = output_dim if output_dim is not None else model_dim
+        if output_dim % num_heads != 0:
             raise ValueError(
-                f"model_dim ({model_dim}) must be divisible by num_heads ({num_heads})"
+                f"output_dim ({output_dim}) must be divisible by num_heads ({num_heads})"
+            )
+        if relation_attention_mode not in {"none", "edge_type_bilinear"}:
+            raise ValueError(
+                "relation_attention_mode must be one of "
+                "{'none', 'edge_type_bilinear'}, "
+                f"got '{relation_attention_mode}'"
+            )
+        if relation_value_mode not in {"none", "sparse_residual_gate"}:
+            raise ValueError(
+                "relation_value_mode must be one of "
+                "{'none', 'sparse_residual_gate'}, "
+                f"got '{relation_value_mode}'"
+            )
+        if (
+            relation_attention_mode == "edge_type_bilinear"
+            or relation_value_mode == "sparse_residual_gate"
+        ) and num_relations <= 0:
+            raise ValueError(
+                "Relation-aware attention/value modes require num_relations > 0."
             )
 
+        self._input_dim = model_dim
+        self._output_dim = output_dim
         self._num_heads = num_heads
-        self._head_dim = model_dim // num_heads
+        self._head_dim = output_dim // num_heads
         self._attention_dropout_rate = attention_dropout_rate
+        self._relation_attention_mode = relation_attention_mode
+        self._relation_value_mode = relation_value_mode
+        self._num_relations = num_relations
 
         self._attention_norm = nn.LayerNorm(model_dim)
-        self._query_projection = nn.Linear(model_dim, model_dim)
-        self._key_projection = nn.Linear(model_dim, model_dim)
-        self._value_projection = nn.Linear(model_dim, model_dim)
-        self._output_projection = nn.Linear(model_dim, model_dim)
+        self._query_projection = nn.Linear(model_dim, output_dim)
+        self._key_projection = nn.Linear(model_dim, output_dim)
+        self._value_projection = nn.Linear(model_dim, output_dim)
+        self._output_projection = nn.Linear(output_dim, output_dim)
+        self._residual_projection: Optional[nn.Linear] = None
+        if model_dim != output_dim:
+            self._residual_projection = nn.Linear(model_dim, output_dim, bias=False)
         self._dropout = nn.Dropout(dropout_rate)
+        self._relation_attention_matrices: Optional[nn.Parameter] = None
+        if relation_attention_mode == "edge_type_bilinear":
+            # Relation-specific bilinear logit term:
+            #   score(target, source, relation) += q_target^T W_relation k_source
+            # Zero init keeps startup behavior identical to shared attention.
+            self._relation_attention_matrices = nn.Parameter(
+                torch.zeros(num_relations, num_heads, self._head_dim, self._head_dim)
+            )
+        self._relation_value_gates: Optional[nn.Parameter] = None
+        if relation_value_mode == "sparse_residual_gate":
+            # Lightweight relation-specific value/message path:
+            #   message(target) += gate_relation * value_source
+            # This is a sparse residual on relation edges because PyTorch SDPA
+            # only accepts one shared value tensor, not per-edge transformed values.
+            self._relation_value_gates = nn.Parameter(
+                torch.zeros(num_relations, num_heads, self._head_dim)
+            )
 
-        self._ffn_norm = nn.LayerNorm(model_dim)
+        self._ffn_norm = nn.LayerNorm(output_dim)
         self._ffn = FeedForwardNetwork(
-            model_dim, feedforward_dim, dropout_rate, activation=activation
+            output_dim, feedforward_dim, dropout_rate, activation=activation
         )
+
+    @property
+    def num_heads(self) -> int:
+        return self._num_heads
+
+    @property
+    def output_dim(self) -> int:
+        return self._output_dim
 
     def reset_parameters(self) -> None:
         """Reinitialize all learnable parameters."""
@@ -287,6 +358,12 @@ class GraphTransformerEncoderLayer(nn.Module):
             nn.init.xavier_uniform_(projection.weight)
             if projection.bias is not None:
                 nn.init.zeros_(projection.bias)
+        if self._residual_projection is not None:
+            nn.init.xavier_uniform_(self._residual_projection.weight)
+        if self._relation_attention_matrices is not None:
+            nn.init.zeros_(self._relation_attention_matrices)
+        if self._relation_value_gates is not None:
+            nn.init.zeros_(self._relation_value_gates)
         self._ffn_norm.reset_parameters()
         self._ffn.reset_parameters()
 
@@ -294,6 +371,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         self,
         x: Tensor,
         attn_bias: Optional[Tensor] = None,
+        pairwise_relation_indices: Optional[Tensor] = None,
         valid_mask: Optional[Tensor] = None,
     ) -> Tensor:
         """Forward pass.
@@ -303,13 +381,16 @@ class GraphTransformerEncoderLayer(nn.Module):
             attn_bias: Optional attention bias of shape
                 ``(batch, num_heads, seq, seq)`` or broadcastable.
                 Added as an additive mask to attention scores.
+            pairwise_relation_indices: Optional long tensor of shape
+                ``(num_relation_edges, 4)`` with sparse
+                ``(batch_idx, query_pos, key_pos, relation_idx)`` coordinates.
             valid_mask: Optional boolean tensor of shape ``(batch, seq)`` used
                 to zero out padded token states after each residual block.
 
         Returns:
-            Output tensor of shape ``(batch, seq, model_dim)``.
+            Output tensor of shape ``(batch, seq, output_dim)``.
         """
-        batch_size, seq_len, model_dim = x.shape
+        batch_size, seq_len, _ = x.shape
 
         # Self-attention block (pre-norm)
         residual = x
@@ -330,22 +411,33 @@ class GraphTransformerEncoderLayer(nn.Module):
             batch_size, seq_len, self._num_heads, self._head_dim
         ).transpose(1, 2)
 
-        attention_output = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            attn_mask=attn_bias,
-            dropout_p=self._attention_dropout_rate if self.training else 0.0,
-            is_causal=False,
+        attention_output = self._run_attention(
+            query=query,
+            key=key,
+            value=value,
+            attn_bias=attn_bias,
+            pairwise_relation_indices=pairwise_relation_indices,
         )
 
-        # Reshape back to (batch, seq, model_dim)
+        if self._relation_value_mode == "sparse_residual_gate":
+            # Relation bilinear attention decides how strongly to attend along
+            # relation edges. This residual separately lets relation type
+            # change the content passed from source values to target queries.
+            attention_output = self._add_relation_value_residual(
+                attention_output=attention_output,
+                value=value,
+                pairwise_relation_indices=pairwise_relation_indices,
+            )
+
+        # Reshape back to (batch, seq, output_dim)
         attention_output = attention_output.transpose(1, 2).reshape(
-            batch_size, seq_len, model_dim
+            batch_size, seq_len, self._output_dim
         )
         attention_output = self._output_projection(attention_output)
         attention_output = self._dropout(attention_output)
 
+        if self._residual_projection is not None:
+            residual = self._residual_projection(residual)
         x = residual + attention_output
         if valid_mask is not None:
             x = x * valid_mask.unsqueeze(-1).to(x.dtype)
@@ -360,14 +452,289 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         return x
 
+    def _run_attention(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attn_bias: Optional[Tensor],
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Tensor:
+        if self._relation_attention_mode == "edge_type_bilinear":
+            return self._run_relation_aware_attention(
+                query=query,
+                key=key,
+                value=value,
+                attn_bias=attn_bias,
+                pairwise_relation_indices=pairwise_relation_indices,
+            )
+
+        # Keep the main path on PyTorch SDPA. Depending on device/dtype/mask,
+        # PyTorch may dispatch this to FlashAttention or another SDPA backend.
+        return F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_bias,
+            dropout_p=self._attention_dropout_rate if self.training else 0.0,
+            is_causal=False,
+        )
+
+    def _run_relation_aware_attention(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attn_bias: Optional[Tensor],
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Tensor:
+        # The relation-aware logit path still uses SDPA. We only add an
+        # additive per-relation bias before attention; value vectors remain
+        # shared unless relation_value_mode adds a sparse residual afterward.
+        attn_bias = self._add_relation_attention_bias(
+            attn_bias=attn_bias,
+            query=query,
+            key=key,
+            pairwise_relation_indices=pairwise_relation_indices,
+        )
+
+        return F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_bias,
+            dropout_p=self._attention_dropout_rate if self.training else 0.0,
+            is_causal=False,
+        )
+
+    def _add_relation_value_residual(
+        self,
+        attention_output: Tensor,
+        value: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Tensor:
+        if pairwise_relation_indices is None:
+            raise ValueError(
+                "pairwise_relation_indices is required when "
+                "relation_value_mode='sparse_residual_gate'."
+            )
+        if self._relation_value_gates is None:
+            raise ValueError("Relation value gates are not initialized.")
+        if pairwise_relation_indices.numel() == 0:
+            return attention_output
+        if (
+            pairwise_relation_indices.dim() != 2
+            or pairwise_relation_indices.size(-1) != 4
+        ):
+            raise ValueError(
+                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+            )
+
+        pairwise_relation_indices = pairwise_relation_indices.to(
+            device=value.device,
+            dtype=torch.long,
+        )
+        batch_indices = pairwise_relation_indices[:, 0]
+        query_indices = pairwise_relation_indices[:, 1]
+        key_indices = pairwise_relation_indices[:, 2]
+        relation_indices = pairwise_relation_indices[:, 3]
+        if (
+            relation_indices.min().item() < 0
+            or relation_indices.max().item() >= self._num_relations
+        ):
+            raise ValueError(
+                "pairwise_relation_indices contains relation ids outside "
+                f"[0, {self._num_relations})."
+            )
+
+        batch_size, _, seq_len, _ = value.shape
+        value_by_position = value.transpose(1, 2)
+        selected_values = value_by_position[batch_indices, key_indices]
+        selected_gates = self._relation_value_gates.to(dtype=value.dtype)[
+            relation_indices
+        ]
+        messages = selected_values * selected_gates
+
+        residual_by_position = value.new_zeros(
+            (batch_size, seq_len, self._num_heads, self._head_dim)
+        )
+        residual_by_position.index_put_(
+            (batch_indices, query_indices),
+            messages,
+            accumulate=True,
+        )
+
+        # Multiple relation edges can target the same token. Average the sparse
+        # residual by target degree so this auxiliary path does not grow just
+        # because a sampled sequence has more relation edges.
+        counts = value.new_zeros((batch_size, seq_len))
+        counts.index_put_(
+            (batch_indices, query_indices),
+            torch.ones(
+                pairwise_relation_indices.size(0),
+                dtype=value.dtype,
+                device=value.device,
+            ),
+            accumulate=True,
+        )
+        residual_by_position = residual_by_position / counts.clamp_min(1).view(
+            batch_size,
+            seq_len,
+            1,
+            1,
+        )
+
+        return attention_output + residual_by_position.transpose(1, 2).to(
+            dtype=attention_output.dtype
+        )
+
+    def _build_relation_attention_bias(
+        self,
+        query: Tensor,
+        key: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Optional[Tensor]:
+        if (
+            pairwise_relation_indices is not None
+            and pairwise_relation_indices.numel() == 0
+        ):
+            return None
+
+        batch_size, _, seq_len, _ = query.shape
+        empty_bias = query.new_zeros((batch_size, self._num_heads, seq_len, seq_len))
+        return self._add_relation_attention_bias(
+            attn_bias=empty_bias,
+            query=query,
+            key=key,
+            pairwise_relation_indices=pairwise_relation_indices,
+        )
+
+    def _add_relation_attention_bias(
+        self,
+        attn_bias: Optional[Tensor],
+        query: Tensor,
+        key: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Optional[Tensor]:
+        if pairwise_relation_indices is None:
+            raise ValueError(
+                "pairwise_relation_indices is required when "
+                "relation_attention_mode='edge_type_bilinear'."
+            )
+        if self._relation_attention_matrices is None:
+            raise ValueError("Relation attention matrices are not initialized.")
+        if pairwise_relation_indices.numel() == 0:
+            return attn_bias
+        if (
+            pairwise_relation_indices.dim() != 2
+            or pairwise_relation_indices.size(-1) != 4
+        ):
+            raise ValueError(
+                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+            )
+
+        pairwise_relation_indices = pairwise_relation_indices.to(
+            device=query.device,
+            dtype=torch.long,
+        )
+        batch_indices = pairwise_relation_indices[:, 0]
+        query_indices = pairwise_relation_indices[:, 1]
+        key_indices = pairwise_relation_indices[:, 2]
+        relation_indices = pairwise_relation_indices[:, 3]
+        if (
+            relation_indices.min().item() < 0
+            or relation_indices.max().item() >= self._num_relations
+        ):
+            raise ValueError(
+                "pairwise_relation_indices contains relation ids outside "
+                f"[0, {self._num_relations})."
+            )
+
+        batch_size, _, seq_len, _ = query.shape
+        if attn_bias is None:
+            attn_bias = query.new_zeros((batch_size, self._num_heads, seq_len, seq_len))
+        elif attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+            attn_bias = attn_bias.expand(
+                batch_size,
+                self._num_heads,
+                seq_len,
+                seq_len,
+            ).clone()
+        else:
+            # The same base attention bias is reused across encoder layers, so
+            # relation-aware logits must be added to a per-layer copy.
+            attn_bias = attn_bias.clone()
+
+        attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+        query_by_position = query.transpose(1, 2)
+        key_by_position = key.transpose(1, 2)
+        relation_matrices = self._relation_attention_matrices.to(dtype=query.dtype)
+
+        # Relation indices are emitted grouped by relation in the transform path.
+        # Sort only if callers provide an unsorted tensor, avoiding repeated
+        # full boolean masks over all relation edges.
+        if (
+            relation_indices.numel() > 1
+            and not torch.all(relation_indices[1:] >= relation_indices[:-1]).item()
+        ):
+            relation_sort_perm = torch.argsort(relation_indices)
+            relation_indices = relation_indices[relation_sort_perm]
+            batch_indices = batch_indices[relation_sort_perm]
+            query_indices = query_indices[relation_sort_perm]
+            key_indices = key_indices[relation_sort_perm]
+
+        unique_relation_indices, relation_counts = torch.unique_consecutive(
+            relation_indices,
+            return_counts=True,
+        )
+        relation_start = 0
+        for relation_idx_tensor, relation_count_tensor in zip(
+            unique_relation_indices,
+            relation_counts,
+        ):
+            relation_idx = int(relation_idx_tensor.item())
+            relation_end = relation_start + int(relation_count_tensor.item())
+            relation_batch_indices = batch_indices[relation_start:relation_end]
+            relation_query_indices = query_indices[relation_start:relation_end]
+            relation_key_indices = key_indices[relation_start:relation_end]
+
+            selected_query = query_by_position[
+                relation_batch_indices,
+                relation_query_indices,
+            ]
+            # This term changes the attention score for relation edge
+            # source -> target, but the SDPA value content is still value_source.
+            transformed_query = torch.einsum(
+                "nhd,hde->nhe",
+                selected_query,
+                relation_matrices[relation_idx],
+            )
+            selected_key = key_by_position[
+                relation_batch_indices,
+                relation_key_indices,
+            ]
+            relation_scores = (transformed_query * selected_key).sum(dim=-1)
+            attn_bias_by_position.index_put_(
+                (
+                    relation_batch_indices,
+                    relation_query_indices,
+                    relation_key_indices,
+                ),
+                (relation_scores / math.sqrt(self._head_dim)).to(dtype=attn_bias.dtype),
+                accumulate=True,
+            )
+            relation_start = relation_end
+
+        return attn_bias
+
 
 class GraphTransformerEncoder(nn.Module):
     """Graph Transformer encoder for heterogeneous graphs.
 
     Converts heterogeneous graph data into fixed-length sequences via
     ``heterodata_to_graph_transformer_input``, processes through pre-norm
-    transformer encoder layers, and produces per-node embeddings via
-    attention-weighted neighbor readout (from RelGT's LocalModule).
+    transformer encoder layers, and produces per-node embeddings via a
+    configurable readout over the anchor token and its sequence context.
 
     Conforms to the same forward interface as ``HGT`` and ``SimpleHGN``,
     making it a drop-in encoder for ``LinkPredictionGNN``.
@@ -376,12 +743,12 @@ class GraphTransformerEncoder(nn.Module):
         node_type_to_feat_dim_map: Dictionary mapping node types to their
             input feature dimensions.
         edge_type_to_feat_dim_map: Dictionary mapping edge types to their
-            feature dimensions. Accepted for interface conformance with
-            ``HGT``/``SimpleHGN``; edge features are not used by the
-            graph transformer.
-        hid_dim: Hidden dimension for transformer layers. All node types
-            are projected to this dimension before processing.
-        out_dim: Output embedding dimension.
+            feature dimensions. Used by optional relation-aware and sparse
+            edge-attribute attention-bias paths.
+        hid_dim: Hidden dimension for intermediate transformer layers. Layer 0
+            projects raw token features to this width.
+        out_dim: Output embedding dimension produced directly by the final
+            transformer layer.
         num_layers: Number of transformer encoder layers.
         num_heads: Number of attention heads per layer. Must evenly divide
             ``hid_dim``.
@@ -392,6 +759,11 @@ class GraphTransformerEncoder(nn.Module):
         sequence_construction_method: Sequence builder used to create tokens for
             each anchor. ``"khop"`` expands the sampled graph by hop distance,
             while ``"ppr"`` consumes outgoing ``"ppr"`` edges sorted by weight.
+        sampling_direction: Direction used for ``"khop"`` sequence construction.
+            ``"incoming"`` expands over reversed edges so anchor sequences
+            contain nodes that can send messages into the anchor. ``"outgoing"``
+            preserves the previous reachability expansion. PPR sequence
+            construction remains outgoing and ignores this argument.
         sequence_positional_encoding_type: Optional sequence-level positional
             encoding applied after sequence construction. Supported values are
             ``None`` and ``"sinusoidal"``. Lower-cost future extensions could
@@ -416,7 +788,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: List of anchor-relative attribute names
             used as token-aligned input features. Sparse graph-level attributes
             are looked up from ``data`` and ``"ppr_weight"`` resolves to PPR
-            edge weights in PPR mode. These are projected to ``hid_dim`` and
+            edge weights in PPR mode. These are projected to token width and
             added to the sequence tokens after sequence construction.
             Example: ``['hop_distance', 'ppr_weight']`` for continuous features,
             or ``['hop_distance']`` when ``hop_distance`` will be embedded via
@@ -426,15 +798,18 @@ class GraphTransformerEncoder(nn.Module):
             layers. These attributes are treated as discrete indices and their
             embedded contributions are added to the sequence tokens. Padding is
             masked out using the sequence valid mask.
-            Example: ``nn.ModuleDict({'hop_distance': nn.Embedding(10, hid_dim)})``
-            to embed hop distances 0-9 into ``hid_dim``-dimensional vectors.
-            The embedding output dimension must match ``hid_dim``.
+            Example: ``nn.ModuleDict({'hop_distance': nn.Embedding(10, d)})``
+            to embed hop distances 0-9 into token-width vectors.
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
-            features before node projection. (default: None)
+            features before sequence construction. (default: None)
+        readout_mode: Readout applied after the transformer encoder stack.
+            ``"anchor_neighbor_attention"`` preserves the current RelGT-style
+            anchor-plus-neighbor attention pooling. ``"anchor_only"`` returns
+            the normalized anchor token directly.
         pe_integration_mode: How to fuse positional encodings into the model
             input. ``"concat"`` preserves the current behavior by concatenating
             node-level PE to token features. ``"add"`` uses node-level additive
@@ -445,11 +820,27 @@ class GraphTransformerEncoder(nn.Module):
             - Standard: "gelu" (default), "relu", "silu", "tanh"
             - XGLU family: "geglu", "swiglu", "reglu"
             XGLU activations use gating: activation(xW) * xV.
-        feedforward_ratio: Ratio of feedforward dimension to hidden dimension
-            (feedforward_dim = hid_dim * feedforward_ratio). If None (default),
-            uses 4.0 for standard activations and 8/3 (~2.67) for XGLU variants,
-            following the convention that XGLU's gating doubles the effective
-            parameters, so a smaller ratio maintains similar parameter count.
+        feedforward_ratio: Ratio of feedforward dimension to each layer output
+            dimension. If None (default), uses 4.0 for standard activations and
+            8/3 (~2.67) for XGLU variants, following the convention that XGLU's
+            gating doubles the effective parameters, so a smaller ratio maintains
+            similar parameter count.
+        relation_attention_mode: Optional relation-aware augmentation for
+            attention scores. ``"none"`` preserves the current transformer path.
+            ``"edge_type_bilinear"`` adds a learned per-edge-type bilinear score
+            term for sampled directed edges.
+        relation_value_mode: Optional relation-aware value augmentation.
+            ``"none"`` preserves the current transformer path.
+            ``"sparse_residual_gate"`` adds a zero-initialized sparse residual
+            value path on sampled directed relation edges.
+        attention_mask_mode: Attention connectivity mode. ``"none"`` preserves
+            dense valid-token attention. ``"incoming_edges"`` allows only valid
+            self-pairs and sampled directed edge coordinates in attention
+            orientation ``query=dst_token, key=src_token``.
+        edge_attr_attention_bias_mode: Optional edge-attribute logit-bias path.
+            ``"none"`` preserves the current behavior. ``"sparse_linear"`` adds
+            a zero-initialized per-edge-type linear projection from sampled
+            edge attributes to per-head attention logits.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -486,6 +877,7 @@ class GraphTransformerEncoder(nn.Module):
         max_seq_len: int = 128,
         hop_distance: int = 2,
         sequence_construction_method: Literal["khop", "ppr"] = "khop",
+        sampling_direction: Literal["incoming", "outgoing"] = "incoming",
         sequence_positional_encoding_type: Optional[str] = None,
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
@@ -496,9 +888,16 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
+        readout_mode: Literal[
+            "anchor_neighbor_attention", "anchor_only"
+        ] = "anchor_only",
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
         feedforward_ratio: Optional[float] = None,
+        relation_attention_mode: Literal["none", "edge_type_bilinear"] = "none",
+        relation_value_mode: Literal["none", "sparse_residual_gate"] = "none",
+        attention_mask_mode: Literal["none", "incoming_edges"] = "none",
+        edge_attr_attention_bias_mode: Literal["none", "sparse_linear"] = "none",
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -518,6 +917,11 @@ class GraphTransformerEncoder(nn.Module):
             raise ValueError(
                 "sequence_construction_method must be one of {'khop', 'ppr'}, "
                 f"got '{sequence_construction_method}'"
+            )
+        if sampling_direction not in {"incoming", "outgoing"}:
+            raise ValueError(
+                "sampling_direction must be one of {'incoming', 'outgoing'}, "
+                f"got '{sampling_direction}'"
             )
         if sequence_positional_encoding_type is not None:
             sequence_positional_encoding_type = (
@@ -540,6 +944,36 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method='ppr' because khop sequences do not "
                 "enforce a stable token order."
             )
+        if readout_mode not in {"anchor_neighbor_attention", "anchor_only"}:
+            raise ValueError(
+                "readout_mode must be one of "
+                "{'anchor_neighbor_attention', 'anchor_only'}, "
+                f"got '{readout_mode}'"
+            )
+        if relation_attention_mode not in {"none", "edge_type_bilinear"}:
+            raise ValueError(
+                "relation_attention_mode must be one of "
+                "{'none', 'edge_type_bilinear'}, "
+                f"got '{relation_attention_mode}'"
+            )
+        if relation_value_mode not in {"none", "sparse_residual_gate"}:
+            raise ValueError(
+                "relation_value_mode must be one of "
+                "{'none', 'sparse_residual_gate'}, "
+                f"got '{relation_value_mode}'"
+            )
+        if attention_mask_mode not in {"none", "incoming_edges"}:
+            raise ValueError(
+                "attention_mask_mode must be one of "
+                "{'none', 'incoming_edges'}, "
+                f"got '{attention_mask_mode}'"
+            )
+        if edge_attr_attention_bias_mode not in {"none", "sparse_linear"}:
+            raise ValueError(
+                "edge_attr_attention_bias_mode must be one of "
+                "{'none', 'sparse_linear'}, "
+                f"got '{edge_attr_attention_bias_mode}'"
+            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
@@ -556,7 +990,17 @@ class GraphTransformerEncoder(nn.Module):
                 "The reserved anchor-relative feature 'ppr_weight' requires "
                 "sequence_construction_method='ppr'."
             )
+        transformer_input_dims = {
+            int(feat_dim) for feat_dim in node_type_to_feat_dim_map.values()
+        }
+        if len(transformer_input_dims) != 1:
+            raise ValueError(
+                "GraphTransformerEncoder skips pre-encoder node projection, so all "
+                "node types must share the same input feature dimension."
+            )
+        self._transformer_input_dim = next(iter(transformer_input_dims))
         self._sequence_construction_method = sequence_construction_method
+        self._sampling_direction = sampling_direction
         self._sequence_positional_encoding_type = sequence_positional_encoding_type
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
@@ -569,8 +1013,33 @@ class GraphTransformerEncoder(nn.Module):
         self._anchor_based_input_embedding_dict = anchor_based_input_embedding_dict
         self._pairwise_attention_bias_attr_names = pairwise_attention_bias_attr_names
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
+        self._readout_mode = readout_mode
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
+        self._relation_attention_mode = relation_attention_mode
+        self._relation_value_mode = relation_value_mode
+        self._attention_mask_mode = attention_mask_mode
+        self._edge_attr_attention_bias_mode = edge_attr_attention_bias_mode
+        self._edge_type_to_feat_dim_map = {
+            edge_type: edge_type_to_feat_dim_map[edge_type]
+            for edge_type in sorted(edge_type_to_feat_dim_map.keys())
+        }
+        self._attention_mask_edge_types = (
+            list(self._edge_type_to_feat_dim_map.keys())
+            if attention_mask_mode == "incoming_edges"
+            else []
+        )
+        self._relation_attention_edge_types = (
+            list(self._edge_type_to_feat_dim_map.keys())
+            if relation_attention_mode == "edge_type_bilinear"
+            or relation_value_mode == "sparse_residual_gate"
+            else []
+        )
+        self._edge_attr_attention_bias_edge_types = (
+            list(self._edge_type_to_feat_dim_map.keys())
+            if edge_attr_attention_bias_mode == "sparse_linear"
+            else []
+        )
         anchor_input_embedding_attr_names = (
             set(anchor_based_input_embedding_dict.keys())
             if anchor_based_input_embedding_dict is not None
@@ -595,7 +1064,7 @@ class GraphTransformerEncoder(nn.Module):
                 "_sequence_positional_encoding_table",
                 _build_sinusoidal_sequence_position_table(
                     max_seq_len=max_seq_len,
-                    hid_dim=hid_dim,
+                    hid_dim=self._transformer_input_dim,
                 ),
                 persistent=False,
             )
@@ -606,29 +1075,32 @@ class GraphTransformerEncoder(nn.Module):
                 persistent=False,
             )
 
-        # Per-node-type input projection to hid_dim (like HGT's lin_dict)
-        self._node_projection_dict = nn.ModuleDict(
-            {
-                str(node_type): nn.Linear(feat_dim, hid_dim)
-                for node_type, feat_dim in node_type_to_feat_dim_map.items()
-            }
-        )
+        # Layer 0 owns raw token projection; no pre-encoder per-node projection.
+        self._node_projection_dict = nn.ModuleDict()
 
         # PE fusion layers for node-level positional encodings.
-        # In "concat" mode: projects [node_features || PE] → hid_dim
-        # In "add" mode: projects PE → hid_dim, then adds to node features
+        # In "concat" mode: projects [node_features || PE] → token width.
+        # In "add" mode: projects PE → token width, then adds to node features.
         self._concat_pe_fusion_projection: Optional[nn.Module] = None
         has_node_level_pe = bool(pe_attr_names)
         if pe_integration_mode == "concat" and has_node_level_pe:
-            self._concat_pe_fusion_projection = nn.LazyLinear(hid_dim)
+            self._concat_pe_fusion_projection = nn.LazyLinear(
+                self._transformer_input_dim
+            )
 
         self._pe_projection: Optional[nn.Module] = None
         if pe_integration_mode == "add" and has_node_level_pe:
-            self._pe_projection = nn.LazyLinear(hid_dim, bias=False)
+            self._pe_projection = nn.LazyLinear(
+                self._transformer_input_dim,
+                bias=False,
+            )
 
         self._token_input_projection: Optional[nn.Module] = None
         if self._continuous_anchor_input_attr_names:
-            self._token_input_projection = nn.LazyLinear(hid_dim, bias=False)
+            self._token_input_projection = nn.LazyLinear(
+                self._transformer_input_dim,
+                bias=False,
+            )
 
         self._anchor_pe_attention_bias_projection: Optional[nn.Linear] = None
         num_anchor_bias_attrs = len(self._anchor_based_attention_bias_attr_names or [])
@@ -638,6 +1110,8 @@ class GraphTransformerEncoder(nn.Module):
                 num_heads,
                 bias=False,
             )
+            # Start structural logit bias neutral; training can turn it on if useful.
+            nn.init.zeros_(self._anchor_pe_attention_bias_projection.weight)
 
         self._pairwise_pe_attention_bias_projection: Optional[nn.Linear] = None
         if self._pairwise_attention_bias_attr_names:
@@ -646,6 +1120,26 @@ class GraphTransformerEncoder(nn.Module):
                 num_heads,
                 bias=False,
             )
+            nn.init.zeros_(self._pairwise_pe_attention_bias_projection.weight)
+            self._pairwise_nonmissing_attention_bias = nn.Parameter(
+                torch.zeros(num_heads)
+            )
+        else:
+            self.register_parameter("_pairwise_nonmissing_attention_bias", None)
+
+        self._edge_attr_attention_bias_projection_dict = nn.ModuleDict()
+        if self._edge_attr_attention_bias_mode == "sparse_linear":
+            for relation_idx, edge_type in enumerate(
+                self._edge_attr_attention_bias_edge_types
+            ):
+                edge_attr_dim = int(self._edge_type_to_feat_dim_map[edge_type])
+                if edge_attr_dim <= 0:
+                    continue
+                projection = nn.Linear(edge_attr_dim, num_heads, bias=False)
+                nn.init.zeros_(projection.weight)
+                self._edge_attr_attention_bias_projection_dict[str(relation_idx)] = (
+                    projection
+                )
 
         # Transformer encoder layers
         # Default feedforward ratio: 4.0 for standard activations, 8/3 for XGLU
@@ -654,28 +1148,34 @@ class GraphTransformerEncoder(nn.Module):
         is_xglu = activation.lower() in _XGLU_BASE_ACTIVATIONS
         if feedforward_ratio is None:
             feedforward_ratio = 8.0 / 3.0 if is_xglu else 4.0
-        feedforward_dim = int(hid_dim * feedforward_ratio)
-        self._encoder_layers = nn.ModuleList(
-            [
+        layer_input_dim = self._transformer_input_dim
+        encoder_layers = []
+        for layer_idx in range(num_layers):
+            is_last_layer = layer_idx == num_layers - 1
+            layer_num_heads = 1 if is_last_layer else num_heads
+            layer_output_dim = out_dim if is_last_layer else hid_dim
+            feedforward_dim = int(layer_output_dim * feedforward_ratio)
+            encoder_layers.append(
                 GraphTransformerEncoderLayer(
-                    model_dim=hid_dim,
-                    num_heads=num_heads,
+                    model_dim=layer_input_dim,
+                    num_heads=layer_num_heads,
                     feedforward_dim=feedforward_dim,
+                    output_dim=layer_output_dim,
                     dropout_rate=dropout_rate,
                     attention_dropout_rate=attention_dropout_rate,
                     activation=activation,
+                    relation_attention_mode=relation_attention_mode,
+                    relation_value_mode=relation_value_mode,
+                    num_relations=len(self._relation_attention_edge_types),
                 )
-                for _ in range(num_layers)
-            ]
-        )
+            )
+            layer_input_dim = layer_output_dim
+        self._encoder_layers = nn.ModuleList(encoder_layers)
+        self._transformer_output_dim = layer_input_dim
 
-        self._final_norm = nn.LayerNorm(hid_dim)
-
-        # Readout attention: projects concatenated (anchor, neighbor) to score
-        self._readout_attention = nn.Linear(2 * hid_dim, 1)
-
-        # Output projection: hid_dim -> out_dim
-        self._output_projection = nn.Linear(hid_dim, out_dim)
+        # Always instantiate the neighbor readout head so checkpoints can move
+        # between readout modes without changing parameter shapes.
+        self._readout_attention = nn.Linear(2 * self._transformer_output_dim, 1)
 
     def forward(
         self,
@@ -707,9 +1207,9 @@ class GraphTransformerEncoder(nn.Module):
         if anchor_node_type is None:
             anchor_node_type = list(data.node_types)[0]
 
-        # 0. Apply feature embedding if provided (without modifying original data)
-        # 1. Project all node features to hid_dim
-        # Build a new x_dict with processed features to avoid in-place modifications
+        # Apply feature embeddings and optional node-level PE fusion without
+        # modifying original data. The first encoder layer owns projection to
+        # transformer hidden width.
         projected_x_dict: dict[NodeType, torch.Tensor] = {}
         for node_type, x in data.x_dict.items():
             x_processed = x.to(device)
@@ -722,8 +1222,6 @@ class GraphTransformerEncoder(nn.Module):
             # Apply feature embedding if available for this node type
             if feature_embedding_layer is not None:
                 x_processed = feature_embedding_layer(x_processed)
-            # Project to hid_dim
-            x_projected = self._node_projection_dict[str(node_type)](x_processed)
             node_pe_parts = []
             if self._pe_attr_names:
                 node_pe_parts.append(
@@ -739,16 +1237,22 @@ class GraphTransformerEncoder(nn.Module):
                 if self._pe_integration_mode == "add":
                     if self._pe_projection is None:
                         raise ValueError("PE projection layer is not initialized.")
-                    x_projected = x_projected + self._pe_projection(node_pe)
+                    x_processed = x_processed + self._pe_projection(node_pe)
                 else:
                     if self._concat_pe_fusion_projection is None:
                         raise ValueError(
                             "Concat PE fusion projection layer is not initialized."
                         )
-                    x_projected = self._concat_pe_fusion_projection(
-                        torch.cat([x_projected, node_pe], dim=-1)
+                    x_processed = self._concat_pe_fusion_projection(
+                        torch.cat([x_processed, node_pe], dim=-1)
                     )
-            projected_x_dict[node_type] = x_projected
+            if x_processed.size(-1) != self._transformer_input_dim:
+                raise ValueError(
+                    "GraphTransformerEncoder token features must share the "
+                    f"configured width {self._transformer_input_dim}; node type "
+                    f"'{node_type}' produced width {x_processed.size(-1)}."
+                )
+            projected_x_dict[node_type] = x_processed
 
         # Create a new HeteroData with projected features (avoiding in-place modification)
         projected_data = torch_geometric.data.HeteroData()
@@ -798,17 +1302,38 @@ class GraphTransformerEncoder(nn.Module):
             anchor_node_ids=anchor_node_ids,
             hop_distance=self._hop_distance,
             sequence_construction_method=self._sequence_construction_method,
+            sampling_direction=self._sampling_direction,
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
+            attention_mask_edge_types=(
+                self._attention_mask_edge_types
+                if self._attention_mask_mode == "incoming_edges"
+                else None
+            ),
+            relation_edge_types=(
+                self._relation_attention_edge_types
+                if self._relation_attention_mode == "edge_type_bilinear"
+                or self._relation_value_mode == "sparse_residual_gate"
+                else None
+            ),
+            edge_attr_edge_type_to_feat_dim_map=(
+                {
+                    edge_type: self._edge_type_to_feat_dim_map[edge_type]
+                    for edge_type in self._edge_attr_attention_bias_edge_types
+                }
+                if self._edge_attr_attention_bias_mode == "sparse_linear"
+                else None
+            ),
         )
 
         # Free memory after sequences are built
         del projected_data
 
-        if sequences.size(-1) != self._hid_dim:
+        if sequences.size(-1) != self._transformer_input_dim:
             raise ValueError(
-                f"Expected sequence dim {self._hid_dim} after node projection, "
+                f"Expected sequence dim {self._transformer_input_dim} after "
+                "tokenization, "
                 f"got {sequences.size(-1)}."
             )
 
@@ -837,8 +1362,10 @@ class GraphTransformerEncoder(nn.Module):
             sequences=sequences,
             valid_mask=valid_mask,
             attn_bias=attn_bias,
+            pairwise_relation_indices=sequence_auxiliary_data.get(
+                "pairwise_relation_indices"
+            ),
         )
-        embeddings = self._output_projection(embeddings)
 
         if self._should_l2_normalize_embedding_layer_output:
             embeddings = F.normalize(embeddings, p=2, dim=-1)
@@ -966,6 +1493,10 @@ class GraphTransformerEncoder(nn.Module):
             attention_bias_data: Dictionary containing optional PE tensors:
                 - "anchor_bias": (batch, seq, num_anchor_attrs) or None
                 - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
+                - "pairwise_nonmissing_indices": (num_pairs, 3) or None
+                - "pairwise_attention_mask_indices": (num_edges, 3) or None
+                - "pairwise_edge_attr_indices": dict[int, (num_edges, 3)] or None
+                - "pairwise_edge_attr_values": dict[int, (num_edges, edge_dim)] or None
 
         Returns:
             Combined attention bias tensor of shape (batch_size, num_heads, seq_len, seq_len)
@@ -985,17 +1516,69 @@ class GraphTransformerEncoder(nn.Module):
         device = sequences.device
         negative_inf = torch.finfo(dtype).min
 
-        # Step 1: Initialize with padding mask bias
-        # Shape: (batch, 1, 1, seq) - broadcasts to mask invalid keys for all queries/heads
-        attn_bias = torch.zeros(
-            (batch_size, 1, 1, seq_len),
-            dtype=dtype,
-            device=device,
-        )
-        attn_bias = attn_bias.masked_fill(
-            ~valid_mask.unsqueeze(1).unsqueeze(2),  # (batch, 1, 1, seq)
-            negative_inf,
-        )
+        if self._attention_mask_mode == "incoming_edges":
+            pairwise_attention_mask_indices = attention_bias_data.get(
+                "pairwise_attention_mask_indices"
+            )
+            if pairwise_attention_mask_indices is None:
+                raise ValueError(
+                    "pairwise_attention_mask_indices is required when "
+                    "attention_mask_mode='incoming_edges'."
+                )
+
+            # Step 1a: Initialize the hard connectivity mask directly as an
+            # additive SDPA mask. The transform supplies sparse directed
+            # source->target coordinates, so no dense bool mask or valid-pair
+            # enumeration is needed here.
+            attn_bias = torch.full(
+                (batch_size, 1, seq_len, seq_len),
+                negative_inf,
+                dtype=dtype,
+                device=device,
+            )
+            valid_batch_indices, valid_positions = torch.nonzero(
+                valid_mask,
+                as_tuple=True,
+            )
+            if valid_batch_indices.numel() > 0:
+                attn_bias[
+                    valid_batch_indices,
+                    0,
+                    valid_positions,
+                    valid_positions,
+                ] = 0.0
+
+            if pairwise_attention_mask_indices.numel() > 0:
+                if (
+                    pairwise_attention_mask_indices.dim() != 2
+                    or pairwise_attention_mask_indices.size(-1) != 3
+                ):
+                    raise ValueError(
+                        "pairwise_attention_mask_indices must have shape "
+                        "(num_edges, 3)."
+                    )
+                pairwise_attention_mask_indices = pairwise_attention_mask_indices.to(
+                    device=device,
+                    dtype=torch.long,
+                )
+                attn_bias[
+                    pairwise_attention_mask_indices[:, 0],
+                    0,
+                    pairwise_attention_mask_indices[:, 1],
+                    pairwise_attention_mask_indices[:, 2],
+                ] = 0.0
+        else:
+            # Step 1b: Default padding-only mask.
+            # Shape: (batch, 1, 1, seq) broadcasts to mask invalid keys.
+            attn_bias = torch.zeros(
+                (batch_size, 1, 1, seq_len),
+                dtype=dtype,
+                device=device,
+            )
+            attn_bias.masked_fill_(
+                ~valid_mask.unsqueeze(1).unsqueeze(2),  # (batch, 1, 1, seq)
+                negative_inf,
+            )
 
         # Step 2: Add anchor-relative bias (optional)
         # Projects (batch, seq, num_attrs) → (batch, seq, num_heads)
@@ -1029,34 +1612,184 @@ class GraphTransformerEncoder(nn.Module):
             )  # (batch, num_heads, seq, seq)
             attn_bias = attn_bias + pairwise_bias
 
+        pairwise_nonmissing_indices = attention_bias_data.get(
+            "pairwise_nonmissing_indices"
+        )
+        if pairwise_nonmissing_indices is not None:
+            if self._pairwise_nonmissing_attention_bias is None:
+                raise ValueError(
+                    "Pairwise nonmissing attention bias is not initialized."
+                )
+            if pairwise_nonmissing_indices.numel() > 0:
+                if attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+                    attn_bias = attn_bias.expand(
+                        batch_size,
+                        self._num_heads,
+                        seq_len,
+                        seq_len,
+                    ).clone()
+                pairwise_nonmissing_indices = pairwise_nonmissing_indices.to(
+                    device=device,
+                    dtype=torch.long,
+                )
+                attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+                nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
+                    dtype=attn_bias.dtype
+                ).view(1, -1)
+                attn_bias_by_position.index_put_(
+                    (
+                        pairwise_nonmissing_indices[:, 0],
+                        pairwise_nonmissing_indices[:, 1],
+                        pairwise_nonmissing_indices[:, 2],
+                    ),
+                    nonmissing_bias.expand(pairwise_nonmissing_indices.size(0), -1),
+                    accumulate=True,
+                )
+
+        pairwise_edge_attr_indices = attention_bias_data.get(
+            "pairwise_edge_attr_indices"
+        )
+        pairwise_edge_attr_values = attention_bias_data.get("pairwise_edge_attr_values")
+        if (
+            pairwise_edge_attr_indices is not None
+            or pairwise_edge_attr_values is not None
+        ):
+            if self._edge_attr_attention_bias_mode != "sparse_linear":
+                raise ValueError(
+                    "Sparse edge-attribute attention-bias payloads require "
+                    "edge_attr_attention_bias_mode='sparse_linear'."
+                )
+            if pairwise_edge_attr_indices is None or pairwise_edge_attr_values is None:
+                raise ValueError(
+                    "pairwise_edge_attr_indices and pairwise_edge_attr_values "
+                    "must be provided together."
+                )
+            if set(pairwise_edge_attr_indices.keys()) != set(
+                pairwise_edge_attr_values.keys()
+            ):
+                raise ValueError(
+                    "pairwise_edge_attr_indices and pairwise_edge_attr_values "
+                    "must have identical relation-index keys."
+                )
+
+            attn_bias_by_position: Optional[Tensor] = None
+            for relation_idx in sorted(pairwise_edge_attr_indices.keys()):
+                edge_attr_indices = pairwise_edge_attr_indices[relation_idx]
+                edge_attr_values = pairwise_edge_attr_values[relation_idx]
+                if edge_attr_indices.numel() == 0:
+                    continue
+                if edge_attr_indices.dim() != 2 or edge_attr_indices.size(-1) != 3:
+                    raise ValueError(
+                        "pairwise_edge_attr_indices entries must have shape "
+                        "(num_edges, 3)."
+                    )
+                if edge_attr_values.dim() != 2 or edge_attr_values.size(
+                    0
+                ) != edge_attr_indices.size(0):
+                    raise ValueError(
+                        "pairwise_edge_attr_values entries must have shape "
+                        "(num_edges, edge_attr_dim) with the same num_edges "
+                        "as their index tensor."
+                    )
+
+                projection_key = str(relation_idx)
+                if projection_key not in self._edge_attr_attention_bias_projection_dict:
+                    raise ValueError(
+                        "No edge-attribute attention-bias projection is "
+                        f"initialized for relation index {relation_idx}."
+                    )
+                if attn_bias_by_position is None:
+                    if attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+                        attn_bias = attn_bias.expand(
+                            batch_size,
+                            self._num_heads,
+                            seq_len,
+                            seq_len,
+                        ).clone()
+                    attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+
+                edge_attr_projection = self._edge_attr_attention_bias_projection_dict[
+                    projection_key
+                ]
+                edge_attr_indices = edge_attr_indices.to(
+                    device=device,
+                    dtype=torch.long,
+                )
+                edge_attr_bias = edge_attr_projection(
+                    edge_attr_values.to(device=device, dtype=dtype)
+                )
+                attn_bias_by_position.index_put_(
+                    (
+                        edge_attr_indices[:, 0],
+                        edge_attr_indices[:, 1],
+                        edge_attr_indices[:, 2],
+                    ),
+                    edge_attr_bias.to(dtype=attn_bias.dtype),
+                    accumulate=True,
+                )
+
         return attn_bias
+
+    @staticmethod
+    def _attention_bias_for_layer(
+        attn_bias: Optional[Tensor],
+        num_heads: int,
+    ) -> Optional[Tensor]:
+        if attn_bias is None:
+            return None
+        if attn_bias.size(1) in (1, num_heads):
+            return attn_bias
+        if attn_bias.size(1) > num_heads:
+            return attn_bias[:, :num_heads]
+        raise ValueError(
+            "Attention bias head dimension must be 1, match the layer head count, "
+            "or be larger than the layer head count for truncation; got "
+            f"{attn_bias.size(1)} heads for a {num_heads}-head layer."
+        )
 
     def _encode_and_readout(
         self,
         sequences: Tensor,
         valid_mask: Tensor,
         attn_bias: Optional[Tensor] = None,
+        pairwise_relation_indices: Optional[Tensor] = None,
     ) -> Tensor:
-        """Process sequences through transformer layers and attention readout.
+        """Process sequences through transformer layers and configured readout.
 
         Args:
-            sequences: Input tensor of shape ``(batch_size, max_seq_len, hid_dim)``.
+            sequences: Input tensor of shape
+                ``(batch_size, max_seq_len, token_dim)``.
             valid_mask: Boolean mask of shape ``(batch_size, max_seq_len)``.
             attn_bias: Optional additive attention bias broadcastable to
                 ``(batch_size, num_heads, seq, seq)``.
+            pairwise_relation_indices: Optional sparse relation coordinates shaped
+                ``(num_relation_edges, 4)``.
 
         Returns:
-            Output embeddings of shape ``(batch_size, hid_dim)``.
+            Output embeddings of shape ``(batch_size, out_dim)``.
         """
         x = sequences * valid_mask.unsqueeze(-1).to(sequences.dtype)
 
         for encoder_layer in self._encoder_layers:
-            x = encoder_layer(x, attn_bias=attn_bias, valid_mask=valid_mask)
+            x = encoder_layer(
+                x,
+                attn_bias=self._attention_bias_for_layer(
+                    attn_bias=attn_bias,
+                    num_heads=encoder_layer.num_heads,
+                ),
+                pairwise_relation_indices=pairwise_relation_indices,
+                valid_mask=valid_mask,
+            )
 
-        x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
-        # Readout: anchor (position 0) + attention-weighted neighbor aggregation
+        if self._readout_mode == "anchor_only":
+            return x[:, 0, :]
+
+        # RelGT-style readout: anchor (position 0) + attention-weighted
+        # neighbor aggregation.
+        if self._readout_attention is None:
+            raise ValueError("Readout attention is not initialized.")
         anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
         neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
         neighbor_valid_mask = valid_mask[:, 1:]

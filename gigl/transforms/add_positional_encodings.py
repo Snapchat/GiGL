@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 from torch_geometric.data import HeteroData
@@ -253,6 +253,11 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected for distance computation.
             (default: :obj:`False`)
+        sampling_direction (str, optional): Direction used to align
+            anchor-relative distances with k-hop GraphTransformer tokenization.
+            ``"incoming"`` computes distances over reversed edges, while
+            ``"outgoing"`` preserves the original edge direction.
+            (default: :obj:`"incoming"`)
     """
 
     def __init__(
@@ -260,10 +265,17 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         h_max: int,
         attr_name: Optional[str] = "hop_distance",
         is_undirected: bool = False,
+        sampling_direction: Literal["incoming", "outgoing"] = "incoming",
     ) -> None:
+        if sampling_direction not in {"incoming", "outgoing"}:
+            raise ValueError(
+                "sampling_direction must be one of {'incoming', 'outgoing'}, "
+                f"got '{sampling_direction}'."
+            )
         self.h_max = h_max
         self.attr_name = attr_name
         self.is_undirected = is_undirected
+        self.sampling_direction = sampling_direction
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -274,6 +286,8 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         # Convert to homogeneous to compute shortest paths
         homo_data = data.to_homogeneous()
         edge_index = homo_data.edge_index
+        if self.sampling_direction == "incoming":
+            edge_index = edge_index.flip(0)
         num_nodes = homo_data.num_nodes
         num_edges = edge_index.size(1)
 
@@ -313,7 +327,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         # 2. Store distances as int8 (h_max typically < 127)
         # 3. Avoid tensor concatenation in hot loop - use pre-sorted merge instead
         # 4. Explicit del statements to trigger garbage collection
-        # 5. CSR format for sparse matmul (more memory efficient than COO)
+        # 5. COO sparse matmul for CPU portability, then CSR output for lookup
         #
         # Memory complexity: O(nnz_frontier + nnz_visited) per iteration
         # where nnz_frontier can grow up to O(n^2) for dense graphs at large hop
@@ -340,23 +354,21 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             visited_linear = identity_indices * num_nodes + identity_indices  # Diagonal
             visited_linear = visited_linear.sort()[0]
 
-        # Adjacency matrix in CSR format (more memory efficient for matmul)
-        adj_csr = adj.to_sparse_csr()
-        del adj  # Free COO adjacency
+        # Keep adjacency in COO form for sparse matmul portability. CPU builds
+        # without MKL do not support SparseCsr @ SparseCsr.
+        adj_coo = adj.coalesce()
+        del adj
 
         # Current frontier (reachable pairs at current hop distance)
-        frontier = adj_csr.to_sparse_coo().coalesce()
+        frontier = adj_coo
 
         for hop in range(1, self.h_max + 1):
             if hop > 1:
                 # frontier = frontier @ adj (sparse matmul)
-                # CSR @ CSR is most efficient
-                frontier_csr = frontier.to_sparse_csr()
+                frontier_coo = frontier.coalesce()
                 del frontier
-                frontier = (
-                    torch.sparse.mm(frontier_csr, adj_csr).to_sparse_coo().coalesce()
-                )
-                del frontier_csr
+                frontier = torch.sparse.mm(frontier_coo, adj_coo).coalesce()
+                del frontier_coo
 
             frontier_indices = frontier.indices()
             num_frontier = frontier_indices.size(1)
@@ -406,7 +418,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             del visited_bitmap
         else:
             del visited_linear
-        del adj_csr, frontier
+        del adj_coo, frontier
 
         # Build sparse distance matrix
         if dist_matrix_rows:
@@ -442,4 +454,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         return data
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(h_max={self.h_max})"
+        return (
+            f"{self.__class__.__name__}(h_max={self.h_max}, "
+            f"sampling_direction={self.sampling_direction})"
+        )
