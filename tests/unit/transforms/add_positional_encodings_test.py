@@ -282,7 +282,7 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         self.assertTrue(result.hop_distance.is_sparse_csr)
         self.assertEqual(result.hop_distance.shape, (5, 5))
 
-    def test_forward_tokenization_direction_defaults_to_outgoing(self):
+    def test_forward_sampling_direction_defaults_to_outgoing(self):
         """Outgoing hop distances preserve existing directed reachability."""
         data = create_directed_chain_data()
         transform = AddHeteroHopDistanceEncoding(h_max=2)
@@ -295,12 +295,12 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         self.assertEqual(dense[2, 1].item(), 0.0)
         self.assertEqual(dense[2, 0].item(), 0.0)
 
-    def test_forward_tokenization_direction_incoming_reverses_reachability(self):
+    def test_forward_sampling_direction_incoming_reverses_reachability(self):
         """Incoming hop distances are computed over reversed graph edges."""
         data = create_directed_chain_data()
         transform = AddHeteroHopDistanceEncoding(
             h_max=2,
-            tokenization_direction="incoming",
+            sampling_direction="incoming",
         )
 
         result = transform(data)
@@ -311,11 +311,11 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         self.assertEqual(dense[0, 1].item(), 0.0)
         self.assertEqual(dense[0, 2].item(), 0.0)
 
-    def test_tokenization_direction_rejects_invalid_value(self):
-        with self.assertRaisesRegex(ValueError, "tokenization_direction"):
+    def test_sampling_direction_rejects_invalid_value(self):
+        with self.assertRaisesRegex(ValueError, "sampling_direction"):
             AddHeteroHopDistanceEncoding(
                 h_max=2,
-                tokenization_direction=cast(
+                sampling_direction=cast(
                     Literal["outgoing", "incoming"],
                     "sideways",
                 ),
@@ -339,15 +339,15 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         transform = AddHeteroHopDistanceEncoding(h_max=5)
         self.assertEqual(repr(transform), "AddHeteroHopDistanceEncoding(h_max=5)")
 
-    def test_repr_incoming_tokenization_direction(self):
+    def test_repr_incoming_sampling_direction(self):
         """Test string representation with non-default direction."""
         transform = AddHeteroHopDistanceEncoding(
             h_max=5,
-            tokenization_direction="incoming",
+            sampling_direction="incoming",
         )
         self.assertEqual(
             repr(transform),
-            "AddHeteroHopDistanceEncoding(h_max=5, tokenization_direction='incoming')",
+            "AddHeteroHopDistanceEncoding(h_max=5, sampling_direction='incoming')",
         )
 
 

@@ -125,7 +125,7 @@ def create_ppr_sequence_hetero_data() -> HeteroData:
 
 
 def create_directed_chain_data() -> HeteroData:
-    """Create a directed chain 0 -> 1 -> 2 for tokenization direction tests."""
+    """Create a directed chain 0 -> 1 -> 2 for sampling direction tests."""
     data = HeteroData()
     data["user"].x = torch.tensor([[10.0], [11.0], [12.0]])
     data["user", "to", "user"].edge_index = torch.tensor(
@@ -320,8 +320,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         # First position should be anchor node
         self.assertTrue(torch.allclose(sequences[0, 0], anchor_feature))
 
-    def test_tokenization_direction_defaults_to_outgoing(self):
-        """Outgoing tokenization preserves existing k-hop reachability."""
+    def test_sampling_direction_defaults_to_outgoing(self):
+        """Outgoing sampling preserves existing k-hop reachability."""
         data = create_directed_chain_data()
 
         sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
@@ -336,8 +336,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertEqual(valid_mask[0].tolist(), [True, False, False])
         self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 0.0, 0.0])
 
-    def test_tokenization_direction_incoming_uses_reverse_reachability(self):
-        """Incoming tokenization includes upstream message-source nodes."""
+    def test_sampling_direction_incoming_uses_reverse_reachability(self):
+        """Incoming sampling includes upstream message-source nodes."""
         data = create_directed_chain_data()
 
         sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
@@ -347,28 +347,28 @@ class TestHeteroToGraphTransformerInput(TestCase):
             anchor_node_type="user",
             anchor_node_ids=torch.tensor([2]),
             hop_distance=2,
-            tokenization_direction="incoming",
+            sampling_direction="incoming",
         )
 
         self.assertEqual(valid_mask[0].tolist(), [True, True, True])
         self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 10.0, 11.0])
 
-    def test_tokenization_direction_rejects_invalid_value(self):
+    def test_sampling_direction_rejects_invalid_value(self):
         data = create_directed_chain_data()
 
-        with self.assertRaisesRegex(ValueError, "tokenization_direction"):
+        with self.assertRaisesRegex(ValueError, "sampling_direction"):
             heterodata_to_graph_transformer_input(
                 data=data,
                 batch_size=1,
                 max_seq_len=3,
                 anchor_node_type="user",
-                tokenization_direction=cast(
+                sampling_direction=cast(
                     Literal["outgoing", "incoming"],
                     "sideways",
                 ),
             )
 
-    def test_tokenization_direction_incoming_requires_khop(self):
+    def test_sampling_direction_incoming_requires_khop(self):
         data = create_ppr_sequence_hetero_data()
 
         with self.assertRaisesRegex(ValueError, "currently supported only"):
@@ -378,7 +378,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 max_seq_len=3,
                 anchor_node_type="user",
                 sequence_construction_method="ppr",
-                tokenization_direction="incoming",
+                sampling_direction="incoming",
             )
 
     def test_different_anchor_types(self):

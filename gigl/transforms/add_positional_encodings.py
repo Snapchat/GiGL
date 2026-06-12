@@ -253,11 +253,11 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected for distance computation.
             (default: :obj:`False`)
-        tokenization_direction (str, optional): Direction used for directed
+        sampling_direction (str, optional): Direction used for directed
             distance computation. ``"outgoing"`` preserves existing shortest
             paths over graph edges, while ``"incoming"`` computes shortest paths
             over reversed graph edges. Use ``"incoming"`` to align hop-distance
-            relative encodings with incoming Graph Transformer tokenization.
+            relative encodings with incoming Graph Transformer sampling.
             (default: :obj:`"outgoing"`)
     """
 
@@ -266,17 +266,17 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         h_max: int,
         attr_name: Optional[str] = "hop_distance",
         is_undirected: bool = False,
-        tokenization_direction: Literal["outgoing", "incoming"] = "outgoing",
+        sampling_direction: Literal["outgoing", "incoming"] = "outgoing",
     ) -> None:
-        if tokenization_direction not in {"outgoing", "incoming"}:
+        if sampling_direction not in {"outgoing", "incoming"}:
             raise ValueError(
-                "tokenization_direction must be one of {'outgoing', 'incoming'}, "
-                f"got '{tokenization_direction}'."
+                "sampling_direction must be one of {'outgoing', 'incoming'}, "
+                f"got '{sampling_direction}'."
             )
         self.h_max = h_max
         self.attr_name = attr_name
         self.is_undirected = is_undirected
-        self.tokenization_direction = tokenization_direction
+        self.sampling_direction = sampling_direction
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -287,7 +287,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         # Convert to homogeneous to compute shortest paths
         homo_data = data.to_homogeneous()
         edge_index = homo_data.edge_index
-        if self.tokenization_direction == "incoming":
+        if self.sampling_direction == "incoming":
             edge_index = edge_index.flip(0)
         num_nodes = homo_data.num_nodes
         num_edges = edge_index.size(1)
@@ -458,6 +458,6 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
 
     def __repr__(self) -> str:
         repr_args = f"h_max={self.h_max}"
-        if self.tokenization_direction != "outgoing":
-            repr_args += f", tokenization_direction='{self.tokenization_direction}'"
+        if self.sampling_direction != "outgoing":
+            repr_args += f", sampling_direction='{self.sampling_direction}'"
         return f"{self.__class__.__name__}({repr_args})"

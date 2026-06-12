@@ -432,7 +432,7 @@ class GraphTransformerEncoder(nn.Module):
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
-        tokenization_direction: Direction used for sequence token construction.
+        sampling_direction: Direction used for sequence token construction.
             ``"outgoing"`` preserves the existing k-hop reachability expansion.
             ``"incoming"`` expands over reversed edges and is supported only
             when ``sequence_construction_method="khop"``. Directed relative
@@ -501,7 +501,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: Optional[list[str]] = None,
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
-        tokenization_direction: Literal["outgoing", "incoming"] = "outgoing",
+        sampling_direction: Literal["outgoing", "incoming"] = "outgoing",
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -526,17 +526,17 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method must be one of {'khop', 'ppr'}, "
                 f"got '{sequence_construction_method}'"
             )
-        if tokenization_direction not in {"outgoing", "incoming"}:
+        if sampling_direction not in {"outgoing", "incoming"}:
             raise ValueError(
-                "tokenization_direction must be one of {'outgoing', 'incoming'}, "
-                f"got '{tokenization_direction}'"
+                "sampling_direction must be one of {'outgoing', 'incoming'}, "
+                f"got '{sampling_direction}'"
             )
         if (
-            tokenization_direction == "incoming"
+            sampling_direction == "incoming"
             and sequence_construction_method != "khop"
         ):
             raise ValueError(
-                "tokenization_direction='incoming' is currently supported only "
+                "sampling_direction='incoming' is currently supported only "
                 "with sequence_construction_method='khop'."
             )
         if sequence_positional_encoding_type is not None:
@@ -577,7 +577,7 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method='ppr'."
             )
         self._sequence_construction_method = sequence_construction_method
-        self._tokenization_direction = tokenization_direction
+        self._sampling_direction = sampling_direction
         self._sequence_positional_encoding_type = sequence_positional_encoding_type
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
@@ -819,7 +819,7 @@ class GraphTransformerEncoder(nn.Module):
             anchor_node_ids=anchor_node_ids,
             hop_distance=self._hop_distance,
             sequence_construction_method=self._sequence_construction_method,
-            tokenization_direction=self._tokenization_direction,
+            sampling_direction=self._sampling_direction,
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
