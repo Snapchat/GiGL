@@ -238,6 +238,33 @@ class TestGraphTransformerEncoder(TestCase):
 
         self.assertTrue(torch.allclose(result_1, result_2))
 
+    def test_forward_with_incoming_tokenization_direction(self) -> None:
+        """Test forward pass with incoming k-hop tokenization."""
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder(tokenization_direction="incoming")
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._user_node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(embeddings.shape, (3, self._out_dim))
+        self.assertFalse(torch.isnan(embeddings).any())
+
+    def test_tokenization_direction_rejects_invalid_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "tokenization_direction"):
+            self._create_encoder(tokenization_direction="sideways")
+
+    def test_incoming_tokenization_direction_requires_khop(self) -> None:
+        with self.assertRaisesRegex(ValueError, "currently supported only"):
+            self._create_encoder(
+                sequence_construction_method="ppr",
+                tokenization_direction="incoming",
+            )
+
 
 def _create_user_graph_with_pe() -> HeteroData:
     data = HeteroData()

@@ -90,6 +90,7 @@ def heterodata_to_graph_transformer_input(
     anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
     anchor_based_input_attr_names: Optional[list[str]] = None,
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+    tokenization_direction: Literal["outgoing", "incoming"] = "outgoing",
 ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -131,6 +132,10 @@ def heterodata_to_graph_transformer_input(
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
+        tokenization_direction: Direction used for token construction.
+            ``"outgoing"`` preserves the existing k-hop reachability expansion.
+            ``"incoming"`` expands over reversed edges and is supported only
+            with ``sequence_construction_method="khop"``.
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -190,6 +195,21 @@ def heterodata_to_graph_transformer_input(
             "be used as pairwise attention bias."
         )
 
+    if tokenization_direction not in {"outgoing", "incoming"}:
+        raise ValueError(
+            "tokenization_direction must be one of {'outgoing', 'incoming'}, "
+            f"got '{tokenization_direction}'."
+        )
+
+    if (
+        tokenization_direction == "incoming"
+        and sequence_construction_method != "khop"
+    ):
+        raise ValueError(
+            "tokenization_direction='incoming' is currently supported only with "
+            "sequence_construction_method='khop'."
+        )
+
     if (
         PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
         and sequence_construction_method != "ppr"
@@ -233,6 +253,8 @@ def heterodata_to_graph_transformer_input(
     ppr_weight_sequences: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
+        if tokenization_direction == "incoming":
+            homo_edge_index = homo_edge_index.flip(0)
         # Use sparse matrix operations for efficient k-hop neighbor extraction
         # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
         reachable = _get_k_hop_neighbors_sparse(
