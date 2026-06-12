@@ -435,7 +435,9 @@ class GraphTransformerEncoder(nn.Module):
         tokenization_direction: Direction used for sequence token construction.
             ``"outgoing"`` preserves the existing k-hop reachability expansion.
             ``"incoming"`` expands over reversed edges and is supported only
-            when ``sequence_construction_method="khop"``.
+            when ``sequence_construction_method="khop"``. Directed relative
+            encodings such as ``"hop_distance"`` should be computed with the
+            same direction.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)

@@ -1,3 +1,5 @@
+from typing import Literal, cast
+
 import torch
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
@@ -47,6 +49,19 @@ def create_empty_hetero_data() -> HeteroData:
     data = HeteroData()
     data["user"].x = torch.zeros(0, 4)
     data["item"].x = torch.zeros(0, 4)
+    return data
+
+
+def create_directed_chain_data() -> HeteroData:
+    """Create a directed chain 0 -> 1 -> 2 for direction tests."""
+    data = HeteroData()
+    data["user"].x = torch.randn(3, 4)
+    data["user", "to", "user"].edge_index = torch.tensor(
+        [
+            [0, 1],
+            [1, 2],
+        ]
+    )
     return data
 
 
@@ -267,6 +282,45 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         self.assertTrue(result.hop_distance.is_sparse_csr)
         self.assertEqual(result.hop_distance.shape, (5, 5))
 
+    def test_forward_tokenization_direction_defaults_to_outgoing(self):
+        """Outgoing hop distances preserve existing directed reachability."""
+        data = create_directed_chain_data()
+        transform = AddHeteroHopDistanceEncoding(h_max=2)
+
+        result = transform(data)
+        dense = result.hop_distance.to_dense()
+
+        self.assertEqual(dense[0, 1].item(), 1.0)
+        self.assertEqual(dense[0, 2].item(), 2.0)
+        self.assertEqual(dense[2, 1].item(), 0.0)
+        self.assertEqual(dense[2, 0].item(), 0.0)
+
+    def test_forward_tokenization_direction_incoming_reverses_reachability(self):
+        """Incoming hop distances are computed over reversed graph edges."""
+        data = create_directed_chain_data()
+        transform = AddHeteroHopDistanceEncoding(
+            h_max=2,
+            tokenization_direction="incoming",
+        )
+
+        result = transform(data)
+        dense = result.hop_distance.to_dense()
+
+        self.assertEqual(dense[2, 1].item(), 1.0)
+        self.assertEqual(dense[2, 0].item(), 2.0)
+        self.assertEqual(dense[0, 1].item(), 0.0)
+        self.assertEqual(dense[0, 2].item(), 0.0)
+
+    def test_tokenization_direction_rejects_invalid_value(self):
+        with self.assertRaisesRegex(ValueError, "tokenization_direction"):
+            AddHeteroHopDistanceEncoding(
+                h_max=2,
+                tokenization_direction=cast(
+                    Literal["outgoing", "incoming"],
+                    "sideways",
+                ),
+            )
+
     def test_forward_empty_graph(self):
         """Test forward pass with empty graph."""
         data = create_empty_hetero_data()
@@ -284,6 +338,17 @@ class TestAddHeteroHopDistanceEncoding(TestCase):
         """Test string representation."""
         transform = AddHeteroHopDistanceEncoding(h_max=5)
         self.assertEqual(repr(transform), "AddHeteroHopDistanceEncoding(h_max=5)")
+
+    def test_repr_incoming_tokenization_direction(self):
+        """Test string representation with non-default direction."""
+        transform = AddHeteroHopDistanceEncoding(
+            h_max=5,
+            tokenization_direction="incoming",
+        )
+        self.assertEqual(
+            repr(transform),
+            "AddHeteroHopDistanceEncoding(h_max=5, tokenization_direction='incoming')",
+        )
 
 
 if __name__ == "__main__":

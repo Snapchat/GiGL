@@ -135,7 +135,9 @@ def heterodata_to_graph_transformer_input(
         tokenization_direction: Direction used for token construction.
             ``"outgoing"`` preserves the existing k-hop reachability expansion.
             ``"incoming"`` expands over reversed edges and is supported only
-            with ``sequence_construction_method="khop"``.
+            with ``sequence_construction_method="khop"``. Directed relative
+            encodings such as ``"hop_distance"`` should be computed with the
+            same direction.
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
