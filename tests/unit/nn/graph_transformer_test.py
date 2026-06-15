@@ -274,6 +274,10 @@ def _create_user_graph_with_ppr_edges() -> HeteroData:
     return data
 
 
+def _pairwise_relation_indices(coords: list[tuple[int, int, int, int]]) -> Tensor:
+    return torch.tensor(coords, dtype=torch.long)
+
+
 class TestGraphTransformerEncoderPEModes(TestCase):
     def setUp(self) -> None:
         self._node_type = NodeType("user")
@@ -411,6 +415,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                             ]
                         ]
                     ),
+                    "pairwise_relation_indices": None,
                     "token_input": None,
                 },
             )
@@ -447,6 +452,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                         [[[1.0, 0.5], [2.0, 0.25], [3.0, 0.125]]]
                     ),
                     "pairwise_bias": None,
+                    "pairwise_relation_indices": None,
                     "token_input": None,
                 },
             )
@@ -616,6 +622,270 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertTrue(
             torch.allclose(base_embeddings, augmented_embeddings, atol=1e-6)
         )
+
+    def test_relation_attention_zero_init_matches_plain_layer(self) -> None:
+        torch.manual_seed(0)
+        base_layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+        )
+        relation_layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_bilinear",
+            num_relations=2,
+        )
+        relation_layer.load_state_dict(base_layer.state_dict(), strict=False)
+        base_layer.eval()
+        relation_layer.eval()
+
+        x = torch.randn(2, 4, 8)
+        valid_mask = torch.ones((2, 4), dtype=torch.bool)
+
+        with torch.no_grad():
+            assert relation_layer._relation_attention_matrices is not None
+            self.assertTrue(
+                torch.equal(
+                    relation_layer._relation_attention_matrices,
+                    torch.zeros_like(relation_layer._relation_attention_matrices),
+                )
+            )
+            base_output = base_layer(x, valid_mask=valid_mask)
+            relation_output = relation_layer(
+                x,
+                pairwise_relation_indices=_pairwise_relation_indices(
+                    [(0, 1, 0, 0), (1, 2, 1, 1)]
+                ),
+                valid_mask=valid_mask,
+            )
+
+        self.assertTrue(torch.allclose(base_output, relation_output, atol=1e-6))
+
+    def test_relation_value_mode_none_ignores_relation_indices(self) -> None:
+        torch.manual_seed(0)
+        layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+        )
+        layer.eval()
+        x = torch.randn(1, 3, 8)
+
+        with torch.no_grad():
+            base_output = layer(x, valid_mask=torch.ones((1, 3), dtype=torch.bool))
+            relation_index_output = layer(
+                x,
+                pairwise_relation_indices=_pairwise_relation_indices(
+                    [(0, 1, 0, 0), (0, 2, 1, 0)]
+                ),
+                valid_mask=torch.ones((1, 3), dtype=torch.bool),
+            )
+
+        self.assertTrue(torch.allclose(base_output, relation_index_output, atol=1e-6))
+
+    def test_relation_value_zero_init_matches_plain_layer(self) -> None:
+        torch.manual_seed(0)
+        base_layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+        )
+        relation_value_layer = GraphTransformerEncoderLayer(
+            model_dim=8,
+            num_heads=2,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_value_mode="sparse_residual_gate",
+            num_relations=2,
+        )
+        relation_value_layer.load_state_dict(base_layer.state_dict(), strict=False)
+        base_layer.eval()
+        relation_value_layer.eval()
+
+        x = torch.randn(2, 4, 8)
+        valid_mask = torch.ones((2, 4), dtype=torch.bool)
+
+        with torch.no_grad():
+            assert relation_value_layer._relation_value_gates is not None
+            self.assertTrue(
+                torch.equal(
+                    relation_value_layer._relation_value_gates,
+                    torch.zeros_like(relation_value_layer._relation_value_gates),
+                )
+            )
+            base_output = base_layer(x, valid_mask=valid_mask)
+            relation_value_output = relation_value_layer(
+                x,
+                pairwise_relation_indices=_pairwise_relation_indices(
+                    [(0, 1, 0, 0), (1, 2, 1, 1)]
+                ),
+                valid_mask=valid_mask,
+            )
+
+        self.assertTrue(torch.allclose(base_output, relation_value_output, atol=1e-6))
+
+    def test_relation_value_residual_affects_indexed_queries_and_normalizes(
+        self,
+    ) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=4,
+            num_heads=2,
+            feedforward_dim=8,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_value_mode="sparse_residual_gate",
+            num_relations=2,
+        )
+        attention_output = torch.zeros((1, 2, 3, 2))
+        value = torch.tensor(
+            [
+                [
+                    [[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]],
+                    [[4.0, 40.0], [5.0, 50.0], [6.0, 60.0]],
+                ]
+            ]
+        )
+
+        with torch.no_grad():
+            assert layer._relation_value_gates is not None
+            layer._relation_value_gates[0] = torch.tensor([[1.0, 0.5], [0.25, 0.0]])
+            layer._relation_value_gates[1] = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
+            actual = layer._add_relation_value_residual(
+                attention_output=attention_output,
+                value=value,
+                pairwise_relation_indices=_pairwise_relation_indices(
+                    [
+                        (0, 1, 0, 0),
+                        (0, 1, 0, 0),
+                        (0, 1, 2, 1),
+                        (0, 2, 1, 0),
+                    ]
+                ),
+            )
+
+        expected = torch.zeros_like(attention_output)
+        expected[0, 0, 1] = torch.tensor([8.0 / 3.0, 10.0 / 3.0])
+        expected[0, 1, 1] = torch.tensor([2.0 / 3.0, 60.0])
+        expected[0, 0, 2] = torch.tensor([2.0, 10.0])
+        expected[0, 1, 2] = torch.tensor([1.25, 0.0])
+        self.assertTrue(torch.allclose(actual, expected, atol=1e-6))
+
+    def test_relation_value_residual_rejects_invalid_relation_ids(self) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=4,
+            num_heads=2,
+            feedforward_dim=8,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_value_mode="sparse_residual_gate",
+            num_relations=1,
+        )
+
+        with self.assertRaisesRegex(ValueError, "relation ids outside"):
+            layer._add_relation_value_residual(
+                attention_output=torch.zeros((1, 2, 2, 2)),
+                value=torch.zeros((1, 2, 2, 2)),
+                pairwise_relation_indices=_pairwise_relation_indices([(0, 1, 0, 1)]),
+            )
+
+    def test_relation_attention_nonzero_bias_only_indexed_pairs(self) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=2,
+            num_heads=1,
+            feedforward_dim=4,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_bilinear",
+            num_relations=1,
+        )
+        query = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]])
+        key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]])
+
+        with torch.no_grad():
+            assert layer._relation_attention_matrices is not None
+            layer._relation_attention_matrices[0, 0] = torch.eye(2)
+            relation_bias = layer._build_relation_attention_bias(
+                query=query,
+                key=key,
+                pairwise_relation_indices=_pairwise_relation_indices([(0, 2, 1, 0)]),
+            )
+
+        assert relation_bias is not None
+        expected = torch.zeros((1, 1, 3, 3))
+        expected[0, 0, 2, 1] = 1.0 / torch.sqrt(torch.tensor(2.0)).item()
+        self.assertTrue(torch.allclose(relation_bias, expected, atol=1e-6))
+
+    def test_relation_attention_respects_existing_negative_bias(self) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=2,
+            num_heads=1,
+            feedforward_dim=4,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_bilinear",
+            num_relations=1,
+        )
+        query = torch.tensor([[[[1.0, 0.0], [0.0, 1.0]]]])
+        key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0]]]])
+        negative_inf = torch.finfo(torch.float).min
+        attn_bias = torch.zeros((1, 1, 2, 2), dtype=torch.float)
+        attn_bias[0, 0, 0, 0] = negative_inf
+
+        with torch.no_grad():
+            assert layer._relation_attention_matrices is not None
+            layer._relation_attention_matrices[0, 0] = torch.eye(2)
+            relation_bias = layer._add_relation_attention_bias(
+                attn_bias=attn_bias,
+                query=query,
+                key=key,
+                pairwise_relation_indices=_pairwise_relation_indices([(0, 0, 0, 0)]),
+            )
+
+        assert relation_bias is not None
+        self.assertEqual(relation_bias[0, 0, 0, 0].item(), negative_inf)
+
+    def test_relation_attention_supports_ppr_sequence_construction(self) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        base_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+        )
+        relation_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+            relation_attention_mode="edge_type_bilinear",
+        )
+        relation_encoder.load_state_dict(base_encoder.state_dict(), strict=False)
+        base_encoder.eval()
+        relation_encoder.eval()
+
+        with torch.no_grad():
+            base_embeddings = base_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            relation_embeddings = relation_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(relation_embeddings.shape, (3, 6))
+        self.assertTrue(torch.allclose(base_embeddings, relation_embeddings, atol=1e-6))
 
     def test_forward_supports_mixed_embedded_and_continuous_token_input_features(
         self,

@@ -7,6 +7,7 @@ import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
@@ -252,6 +253,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertIsInstance(attention_bias_data, dict)
         self.assertIn("anchor_bias", attention_bias_data)
         self.assertIn("pairwise_bias", attention_bias_data)
+        self.assertIn("pairwise_relation_indices", attention_bias_data)
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
@@ -304,6 +306,52 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         # First position should be anchor node
         self.assertTrue(torch.allclose(sequences[0, 0], anchor_feature))
+
+    def test_pairwise_relation_indices_follow_order_direction_and_padding(self):
+        """Sparse relation indices preserve edge-type labels before homogenization."""
+        user = NodeType("user")
+        likes = EdgeType(user, Relation("likes"), user)
+        follows = EdgeType(user, Relation("follows"), user)
+        missing = EdgeType(user, Relation("missing"), user)
+
+        data = HeteroData()
+        data["user"].x = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0],
+            ]
+        )
+        data["user"].batch_size = 1
+        data[likes.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[follows.tuple_repr()].edge_index = torch.tensor([[0, 1], [1, 2]])
+
+        _, valid_mask, auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            relation_edge_types=[likes, follows, missing],
+        )
+
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+        pairwise_relation_indices = auxiliary_data["pairwise_relation_indices"]
+        self.assertIsNotNone(pairwise_relation_indices)
+        assert pairwise_relation_indices is not None
+        self.assertEqual(pairwise_relation_indices.shape[1], 4)
+        self.assertEqual(
+            {tuple(coord) for coord in pairwise_relation_indices.tolist()},
+            {
+                (0, 1, 0, 0),  # likes: source 0 -> target 1
+                (0, 1, 0, 1),  # follows: source 0 -> target 1
+                (0, 2, 1, 1),  # follows: source 1 -> target 2
+            },
+        )
+        self.assertFalse((pairwise_relation_indices[:, 1:3] == 3).any().item())
+        self.assertFalse((pairwise_relation_indices[:, 3] == 2).any().item())
 
     def test_different_anchor_types(self):
         """Test with different anchor node types."""
