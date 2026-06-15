@@ -274,6 +274,18 @@ def _create_user_graph_with_ppr_edges() -> HeteroData:
     return data
 
 
+def _create_user_graph_with_edge_attrs() -> HeteroData:
+    data = HeteroData()
+
+    data["user"].x = torch.tensor(
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+    )
+    data["user", "connects", "user"].edge_index = torch.tensor([[0, 1, 1], [1, 2, 2]])
+    data["user", "connects", "user"].edge_attr = torch.tensor([[0.5], [1.5], [2.5]])
+
+    return data
+
+
 class TestGraphTransformerEncoderPEModes(TestCase):
     def setUp(self) -> None:
         self._node_type = NodeType("user")
@@ -411,6 +423,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                             ]
                         ]
                     ),
+                    "pairwise_edge_attr_indices": None,
+                    "pairwise_edge_attr_values": None,
                     "token_input": None,
                 },
             )
@@ -420,6 +434,135 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 8.0)
         self.assertEqual(attn_bias[0, 0, 2, 2].item(), 27.0)
         self.assertEqual(attn_bias[0, 1, 2, 2].item(), 38.0)
+
+    def test_edge_attr_attention_bias_zero_init_matches_baseline(self) -> None:
+        data = _create_user_graph_with_edge_attrs()
+
+        base_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={self._edge_type: 1},
+        )
+        edge_attr_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={self._edge_type: 1},
+            edge_attr_attention_bias_mode="sparse_linear",
+        )
+        edge_attr_encoder.load_state_dict(base_encoder.state_dict(), strict=False)
+
+        projection = edge_attr_encoder._edge_attr_attention_bias_projection_dict["0"]
+        assert isinstance(projection, nn.Linear)
+        self.assertTrue(
+            torch.equal(projection.weight, torch.zeros_like(projection.weight))
+        )
+        self.assertTrue(torch.equal(projection.bias, torch.zeros_like(projection.bias)))
+
+        base_encoder.eval()
+        edge_attr_encoder.eval()
+        with torch.no_grad():
+            base_embeddings = base_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            edge_attr_embeddings = edge_attr_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertTrue(
+            torch.allclose(base_embeddings, edge_attr_embeddings, atol=1e-6)
+        )
+
+    def test_edge_attr_attention_bias_adds_presence_and_feature_biases(self) -> None:
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={self._edge_type: 2},
+            edge_attr_attention_bias_mode="sparse_linear",
+        )
+
+        projection = encoder._edge_attr_attention_bias_projection_dict["0"]
+        assert isinstance(projection, nn.Linear)
+        with torch.no_grad():
+            projection.weight.copy_(torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
+            projection.bias.copy_(torch.tensor([0.5, 1.5]))
+
+            attn_bias = encoder._build_attention_bias(
+                valid_mask=torch.ones((1, 3), dtype=torch.bool),
+                sequences=torch.zeros((1, 3, 8), dtype=torch.float),
+                attention_bias_data={
+                    "anchor_bias": None,
+                    "pairwise_bias": None,
+                    "pairwise_edge_attr_indices": {
+                        0: torch.tensor([[0, 1, 0], [0, 1, 0], [0, 2, 1]])
+                    },
+                    "pairwise_edge_attr_values": {
+                        0: torch.tensor([[1.0, 1.0], [2.0, 0.0], [0.0, 1.0]])
+                    },
+                    "token_input": None,
+                },
+            )
+
+        expected = torch.zeros((1, 2, 3, 3), dtype=torch.float)
+        expected[0, :, 1, 0] = torch.tensor([6.0, 16.0])
+        expected[0, :, 2, 1] = torch.tensor([2.5, 5.5])
+        self.assertTrue(torch.allclose(attn_bias, expected))
+
+    def test_edge_attr_attention_bias_supports_ppr_sequence_construction(self) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        base_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 1},
+            sequence_construction_method="ppr",
+        )
+        edge_attr_encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 1},
+            sequence_construction_method="ppr",
+            edge_attr_attention_bias_mode="sparse_linear",
+        )
+        edge_attr_encoder.load_state_dict(base_encoder.state_dict(), strict=False)
+
+        base_encoder.eval()
+        edge_attr_encoder.eval()
+        with torch.no_grad():
+            base_embeddings = base_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+            edge_attr_embeddings = edge_attr_encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertTrue(
+            torch.allclose(base_embeddings, edge_attr_embeddings, atol=1e-6)
+        )
+
+    def test_edge_attr_attention_bias_skips_zero_dim_edge_types(self) -> None:
+        data = HeteroData()
+        data["user"].x = torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+        data["user", "connects", "user"].edge_index = torch.tensor([[0], [1]])
+
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            edge_attr_attention_bias_mode="sparse_linear",
+        )
+        self.assertEqual(len(encoder._edge_attr_attention_bias_projection_dict), 0)
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(embeddings.shape, (2, 6))
+        self.assertFalse(torch.isnan(embeddings).any())
+
+    def test_edge_attr_attention_bias_rejects_unknown_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "edge_attr_attention_bias_mode"):
+            self._create_encoder(edge_attr_attention_bias_mode="dense")
 
     def test_attention_bias_supports_anchor_relative_attrs_and_ppr_weights(
         self,
@@ -447,6 +590,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                         [[[1.0, 0.5], [2.0, 0.25], [3.0, 0.125]]]
                     ),
                     "pairwise_bias": None,
+                    "pairwise_edge_attr_indices": None,
+                    "pairwise_edge_attr_values": None,
                     "token_input": None,
                 },
             )
