@@ -376,9 +376,8 @@ class GraphTransformerEncoder(nn.Module):
         node_type_to_feat_dim_map: Dictionary mapping node types to their
             input feature dimensions.
         edge_type_to_feat_dim_map: Dictionary mapping edge types to their
-            feature dimensions. Accepted for interface conformance with
-            ``HGT``/``SimpleHGN``; edge features are not used by the
-            graph transformer.
+            feature dimensions. Used only when
+            ``edge_attr_attention_bias_mode="sparse_linear"``.
         hid_dim: Hidden dimension for transformer layers. All node types
             are projected to this dimension before processing.
         out_dim: Output embedding dimension.
@@ -432,6 +431,11 @@ class GraphTransformerEncoder(nn.Module):
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
+        edge_attr_attention_bias_mode: How to use sampled edge attributes as
+            attention-logit bias. ``"none"`` preserves the default behavior.
+            ``"sparse_linear"`` keeps edge attrs sparse, projects each matched
+            edge attr row to per-head bias, and accumulates it at
+            ``query=dst, key=src`` for the stored edge direction.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
@@ -495,6 +499,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: Optional[list[str]] = None,
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+        edge_attr_attention_bias_mode: Literal["none", "sparse_linear"] = "none",
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -508,6 +513,12 @@ class GraphTransformerEncoder(nn.Module):
             raise ValueError(
                 "pe_integration_mode must be one of {'concat', 'add'}, "
                 f"got '{pe_integration_mode}'"
+            )
+        if edge_attr_attention_bias_mode not in {"none", "sparse_linear"}:
+            raise ValueError(
+                "edge_attr_attention_bias_mode must be one of "
+                "{'none', 'sparse_linear'}, "
+                f"got '{edge_attr_attention_bias_mode}'"
             )
 
         self._hid_dim = hid_dim
@@ -571,6 +582,20 @@ class GraphTransformerEncoder(nn.Module):
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
+        self._edge_type_to_feat_dim_map = {
+            edge_type: edge_type_to_feat_dim_map[edge_type]
+            for edge_type in sorted(edge_type_to_feat_dim_map.keys())
+        }
+        self._edge_attr_attention_bias_mode = edge_attr_attention_bias_mode
+        self._edge_attr_attention_bias_edge_types = (
+            [
+                edge_type
+                for edge_type, edge_attr_dim in self._edge_type_to_feat_dim_map.items()
+                if int(edge_attr_dim) > 0
+            ]
+            if edge_attr_attention_bias_mode == "sparse_linear"
+            else []
+        )
         anchor_input_embedding_attr_names = (
             set(anchor_based_input_embedding_dict.keys())
             if anchor_based_input_embedding_dict is not None
@@ -645,6 +670,20 @@ class GraphTransformerEncoder(nn.Module):
                 len(self._pairwise_attention_bias_attr_names),
                 num_heads,
                 bias=False,
+            )
+
+        self._edge_attr_attention_bias_projection_dict = nn.ModuleDict()
+        for relation_idx, edge_type in enumerate(
+            self._edge_attr_attention_bias_edge_types
+        ):
+            edge_attr_dim = int(self._edge_type_to_feat_dim_map[edge_type])
+            if edge_attr_dim <= 0:
+                continue
+            projection = nn.Linear(edge_attr_dim, num_heads, bias=True)
+            nn.init.zeros_(projection.weight)
+            nn.init.zeros_(projection.bias)
+            self._edge_attr_attention_bias_projection_dict[str(relation_idx)] = (
+                projection
             )
 
         # Transformer encoder layers
@@ -801,6 +840,14 @@ class GraphTransformerEncoder(nn.Module):
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
+            edge_attr_edge_type_to_feat_dim_map=(
+                {
+                    edge_type: self._edge_type_to_feat_dim_map[edge_type]
+                    for edge_type in self._edge_attr_attention_bias_edge_types
+                }
+                if self._edge_attr_attention_bias_mode == "sparse_linear"
+                else None
+            ),
         )
 
         # Free memory after sequences are built
@@ -958,6 +1005,11 @@ class GraphTransformerEncoder(nn.Module):
            Input shape: (batch, seq, seq, num_pairwise_attrs)
            After projection: (batch, num_heads, seq, seq) - unique bias per query-key pair.
 
+        4. **Sparse edge-attribute bias** (optional): For each matched sampled
+           edge attr row, project to per-head bias and accumulate at
+           ``(batch, head, query_pos=dst, key_pos=src)`` without materializing
+           dense edge-feature tensors.
+
         Args:
             valid_mask: Boolean mask of shape (batch_size, seq_len) indicating
                 valid (non-padding) positions.
@@ -966,6 +1018,8 @@ class GraphTransformerEncoder(nn.Module):
             attention_bias_data: Dictionary containing optional PE tensors:
                 - "anchor_bias": (batch, seq, num_anchor_attrs) or None
                 - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
+                - "pairwise_edge_attr_indices": dict[int, (n, 3)] or None
+                - "pairwise_edge_attr_values": dict[int, (n, edge_dim)] or None
 
         Returns:
             Combined attention bias tensor of shape (batch_size, num_heads, seq_len, seq_len)
@@ -1028,6 +1082,93 @@ class GraphTransformerEncoder(nn.Module):
                 0, 3, 1, 2
             )  # (batch, num_heads, seq, seq)
             attn_bias = attn_bias + pairwise_bias
+
+        pairwise_edge_attr_indices = attention_bias_data.get(
+            "pairwise_edge_attr_indices"
+        )
+        pairwise_edge_attr_values = attention_bias_data.get("pairwise_edge_attr_values")
+        if (
+            pairwise_edge_attr_indices is not None
+            or pairwise_edge_attr_values is not None
+        ):
+            if self._edge_attr_attention_bias_mode != "sparse_linear":
+                raise ValueError(
+                    "Sparse edge-attribute attention-bias payloads require "
+                    "edge_attr_attention_bias_mode='sparse_linear'."
+                )
+            if pairwise_edge_attr_indices is None or pairwise_edge_attr_values is None:
+                raise ValueError(
+                    "Both pairwise_edge_attr_indices and pairwise_edge_attr_values "
+                    "must be provided together."
+                )
+            if set(pairwise_edge_attr_indices.keys()) != set(
+                pairwise_edge_attr_values.keys()
+            ):
+                raise ValueError(
+                    "pairwise_edge_attr_indices and pairwise_edge_attr_values "
+                    "must contain the same relation indices."
+                )
+
+            attn_bias_by_position: Optional[Tensor] = None
+            for relation_idx in sorted(pairwise_edge_attr_indices.keys()):
+                edge_attr_indices = pairwise_edge_attr_indices[relation_idx]
+                edge_attr_values = pairwise_edge_attr_values[relation_idx]
+                if edge_attr_indices.dim() != 2 or edge_attr_indices.size(-1) != 3:
+                    raise ValueError(
+                        "pairwise_edge_attr_indices values must have shape "
+                        f"(num_edges, 3), got {tuple(edge_attr_indices.shape)}."
+                    )
+                if edge_attr_values.dim() != 2:
+                    raise ValueError(
+                        "pairwise_edge_attr_values values must have shape "
+                        f"(num_edges, edge_dim), got {tuple(edge_attr_values.shape)}."
+                    )
+                if edge_attr_indices.size(0) != edge_attr_values.size(0):
+                    raise ValueError(
+                        "pairwise_edge_attr_indices and pairwise_edge_attr_values "
+                        "must have the same number of rows for relation "
+                        f"{relation_idx}."
+                    )
+                if edge_attr_indices.numel() == 0:
+                    continue
+
+                projection_key = str(relation_idx)
+                if projection_key not in self._edge_attr_attention_bias_projection_dict:
+                    raise ValueError(
+                        "No sparse edge-attribute attention-bias projection found "
+                        f"for relation index {relation_idx}."
+                    )
+                projection = self._edge_attr_attention_bias_projection_dict[
+                    projection_key
+                ]
+
+                if attn_bias_by_position is None:
+                    full_attn_bias_shape = (
+                        batch_size,
+                        self._num_heads,
+                        seq_len,
+                        seq_len,
+                    )
+                    if tuple(attn_bias.shape) != full_attn_bias_shape:
+                        attn_bias = attn_bias.expand(full_attn_bias_shape).clone()
+                    attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+
+                edge_attr_indices = edge_attr_indices.to(
+                    device=device,
+                    dtype=torch.long,
+                )
+                edge_attr_bias = projection(
+                    edge_attr_values.to(device=device, dtype=dtype)
+                )
+                attn_bias_by_position.index_put_(
+                    (
+                        edge_attr_indices[:, 0],
+                        edge_attr_indices[:, 1],
+                        edge_attr_indices[:, 2],
+                    ),
+                    edge_attr_bias.to(dtype=attn_bias.dtype),
+                    accumulate=True,
+                )
 
         return attn_bias
 

@@ -7,6 +7,7 @@ import torch.nn as nn
 from absl.testing import absltest
 from torch_geometric.data import HeteroData
 
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
@@ -252,6 +253,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertIsInstance(attention_bias_data, dict)
         self.assertIn("anchor_bias", attention_bias_data)
         self.assertIn("pairwise_bias", attention_bias_data)
+        self.assertIn("pairwise_edge_attr_indices", attention_bias_data)
+        self.assertIn("pairwise_edge_attr_values", attention_bias_data)
 
     def test_attention_mask_validity(self):
         """Test that attention mask correctly identifies valid positions."""
@@ -304,6 +307,163 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         # First position should be anchor node
         self.assertTrue(torch.allclose(sequences[0, 0], anchor_feature))
+
+    def test_pairwise_edge_attr_payloads_follow_stored_direction_and_padding(self):
+        """Test sparse edge attrs use query=dst, key=src and exclude padding."""
+        user_node_type = NodeType("user")
+        likes_edge_type = EdgeType(
+            user_node_type,
+            Relation("likes"),
+            user_node_type,
+        )
+        follows_edge_type = EdgeType(
+            user_node_type,
+            Relation("follows"),
+            user_node_type,
+        )
+        no_feat_edge_type = EdgeType(
+            user_node_type,
+            Relation("no_feat"),
+            user_node_type,
+        )
+        missing_edge_type = EdgeType(
+            user_node_type,
+            Relation("missing"),
+            user_node_type,
+        )
+
+        data = HeteroData()
+        data["user"].x = torch.tensor(
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        )
+        data[likes_edge_type.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[likes_edge_type.tuple_repr()].edge_attr = torch.tensor([[0.25, 1.25]])
+        data[follows_edge_type.tuple_repr()].edge_index = torch.tensor(
+            [[0, 1, 1], [1, 2, 2]],
+        )
+        data[follows_edge_type.tuple_repr()].edge_attr = torch.tensor(
+            [[2.0], [3.0], [4.0]],
+        )
+        data[no_feat_edge_type.tuple_repr()].edge_index = torch.tensor([[0], [2]])
+
+        edge_attr_dim_map = {
+            likes_edge_type: 2,
+            follows_edge_type: 1,
+            no_feat_edge_type: 0,
+            missing_edge_type: 1,
+        }
+        _, valid_mask, sequence_auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            edge_attr_edge_type_to_feat_dim_map=edge_attr_dim_map,
+        )
+
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+        pairwise_edge_attr_indices = sequence_auxiliary_data[
+            "pairwise_edge_attr_indices"
+        ]
+        pairwise_edge_attr_values = sequence_auxiliary_data["pairwise_edge_attr_values"]
+        assert pairwise_edge_attr_indices is not None
+        assert pairwise_edge_attr_values is not None
+
+        sorted_edge_types = sorted(edge_attr_dim_map.keys())
+        likes_relation_idx = sorted_edge_types.index(likes_edge_type)
+        follows_relation_idx = sorted_edge_types.index(follows_edge_type)
+        no_feat_relation_idx = sorted_edge_types.index(no_feat_edge_type)
+        missing_relation_idx = sorted_edge_types.index(missing_edge_type)
+
+        self.assertTrue(
+            torch.equal(
+                pairwise_edge_attr_indices[likes_relation_idx],
+                torch.tensor([[0, 1, 0]]),
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                pairwise_edge_attr_values[likes_relation_idx],
+                torch.tensor([[0.25, 1.25]]),
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                pairwise_edge_attr_indices[follows_relation_idx],
+                torch.tensor([[0, 1, 0], [0, 2, 1], [0, 2, 1]]),
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                pairwise_edge_attr_values[follows_relation_idx],
+                torch.tensor([[2.0], [3.0], [4.0]]),
+            )
+        )
+        self.assertNotIn(no_feat_relation_idx, pairwise_edge_attr_indices)
+        self.assertNotIn(missing_relation_idx, pairwise_edge_attr_indices)
+        all_indices = torch.cat(list(pairwise_edge_attr_indices.values()), dim=0)
+        self.assertFalse((all_indices[:, 1:] == 3).any())
+
+    def test_pairwise_edge_attr_payloads_missing_edge_attr_raises(self):
+        user_node_type = NodeType("user")
+        edge_type = EdgeType(user_node_type, Relation("connects"), user_node_type)
+
+        data = HeteroData()
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+        data[edge_type.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+
+        with self.assertRaisesRegex(ValueError, "requires edge_attr"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=2,
+                anchor_node_type="user",
+                hop_distance=1,
+                edge_attr_edge_type_to_feat_dim_map={edge_type: 1},
+            )
+
+    def test_pairwise_edge_attr_payloads_reject_malformed_edge_attrs(self):
+        user_node_type = NodeType("user")
+        edge_type = EdgeType(user_node_type, Relation("connects"), user_node_type)
+
+        data = HeteroData()
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+        data[edge_type.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[edge_type.tuple_repr()].edge_attr = torch.tensor([[1.0], [2.0]])
+
+        with self.assertRaisesRegex(ValueError, "has 2 rows"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=2,
+                anchor_node_type="user",
+                hop_distance=1,
+                edge_attr_edge_type_to_feat_dim_map={edge_type: 1},
+            )
+
+        data[edge_type.tuple_repr()].edge_attr = torch.tensor([[1.0, 2.0]])
+        with self.assertRaisesRegex(ValueError, "feature dim 2"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=2,
+                anchor_node_type="user",
+                hop_distance=1,
+                edge_attr_edge_type_to_feat_dim_map={edge_type: 1},
+            )
+
+        data[edge_type.tuple_repr()].edge_attr = torch.tensor([[[1.0]]])
+        with self.assertRaisesRegex(ValueError, "1D or 2D"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=2,
+                anchor_node_type="user",
+                hop_distance=1,
+                edge_attr_edge_type_to_feat_dim_map={edge_type: 1},
+            )
 
     def test_different_anchor_types(self):
         """Test with different anchor node types."""
