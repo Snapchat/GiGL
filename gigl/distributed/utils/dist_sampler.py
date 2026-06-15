@@ -37,6 +37,7 @@ def create_dist_sampler(
     sampler_options: SamplerOptions,
     degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
     current_device: torch.device,
+    edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None,
 ) -> SamplerRuntime:
     """Create a GiGL sampler runtime for one channel on one worker.
 
@@ -49,6 +50,10 @@ def create_dist_sampler(
         degree_tensors: Pre-computed degree tensors required by PPR sampling.
             Must not be ``None`` when ``sampler_options`` is :class:`PPRSamplerOptions`.
         current_device: The device on which sampling will run.
+        edge_weights: Per-edge weight tensors for this rank's partition.  Required when
+            ``sampler_options`` is :class:`PPRSamplerOptions` and
+            ``sampling_config.with_weight`` is ``True``.  Ignored for k-hop sampling
+            (GLT handles weight-biased sampling internally via ``with_weight``).
 
     Returns:
         A configured sampler runtime, either :class:`DistNeighborSampler` or
@@ -77,14 +82,19 @@ def create_dist_sampler(
         )
     elif isinstance(sampler_options, PPRSamplerOptions):
         assert degree_tensors is not None
+        # PPR traversal must always use uniform neighbor sampling: biased selection
+        # would double-count high-weight edges (once in the fetch, once in residual
+        # distribution).  Weight influence is captured entirely in the residual math.
+        # Pass edge_weights only when with_weight=True; None disables weighted residuals.
         sampler = DistPPRNeighborSampler(
-            **shared_sampler_kwargs,
+            **{**shared_sampler_kwargs, "with_weight": False},
             alpha=sampler_options.alpha,
             eps=sampler_options.eps,
             max_ppr_nodes=sampler_options.max_ppr_nodes,
             max_fetch_iterations=sampler_options.max_fetch_iterations,
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
             degree_tensors=degree_tensors,
+            edge_weights=edge_weights if sampling_config.with_weight else None,
         )
     else:
         raise NotImplementedError(

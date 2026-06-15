@@ -356,7 +356,6 @@ class BaseDistLoader(DistLoader):
 
         Raises:
             ValueError: If ``with_weight=True`` but no edge weights are registered.
-            NotImplementedError: If ``with_weight=True`` and a PPR sampler is requested.
         """
         if not with_weight:
             return
@@ -369,12 +368,6 @@ class BaseDistLoader(DistLoader):
             raise ValueError(
                 "with_weight=True requires edge weights to be registered in the dataset. "
                 "Pass weight_edge_feat_name to build_dataset() to register edge weights."
-            )
-        # TODO(mkolodner-sc): Implement weight-proportional residual propagation for PPR.
-        if with_weight and isinstance(sampler_options, PPRSamplerOptions):
-            raise NotImplementedError(
-                "Weighted sampling is not yet supported with PPRSamplerOptions. "
-                "Weight-proportional residual propagation for PPR is planned but not implemented."
             )
 
     @staticmethod

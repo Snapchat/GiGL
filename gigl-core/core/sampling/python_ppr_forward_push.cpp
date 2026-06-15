@@ -20,15 +20,21 @@ namespace gigl {
 // pushResiduals: a wrapper is needed solely to release the GIL during the C++ push.
 // pybind11/stl.h handles all type conversions automatically; the other methods use
 // direct member function pointers for the same reason.
+//
+// Each tuple value is (node_ids, flat_nbrs, counts, flat_weights).  flat_weights is
+// an empty tensor in uniform-residual mode and a non-empty float64 tensor in
+// weight-proportional mode.
 static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> neighborTensorsByEtypeId;
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>>
+        neighborTensorsByEtypeId;
     // Dict iteration touches Python objects — GIL must be held here.
     for (auto item : fetchedByEtypeId) {
         auto edgeTypeId = item.first.cast<int32_t>();
         auto neighborTensors = item.second.cast<py::tuple>();
         neighborTensorsByEtypeId[edgeTypeId] = {neighborTensors[0].cast<torch::Tensor>(),
                                                 neighborTensors[1].cast<torch::Tensor>(),
-                                                neighborTensors[2].cast<torch::Tensor>()};
+                                                neighborTensors[2].cast<torch::Tensor>(),
+                                                neighborTensors[3].cast<torch::Tensor>()};
     }
     // C++ push only uses tensor accessor/data_ptr APIs — GIL-safe to release.
     // Releasing here lets the asyncio event loop process RPC completion callbacks

@@ -691,6 +691,7 @@ def _shared_sampling_worker_loop(
                 sampler_options=sampler_options,
                 degree_tensors=degree_tensors,
                 current_device=current_device,
+                edge_weights=data.edge_weights,
             )
             sampler.start_loop()
             with state_lock:

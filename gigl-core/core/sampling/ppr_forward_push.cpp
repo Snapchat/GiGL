@@ -147,20 +147,33 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
 }
 
 void PPRForwardPush::pushResiduals(
-    const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
-    // Step 1: Unpack the input map into a C++ map keyed by packKey(nodeId, edgeTypeId)
+    const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>>&
+        fetchedByEtypeId) {
+    // Step 1: Unpack the input map into C++ maps keyed by packKey(nodeId, edgeTypeId)
     // for fast lookup during the residual-push loop below.
+    // fetchedWeights is populated only in weighted mode (_hasWeights becomes true on
+    // the first call that includes a non-empty flat_weights tensor).
     std::unordered_map<uint64_t, std::vector<int32_t>> fetched;
+    std::unordered_map<uint64_t, std::vector<double>> fetchedWeights;
+
     for (const auto& [edgeTypeId, neighborTensors] : fetchedByEtypeId) {
         const auto& nodeIdsTensor = std::get<0>(neighborTensors);
         const auto& flatNeighborIdsTensor = std::get<1>(neighborTensors);
         const auto& countsTensor = std::get<2>(neighborTensors);
+        const auto& flatWeightsTensor = std::get<3>(neighborTensors);
+
+        bool etypeHasWeights = flatWeightsTensor.numel() > 0;
+        if (etypeHasWeights) {
+            _hasWeights = true;
+        }
 
         // accessor<int64_t, 1>() gives a bounds-checked, typed 1-D view into
         // each tensor's data — equivalent to iterating over a NumPy array.
         auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
         auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
         auto countsAccessor = countsTensor.accessor<int64_t, 1>();
+        // Raw pointer for weights avoids a conditional accessor construction.
+        const double* flatWeightsPtr = etypeHasWeights ? flatWeightsTensor.data_ptr<double>() : nullptr;
 
         // Walk the flat neighbor list, slicing out each node's neighbors using
         // the running offset into the concatenated flat buffer.
@@ -168,20 +181,56 @@ void PPRForwardPush::pushResiduals(
         for (int64_t nodeIdx = 0; nodeIdx < nodeIdsTensor.size(0); ++nodeIdx) {
             auto nodeId = static_cast<int32_t>(nodeIdsAccessor[nodeIdx]);
             int64_t count = countsAccessor[nodeIdx];
+            uint64_t key = packKey(nodeId, edgeTypeId);
+
             std::vector<int32_t> neighborIds(count);
             for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
                 neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
             }
-            fetched[packKey(nodeId, edgeTypeId)] = std::move(neighborIds);
+            fetched[key] = std::move(neighborIds);
+
+            if (flatWeightsPtr != nullptr) {
+                std::vector<double> neighborWeights(count);
+                for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
+                    double weight = flatWeightsPtr[offset + neighborIdx];
+                    TORCH_CHECK(weight >= 0.0, "PPR edge weights must be non-negative.");
+                    neighborWeights[neighborIdx] = weight;
+                }
+                fetchedWeights[key] = std::move(neighborWeights);
+            }
+
             offset += count;
         }
     }
 
+    // Promote neighbor and weight lists for a newly re-queued node into the persistent cache.
+    // Called from both uniform and weighted paths — the _hasWeights guard inside handles
+    // whether _weightCache is populated.
+    auto promoteToCache = [&](int32_t neighborNodeId, int32_t dstNodeTypeId) {
+        for (int32_t neighborEdgeTypeId : _nodeTypeToEdgeTypeIds[dstNodeTypeId]) {
+            uint64_t packedKey = packKey(neighborNodeId, neighborEdgeTypeId);
+            if (_neighborCache.find(packedKey) == _neighborCache.end()) {
+                auto fetchedNeighborEntry = fetched.find(packedKey);
+                if (fetchedNeighborEntry != fetched.end()) {
+                    _neighborCache[packedKey] = fetchedNeighborEntry->second;
+                    if (_hasWeights) {
+                        auto fetchedWeightsNeighborEntry = fetchedWeights.find(packedKey);
+                        if (fetchedWeightsNeighborEntry != fetchedWeights.end()) {
+                            _weightCache[packedKey] = fetchedWeightsNeighborEntry->second;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
     // Step 2: For every node that was in the queue (captured in _queuedNodes
     // by drainQueue()), apply one PPR push step:
     //   a. Absorb residual into the PPR score.
-    //   b. Distribute (1-alpha) * residual equally to each neighbor.
-    //   c. Enqueue any neighbor whose residual now exceeds the requeue threshold.
+    //   b. Compute the normalisation factor (neighbor count or total weight).
+    //   c. Distribute (1-alpha) * residual to each neighbor: uniformly when
+    //      _hasWeights is false; proportionally to edge weight when true.
+    //   d. Enqueue any neighbor whose residual now exceeds the requeue threshold.
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
         for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
             auto& srcNodeTypeState = _state[seedIdx][nodeTypeId];
@@ -197,87 +246,168 @@ void PPRForwardPush::pushResiduals(
                 srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
                 srcNodeTypeState.residuals[sourceNodeId] = 0.0;
 
-                // b. Count total fetched/cached neighbors across all edge types for
-                // this source node.  We normalise by the number of neighbors we
-                // actually retrieved, not the true degree, so residual is fully
-                // distributed among known neighbors rather than leaking to unfetched
-                // ones (which matters when num_neighbors_per_hop < true_degree).
-                int32_t totalFetched = 0;
-                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
-                    if (fetchedEntry != fetched.end()) {
-                        totalFetched += static_cast<int32_t>(fetchedEntry->second.size());
-                    } else {
-                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
-                        if (cachedEntry != _neighborCache.end()) {
-                            totalFetched += static_cast<int32_t>(cachedEntry->second.size());
+                if (!_hasWeights) {
+                    // --- Uniform path ---
+                    // b. Count total fetched/cached neighbors across all edge types for
+                    // this source node.  We normalise by the number of neighbors we
+                    // actually retrieved, not the true degree, so residual is fully
+                    // distributed among known neighbors rather than leaking to unfetched
+                    // ones (which matters when num_neighbors_per_hop < true_degree).
+                    int32_t totalFetched = 0;
+                    for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+                        auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
+                        if (fetchedEntry != fetched.end()) {
+                            totalFetched += static_cast<int32_t>(fetchedEntry->second.size());
+                        } else {
+                            auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
+                            if (cachedEntry != _neighborCache.end()) {
+                                totalFetched += static_cast<int32_t>(cachedEntry->second.size());
+                            }
                         }
                     }
-                }
-                // Two cases reach here:
-                //   1. True sink node (no outgoing edges): absorbing the full residual is correct.
-                //   2. Budget exhausted, no cache entry: the (1-α)·r that should flow to
-                //      neighbors has nowhere to go, so it gets absorbed into src's score instead.
-                //      This overstates src and understates its neighbors.  This is expected
-                //      behavior when max_fetch_iterations is set, which intentionally trades
-                //      theoretical PPR correctness for better throughput.
-                if (totalFetched == 0) {
-                    continue;
-                }
-
-                double residualPerNeighbor = (1.0 - _alpha) * sourceResidual / static_cast<double>(totalFetched);
-
-                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    // Invariant: fetched and _neighborCache are mutually exclusive for
-                    // any given (node, etype) key within one iteration.  drainQueue()
-                    // only requests a fetch for nodes absent from _neighborCache, so a
-                    // key is in at most one of the two.
-                    //
-                    // Neighbor list for this (src, edgeTypeId) pair, borrowed from whichever
-                    // map holds it.  reference_wrapper is used because std::optional cannot
-                    // hold a reference directly, and we want to avoid copying the vector —
-                    // the data already exists in fetched or _neighborCache and both outlive
-                    // this loop body.  Access via neighborList->get().
-                    std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
-                    auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
-                    if (fetchedEntry != fetched.end()) {
-                        neighborList = std::cref(fetchedEntry->second);
-                    } else {
-                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
-                        if (cachedEntry != _neighborCache.end()) {
-                            neighborList = std::cref(cachedEntry->second);
-                        }
-                    }
-                    if (!neighborList || neighborList->get().empty()) {
+                    // Two cases reach here:
+                    //   1. True sink node (no outgoing edges): absorbing the full residual is correct.
+                    //   2. Budget exhausted, no cache entry: the (1-α)·r that should flow to
+                    //      neighbors has nowhere to go, so it gets absorbed into src's score instead.
+                    //      This overstates src and understates its neighbors.  This is expected
+                    //      behavior when max_fetch_iterations is set, which intentionally trades
+                    //      theoretical PPR correctness for better throughput.
+                    if (totalFetched == 0) {
                         continue;
                     }
 
-                    int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
+                    double residualPerNeighbor = (1.0 - _alpha) * sourceResidual / static_cast<double>(totalFetched);
 
-                    // c. Accumulate residual for each neighbor and re-enqueue if threshold
-                    // exceeded.
-                    auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
-                    for (int32_t neighborNodeId : neighborList->get()) {
-                        dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
+                    for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+                        // Invariant: fetched and _neighborCache are mutually exclusive for
+                        // any given (node, etype) key within one iteration.  drainQueue()
+                        // only requests a fetch for nodes absent from _neighborCache, so a
+                        // key is in at most one of the two.
+                        //
+                        // Neighbor list for this (src, edgeTypeId) pair, borrowed from whichever
+                        // map holds it.  reference_wrapper is used because std::optional cannot
+                        // hold a reference directly, and we want to avoid copying the vector —
+                        // the data already exists in fetched or _neighborCache and both outlive
+                        // this loop body.  Access via neighborList->get().
+                        std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
+                        auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
+                        if (fetchedEntry != fetched.end()) {
+                            neighborList = std::cref(fetchedEntry->second);
+                        } else {
+                            auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
+                            if (cachedEntry != _neighborCache.end()) {
+                                neighborList = std::cref(cachedEntry->second);
+                            }
+                        }
+                        if (!neighborList || neighborList->get().empty()) {
+                            continue;
+                        }
 
-                        double threshold = _requeueThresholdFactor *
-                                           static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
+                        int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
 
-                        if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
-                            dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
-                            dstNodeTypeState.queue.insert(neighborNodeId);
-                            ++_numNodesInQueue;
+                        // c. Accumulate residual for each neighbor and re-enqueue if threshold
+                        // exceeded.
+                        auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
+                        for (int32_t neighborNodeId : neighborList->get()) {
+                            dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
 
-                            // Promote neighbor lists to the persistent cache: this node will
-                            // be processed next iteration, so caching avoids a re-fetch.
-                            for (int32_t neighborEdgeTypeId : _nodeTypeToEdgeTypeIds[dstNodeTypeId]) {
-                                uint64_t packedKey = packKey(neighborNodeId, neighborEdgeTypeId);
-                                if (_neighborCache.find(packedKey) == _neighborCache.end()) {
-                                    auto fetchedNeighborEntry = fetched.find(packedKey);
-                                    if (fetchedNeighborEntry != fetched.end()) {
-                                        _neighborCache[packedKey] = fetchedNeighborEntry->second;
-                                    }
+                            double threshold = _requeueThresholdFactor *
+                                               static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
+
+                            if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
+                                dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
+                                dstNodeTypeState.queue.insert(neighborNodeId);
+                                ++_numNodesInQueue;
+                                promoteToCache(neighborNodeId, dstNodeTypeId);
+                            }
+                        }
+                    }
+                } else {
+                    // --- Weighted path ---
+                    // b. Sum total weight of fetched/cached neighbors across all edge types.
+                    // We normalise by total fetched weight rather than by true out-weight so
+                    // that the residual is fully distributed among known neighbors, consistent
+                    // with how the uniform path handles truncated neighbor lists.
+                    double totalFetchedWeight = 0.0;
+                    for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+                        uint64_t key = packKey(sourceNodeId, edgeTypeId);
+                        auto fetchedWeightsEntry = fetchedWeights.find(key);
+                        if (fetchedWeightsEntry != fetchedWeights.end()) {
+                            for (double w : fetchedWeightsEntry->second) {
+                                totalFetchedWeight += w;
+                            }
+                        } else {
+                            auto cachedWeightsEntry = _weightCache.find(key);
+                            if (cachedWeightsEntry != _weightCache.end()) {
+                                for (double w : cachedWeightsEntry->second) {
+                                    totalFetchedWeight += w;
                                 }
+                            }
+                        }
+                    }
+                    // Sink node or all-zero-weight edges: absorb residual, nothing to distribute.
+                    if (totalFetchedWeight == 0.0) {
+                        continue;
+                    }
+
+                    double baseResidual = (1.0 - _alpha) * sourceResidual;
+
+                    for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
+                        uint64_t key = packKey(sourceNodeId, edgeTypeId);
+
+                        std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
+                        std::optional<std::reference_wrapper<const std::vector<double>>> weightList;
+
+                        auto fetchedEntry = fetched.find(key);
+                        if (fetchedEntry != fetched.end()) {
+                            neighborList = std::cref(fetchedEntry->second);
+                            auto fetchedWeightsEntry = fetchedWeights.find(key);
+                            if (fetchedWeightsEntry != fetchedWeights.end()) {
+                                weightList = std::cref(fetchedWeightsEntry->second);
+                            }
+                        } else {
+                            auto cachedEntry = _neighborCache.find(key);
+                            if (cachedEntry != _neighborCache.end()) {
+                                neighborList = std::cref(cachedEntry->second);
+                                auto cachedWeightsEntry = _weightCache.find(key);
+                                if (cachedWeightsEntry != _weightCache.end()) {
+                                    weightList = std::cref(cachedWeightsEntry->second);
+                                }
+                            }
+                        }
+                        if (!neighborList || neighborList->get().empty()) {
+                            continue;
+                        }
+
+                        int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
+                        auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
+
+                        // c. Accumulate weight-proportional residual for each neighbor.
+                        // weightList is always populated alongside neighborList in weighted mode:
+                        // fetched[key] and fetchedWeights[key] are set together in Step 1,
+                        // and _neighborCache[key] and _weightCache[key] are promoted together.
+                        TORCH_INTERNAL_ASSERT(weightList.has_value(),
+                                              "weightList must be populated alongside neighborList in weighted mode");
+                        const auto& neighbors = neighborList->get();
+                        const auto& weights = weightList->get();
+                        TORCH_INTERNAL_ASSERT(weights.size() == neighbors.size(),
+                                              "weightList and neighborList must have the same size");
+                        for (int32_t i = 0; i < static_cast<int32_t>(neighbors.size()); ++i) {
+                            if (weights[i] == 0.0) {
+                                continue;
+                            }
+                            int32_t neighborNodeId = neighbors[i];
+                            dstNodeTypeState.residuals[neighborNodeId] +=
+                                baseResidual * weights[i] / totalFetchedWeight;
+
+                            double threshold = _requeueThresholdFactor *
+                                               static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
+
+                            if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
+                                dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
+                                dstNodeTypeState.queue.insert(neighborNodeId);
+                                ++_numNodesInQueue;
+                                promoteToCache(neighborNodeId, dstNodeTypeId);
                             }
                         }
                     }
