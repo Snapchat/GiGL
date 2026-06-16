@@ -90,7 +90,7 @@ def heterodata_to_graph_transformer_input(
     anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
     anchor_based_input_attr_names: Optional[list[str]] = None,
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
-    sampling_direction: Literal["outgoing", "incoming"] = "outgoing",
+    sampling_direction: Literal["in", "out"] = "out",
 ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -133,8 +133,8 @@ def heterodata_to_graph_transformer_input(
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
         sampling_direction: Direction used for token construction.
-            ``"outgoing"`` preserves the existing k-hop reachability expansion.
-            ``"incoming"`` expands over reversed edges and is supported only
+            ``"out"`` preserves the existing k-hop reachability expansion.
+            ``"in"`` expands over reversed edges and is supported only
             with ``sequence_construction_method="khop"``. Directed relative
             encodings such as ``"hop_distance"`` should be computed with the
             same direction.
@@ -197,19 +197,15 @@ def heterodata_to_graph_transformer_input(
             "be used as pairwise attention bias."
         )
 
-    if sampling_direction not in {"outgoing", "incoming"}:
+    if sampling_direction not in {"in", "out"}:
         raise ValueError(
-            "sampling_direction must be one of {'outgoing', 'incoming'}, "
+            "sampling_direction must be one of {'in', 'out'}, "
             f"got '{sampling_direction}'."
         )
 
-    if (
-        sampling_direction == "incoming"
-        and sequence_construction_method != "khop"
-    ):
+    if sequence_construction_method == "ppr" and sampling_direction != "out":
         raise ValueError(
-            "sampling_direction='incoming' is currently supported only with "
-            "sequence_construction_method='khop'."
+            "sequence_construction_method='ppr' supports only sampling_direction='out'."
         )
 
     if (
@@ -255,7 +251,7 @@ def heterodata_to_graph_transformer_input(
     ppr_weight_sequences: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
-        if sampling_direction == "incoming":
+        if sampling_direction == "in":
             homo_edge_index = homo_edge_index.flip(0)
         # Use sparse matrix operations for efficient k-hop neighbor extraction
         # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable

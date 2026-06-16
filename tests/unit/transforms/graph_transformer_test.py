@@ -320,8 +320,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         # First position should be anchor node
         self.assertTrue(torch.allclose(sequences[0, 0], anchor_feature))
 
-    def test_sampling_direction_defaults_to_outgoing(self):
-        """Outgoing sampling preserves existing k-hop reachability."""
+    def test_sampling_direction_defaults_to_out(self):
+        """Out sampling preserves existing k-hop reachability."""
         data = create_directed_chain_data()
 
         sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
@@ -336,8 +336,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertEqual(valid_mask[0].tolist(), [True, False, False])
         self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 0.0, 0.0])
 
-    def test_sampling_direction_incoming_uses_reverse_reachability(self):
-        """Incoming sampling includes upstream message-source nodes."""
+    def test_sampling_direction_in_uses_reverse_reachability(self):
+        """In sampling includes upstream message-source nodes."""
         data = create_directed_chain_data()
 
         sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
@@ -347,7 +347,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
             anchor_node_type="user",
             anchor_node_ids=torch.tensor([2]),
             hop_distance=2,
-            sampling_direction="incoming",
+            sampling_direction="in",
         )
 
         self.assertEqual(valid_mask[0].tolist(), [True, True, True])
@@ -363,22 +363,22 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 max_seq_len=3,
                 anchor_node_type="user",
                 sampling_direction=cast(
-                    Literal["outgoing", "incoming"],
+                    Literal["in", "out"],
                     "sideways",
                 ),
             )
 
-    def test_sampling_direction_incoming_requires_khop(self):
+    def test_sampling_direction_in_requires_khop(self):
         data = create_ppr_sequence_hetero_data()
 
-        with self.assertRaisesRegex(ValueError, "currently supported only"):
+        with self.assertRaisesRegex(ValueError, "supports only"):
             heterodata_to_graph_transformer_input(
                 data=data,
                 batch_size=1,
                 max_seq_len=3,
                 anchor_node_type="user",
                 sequence_construction_method="ppr",
-                sampling_direction="incoming",
+                sampling_direction="in",
             )
 
     def test_different_anchor_types(self):

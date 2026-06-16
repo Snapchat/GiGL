@@ -238,10 +238,10 @@ class TestGraphTransformerEncoder(TestCase):
 
         self.assertTrue(torch.allclose(result_1, result_2))
 
-    def test_forward_with_incoming_sampling_direction(self) -> None:
+    def test_forward_with_in_sampling_direction(self) -> None:
         """Test forward pass with incoming k-hop sampling."""
         data = _create_simple_hetero_data()
-        encoder = self._create_encoder(sampling_direction="incoming")
+        encoder = self._create_encoder(sampling_direction="in")
         encoder.eval()
 
         with torch.no_grad():
@@ -258,11 +258,11 @@ class TestGraphTransformerEncoder(TestCase):
         with self.assertRaisesRegex(ValueError, "sampling_direction"):
             self._create_encoder(sampling_direction="sideways")
 
-    def test_incoming_sampling_direction_requires_khop(self) -> None:
-        with self.assertRaisesRegex(ValueError, "currently supported only"):
+    def test_in_sampling_direction_requires_khop(self) -> None:
+        with self.assertRaisesRegex(ValueError, "supports only"):
             self._create_encoder(
                 sequence_construction_method="ppr",
-                sampling_direction="incoming",
+                sampling_direction="in",
             )
 
 

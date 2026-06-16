@@ -433,8 +433,8 @@ class GraphTransformerEncoder(nn.Module):
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
         sampling_direction: Direction used for sequence token construction.
-            ``"outgoing"`` preserves the existing k-hop reachability expansion.
-            ``"incoming"`` expands over reversed edges and is supported only
+            ``"out"`` preserves the existing k-hop reachability expansion.
+            ``"in"`` expands over reversed edges and is supported only
             when ``sequence_construction_method="khop"``. Directed relative
             encodings such as ``"hop_distance"`` should be computed with the
             same direction.
@@ -501,7 +501,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: Optional[list[str]] = None,
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
-        sampling_direction: Literal["outgoing", "incoming"] = "outgoing",
+        sampling_direction: Literal["in", "out"] = "out",
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -526,18 +526,15 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method must be one of {'khop', 'ppr'}, "
                 f"got '{sequence_construction_method}'"
             )
-        if sampling_direction not in {"outgoing", "incoming"}:
+        if sampling_direction not in {"in", "out"}:
             raise ValueError(
-                "sampling_direction must be one of {'outgoing', 'incoming'}, "
+                "sampling_direction must be one of {'in', 'out'}, "
                 f"got '{sampling_direction}'"
             )
-        if (
-            sampling_direction == "incoming"
-            and sequence_construction_method != "khop"
-        ):
+        if sequence_construction_method == "ppr" and sampling_direction != "out":
             raise ValueError(
-                "sampling_direction='incoming' is currently supported only "
-                "with sequence_construction_method='khop'."
+                "sequence_construction_method='ppr' supports only "
+                "sampling_direction='out'."
             )
         if sequence_positional_encoding_type is not None:
             sequence_positional_encoding_type = (
