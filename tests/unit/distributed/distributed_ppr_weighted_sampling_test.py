@@ -11,6 +11,8 @@ nodes therefore accumulate a PPR score of exactly 0 and are excluded from
 every top-k result.
 """
 
+from dataclasses import replace
+
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
@@ -18,9 +20,9 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.types.graph import GraphPartitionData
 from tests.test_assets.distributed.bipartite_weight_graph import (
     ITEM,
     USER,
@@ -166,21 +168,40 @@ class PPRWeightedSamplingTest(TestCase):
             nprocs=1,
         )
 
-    def test_ppr_weight_lookup_uses_edge_ids_not_tensor_offsets(self) -> None:
-        """Sampled edge IDs may be non-contiguous and must resolve by ID."""
-        lookup = DistPPRNeighborSampler._build_sorted_edge_weight_lookup(
-            edge_ids=torch.tensor([42, 7, 100]),
-            edge_weights=torch.tensor([4.2, 0.7, 10.0]),
+    def test_ppr_weighted_handles_non_contiguous_edge_ids_homogeneous(self) -> None:
+        """Homogeneous: sampled global edge ids resolve to local edge weights.
+
+        Partitioned weighted graphs store local weights compactly, while GLT
+        sampling returns the graph edge ids.  This test gives every local edge a
+        large non-contiguous edge id; indexing the local weight tensor directly
+        with sampled edge ids would go out of bounds.
+        """
+        partition_output, n_hub = build_homogeneous_bipartite_weight_graph()
+        partitioned_edge_index = partition_output.partitioned_edge_index
+        self.assertIsInstance(partitioned_edge_index, GraphPartitionData)
+        assert isinstance(partitioned_edge_index, GraphPartitionData)
+        num_edges = partitioned_edge_index.edge_index.size(1)
+        partition_output = replace(
+            partition_output,
+            partitioned_edge_index=replace(
+                partitioned_edge_index,
+                edge_ids=torch.arange(
+                    10_000,
+                    10_000 + num_edges,
+                    dtype=torch.long,
+                ),
+            ),
         )
 
-        actual = DistPPRNeighborSampler._lookup_edge_weights_by_id(
-            edge_ids=torch.tensor([7, 100, 42]),
-            edge_weight_lookup=lookup,
-        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
 
-        torch.testing.assert_close(
-            actual,
-            torch.tensor([0.7, 10.0, 4.2], dtype=torch.float64),
+        self.assertTrue(dataset.has_edge_weights)
+
+        mp.spawn(
+            fn=_run_ppr_weighted_correctness_homogeneous,
+            args=(dataset, n_hub),
+            nprocs=1,
         )
 
     def test_ppr_weighted_never_traverses_zero_weight_edges_heterogeneous(self) -> None:

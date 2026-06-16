@@ -7,7 +7,8 @@ import torch
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
 from gigl_core import PPRForwardPush
-from graphlearn_torch.data import Graph
+from graphlearn_torch.distributed.event_loop import wrap_torch_future
+from graphlearn_torch.distributed.rpc import rpc_register, rpc_request_async
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -18,6 +19,14 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
+from gigl.distributed.utils.weighted_neighbor_sampling import (
+    LocalEdgeWeightLookup,
+    PartialWeightedNeighborOutput,
+    WeightedNeighborOutput,
+    WeightedSamplingCallee,
+    empty_weighted_neighbor_output,
+    sample_local_one_hop_with_edge_weights,
+)
 from gigl.types.graph import is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
@@ -36,8 +45,6 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     "to",
     _PPR_HOMOGENEOUS_NODE_TYPE,
 )
-
-EdgeWeightLookup = tuple[torch.Tensor, torch.Tensor]
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
@@ -112,7 +119,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
-        self._edge_weights = edge_weights
+        self._edge_weight_lookup: Optional[LocalEdgeWeightLookup] = None
+        self._ppr_weighted_sample_callee_id: Optional[int] = None
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -205,9 +213,18 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             self._node_type_to_total_degree.get(nt, torch.zeros(0, dtype=torch.int32))
             for nt in all_node_types
         ]
-        self._edge_weight_lookup: Optional[
-            Union[EdgeWeightLookup, dict[EdgeType, EdgeWeightLookup]]
-        ] = self._build_edge_weight_lookup()
+
+        if edge_weights is not None:
+            self._edge_weight_lookup = LocalEdgeWeightLookup(
+                self.dist_graph.local_graph
+            )
+            self._ppr_weighted_sample_callee_id = rpc_register(
+                WeightedSamplingCallee(
+                    sampler=self.sampler,
+                    edge_weight_lookup=self._edge_weight_lookup,
+                    device=self.device,
+                )
+            )
 
     def _build_total_degree_tensors(
         self,
@@ -265,145 +282,209 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
-    def _build_edge_weight_lookup(
+    def _attach_edge_weights_to_neighbor_output(
         self,
-    ) -> Optional[Union[EdgeWeightLookup, dict[EdgeType, EdgeWeightLookup]]]:
-        """Build edge-id keyed weight lookup tables for weighted PPR residuals.
+        output: Union[NeighborOutput, torch.Tensor],
+        srcs: torch.Tensor,
+        edge_type: Optional[EdgeType],
+    ) -> WeightedNeighborOutput:
+        """Attach local edge weights to a base one-hop ``NeighborOutput``.
 
-        GLT's ``sample_with_edge`` returns graph edge IDs, not guaranteed local
-        tensor positions.  These lookup tables map sampled edge IDs back to the
-        aligned edge weights stored in the local graph topology.
-
-        Returns:
-            A homogeneous lookup tuple, a heterogeneous lookup dict, or ``None``
-            when weighted residuals are disabled.
-
-        Raises:
-            ValueError: If edge weights were requested but graph topology does
-                not contain aligned edge IDs and weights.
+        Used when the inherited GLT ``_sample_one_hop`` can do all routing for
+        us (graph-cached or single-partition sampling). The only extra behavior
+        here is resolving sampled edge ids through the local weight lookup.
         """
-        if self._edge_weights is None:
-            return None
-
-        graph = self.data.graph
-        if graph is None:
-            raise ValueError("Cannot build PPR edge-weight lookup without graph data.")
-
-        if self._is_homogeneous:
-            assert isinstance(graph, Graph)
-            return self._build_sorted_edge_weight_lookup_from_graph(graph)
-
-        assert isinstance(graph, dict)
-        assert isinstance(self._edge_weights, dict)
-        return {
-            edge_type: self._build_sorted_edge_weight_lookup_from_graph(
-                graph[edge_type]
+        if self._edge_weight_lookup is None:
+            raise RuntimeError("Cannot attach edge weights without a local lookup.")
+        if not isinstance(output, NeighborOutput):
+            return empty_weighted_neighbor_output(srcs=srcs, device=self.device)
+        if output.edge is None:
+            raise RuntimeError(
+                "Weighted PPR requires GLT one-hop sampling to return edge ids."
             )
-            for edge_type in self._edge_weights
-        }
-
-    @staticmethod
-    def _build_sorted_edge_weight_lookup_from_graph(
-        graph: Graph,
-    ) -> EdgeWeightLookup:
-        """Build a sorted edge-id lookup from a GLT graph's local topology."""
-        edge_ids = graph.topo.edge_ids
-        edge_weights = graph.topo.edge_weights
-        if edge_ids is None or edge_weights is None:
-            raise ValueError(
-                "Weighted PPR requires graph topology to contain both edge IDs "
-                "and edge weights."
-            )
-        return DistPPRNeighborSampler._build_sorted_edge_weight_lookup(
-            edge_ids=edge_ids,
-            edge_weights=edge_weights,
+        return WeightedNeighborOutput(
+            nbr=output.nbr,
+            nbr_num=output.nbr_num,
+            edge=output.edge,
+            weight=self._edge_weight_lookup.lookup(output.edge, edge_type),
         )
 
-    @staticmethod
-    def _build_sorted_edge_weight_lookup(
-        edge_ids: torch.Tensor,
-        edge_weights: torch.Tensor,
-    ) -> EdgeWeightLookup:
-        """Build a sorted lookup tuple from edge IDs to weights.
+    def _stitch_edge_weights(
+        self,
+        input_seeds: torch.Tensor,
+        results: list[PartialWeightedNeighborOutput],
+    ) -> torch.Tensor:
+        """Stitch partitioned sampled edge weights in original source-node order.
 
         Args:
-            edge_ids: Edge IDs aligned with ``edge_weights``.
-            edge_weights: Per-edge weights aligned with ``edge_ids``.
+            input_seeds: The source nodes passed to the one-hop sampler.
+            results: Per-partition weighted one-hop outputs.
 
         Returns:
-            ``(sorted_edge_ids, sorted_weights)``.
-
-        Raises:
-            ValueError: If IDs and weights are not aligned or IDs are duplicated.
+            A flat weight tensor parallel to the stitched neighbor and edge-id tensors.
         """
-        if edge_ids.numel() != edge_weights.numel():
-            raise ValueError(
-                f"Edge IDs and weights must have the same length, got "
-                f"{edge_ids.numel()} and {edge_weights.numel()}."
-            )
+        # GLT's C++ stitcher only accepts neighbor ids, neighbor counts, and
+        # edge ids. This mirrors that row-ordering logic for the one extra
+        # tensor we carry in weighted PPR: edge weights.
+        if not results:
+            return torch.empty(0, dtype=torch.float32, device=self.device)
 
-        sorted_edge_ids, sort_indices = torch.sort(edge_ids.to(torch.long))
-        if (
-            sorted_edge_ids.numel() > 1
-            and (sorted_edge_ids[1:] == sorted_edge_ids[:-1]).any().item()
-        ):
-            raise ValueError("Edge IDs must be unique within each edge type.")
+        empty = results[0].output.weight.new_empty((0,))
+        weight_chunks: list[torch.Tensor] = [empty] * input_seeds.size(0)
 
-        return sorted_edge_ids, edge_weights.to(torch.float64)[sort_indices]
+        for result in results:
+            output = result.output
+            counts = output.nbr_num.to(torch.device("cpu"))
+            start = 0
+            for local_row, input_row in enumerate(result.index.cpu().tolist()):
+                count = int(counts[local_row])
+                if count > 0:
+                    weight_chunks[input_row] = output.weight[start : start + count]
+                start += count
 
-    @staticmethod
-    def _lookup_edge_weights_by_id(
-        edge_ids: torch.Tensor,
-        edge_weight_lookup: EdgeWeightLookup,
-    ) -> torch.Tensor:
-        """Resolve sampled edge IDs to weights without assuming local ID offsets."""
-        sorted_edge_ids, sorted_weights = edge_weight_lookup
-        if edge_ids.numel() == 0:
-            return torch.empty(0, dtype=torch.float64, device=edge_ids.device)
-        if sorted_edge_ids.numel() == 0:
-            raise ValueError("Cannot resolve non-empty edge IDs against empty weights.")
+        return torch.cat(weight_chunks) if weight_chunks else empty
 
-        requested_edge_ids = edge_ids.to(
-            device=sorted_edge_ids.device, dtype=torch.long
-        )
-        insertion_indices = torch.searchsorted(sorted_edge_ids, requested_edge_ids)
-        clamped_indices = insertion_indices.clamp(max=sorted_edge_ids.numel() - 1)
-        found_mask = (insertion_indices < sorted_edge_ids.numel()) & (
-            sorted_edge_ids[clamped_indices] == requested_edge_ids
-        )
-        if not found_mask.all().item():
-            missing_edge_ids = requested_edge_ids[~found_mask][:10].tolist()
-            raise ValueError(
-                f"Sampled edge IDs were not found in the edge-weight lookup. "
-                f"First missing IDs: {missing_edge_ids}."
-            )
-
-        return sorted_weights[clamped_indices].to(
-            device=edge_ids.device, dtype=torch.float64
-        )
-
-    def _lookup_edge_weights(
+    def _stitch_weighted_sample_results(
         self,
-        edge_ids: torch.Tensor,
-        edge_type_id: int,
-    ) -> torch.Tensor:
-        """Resolve sampled edge IDs to edge weights for one PPR edge type."""
-        if self._edge_weight_lookup is None:
-            raise ValueError("PPR edge-weight lookup is not initialized.")
+        input_seeds: torch.Tensor,
+        results: list[PartialWeightedNeighborOutput],
+    ) -> WeightedNeighborOutput:
+        """Stitch partitioned weighted one-hop outputs.
 
-        if self._is_homogeneous:
-            assert isinstance(self._edge_weight_lookup, tuple)
-            return self._lookup_edge_weights_by_id(
-                edge_ids=edge_ids,
-                edge_weight_lookup=self._edge_weight_lookup,
+        Reuses GLT's optimized neighbor/edge-id stitcher, then stitches the
+        parallel weight tensor using the same per-source counts.
+
+        Difference from GLT ``_stitch_sample_results``: the inherited stitcher
+        still owns ``nbr``, ``nbr_num``, and ``edge`` ordering; this wrapper only
+        adds the parallel ``weight`` tensor.
+        """
+        stitched_output = self._stitch_sample_results(input_seeds, results)
+        if stitched_output.edge is None:
+            raise RuntimeError("Weighted PPR stitching expected sampled edge ids.")
+        return WeightedNeighborOutput(
+            nbr=stitched_output.nbr,
+            nbr_num=stitched_output.nbr_num,
+            edge=stitched_output.edge,
+            weight=self._stitch_edge_weights(input_seeds, results),
+        )
+
+    async def _sample_one_hop_with_edge_weights(
+        self,
+        srcs: torch.Tensor,
+        num_nbr: int,
+        etype: Optional[EdgeType],
+    ) -> WeightedNeighborOutput:
+        """Sample one hop and return edge weights with the sampled edges.
+
+        Remote workers attach weights before returning, so weighted PPR does not
+        need a second distributed lookup after one-hop sampling.
+
+        This method intentionally tracks GLT
+        ``DistNeighborSampler._sample_one_hop``. The shared pieces are device
+        placement, partition routing, ``id_select`` conversion, remote futures,
+        and final stitching. The differences are limited to:
+
+        - graph-cached/single-partition paths call the inherited method and then
+          attach local weights;
+        - multi-partition local work calls ``sample_local_one_hop_with_edge_weights``;
+        - remote work calls ``WeightedSamplingCallee`` instead of GLT's sampling
+          callee so weights come back in the same RPC response;
+        - final stitching adds a parallel weight tensor.
+        """
+        if self._edge_weight_lookup is None:
+            raise RuntimeError(
+                "_sample_one_hop_with_edge_weights called without edge weights."
             )
 
-        assert isinstance(self._edge_weight_lookup, dict)
-        edge_type = self._etype_id_to_etype[edge_type_id]
-        return self._lookup_edge_weights_by_id(
-            edge_ids=edge_ids,
-            edge_weight_lookup=self._edge_weight_lookup[edge_type],
-        )
+        device = self.device
+        srcs = srcs.to(device)
+        if self.data.graph_caching or self.data.num_partitions == 1:
+            # Same as GLT for routing and sampling; the local weight lookup
+            # below is the only weighted-PPR addition in this branch.
+            output = await self._sample_one_hop(
+                srcs=srcs,
+                num_nbr=num_nbr,
+                etype=etype,
+            )
+            return self._attach_edge_weights_to_neighbor_output(output, srcs, etype)
+
+        orders = torch.arange(srcs.size(0), dtype=torch.long, device=device)
+        if self.edge_dir == "out":
+            src_ntype = etype[0] if etype is not None else None
+        elif self.edge_dir == "in":
+            src_ntype = etype[-1] if etype is not None else None
+        else:
+            raise ValueError(f"Unsupported edge_dir: {self.edge_dir}")
+
+        partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
+        partition_results: list[PartialWeightedNeighborOutput] = []
+        remote_orders_list: list[torch.Tensor] = []
+        futures: list[torch.futures.Future] = []
+
+        for i in range(self.data.num_partitions):
+            partition_idx = (self.data.partition_idx + i) % self.data.num_partitions
+            partition_mask = partition_ids == partition_idx
+            if isinstance(self.dist_graph.node_pb, dict):
+                assert src_ntype is not None
+                partition_node_ids = self.data.id_select(
+                    srcs, partition_mask, self.dist_graph.node_pb[src_ntype]
+                )
+            else:
+                partition_node_ids = self.data.id_select(
+                    srcs, partition_mask, self.dist_graph.node_pb
+                )
+            if partition_node_ids.shape[0] == 0:
+                continue
+
+            partition_orders = torch.masked_select(orders, partition_mask)
+            if partition_idx == self.data.partition_idx:
+                # Same local branch as GLT, except the helper attaches weights
+                # to the ``sample_one_hop`` result before returning it.
+                partition_output = sample_local_one_hop_with_edge_weights(
+                    sampler=self.sampler,
+                    edge_weight_lookup=self._edge_weight_lookup,
+                    device=device,
+                    srcs=partition_node_ids,
+                    num_nbr=num_nbr,
+                    edge_type=etype,
+                )
+                partition_results.append(
+                    PartialWeightedNeighborOutput(
+                        index=partition_orders,
+                        output=partition_output,
+                    )
+                )
+            else:
+                if self._ppr_weighted_sample_callee_id is None:
+                    raise RuntimeError(
+                        "Weighted PPR sampling RPC callee was not registered."
+                    )
+                # Same remote branch as GLT, except the callee id points to a
+                # weighted callee that returns edge weights with NeighborOutput.
+                remote_orders_list.append(partition_orders)
+                to_worker = self.rpc_router.get_to_worker(partition_idx)
+                futures.append(
+                    rpc_request_async(
+                        to_worker,
+                        self._ppr_weighted_sample_callee_id,
+                        args=(partition_node_ids.cpu(), num_nbr, etype),
+                    )
+                )
+
+        if not remote_orders_list:
+            if partition_results:
+                return partition_results[0].output
+            return empty_weighted_neighbor_output(srcs=srcs, device=device)
+
+        result_futures = await wrap_torch_future(torch.futures.collect_all(futures))
+        for i, result_future in enumerate(result_futures):
+            partition_results.append(
+                PartialWeightedNeighborOutput(
+                    index=remote_orders_list[i],
+                    output=result_future.wait().to(device),
+                )
+            )
+        return self._stitch_weighted_sample_results(srcs, partition_results)
 
     async def _batch_fetch_neighbors(
         self,
@@ -450,15 +531,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         sample_tasks = []
         for eid in eids:
             etype = self._etype_id_to_etype[eid]
-            sample_tasks.append(
-                self._sample_one_hop(
-                    srcs=nodes_by_etype_id[eid].to(device),
-                    num_nbr=self._num_neighbors_per_hop,
-                    # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
-                    etype=None if etype == _PPR_HOMOGENEOUS_EDGE_TYPE else etype,
+            sample_etype = None if etype == _PPR_HOMOGENEOUS_EDGE_TYPE else etype
+            if self._edge_weight_lookup is not None:
+                sample_tasks.append(
+                    self._sample_one_hop_with_edge_weights(
+                        srcs=nodes_by_etype_id[eid].to(device),
+                        num_nbr=self._num_neighbors_per_hop,
+                        etype=sample_etype,
+                    )
                 )
-            )
-        outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
+            else:
+                sample_tasks.append(
+                    self._sample_one_hop(
+                        srcs=nodes_by_etype_id[eid].to(device),
+                        num_nbr=self._num_neighbors_per_hop,
+                        # _sample_one_hop expects None for homogeneous graphs, not the PPR sentinel.
+                        etype=sample_etype,
+                    )
+                )
+        outputs: list[
+            Union[NeighborOutput, WeightedNeighborOutput]
+        ] = await asyncio.gather(*sample_tasks)
 
         _empty_weights = torch.empty(0, dtype=torch.float64)
 
@@ -466,13 +559,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
         ] = {}
         for eid, output in zip(eids, outputs):
-            if self._edge_weights is not None:
-                assert output.edge is not None, (
-                    "output.edge must be set when edge_weights is provided; "
-                    "ensure with_edge=True in SamplingConfig (hardcoded in create_sampling_config)."
-                )
-                flat_weights = self._lookup_edge_weights(output.edge, eid)
+            if self._edge_weight_lookup is not None:
+                assert isinstance(output, WeightedNeighborOutput)
+                flat_weights = output.weight.to(torch.float64)
             else:
+                assert isinstance(output, NeighborOutput)
                 flat_weights = _empty_weights
             result[eid] = (
                 nodes_by_etype_id[eid],

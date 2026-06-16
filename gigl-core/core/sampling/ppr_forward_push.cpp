@@ -397,8 +397,11 @@ void PPRForwardPush::pushResiduals(
                                 continue;
                             }
                             int32_t neighborNodeId = neighbors[i];
-                            dstNodeTypeState.residuals[neighborNodeId] +=
-                                baseResidual * weights[i] / totalFetchedWeight;
+                            double residualContribution = baseResidual * weights[i] / totalFetchedWeight;
+                            if (residualContribution == 0.0) {
+                                continue;
+                            }
+                            dstNodeTypeState.residuals[neighborNodeId] += residualContribution;
 
                             double threshold = _requeueThresholdFactor *
                                                static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));

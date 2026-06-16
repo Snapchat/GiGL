@@ -3,33 +3,31 @@
 
 using gigl::PPRForwardPush;
 
-using FetchedByEtypeId = std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>>;
+using FetchedByEtypeId =
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>>;
 
 // Builds a single-edge-type, single-node-type PPRForwardPush.
-static PPRForwardPush makeState(
-    const std::vector<int64_t>& seeds,
-    double alpha,
-    double requeueThresholdFactor,
-    const std::vector<int32_t>& degrees) {
-    return PPRForwardPush(
-        torch::tensor(seeds, torch::kLong),
-        /*seedNodeTypeId=*/0,
-        alpha,
-        requeueThresholdFactor,
-        /*nodeTypeToEdgeTypeIds=*/{{0}},
-        /*edgeTypeToDstNtypeId=*/{0},
-        {torch::tensor(degrees, torch::kInt)});
+static PPRForwardPush makeState(const std::vector<int64_t>& seeds,
+                                double alpha,
+                                double requeueThresholdFactor,
+                                const std::vector<int32_t>& degrees) {
+    return PPRForwardPush(torch::tensor(seeds, torch::kLong),
+                          /*seedNodeTypeId=*/0,
+                          alpha,
+                          requeueThresholdFactor,
+                          /*nodeTypeToEdgeTypeIds=*/{{0}},
+                          /*edgeTypeToDstNtypeId=*/{0},
+                          {torch::tensor(degrees, torch::kInt)});
 }
 
 // Convenience wrapper: build the fetchedByEtypeId argument for pushResiduals
 // from flat vectors, keeping test call sites readable.  Empty weights select
 // uniform-residual mode.
-static FetchedByEtypeId
-makeFetched(int32_t edgeTypeId,
-            const std::vector<int64_t>& nodeIds,
-            const std::vector<int64_t>& flatNeighborIds,
-            const std::vector<int64_t>& counts,
-            const std::vector<double>& flatWeights = {}) {
+static FetchedByEtypeId makeFetched(int32_t edgeTypeId,
+                                    const std::vector<int64_t>& nodeIds,
+                                    const std::vector<int64_t>& flatNeighborIds,
+                                    const std::vector<int64_t>& counts,
+                                    const std::vector<double>& flatWeights = {}) {
     auto weightsTensor =
         flatWeights.empty() ? torch::empty({0}, torch::kDouble) : torch::tensor(flatWeights, torch::kDouble);
     return {{edgeTypeId,
@@ -136,13 +134,14 @@ TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
     auto state = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1, 1, 0});
 
     state.drainQueue();
-    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0, 1}, /*flatNeighborIds=*/{2, 2}, /*counts=*/{1, 1}));
+    state.pushResiduals(
+        makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0, 1}, /*flatNeighborIds=*/{2, 2}, /*counts=*/{1, 1}));
 
     auto iter2 = state.drainQueue();
     ASSERT_TRUE(iter2.has_value());
     const auto& iter2Map = iter2.value();
     ASSERT_NE(iter2Map.find(0), iter2Map.end());
-    EXPECT_EQ(iter2Map.at(0).size(0), 1);  // node 2 deduplicated in the lookup request
+    EXPECT_EQ(iter2Map.at(0).size(0), 1); // node 2 deduplicated in the lookup request
 
     state.pushResiduals({});
     EXPECT_FALSE(state.drainQueue().has_value());
@@ -151,12 +150,45 @@ TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
     ASSERT_NE(topk.find(0), topk.end());
     const auto& [ids, weights, counts] = topk.at(0);
     // Each seed (batch indices 0 and 1) should have 2 nodes in its top-k.
-    EXPECT_EQ(counts[0].item<int64_t>(), 2);  // seed 0: nodes {0, 2}
-    EXPECT_EQ(counts[1].item<int64_t>(), 2);  // seed 1: nodes {1, 2}
+    EXPECT_EQ(counts[0].item<int64_t>(), 2); // seed 0: nodes {0, 2}
+    EXPECT_EQ(counts[1].item<int64_t>(), 2); // seed 1: nodes {1, 2}
     // The flat id layout is [seed0_top1, seed0_top2, seed1_top1, seed1_top2].
     // Within each seed the highest scorer comes first, so seed-node beats node 2.
-    EXPECT_EQ(ids[1].item<int64_t>(), 2);  // seed 0's second node is node 2
-    EXPECT_EQ(ids[3].item<int64_t>(), 2);  // seed 1's second node is node 2
+    EXPECT_EQ(ids[1].item<int64_t>(), 2); // seed 0's second node is node 2
+    EXPECT_EQ(ids[3].item<int64_t>(), 2); // seed 1's second node is node 2
+}
+
+// In weighted mode, a neighbor receiving zero residual must not be re-queued.
+// Node 2 is intentionally outside the degree tensor; the test would fail if the
+// zero-weight edge tried to compute its requeue threshold.
+TEST(PPRForwardPush, WeightedZeroContributionNeighborDoesNotRequeue) {
+    auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{2, 0});
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0,
+                                    /*nodeIds=*/{0},
+                                    /*flatNeighborIds=*/{1, 2},
+                                    /*counts=*/{2},
+                                    /*flatWeights=*/{1.0, 0.0}));
+
+    auto iter2 = state.drainQueue();
+    ASSERT_TRUE(iter2.has_value());
+    const auto& iter2Map = iter2.value();
+    ASSERT_NE(iter2Map.find(0), iter2Map.end());
+    ASSERT_EQ(iter2Map.at(0).size(0), 1);
+    EXPECT_EQ(iter2Map.at(0)[0].item<int64_t>(), 1);
+
+    state.pushResiduals({});
+    EXPECT_FALSE(state.drainQueue().has_value());
+
+    auto topk = state.extractTopK(10);
+    ASSERT_NE(topk.find(0), topk.end());
+    const auto& result = topk.at(0);
+    const auto& ids = std::get<0>(result);
+    const auto& counts = std::get<2>(result);
+    EXPECT_EQ(counts[0].item<int64_t>(), 2);
+    EXPECT_EQ(ids[0].item<int64_t>(), 0);
+    EXPECT_EQ(ids[1].item<int64_t>(), 1);
 }
 
 // extractTopK respects the maxPprNodes limit.

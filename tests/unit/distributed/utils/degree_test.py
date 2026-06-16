@@ -119,10 +119,10 @@ class TestDegreeComputation(TestCase):
         self.assertEqual(set(result.keys()), set(edge_types))
 
         # Edge type with topology should have computed degrees
-        self.assert_tensor_equality(result[edge_type_with_topo], expected_degrees)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assert_tensor_equality(result[edge_type_with_topo], expected_degrees)
 
         # Edge type without topology should have empty tensor
-        self.assertEqual(result[edge_type_without_topo].numel(), 0)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(result[edge_type_without_topo].numel(), 0)
 
 
 def _run_local_world_size_correction_homogeneous(
