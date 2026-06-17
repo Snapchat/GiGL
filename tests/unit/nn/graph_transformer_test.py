@@ -1,6 +1,6 @@
 """Tests for GraphTransformerEncoder."""
 
-from typing import cast
+from typing import Literal, cast
 
 import torch
 import torch.nn as nn
@@ -247,7 +247,15 @@ class TestGraphTransformerEncoder(TestCase):
     def test_readout_mode_rejects_invalid_value(self) -> None:
         """Test that unsupported readout modes fail fast."""
         with self.assertRaisesRegex(ValueError, "readout_mode"):
-            self._create_encoder(readout_mode="anchor_neighbor_attention")
+            self._create_encoder(
+                readout_mode=cast(
+                    Literal[
+                        "anchor_neighbor_attention",
+                        "anchor_only",
+                    ],
+                    "mean_pool",
+                )
+            )
 
     def test_forward_with_anchor_only_readout(self) -> None:
         """Test public forward with anchor-only readout."""
