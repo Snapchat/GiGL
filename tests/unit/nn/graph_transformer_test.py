@@ -277,6 +277,7 @@ class TestGraphTransformerEncoder(TestCase):
                 sequence_construction_method="ppr",
                 sampling_direction="in",
             )
+
     def test_anchor_only_readout_returns_anchor_token(self) -> None:
         """Test anchor-only readout returns the post-norm anchor token."""
         encoder = self._create_encoder(
