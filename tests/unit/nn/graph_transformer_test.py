@@ -238,6 +238,140 @@ class TestGraphTransformerEncoder(TestCase):
 
         self.assertTrue(torch.allclose(result_1, result_2))
 
+    def test_readout_mode_rejects_invalid_value(self) -> None:
+        """Test that unsupported readout modes fail fast."""
+        with self.assertRaisesRegex(ValueError, "readout_mode"):
+            self._create_encoder(readout_mode="neighbor_average")
+
+    def test_forward_with_anchor_only_readout(self) -> None:
+        """Test public forward with anchor-only readout."""
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder(readout_mode="anchor_only")
+        encoder.eval()
+
+        self.assertIsNone(encoder._readout_attention)
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._user_node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(embeddings.shape, (3, self._out_dim))
+        self.assertFalse(torch.isnan(embeddings).any())
+
+    def test_anchor_only_readout_returns_anchor_token(self) -> None:
+        """Test anchor-only readout returns the post-norm anchor token."""
+        encoder = self._create_encoder(
+            hid_dim=4,
+            out_dim=2,
+            num_layers=0,
+            num_heads=2,
+            readout_mode="anchor_only",
+        )
+        self.assertIsNone(encoder._readout_attention)
+
+        sequences = torch.tensor(
+            [
+                [
+                    [1.0, 2.0, 3.0, 4.0],
+                    [100.0, 100.0, 100.0, 100.0],
+                    [-100.0, -100.0, -100.0, -100.0],
+                ],
+                [
+                    [4.0, 3.0, 2.0, 1.0],
+                    [50.0, 60.0, 70.0, 80.0],
+                    [90.0, 100.0, 110.0, 120.0],
+                ],
+            ]
+        )
+        valid_mask = torch.tensor(
+            [
+                [True, True, True],
+                [True, True, False],
+            ]
+        )
+
+        expected = encoder._final_norm(sequences[:, :1, :]).squeeze(1)
+        actual = encoder._encode_and_readout(
+            sequences=sequences,
+            valid_mask=valid_mask,
+        )
+
+        self.assertTrue(torch.allclose(actual, expected, atol=1e-6))
+
+    def test_default_readout_matches_anchor_neighbor_attention(self) -> None:
+        """Test default readout adds attention-weighted neighbors to anchor."""
+        encoder = self._create_encoder(
+            hid_dim=4,
+            out_dim=2,
+            num_layers=0,
+            num_heads=2,
+            readout_mode="anchor_neighbor_attention",
+        )
+        readout_attention = encoder._readout_attention
+        assert isinstance(readout_attention, nn.Linear)
+        assert readout_attention.bias is not None
+        with torch.no_grad():
+            readout_attention.weight.copy_(
+                torch.tensor([[0.2, -0.1, 0.3, 0.4, 0.5, -0.2, 0.1, -0.3]])
+            )
+            readout_attention.bias.zero_()
+
+        sequences = torch.tensor(
+            [
+                [
+                    [1.0, 2.0, 3.0, 4.0],
+                    [4.0, 3.0, 2.0, 1.0],
+                    [0.0, 1.0, 0.0, 1.0],
+                    [9.0, 9.0, 9.0, 9.0],
+                ],
+                [
+                    [2.0, 0.0, 1.0, 3.0],
+                    [1.0, 1.0, 1.0, 1.0],
+                    [5.0, 5.0, 5.0, 5.0],
+                    [6.0, 6.0, 6.0, 6.0],
+                ],
+            ]
+        )
+        valid_mask = torch.tensor(
+            [
+                [True, True, True, False],
+                [True, True, False, False],
+            ]
+        )
+
+        x = sequences * valid_mask.unsqueeze(-1).to(sequences.dtype)
+        x = encoder._final_norm(x)
+        x = x * valid_mask.unsqueeze(-1).to(x.dtype)
+        anchor = x[:, 0, :].unsqueeze(1)
+        neighbors = x[:, 1:, :]
+        neighbor_valid_mask = valid_mask[:, 1:]
+        anchor_expanded = anchor.expand(-1, neighbors.size(1), -1)
+        readout_scores = readout_attention(
+            torch.cat([anchor_expanded, neighbors], dim=-1)
+        )
+        readout_scores = readout_scores.masked_fill(
+            ~neighbor_valid_mask.unsqueeze(-1),
+            torch.finfo(readout_scores.dtype).min,
+        )
+        readout_weights = torch.softmax(readout_scores, dim=1)
+        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
+        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
+            readout_weights.dtype
+        )
+        expected = (
+            anchor + (neighbors * readout_weights).sum(dim=1, keepdim=True)
+        ).squeeze(1)
+
+        actual = encoder._encode_and_readout(
+            sequences=sequences,
+            valid_mask=valid_mask,
+        )
+
+        self.assertTrue(torch.allclose(actual, expected, atol=1e-6))
+
 
 def _create_user_graph_with_pe() -> HeteroData:
     data = HeteroData()
