@@ -244,12 +244,8 @@ class GraphTransformerEncoderLayer(nn.Module):
             self-attention path. ``"edge_type_bilinear"`` adds a learned
             per-edge-type bilinear term for sampled directed graph edges. This
             changes attention weights, not value/message content.
-        relation_value_mode: Optional relation-aware value augmentation strategy.
-            ``"none"`` preserves the default shared value path.
-            ``"sparse_residual_gate"`` adds a zero-initialized sparse residual
-            message path from relation-indexed source values to target queries.
         num_relations: Number of relation channels expected in
-            ``pairwise_relation_indices`` when a relation-aware mode is enabled.
+            ``pairwise_relation_indices`` when relation-aware attention is enabled.
 
     Raises:
         ValueError: If model_dim is not divisible by num_heads.
@@ -264,7 +260,6 @@ class GraphTransformerEncoderLayer(nn.Module):
         attention_dropout_rate: float = 0.0,
         activation: str = "gelu",
         relation_attention_mode: Literal["none", "edge_type_bilinear"] = "none",
-        relation_value_mode: Literal["none", "sparse_residual_gate"] = "none",
         num_relations: int = 0,
     ) -> None:
         super().__init__()
@@ -278,25 +273,15 @@ class GraphTransformerEncoderLayer(nn.Module):
                 "{'none', 'edge_type_bilinear'}, "
                 f"got '{relation_attention_mode}'"
             )
-        if relation_value_mode not in {"none", "sparse_residual_gate"}:
+        if relation_attention_mode == "edge_type_bilinear" and num_relations <= 0:
             raise ValueError(
-                "relation_value_mode must be one of "
-                "{'none', 'sparse_residual_gate'}, "
-                f"got '{relation_value_mode}'"
-            )
-        if (
-            relation_attention_mode == "edge_type_bilinear"
-            or relation_value_mode == "sparse_residual_gate"
-        ) and num_relations <= 0:
-            raise ValueError(
-                "Relation-aware attention/value modes require num_relations > 0."
+                "Relation-aware attention mode requires num_relations > 0."
             )
 
         self._num_heads = num_heads
         self._head_dim = model_dim // num_heads
         self._attention_dropout_rate = attention_dropout_rate
         self._relation_attention_mode = relation_attention_mode
-        self._relation_value_mode = relation_value_mode
         self._num_relations = num_relations
 
         self._attention_norm = nn.LayerNorm(model_dim)
@@ -311,12 +296,6 @@ class GraphTransformerEncoderLayer(nn.Module):
             # Zero init keeps startup behavior identical to shared attention.
             self._relation_attention_matrices = nn.Parameter(
                 torch.zeros(num_relations, num_heads, self._head_dim, self._head_dim)
-            )
-        self._relation_value_gates: Optional[nn.Parameter] = None
-        if relation_value_mode == "sparse_residual_gate":
-            # Sparse residual on relation edges: message(target) += gate * value_source.
-            self._relation_value_gates = nn.Parameter(
-                torch.zeros(num_relations, num_heads, self._head_dim)
             )
 
         self._ffn_norm = nn.LayerNorm(model_dim)
@@ -338,8 +317,6 @@ class GraphTransformerEncoderLayer(nn.Module):
                 nn.init.zeros_(projection.bias)
         if self._relation_attention_matrices is not None:
             nn.init.zeros_(self._relation_attention_matrices)
-        if self._relation_value_gates is not None:
-            nn.init.zeros_(self._relation_value_gates)
         self._ffn_norm.reset_parameters()
         self._ffn.reset_parameters()
 
@@ -394,12 +371,6 @@ class GraphTransformerEncoderLayer(nn.Module):
             attn_bias=attn_bias,
             pairwise_relation_indices=pairwise_relation_indices,
         )
-        if self._relation_value_mode == "sparse_residual_gate":
-            attention_output = self._add_relation_value_residual(
-                attention_output=attention_output,
-                value=value,
-                pairwise_relation_indices=pairwise_relation_indices,
-            )
 
         # Reshape back to (batch, seq, model_dim)
         attention_output = attention_output.transpose(1, 2).reshape(
@@ -445,84 +416,6 @@ class GraphTransformerEncoderLayer(nn.Module):
             attn_mask=attn_bias,
             dropout_p=self._attention_dropout_rate if self.training else 0.0,
             is_causal=False,
-        )
-
-    def _add_relation_value_residual(
-        self,
-        attention_output: Tensor,
-        value: Tensor,
-        pairwise_relation_indices: Optional[Tensor],
-    ) -> Tensor:
-        if pairwise_relation_indices is None:
-            raise ValueError(
-                "pairwise_relation_indices is required when "
-                "relation_value_mode='sparse_residual_gate'."
-            )
-        if self._relation_value_gates is None:
-            raise ValueError("Relation value gates are not initialized.")
-        if pairwise_relation_indices.numel() == 0:
-            return attention_output
-        if (
-            pairwise_relation_indices.dim() != 2
-            or pairwise_relation_indices.size(-1) != 4
-        ):
-            raise ValueError(
-                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
-            )
-
-        pairwise_relation_indices = pairwise_relation_indices.to(
-            device=value.device,
-            dtype=torch.long,
-        )
-        batch_indices = pairwise_relation_indices[:, 0]
-        query_indices = pairwise_relation_indices[:, 1]
-        key_indices = pairwise_relation_indices[:, 2]
-        relation_indices = pairwise_relation_indices[:, 3]
-        if (
-            relation_indices.min().item() < 0
-            or relation_indices.max().item() >= self._num_relations
-        ):
-            raise ValueError(
-                "pairwise_relation_indices contains relation ids outside "
-                f"[0, {self._num_relations})."
-            )
-
-        batch_size, _, seq_len, _ = value.shape
-        value_by_position = value.transpose(1, 2)
-        selected_values = value_by_position[batch_indices, key_indices]
-        selected_gates = self._relation_value_gates.to(dtype=value.dtype)[
-            relation_indices
-        ]
-        messages = selected_values * selected_gates
-
-        residual_by_position = value.new_zeros(
-            (batch_size, seq_len, self._num_heads, self._head_dim)
-        )
-        residual_by_position.index_put_(
-            (batch_indices, query_indices),
-            messages,
-            accumulate=True,
-        )
-
-        counts = value.new_zeros((batch_size, seq_len))
-        counts.index_put_(
-            (batch_indices, query_indices),
-            torch.ones(
-                pairwise_relation_indices.size(0),
-                dtype=value.dtype,
-                device=value.device,
-            ),
-            accumulate=True,
-        )
-        residual_by_position = residual_by_position / counts.clamp_min(1).view(
-            batch_size,
-            seq_len,
-            1,
-            1,
-        )
-
-        return attention_output + residual_by_position.transpose(1, 2).to(
-            dtype=attention_output.dtype
         )
 
     def _build_relation_attention_bias(
@@ -751,10 +644,6 @@ class GraphTransformerEncoder(nn.Module):
             attention scores. ``"none"`` preserves the current transformer path.
             ``"edge_type_bilinear"`` adds a learned per-edge-type bilinear score
             term for sampled directed edges.
-        relation_value_mode: Optional relation-aware value augmentation.
-            ``"none"`` preserves the current transformer path.
-            ``"sparse_residual_gate"`` adds a zero-initialized sparse residual
-            value path on sampled directed relation edges.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -805,7 +694,6 @@ class GraphTransformerEncoder(nn.Module):
         activation: str = "gelu",
         feedforward_ratio: Optional[float] = None,
         relation_attention_mode: Literal["none", "edge_type_bilinear"] = "none",
-        relation_value_mode: Literal["none", "sparse_residual_gate"] = "none",
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -853,12 +741,6 @@ class GraphTransformerEncoder(nn.Module):
                 "{'none', 'edge_type_bilinear'}, "
                 f"got '{relation_attention_mode}'"
             )
-        if relation_value_mode not in {"none", "sparse_residual_gate"}:
-            raise ValueError(
-                "relation_value_mode must be one of "
-                "{'none', 'sparse_residual_gate'}, "
-                f"got '{relation_value_mode}'"
-            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
@@ -891,7 +773,6 @@ class GraphTransformerEncoder(nn.Module):
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
         self._relation_attention_mode = relation_attention_mode
-        self._relation_value_mode = relation_value_mode
         self._edge_type_to_feat_dim_map = {
             edge_type: edge_type_to_feat_dim_map[edge_type]
             for edge_type in sorted(edge_type_to_feat_dim_map.keys())
@@ -899,7 +780,6 @@ class GraphTransformerEncoder(nn.Module):
         self._relation_attention_edge_types = (
             list(self._edge_type_to_feat_dim_map.keys())
             if relation_attention_mode == "edge_type_bilinear"
-            or relation_value_mode == "sparse_residual_gate"
             else []
         )
         anchor_input_embedding_attr_names = (
@@ -996,7 +876,6 @@ class GraphTransformerEncoder(nn.Module):
                     attention_dropout_rate=attention_dropout_rate,
                     activation=activation,
                     relation_attention_mode=relation_attention_mode,
-                    relation_value_mode=relation_value_mode,
                     num_relations=len(self._relation_attention_edge_types),
                 )
                 for _ in range(num_layers)
@@ -1138,7 +1017,6 @@ class GraphTransformerEncoder(nn.Module):
             relation_edge_types=(
                 self._relation_attention_edge_types
                 if self._relation_attention_mode == "edge_type_bilinear"
-                or self._relation_value_mode == "sparse_residual_gate"
                 else None
             ),
         )
