@@ -1,6 +1,6 @@
 """Tests for GraphTransformerEncoder."""
 
-from typing import cast
+from typing import Literal, cast
 
 import torch
 import torch.nn as nn
@@ -238,10 +238,24 @@ class TestGraphTransformerEncoder(TestCase):
 
         self.assertTrue(torch.allclose(result_1, result_2))
 
+    def test_forward_with_in_sampling_direction(self) -> None:
+        """Test forward pass with incoming k-hop sampling."""
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder(sampling_direction="in")
+        encoder.eval()
+
     def test_readout_mode_rejects_invalid_value(self) -> None:
         """Test that unsupported readout modes fail fast."""
         with self.assertRaisesRegex(ValueError, "readout_mode"):
-            self._create_encoder(readout_mode="neighbor_average")
+            self._create_encoder(
+                readout_mode=cast(
+                    Literal[
+                        "anchor_neighbor_attention",
+                        "anchor_only",
+                    ],
+                    "mean_pool",
+                )
+            )
 
     def test_forward_with_anchor_only_readout(self) -> None:
         """Test public forward with anchor-only readout."""
@@ -260,6 +274,17 @@ class TestGraphTransformerEncoder(TestCase):
 
         self.assertEqual(embeddings.shape, (3, self._out_dim))
         self.assertFalse(torch.isnan(embeddings).any())
+
+    def test_sampling_direction_rejects_invalid_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "sampling_direction"):
+            self._create_encoder(sampling_direction="sideways")
+
+    def test_in_sampling_direction_requires_khop(self) -> None:
+        with self.assertRaisesRegex(ValueError, "supports only"):
+            self._create_encoder(
+                sequence_construction_method="ppr",
+                sampling_direction="in",
+            )
 
     def test_anchor_only_readout_returns_anchor_token(self) -> None:
         """Test anchor-only readout returns the post-norm anchor token."""

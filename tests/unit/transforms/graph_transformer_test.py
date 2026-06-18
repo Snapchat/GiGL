@@ -2,6 +2,8 @@
 Tests for heterodata_to_graph_transformer_input transform.
 """
 
+from typing import Literal, cast
+
 import torch
 import torch.nn as nn
 from absl.testing import absltest
@@ -119,6 +121,19 @@ def create_ppr_sequence_hetero_data() -> HeteroData:
 
     data.hop_distance = hop_distance.to_sparse_csr()
 
+    return data
+
+
+def create_directed_chain_data() -> HeteroData:
+    """Create a directed chain 0 -> 1 -> 2 for sampling direction tests."""
+    data = HeteroData()
+    data["user"].x = torch.tensor([[10.0], [11.0], [12.0]])
+    data["user", "to", "user"].edge_index = torch.tensor(
+        [
+            [0, 1],
+            [1, 2],
+        ]
+    )
     return data
 
 
@@ -304,6 +319,67 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         # First position should be anchor node
         self.assertTrue(torch.allclose(sequences[0, 0], anchor_feature))
+
+    def test_sampling_direction_defaults_to_out(self):
+        """Out sampling preserves existing k-hop reachability."""
+        data = create_directed_chain_data()
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            anchor_node_ids=torch.tensor([2]),
+            hop_distance=2,
+        )
+
+        self.assertEqual(valid_mask[0].tolist(), [True, False, False])
+        self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 0.0, 0.0])
+
+    def test_sampling_direction_in_uses_reverse_reachability(self):
+        """In sampling includes upstream message-source nodes."""
+        data = create_directed_chain_data()
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            anchor_node_ids=torch.tensor([2]),
+            hop_distance=2,
+            sampling_direction="in",
+        )
+
+        self.assertEqual(valid_mask[0].tolist(), [True, True, True])
+        self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 10.0, 11.0])
+
+    def test_sampling_direction_rejects_invalid_value(self):
+        data = create_directed_chain_data()
+
+        with self.assertRaisesRegex(ValueError, "sampling_direction"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=3,
+                anchor_node_type="user",
+                sampling_direction=cast(
+                    Literal["in", "out"],
+                    "sideways",
+                ),
+            )
+
+    def test_sampling_direction_in_requires_khop(self):
+        data = create_ppr_sequence_hetero_data()
+
+        with self.assertRaisesRegex(ValueError, "supports only"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=3,
+                anchor_node_type="user",
+                sequence_construction_method="ppr",
+                sampling_direction="in",
+            )
 
     def test_different_anchor_types(self):
         """Test with different anchor node types."""
