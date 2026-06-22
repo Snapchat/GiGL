@@ -674,11 +674,15 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         self._pairwise_pe_attention_bias_projection: Optional[nn.Linear] = None
+        self._pairwise_nonmissing_attention_bias: Optional[nn.Parameter] = None
         if self._pairwise_attention_bias_attr_names:
             self._pairwise_pe_attention_bias_projection = nn.Linear(
                 len(self._pairwise_attention_bias_attr_names),
                 num_heads,
                 bias=False,
+            )
+            self._pairwise_nonmissing_attention_bias = nn.Parameter(
+                torch.zeros(num_heads)
             )
 
         # Transformer encoder layers
@@ -1003,6 +1007,7 @@ class GraphTransformerEncoder(nn.Module):
             attention_bias_data: Dictionary containing optional PE tensors:
                 - "anchor_bias": (batch, seq, num_anchor_attrs) or None
                 - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
+                - "pairwise_nonmissing_indices": (num_pairs, 3) or None
 
         Returns:
             Combined attention bias tensor of shape (batch_size, num_heads, seq_len, seq_len)
@@ -1065,6 +1070,40 @@ class GraphTransformerEncoder(nn.Module):
                 0, 3, 1, 2
             )  # (batch, num_heads, seq, seq)
             attn_bias = attn_bias + pairwise_bias
+
+        pairwise_nonmissing_indices = attention_bias_data.get(
+            "pairwise_nonmissing_indices"
+        )
+        if pairwise_nonmissing_indices is not None:
+            if self._pairwise_nonmissing_attention_bias is None:
+                raise ValueError(
+                    "Pairwise nonmissing attention bias is not initialized."
+                )
+            if pairwise_nonmissing_indices.numel() > 0:
+                if attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+                    attn_bias = attn_bias.expand(
+                        batch_size,
+                        self._num_heads,
+                        seq_len,
+                        seq_len,
+                    ).clone()
+                pairwise_nonmissing_indices = pairwise_nonmissing_indices.to(
+                    device=device,
+                    dtype=torch.long,
+                )
+                attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+                nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
+                    dtype=attn_bias.dtype
+                ).view(1, -1)
+                attn_bias_by_position.index_put_(
+                    (
+                        pairwise_nonmissing_indices[:, 0],
+                        pairwise_nonmissing_indices[:, 1],
+                        pairwise_nonmissing_indices[:, 2],
+                    ),
+                    nonmissing_bias.expand(pairwise_nonmissing_indices.size(0), -1),
+                    accumulate=True,
+                )
 
         return attn_bias
 
