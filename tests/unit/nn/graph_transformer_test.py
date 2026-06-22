@@ -643,6 +643,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                 attention_bias_data={
                     "anchor_bias": None,
                     "pairwise_bias": torch.zeros((1, 3, 3, 1), dtype=torch.float),
+                    "pairwise_relation_indices": None,
                     "pairwise_nonmissing_indices": torch.tensor(
                         [
                             [0, 0, 0],
