@@ -1,10 +1,16 @@
+from unittest.mock import patch
+
 from parameterized import param, parameterized
 
+from gigl.common import GcsUri, LocalUri
 from gigl.common.logger import Logger
+from gigl.common.metrics.base_metrics import NopMetricsPublisher
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
+from gigl.src.common.utils import metrics_service_provider
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from snapchat.research.gbml import (
@@ -222,6 +228,37 @@ class ConfigPopulatorUnitTest(TestCase):
                     ].predictions_path,
                     "",
                 )
+
+    def test_run_forwards_docker_uris_to_initialize_gigl_runtime(self) -> None:
+        config_populator = ConfigPopulator()
+        frozen_uri = GcsUri("gs://bucket/frozen.yaml")
+
+        with (
+            patch(
+                "gigl.src.config_populator.config_populator.initialize_gigl_runtime"
+            ) as mock_initialize_runtime,
+            patch("gigl.src.config_populator.config_populator.get_resource_config"),
+            patch.object(
+                ConfigPopulator, "_ConfigPopulator__run", return_value=frozen_uri
+            ),
+            patch.object(
+                metrics_service_provider, "_metrics_instance", NopMetricsPublisher()
+            ),
+        ):
+            result = config_populator.run(
+                applied_task_identifier=self.applied_task_identifier,
+                task_config_uri=LocalUri("/tmp/task.yaml"),
+                resource_config_uri=LocalUri("/tmp/resource.yaml"),
+                cpu_docker_uri="gcr.io/p/cpu:tag",
+                cuda_docker_uri="gcr.io/p/cuda:tag",
+            )
+
+        self.assertEqual(result, frozen_uri)
+        mock_initialize_runtime.assert_called_once()
+        _, kwargs = mock_initialize_runtime.call_args
+        self.assertEqual(kwargs["component"], GiGLComponents.ConfigPopulator)
+        self.assertEqual(kwargs["cpu_docker_uri"], "gcr.io/p/cpu:tag")
+        self.assertEqual(kwargs["cuda_docker_uri"], "gcr.io/p/cuda:tag")
 
     def setUp(self) -> None:
         self.applied_task_identifier = AppliedTaskIdentifier(

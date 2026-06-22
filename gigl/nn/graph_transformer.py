@@ -3,8 +3,8 @@
 Adapted from RelGT's LocalModule (https://github.com/snap-stanford/relgt).
 Converts heterogeneous graph data into fixed-length sequences via
 ``heterodata_to_graph_transformer_input``, processes through a stack of pre-norm
-transformer encoder layers, then produces per-node embeddings via
-attention-weighted neighbor readout.
+transformer encoder layers, then produces per-node embeddings via configurable
+anchor or anchor-neighbor readout.
 
 Conforms to the same forward interface as ``HGT`` and ``SimpleHGN`` in
 ``gigl.src.common.models.pyg.heterogeneous``, making it a drop-in
@@ -366,8 +366,8 @@ class GraphTransformerEncoder(nn.Module):
 
     Converts heterogeneous graph data into fixed-length sequences via
     ``heterodata_to_graph_transformer_input``, processes through pre-norm
-    transformer encoder layers, and produces per-node embeddings via
-    attention-weighted neighbor readout (from RelGT's LocalModule).
+    transformer encoder layers, and produces per-node embeddings via configurable
+    anchor or anchor-neighbor readout.
 
     Conforms to the same forward interface as ``HGT`` and ``SimpleHGN``,
     making it a drop-in encoder for ``LinkPredictionGNN``.
@@ -398,6 +398,11 @@ class GraphTransformerEncoder(nn.Module):
             add learned absolute position embeddings here, while attention-level
             options like RoPE or ALiBi would require changes inside the
             attention block.
+        readout_mode: Strategy used to turn encoded sequence tokens into one
+            embedding per anchor. ``"anchor_neighbor_attention"`` preserves the
+            existing behavior by adding the encoded anchor token to an
+            attention-weighted neighbor aggregation. ``"anchor_only"`` returns
+            only the encoded anchor token.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
         should_l2_normalize_embedding_layer_output: Whether to L2 normalize
@@ -432,6 +437,12 @@ class GraphTransformerEncoder(nn.Module):
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as additive attention bias. These must correspond to sparse
             graph-level attributes on ``data``.
+        sampling_direction: Direction used for sequence token construction.
+            ``"out"`` preserves the existing k-hop reachability expansion.
+            ``"in"`` expands over reversed edges and is supported only
+            when ``sequence_construction_method="khop"``. Directed relative
+            encodings such as ``"hop_distance"`` should be computed with the
+            same direction.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
@@ -487,6 +498,10 @@ class GraphTransformerEncoder(nn.Module):
         hop_distance: int = 2,
         sequence_construction_method: Literal["khop", "ppr"] = "khop",
         sequence_positional_encoding_type: Optional[str] = None,
+        readout_mode: Literal[
+            "anchor_neighbor_attention",
+            "anchor_only",
+        ] = "anchor_neighbor_attention",
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         should_l2_normalize_embedding_layer_output: bool = False,
@@ -495,6 +510,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: Optional[list[str]] = None,
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+        sampling_direction: Literal["in", "out"] = "out",
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -509,15 +525,32 @@ class GraphTransformerEncoder(nn.Module):
                 "pe_integration_mode must be one of {'concat', 'add'}, "
                 f"got '{pe_integration_mode}'"
             )
+        if readout_mode not in {"anchor_neighbor_attention", "anchor_only"}:
+            raise ValueError(
+                "readout_mode must be one of "
+                "{'anchor_neighbor_attention', 'anchor_only'}, "
+                f"got '{readout_mode}'"
+            )
 
         self._hid_dim = hid_dim
         self._out_dim = out_dim
         self._max_seq_len = max_seq_len
         self._hop_distance = hop_distance
+        self._readout_mode = readout_mode
         if sequence_construction_method not in {"khop", "ppr"}:
             raise ValueError(
                 "sequence_construction_method must be one of {'khop', 'ppr'}, "
                 f"got '{sequence_construction_method}'"
+            )
+        if sampling_direction not in {"in", "out"}:
+            raise ValueError(
+                "sampling_direction must be one of {'in', 'out'}, "
+                f"got '{sampling_direction}'"
+            )
+        if sequence_construction_method == "ppr" and sampling_direction != "out":
+            raise ValueError(
+                "sequence_construction_method='ppr' supports only "
+                "sampling_direction='out'."
             )
         if sequence_positional_encoding_type is not None:
             sequence_positional_encoding_type = (
@@ -557,6 +590,7 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method='ppr'."
             )
         self._sequence_construction_method = sequence_construction_method
+        self._sampling_direction = sampling_direction
         self._sequence_positional_encoding_type = sequence_positional_encoding_type
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
@@ -672,7 +706,9 @@ class GraphTransformerEncoder(nn.Module):
         self._final_norm = nn.LayerNorm(hid_dim)
 
         # Readout attention: projects concatenated (anchor, neighbor) to score
-        self._readout_attention = nn.Linear(2 * hid_dim, 1)
+        self._readout_attention: Optional[nn.Linear] = None
+        if self._readout_mode == "anchor_neighbor_attention":
+            self._readout_attention = nn.Linear(2 * hid_dim, 1)
 
         # Output projection: hid_dim -> out_dim
         self._output_projection = nn.Linear(hid_dim, out_dim)
@@ -798,6 +834,7 @@ class GraphTransformerEncoder(nn.Module):
             anchor_node_ids=anchor_node_ids,
             hop_distance=self._hop_distance,
             sequence_construction_method=self._sequence_construction_method,
+            sampling_direction=self._sampling_direction,
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
@@ -1058,6 +1095,9 @@ class GraphTransformerEncoder(nn.Module):
 
         # Readout: anchor (position 0) + attention-weighted neighbor aggregation
         anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
+        if self._readout_mode == "anchor_only":
+            return anchor.squeeze(1)
+
         neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
         neighbor_valid_mask = valid_mask[:, 1:]
         seq_minus_one = neighbors.size(1)
@@ -1069,6 +1109,8 @@ class GraphTransformerEncoder(nn.Module):
         anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
 
         # Compute attention scores over neighbors
+        if self._readout_attention is None:
+            raise ValueError("Readout attention layer is not initialized.")
         readout_scores = self._readout_attention(
             torch.cat([anchor_expanded, neighbors], dim=-1)
         )  # (batch, seq-1, 1)
