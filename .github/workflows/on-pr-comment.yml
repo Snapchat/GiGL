@@ -122,7 +122,8 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         command: |
-            make integration_test
+            # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
+            make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
 
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
