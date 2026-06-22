@@ -244,6 +244,8 @@ class GraphTransformerEncoderLayer(nn.Module):
             self-attention path. ``"edge_type_bilinear"`` adds a learned
             per-edge-type bilinear term for sampled directed graph edges. This
             changes attention weights, not value/message content.
+            ``"edge_type_hgt"`` replaces the base query/key score on relation
+            edges with an HGT-style relation transform and relation prior.
         num_relations: Number of relation channels expected in
             ``pairwise_relation_indices`` when relation-aware attention is enabled.
 
@@ -259,7 +261,11 @@ class GraphTransformerEncoderLayer(nn.Module):
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         activation: str = "gelu",
-        relation_attention_mode: Literal["none", "edge_type_bilinear"] = "none",
+        relation_attention_mode: Literal[
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        ] = "none",
         num_relations: int = 0,
     ) -> None:
         super().__init__()
@@ -267,13 +273,17 @@ class GraphTransformerEncoderLayer(nn.Module):
             raise ValueError(
                 f"model_dim ({model_dim}) must be divisible by num_heads ({num_heads})"
             )
-        if relation_attention_mode not in {"none", "edge_type_bilinear"}:
+        if relation_attention_mode not in {
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        }:
             raise ValueError(
                 "relation_attention_mode must be one of "
-                "{'none', 'edge_type_bilinear'}, "
+                "{'none', 'edge_type_bilinear', 'edge_type_hgt'}, "
                 f"got '{relation_attention_mode}'"
             )
-        if relation_attention_mode == "edge_type_bilinear" and num_relations <= 0:
+        if relation_attention_mode != "none" and num_relations <= 0:
             raise ValueError(
                 "Relation-aware attention mode requires num_relations > 0."
             )
@@ -297,6 +307,19 @@ class GraphTransformerEncoderLayer(nn.Module):
             self._relation_attention_matrices = nn.Parameter(
                 torch.zeros(num_relations, num_heads, self._head_dim, self._head_dim)
             )
+        self._relation_hgt_attention_matrices: Optional[nn.Parameter] = None
+        self._relation_hgt_attention_priors: Optional[nn.Parameter] = None
+        if relation_attention_mode == "edge_type_hgt":
+            # Replaces the base score on relation edges with
+            # mu_relation * q_target^T W_relation k_source. Identity/one init
+            # preserves the base query/key score at startup.
+            self._relation_hgt_attention_matrices = nn.Parameter(
+                torch.empty(num_relations, self._head_dim, self._head_dim)
+            )
+            self._relation_hgt_attention_priors = nn.Parameter(
+                torch.empty(num_relations)
+            )
+            self._reset_hgt_relation_attention_parameters()
 
         self._ffn_norm = nn.LayerNorm(model_dim)
         self._ffn = FeedForwardNetwork(
@@ -317,8 +340,26 @@ class GraphTransformerEncoderLayer(nn.Module):
                 nn.init.zeros_(projection.bias)
         if self._relation_attention_matrices is not None:
             nn.init.zeros_(self._relation_attention_matrices)
+        self._reset_hgt_relation_attention_parameters()
         self._ffn_norm.reset_parameters()
         self._ffn.reset_parameters()
+
+    def _reset_hgt_relation_attention_parameters(self) -> None:
+        if self._relation_hgt_attention_matrices is None:
+            return
+        if self._relation_hgt_attention_priors is None:
+            raise ValueError("Relation HGT attention priors are not initialized.")
+
+        with torch.no_grad():
+            relation_identity = torch.eye(
+                self._head_dim,
+                dtype=self._relation_hgt_attention_matrices.dtype,
+                device=self._relation_hgt_attention_matrices.device,
+            )
+            self._relation_hgt_attention_matrices.copy_(
+                relation_identity.expand(self._num_relations, -1, -1)
+            )
+            self._relation_hgt_attention_priors.fill_(1.0)
 
     def forward(
         self,
@@ -401,7 +442,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         attn_bias: Optional[Tensor],
         pairwise_relation_indices: Optional[Tensor],
     ) -> Tensor:
-        if self._relation_attention_mode == "edge_type_bilinear":
+        if self._relation_attention_mode in {"edge_type_bilinear", "edge_type_hgt"}:
             attn_bias = self._add_relation_attention_bias(
                 attn_bias=attn_bias,
                 query=query,
@@ -449,10 +490,8 @@ class GraphTransformerEncoderLayer(nn.Module):
         if pairwise_relation_indices is None:
             raise ValueError(
                 "pairwise_relation_indices is required when "
-                "relation_attention_mode='edge_type_bilinear'."
+                "relation_attention_mode is relation-aware."
             )
-        if self._relation_attention_matrices is None:
-            raise ValueError("Relation attention matrices are not initialized.")
         if pairwise_relation_indices.numel() == 0:
             return attn_bias
         if (
@@ -496,7 +535,6 @@ class GraphTransformerEncoderLayer(nn.Module):
         attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
         query_by_position = query.transpose(1, 2)
         key_by_position = key.transpose(1, 2)
-        relation_matrices = self._relation_attention_matrices.to(dtype=query.dtype)
 
         unique_relation_indices, relation_counts = torch.unique_consecutive(
             relation_indices,
@@ -521,12 +559,11 @@ class GraphTransformerEncoderLayer(nn.Module):
                 relation_batch_indices,
                 relation_key_indices,
             ]
-            relation_scores = torch.einsum(
-                "ehd,hdf,ehf->eh",
-                selected_query,
-                relation_matrices[relation_idx],
-                selected_key,
-            ) / math.sqrt(self._head_dim)
+            relation_scores = self._compute_relation_attention_scores(
+                selected_query=selected_query,
+                selected_key=selected_key,
+                relation_idx=relation_idx,
+            )
             attn_bias_by_position.index_put_(
                 (
                     relation_batch_indices,
@@ -539,6 +576,50 @@ class GraphTransformerEncoderLayer(nn.Module):
             relation_start = relation_end
 
         return attn_bias
+
+    def _compute_relation_attention_scores(
+        self,
+        selected_query: Tensor,
+        selected_key: Tensor,
+        relation_idx: int,
+    ) -> Tensor:
+        if self._relation_attention_mode == "edge_type_bilinear":
+            if self._relation_attention_matrices is None:
+                raise ValueError("Relation attention matrices are not initialized.")
+            relation_matrices = self._relation_attention_matrices.to(
+                dtype=selected_query.dtype
+            )
+            relation_scores = torch.einsum(
+                "ehd,hdf,ehf->eh",
+                selected_query,
+                relation_matrices[relation_idx],
+                selected_key,
+            )
+        elif self._relation_attention_mode == "edge_type_hgt":
+            if self._relation_hgt_attention_matrices is None:
+                raise ValueError("Relation HGT attention matrices are not initialized.")
+            if self._relation_hgt_attention_priors is None:
+                raise ValueError("Relation HGT attention priors are not initialized.")
+            relation_matrices = self._relation_hgt_attention_matrices.to(
+                dtype=selected_query.dtype
+            )
+            relation_priors = self._relation_hgt_attention_priors.to(
+                dtype=selected_query.dtype
+            )
+            hgt_scores = torch.einsum(
+                "ehd,df,ehf->eh",
+                selected_query,
+                relation_matrices[relation_idx],
+                selected_key,
+            )
+            base_scores = (selected_query * selected_key).sum(dim=-1)
+            relation_scores = relation_priors[relation_idx] * hgt_scores - base_scores
+        else:
+            raise ValueError(
+                "Relation attention scores requested when relation_attention_mode "
+                f"is '{self._relation_attention_mode}'."
+            )
+        return relation_scores / math.sqrt(self._head_dim)
 
 
 class GraphTransformerEncoder(nn.Module):
@@ -644,7 +725,9 @@ class GraphTransformerEncoder(nn.Module):
         relation_attention_mode: Optional relation-aware augmentation for
             attention scores. ``"none"`` preserves the current transformer path.
             ``"edge_type_bilinear"`` adds a learned per-edge-type bilinear score
-            term for sampled directed edges.
+            term for sampled directed edges. ``"edge_type_hgt"`` replaces base
+            query/key scores on relation edges with an HGT-style relation
+            transform and relation prior.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -699,7 +782,11 @@ class GraphTransformerEncoder(nn.Module):
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
         feedforward_ratio: Optional[float] = None,
-        relation_attention_mode: Literal["none", "edge_type_bilinear"] = "none",
+        relation_attention_mode: Literal[
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        ] = "none",
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -758,10 +845,14 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method='ppr' because khop sequences do not "
                 "enforce a stable token order."
             )
-        if relation_attention_mode not in {"none", "edge_type_bilinear"}:
+        if relation_attention_mode not in {
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        }:
             raise ValueError(
                 "relation_attention_mode must be one of "
-                "{'none', 'edge_type_bilinear'}, "
+                "{'none', 'edge_type_bilinear', 'edge_type_hgt'}, "
                 f"got '{relation_attention_mode}'"
             )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
@@ -803,7 +894,7 @@ class GraphTransformerEncoder(nn.Module):
         }
         self._relation_attention_edge_types = (
             list(self._edge_type_to_feat_dim_map.keys())
-            if relation_attention_mode == "edge_type_bilinear"
+            if relation_attention_mode in {"edge_type_bilinear", "edge_type_hgt"}
             else []
         )
         anchor_input_embedding_attr_names = (
@@ -1047,7 +1138,8 @@ class GraphTransformerEncoder(nn.Module):
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
             relation_edge_types=(
                 self._relation_attention_edge_types
-                if self._relation_attention_mode == "edge_type_bilinear"
+                if self._relation_attention_mode
+                in {"edge_type_bilinear", "edge_type_hgt"}
                 else None
             ),
         )
