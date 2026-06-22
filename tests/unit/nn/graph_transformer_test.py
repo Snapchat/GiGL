@@ -918,6 +918,42 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         expected[0, 0, 2, 1] = 1.0 / torch.sqrt(torch.tensor(2.0)).item()
         self.assertTrue(torch.allclose(relation_bias, expected, atol=1e-6))
 
+    def test_relation_attention_handles_unsorted_relation_indices(self) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=2,
+            num_heads=1,
+            feedforward_dim=4,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+            relation_attention_mode="edge_type_bilinear",
+            num_relations=2,
+        )
+        query = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]])
+        key = torch.tensor([[[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]])
+
+        with torch.no_grad():
+            assert layer._relation_attention_matrices is not None
+            layer._relation_attention_matrices[0, 0] = torch.eye(2)
+            layer._relation_attention_matrices[1, 0] = 2.0 * torch.eye(2)
+            relation_bias = layer._build_relation_attention_bias(
+                query=query,
+                key=key,
+                pairwise_relation_indices=_pairwise_relation_indices(
+                    [
+                        (0, 2, 1, 1),
+                        (0, 1, 1, 0),
+                        (0, 2, 0, 1),
+                    ]
+                ),
+            )
+
+        assert relation_bias is not None
+        expected = torch.zeros((1, 1, 3, 3))
+        expected[0, 0, 2, 1] = 2.0 / torch.sqrt(torch.tensor(2.0)).item()
+        expected[0, 0, 1, 1] = 1.0 / torch.sqrt(torch.tensor(2.0)).item()
+        expected[0, 0, 2, 0] = 2.0 / torch.sqrt(torch.tensor(2.0)).item()
+        self.assertTrue(torch.allclose(relation_bias, expected, atol=1e-6))
+
     def test_relation_attention_rejects_invalid_relation_ids(self) -> None:
         layer = GraphTransformerEncoderLayer(
             model_dim=2,

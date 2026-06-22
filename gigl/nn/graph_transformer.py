@@ -498,16 +498,6 @@ class GraphTransformerEncoderLayer(nn.Module):
         key_by_position = key.transpose(1, 2)
         relation_matrices = self._relation_attention_matrices.to(dtype=query.dtype)
 
-        if (
-            relation_indices.numel() > 1
-            and not torch.all(relation_indices[1:] >= relation_indices[:-1]).item()
-        ):
-            relation_sort_perm = torch.argsort(relation_indices)
-            relation_indices = relation_indices[relation_sort_perm]
-            batch_indices = batch_indices[relation_sort_perm]
-            query_indices = query_indices[relation_sort_perm]
-            key_indices = key_indices[relation_sort_perm]
-
         unique_relation_indices, relation_counts = torch.unique_consecutive(
             relation_indices,
             return_counts=True,

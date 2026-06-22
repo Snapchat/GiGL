@@ -388,6 +388,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
         self.assertFalse((pairwise_relation_indices[:, 1:3] == 3).any().item())
         self.assertFalse((pairwise_relation_indices[:, 3] == 2).any().item())
+
     def test_sampling_direction_defaults_to_out(self):
         """Out sampling preserves existing k-hop reachability."""
         data = create_directed_chain_data()
