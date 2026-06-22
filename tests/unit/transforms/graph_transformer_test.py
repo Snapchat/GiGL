@@ -124,6 +124,27 @@ def create_ppr_sequence_hetero_data() -> HeteroData:
     return data
 
 
+def _dense_nonmissing_mask_from_indices(
+    pairwise_nonmissing_indices: torch.Tensor | None,
+    batch_size: int,
+    seq_len: int,
+    device: torch.device,
+) -> torch.Tensor:
+    dense_mask = torch.zeros(
+        (batch_size, seq_len, seq_len),
+        dtype=torch.bool,
+        device=device,
+    )
+    if pairwise_nonmissing_indices is None or pairwise_nonmissing_indices.numel() == 0:
+        return dense_mask
+    dense_mask[
+        pairwise_nonmissing_indices[:, 0],
+        pairwise_nonmissing_indices[:, 1],
+        pairwise_nonmissing_indices[:, 2],
+    ] = True
+    return dense_mask
+
+
 def create_directed_chain_data() -> HeteroData:
     """Create a directed chain 0 -> 1 -> 2 for sampling direction tests."""
     data = HeteroData()
@@ -868,6 +889,7 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         assert anchor_bias is not None
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertIsNone(attention_bias_data["pairwise_bias"])
+        self.assertIsNone(attention_bias_data["pairwise_nonmissing_indices"])
         self.assertTrue(valid_mask[0, 0].item())
 
     def test_attention_bias_outputs_include_valid_mask_and_relative_features(
@@ -893,17 +915,96 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
         self.assertEqual(valid_mask.shape, (1, 4))
         anchor_bias = attention_bias_data["anchor_bias"]
         pairwise_bias = attention_bias_data["pairwise_bias"]
+        pairwise_nonmissing_indices = attention_bias_data["pairwise_nonmissing_indices"]
         assert anchor_bias is not None
         assert pairwise_bias is not None
+        assert pairwise_nonmissing_indices is not None
+        pairwise_nonmissing_mask = _dense_nonmissing_mask_from_indices(
+            pairwise_nonmissing_indices=pairwise_nonmissing_indices,
+            batch_size=1,
+            seq_len=4,
+            device=pairwise_bias.device,
+        )
         self.assertEqual(anchor_bias.shape, (1, 4, 1))
         self.assertEqual(pairwise_bias.shape, (1, 4, 4, 1))
+        self.assertEqual(pairwise_nonmissing_indices.shape[1], 3)
         self.assertAlmostEqual(anchor_bias[0, 0, 0].item(), 0.0, places=5)
         self.assertAlmostEqual(anchor_bias[0, 1, 0].item(), 1.0, places=5)
         self.assertAlmostEqual(anchor_bias[0, 2, 0].item(), 3.0, places=5)
         self.assertAlmostEqual(pairwise_bias[0, 0, 0, 0].item(), 0.1, places=5)
+        self.assertTrue(torch.all(pairwise_nonmissing_mask[0, :3, :3]))
 
         invalid_pair_mask = ~(valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1))
         self.assertTrue(torch.all(pairwise_bias[..., 0][invalid_pair_mask] == 0))
+        self.assertTrue(torch.all(~pairwise_nonmissing_mask[invalid_pair_mask]))
+
+    def test_pairwise_nonmissing_indices_distinguish_self_from_missing(self) -> None:
+        data = _create_hetero_data_with_relative_pe()
+        data.pairwise_distance = torch.sparse_csr_tensor(
+            crow_indices=torch.tensor([0, 1, 1, 1, 2, 2]),
+            col_indices=torch.tensor([3, 0]),
+            values=torch.tensor([0.0, 0.7]),
+            size=(5, 5),
+        )
+
+        _, valid_mask, attention_bias_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            hop_distance=2,
+            pairwise_attention_bias_attr_names=["pairwise_distance"],
+        )
+
+        pairwise_bias = attention_bias_data["pairwise_bias"]
+        pairwise_nonmissing_indices = attention_bias_data["pairwise_nonmissing_indices"]
+        assert pairwise_bias is not None
+        assert pairwise_nonmissing_indices is not None
+        pairwise_nonmissing_mask = _dense_nonmissing_mask_from_indices(
+            pairwise_nonmissing_indices=pairwise_nonmissing_indices,
+            batch_size=1,
+            seq_len=4,
+            device=pairwise_bias.device,
+        )
+
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, False]))
+        )
+        self.assertEqual(pairwise_bias[0, 0, 2, 0].item(), 0.0)
+        self.assertTrue(pairwise_nonmissing_mask[0, 0, 0].item())
+        self.assertTrue(pairwise_nonmissing_mask[0, 1, 1].item())
+        self.assertTrue(pairwise_nonmissing_mask[0, 2, 2].item())
+        self.assertTrue(pairwise_nonmissing_mask[0, 0, 2].item())
+        self.assertTrue(pairwise_nonmissing_mask[0, 2, 0].item())
+        self.assertFalse(pairwise_nonmissing_mask[0, 0, 1].item())
+        self.assertFalse(pairwise_nonmissing_mask[0, 1, 0].item())
+        self.assertFalse(pairwise_nonmissing_mask[0, 1, 2].item())
+        self.assertFalse(pairwise_nonmissing_mask[0, 3, 3].item())
+
+    def test_pairwise_attention_bias_attr_support_mismatch_raises(self) -> None:
+        data = _create_hetero_data_with_relative_pe()
+        data.pairwise_distance_sparse_mismatch = torch.sparse_csr_tensor(
+            crow_indices=torch.tensor([0, 1, 1, 1, 1, 1]),
+            col_indices=torch.tensor([0]),
+            values=torch.tensor([1.0]),
+            size=(5, 5),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Pairwise attention bias attributes must share identical nonmissing support",
+        ):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=4,
+                anchor_node_type="user",
+                hop_distance=2,
+                pairwise_attention_bias_attr_names=[
+                    "pairwise_distance",
+                    "pairwise_distance_sparse_mismatch",
+                ],
+            )
 
 
 if __name__ == "__main__":
