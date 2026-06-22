@@ -143,6 +143,8 @@ def _dense_nonmissing_mask_from_indices(
         pairwise_nonmissing_indices[:, 2],
     ] = True
     return dense_mask
+
+
 def create_directed_chain_data() -> HeteroData:
     """Create a directed chain 0 -> 1 -> 2 for sampling direction tests."""
     data = HeteroData()
