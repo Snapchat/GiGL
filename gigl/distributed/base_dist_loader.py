@@ -388,8 +388,9 @@ class BaseDistLoader(DistLoader):
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
-        Patches ``num_neighbors`` to zero-out label edge types, then creates
-        the SamplingConfig used by both colocated and graph store modes.
+        Excludes label edge types from ``num_neighbors`` (the samplers skip them
+        during traversal), then creates the SamplingConfig used by both colocated
+        and graph store modes.
 
         Args:
             num_neighbors: Fanout per hop.

@@ -12,6 +12,7 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import count_dict, merge_dict, reverse_edge_type
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
+from gigl.types.graph import is_label_edge_type
 
 
 class DistNeighborSampler(BaseDistNeighborSampler):
@@ -72,6 +73,13 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                 nbr_dict: dict[EdgeType, list[torch.Tensor]] = {}
                 edge_dict: dict[EdgeType, torch.Tensor] = {}
                 for etype in self.edge_types:
+                    if is_label_edge_type(etype):
+                        # Label (positive/negative supervision) edges are injected
+                        # into the graph for ABLP but must never be traversed during
+                        # sampling (doing so would leak ground-truth targets). Skipping
+                        # them here means they need no num_neighbors entry. Mirrors
+                        # DistPPRNeighborSampler (dist_ppr_sampler.py).
+                        continue
                     req_num = self.num_neighbors[etype][i]
                     if self.edge_dir == "in":
                         srcs = src_dict.get(etype[-1], None)
