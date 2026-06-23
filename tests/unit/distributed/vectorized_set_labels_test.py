@@ -139,11 +139,7 @@ class VectorizedSetLabelsEquivalenceTest(parameterized.TestCase):
     @parameterized.named_parameters(
         dict(
             testcase_name="homogeneous_present_empty_and_padded",
-            node_map={
-                _STORY: torch.tensor(
-                    [10, 11, 12, 13, 14, 15, 16, 17]
-                )
-            },
+            node_map={_STORY: torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])},
             positives={
                 _pos(_USER_TO_STORY): torch.tensor(
                     [[15, -1], [15, 16], [-1, -1], [99, -1]], dtype=torch.long
@@ -154,25 +150,25 @@ class VectorizedSetLabelsEquivalenceTest(parameterized.TestCase):
         ),
         dict(
             testcase_name="homogeneous_duplicate_labels",
-            node_map={
-                _STORY: torch.tensor([10, 11, 12, 13, 14, 15])
-            },
+            node_map={_STORY: torch.tensor([10, 11, 12, 13, 14, 15])},
             positives={
-                _pos(_USER_TO_STORY): torch.tensor([[15, 15], [11, 11]], dtype=torch.long)
+                _pos(_USER_TO_STORY): torch.tensor(
+                    [[15, 15], [11, 11]], dtype=torch.long
+                )
             },
             negatives={},
             supervision_edge_types=[_USER_TO_STORY],
         ),
         dict(
             testcase_name="homogeneous_with_negatives",
-            node_map={
-                _STORY: torch.tensor(
-                    [10, 11, 12, 13, 14, 15, 16, 17]
-                )
+            node_map={_STORY: torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])},
+            positives={
+                _pos(_USER_TO_STORY): torch.tensor([[15], [16]], dtype=torch.long)
             },
-            positives={_pos(_USER_TO_STORY): torch.tensor([[15], [16]], dtype=torch.long)},
             negatives={
-                _neg(_USER_TO_STORY): torch.tensor([[13, 16], [17, -1]], dtype=torch.long)
+                _neg(_USER_TO_STORY): torch.tensor(
+                    [[13, 16], [17, -1]], dtype=torch.long
+                )
             },
             supervision_edge_types=[_USER_TO_STORY],
         ),
@@ -209,9 +205,7 @@ class VectorizedSetLabelsEquivalenceTest(parameterized.TestCase):
         ),
         dict(
             testcase_name="all_anchors_empty",
-            node_map={
-                _STORY: torch.tensor([10, 11, 12])
-            },
+            node_map={_STORY: torch.tensor([10, 11, 12])},
             positives={
                 _pos(_USER_TO_STORY): torch.tensor(
                     [[-1, -1], [99, 98]], dtype=torch.long
@@ -223,9 +217,7 @@ class VectorizedSetLabelsEquivalenceTest(parameterized.TestCase):
         dict(
             testcase_name="zero_anchors",
             node_map={_STORY: torch.tensor([10, 11, 12])},
-            positives={
-                _pos(_USER_TO_STORY): torch.empty((0, 0), dtype=torch.long)
-            },
+            positives={_pos(_USER_TO_STORY): torch.empty((0, 0), dtype=torch.long)},
             negatives={},
             supervision_edge_types=[_USER_TO_STORY],
         ),

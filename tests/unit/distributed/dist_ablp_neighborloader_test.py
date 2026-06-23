@@ -419,6 +419,7 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
 
 def _collect_homogeneous_labels(
+    _: int,
     return_dict,
     collate_impl: str,
     dataset: DistDataset,
@@ -469,6 +470,7 @@ def _collect_homogeneous_labels(
 
 
 def _collect_hetero_labels(
+    _: int,
     return_dict,
     collate_impl: str,
     input_nodes: tuple[NodeType, torch.Tensor],
@@ -1074,9 +1076,7 @@ class DistABLPLoaderTest(TestCase):
             ),
             param(
                 "positive only",
-                labeled_edges={
-                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])
-                },
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
                 input_nodes=torch.tensor([10, 15]),
                 batch_size=2,
                 has_negatives=False,
@@ -1152,12 +1152,8 @@ class DistABLPLoaderTest(TestCase):
                     has_negatives,
                 ),
             )
-        self.assertEqual(
-            return_dict["python"][0], return_dict["vectorized"][0]
-        )
-        self.assertEqual(
-            return_dict["python"][1], return_dict["vectorized"][1]
-        )
+        self.assertEqual(return_dict["python"][0], return_dict["vectorized"][0])
+        self.assertEqual(return_dict["python"][1], return_dict["vectorized"][1])
         if empty_positive_anchor is not None:
             # Both impls must emit the empty anchor's key with an empty list.
             for collate_impl in ("python", "vectorized"):

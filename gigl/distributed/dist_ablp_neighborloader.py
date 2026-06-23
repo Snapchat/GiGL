@@ -95,7 +95,9 @@ def _loop_set_labels(
         ``dict[message_passing_edge_type, dict[anchor_index, local_index_tensor]]``
         with an entry for every anchor index ``0..N_anchors-1``.
     """
-    del supervision_edge_types  # Parity with vectorized_set_labels; not needed by the loop.
+    del (
+        supervision_edge_types
+    )  # Parity with vectorized_set_labels; not needed by the loop.
     output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(dict)
     output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(dict)
     # Supervision edge types are (anchor_node_type, to, supervision_node_type),
@@ -171,7 +173,10 @@ def _remap_one_label_tensor(
     anchor_of_entry = anchor_of_entry[valid]
 
     if num_nodes == 0 or flat.numel() == 0:
-        return {i: torch.empty(0, dtype=torch.long, device=to_device) for i in range(num_anchors)}
+        return {
+            i: torch.empty(0, dtype=torch.long, device=to_device)
+            for i in range(num_anchors)
+        }
 
     # PRECONDITION: `sorted_node` has UNIQUE values (the node map is unique
     # local->global). searchsorted returns the left-most equal position, so a
