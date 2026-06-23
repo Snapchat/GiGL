@@ -1,11 +1,12 @@
 """Utils for Neighbor loaders."""
 
 import ast
+import os
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Optional, TypeVar, Union
+from typing import Final, Literal, Optional, TypeVar, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -16,6 +17,38 @@ from gigl.common.logger import Logger
 from gigl.types.graph import FeatureInfo, is_label_edge_type
 
 logger = Logger()
+
+COLLATE_IMPL_ENV_VAR: Final[str] = "GIGL_COLLATE_IMPL"
+CollateImpl = Literal["python", "vectorized", "cpp"]
+COLLATE_IMPLS: Final[tuple[CollateImpl, ...]] = ("python", "vectorized", "cpp")
+
+
+def resolve_collate_impl() -> CollateImpl:
+    """Resolve the collate implementation selector from the environment.
+
+    Reads ``GIGL_COLLATE_IMPL`` (:data:`COLLATE_IMPL_ENV_VAR`) and lowercases it.
+
+    Returns ``"python"`` (the validated-output default) when the variable is
+    unset or empty.
+
+    Returns:
+        CollateImpl: One of ``"python"``, ``"vectorized"``, ``"cpp"``.
+
+    Raises:
+        ValueError: If the variable is set to a value outside
+            :data:`COLLATE_IMPLS`.
+    """
+    raw = os.environ.get(COLLATE_IMPL_ENV_VAR)
+    if not raw:
+        return "python"
+    value = raw.lower()
+    if value not in COLLATE_IMPLS:
+        raise ValueError(
+            f"{COLLATE_IMPL_ENV_VAR} must be one of {COLLATE_IMPLS}, got {raw!r}."
+        )
+    # ``value`` is one of COLLATE_IMPLS, narrow to CollateImpl for the type checker.
+    return value  # ty: ignore[invalid-return-type]
+
 
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
 
