@@ -1,3 +1,4 @@
+import os
 import unittest
 from collections import defaultdict
 from typing import Literal, Optional, Union
@@ -15,6 +16,7 @@ from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
+from gigl.distributed.utils.neighborloader import COLLATE_IMPL_ENV_VAR
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -413,6 +415,111 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
     # This call is not strictly required to pass tests, since each test here uses the `run_in_separate_process` decorator,
     # but rather is good practice to ensure that we cleanup the rpc after we finish dataloading
+    shutdown_rpc()
+
+
+def _collect_homogeneous_labels(
+    return_dict,
+    collate_impl: str,
+    dataset: DistDataset,
+    input_nodes: torch.Tensor,
+    batch_size: int,
+    has_negatives: bool,
+):
+    """Child-side: run the loader under one collate impl, return labels in GLOBAL ids.
+
+    Local node indices differ run-to-run, so we translate y_* tensors back to
+    global ids via ``datum.node`` before returning, giving the parent a
+    representation that is invariant to local-index assignment.
+    """
+    os.environ[COLLATE_IMPL_ENV_VAR] = collate_impl
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+    )
+    collected_positive: dict[int, list[int]] = {}
+    collected_negative: dict[int, list[int]] = {}
+    for datum in loader:
+        assert isinstance(datum, Data)
+        node = datum.node
+        for local_anchor, local_nodes in datum.y_positive.items():
+            global_anchor = int(node[local_anchor].item())
+            collected_positive[global_anchor] = sorted(
+                int(g.item()) for g in node[local_nodes]
+            )
+        if has_negatives:
+            for local_anchor, local_nodes in datum.y_negative.items():
+                global_anchor = int(node[local_anchor].item())
+                collected_negative[global_anchor] = sorted(
+                    int(g.item()) for g in node[local_nodes]
+                )
+        else:
+            # No negative-label edge type: y_negative must be absent or empty
+            # regardless of impl. Catches a spurious-negatives regression that a
+            # vacuous {} == {} comparison in the parent would miss.
+            assert getattr(datum, "y_negative", {}) == {}, (
+                f"{collate_impl}: expected no negatives, got {datum.y_negative}"
+            )
+    return_dict[collate_impl] = (collected_positive, collected_negative)
+    shutdown_rpc()
+
+
+def _collect_hetero_labels(
+    return_dict,
+    collate_impl: str,
+    input_nodes: tuple[NodeType, torch.Tensor],
+    dataset: DistDataset,
+    supervision_edge_types: list[EdgeType],
+    has_negatives: bool,
+):
+    """Child-side: run the hetero loader under one collate impl, return labels in GLOBAL ids."""
+    os.environ[COLLATE_IMPL_ENV_VAR] = collate_impl
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=1,
+        pin_memory_device=torch.device("cpu"),
+        supervision_edge_type=supervision_edge_types,
+    )
+    anchor_index = 0
+    supervision_index = 2
+    positive: dict[str, dict[int, list[int]]] = {}
+    negative: dict[str, dict[int, list[int]]] = {}
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        for edge_type, inner in datum.y_positive.items():
+            anchor_node = datum[edge_type[anchor_index]].node
+            supervision_node = datum[edge_type[supervision_index]].node
+            positive.setdefault(str(edge_type), {})
+            for local_anchor, local_nodes in inner.items():
+                global_anchor = int(anchor_node[local_anchor].item())
+                positive[str(edge_type)][global_anchor] = sorted(
+                    int(g.item()) for g in supervision_node[local_nodes]
+                )
+        if has_negatives:
+            for edge_type, inner in datum.y_negative.items():
+                anchor_node = datum[edge_type[anchor_index]].node
+                supervision_node = datum[edge_type[supervision_index]].node
+                negative.setdefault(str(edge_type), {})
+                for local_anchor, local_nodes in inner.items():
+                    global_anchor = int(anchor_node[local_anchor].item())
+                    negative[str(edge_type)][global_anchor] = sorted(
+                        int(g.item()) for g in supervision_node[local_nodes]
+                    )
+        else:
+            # No negative-label edge type: y_negative must be absent or empty
+            # regardless of impl. Catches a spurious-negatives regression that a
+            # vacuous {} == {} comparison in the parent would miss.
+            assert getattr(datum, "y_negative", {}) == {}, (
+                f"{collate_impl}: expected no negatives, got {datum.y_negative}"
+            )
+    return_dict[collate_impl] = (positive, negative)
     shutdown_rpc()
 
 
@@ -949,6 +1056,204 @@ class DistABLPLoaderTest(TestCase):
                 ),
             ),
         )
+
+    @parameterized.expand(
+        [
+            param(
+                "positive and negative",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=True,
+                empty_positive_anchor=None,
+            ),
+            param(
+                "positive only",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])
+                },
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=False,
+                empty_positive_anchor=None,
+            ),
+            # Anchor 11 has message-passing edges (11 -> {13, 17}) but is the
+            # source of NO positive-label edge, so its positive-label CSR row is
+            # all-padding and y_positive[11] is a guaranteed-empty tensor. This
+            # exercises the empty-anchor branch of both label-remap impls at the
+            # loader level (see brief's required empty-anchor case).
+            param(
+                "guaranteed empty positive anchor",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 11, 15]),
+                batch_size=3,
+                has_negatives=True,
+                empty_positive_anchor=11,
+            ),
+        ]
+    )
+    def test_collate_impl_equivalence_homogeneous(
+        self,
+        _,
+        labeled_edges,
+        input_nodes,
+        batch_size,
+        has_negatives,
+        empty_positive_anchor,
+    ):
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [[10, 10, 11, 11, 15, 15, 16, 16], [11, 12, 13, 17, 13, 14, 12, 14]]
+            ),
+        }
+        edge_index.update(labeled_edges)
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        for collate_impl in ("python", "vectorized"):
+            mp.spawn(
+                fn=_collect_homogeneous_labels,
+                args=(
+                    return_dict,
+                    collate_impl,
+                    dataset,
+                    input_nodes,
+                    batch_size,
+                    has_negatives,
+                ),
+            )
+        self.assertEqual(
+            return_dict["python"][0], return_dict["vectorized"][0]
+        )
+        self.assertEqual(
+            return_dict["python"][1], return_dict["vectorized"][1]
+        )
+        if empty_positive_anchor is not None:
+            # Both impls must emit the empty anchor's key with an empty list.
+            for collate_impl in ("python", "vectorized"):
+                positive = return_dict[collate_impl][0]
+                self.assertIn(empty_positive_anchor, positive)
+                self.assertEqual(positive[empty_positive_anchor], [])
+
+    @parameterized.expand(
+        [
+            param(
+                "out, positive and negative",
+                edge_dir="out",
+                edge_index={
+                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
+                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [13, 14]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [15, 16]]
+                    ),
+                    _A_TO_C: torch.tensor([[10, 10], [20, 21]]),
+                    message_passing_to_positive_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [22, 23]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [24, 25]]
+                    ),
+                },
+                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                has_negatives=True,
+            ),
+            param(
+                "in, positive only",
+                edge_dir="in",
+                edge_index={
+                    _B_TO_A: torch.tensor([[11, 12], [10, 10]]),
+                    message_passing_to_positive_label(_B_TO_A): torch.tensor(
+                        [[13, 14], [10, 10]]
+                    ),
+                    _C_TO_A: torch.tensor([[20, 21], [10, 10]]),
+                    message_passing_to_positive_label(_C_TO_A): torch.tensor(
+                        [[22, 23], [10, 10]]
+                    ),
+                },
+                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                has_negatives=False,
+            ),
+        ]
+    )
+    def test_collate_impl_equivalence_heterogeneous(
+        self, _, edge_dir, edge_index, supervision_edge_types, has_negatives
+    ):
+        nodes: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
+        for edge_type, edge_idx in edge_index.items():
+            nodes[edge_type[0]].append(edge_idx[0])
+            nodes[edge_type[2]].append(edge_idx[1])
+        partition_output = PartitionOutput(
+            node_partition_book={
+                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                for node_type, node_ids in nodes.items()
+            },
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir=edge_dir)
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        for collate_impl in ("python", "vectorized"):
+            mp.spawn(
+                fn=_collect_hetero_labels,
+                args=(
+                    return_dict,
+                    collate_impl,
+                    (NodeType("a"), torch.tensor([10])),
+                    dataset,
+                    supervision_edge_types,
+                    has_negatives,
+                ),
+            )
+        self.assertEqual(return_dict["python"][0], return_dict["vectorized"][0])
+        self.assertEqual(return_dict["python"][1], return_dict["vectorized"][1])
 
     @parameterized.expand(
         [
