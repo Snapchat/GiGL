@@ -81,22 +81,6 @@ class LoaderUtilsTest(TestCase):
                 },
             ),
             param(
-                "Test patch_fanout_for_sampling on num_neighbors dict with labeled edge type in dataset and fanout",
-                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
-                num_neighbors={
-                    _U2I_EDGE_TYPE: [2, 7],
-                    _I2U_EDGE_TYPE: [3, 4],
-                    # A label edge type supplied by the caller is assumed accidental
-                    # (callers should not be aware of this injected edge type) and is
-                    # dropped from the fanout rather than zeroed.
-                    _LABELED_EDGE_TYPE: [2, 2],
-                },
-                expected_num_neighbors={
-                    _U2I_EDGE_TYPE: [2, 7],
-                    _I2U_EDGE_TYPE: [3, 4],
-                },
-            ),
-            param(
                 "Test patch_fanout_for_sampling on num_neighbors list",
                 edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
                 num_neighbors=[1, 3],
@@ -163,6 +147,20 @@ class LoaderUtilsTest(TestCase):
                     _U2I_EDGE_TYPE: [2, -7],
                     _I2U_EDGE_TYPE: [3, 4],
                 },
+            ),
+            param(
+                "Test that providing a label edge type in num_neighbors raises",
+                edge_types=[_U2I_EDGE_TYPE, _I2U_EDGE_TYPE, _LABELED_EDGE_TYPE],
+                num_neighbors={
+                    _U2I_EDGE_TYPE: [2, 7],
+                    _I2U_EDGE_TYPE: [3, 4],
+                    _LABELED_EDGE_TYPE: [2, 2],
+                },
+            ),
+            param(
+                "Test that a dataset with no message-passing edge types raises",
+                edge_types=[_LABELED_EDGE_TYPE],
+                num_neighbors=[1, 3],
             ),
         ]
     )

@@ -388,9 +388,10 @@ class BaseDistLoader(DistLoader):
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
-        Excludes label edge types from ``num_neighbors`` (the samplers skip them
-        during traversal), then creates the SamplingConfig used by both colocated
-        and graph store modes.
+        ``num_neighbors`` must cover the message-passing edge types; label edge types
+        are injected internally, are never sampled, and must not be specified (passing
+        one raises ``ValueError``). Then creates the SamplingConfig used by both
+        colocated and graph store modes.
 
         Args:
             num_neighbors: Fanout per hop.

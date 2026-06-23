@@ -58,10 +58,11 @@ def patch_fanout_for_sampling(
     For heterogeneous datasets, broadcasts a single fanout list to every message-passing
     edge type, or validates a per-edge-type dict.
 
-    Label edge types (positive/negative supervision edges injected by ABLP) are excluded
-    from the returned fanout: the samplers skip them during traversal (see
+    Label edge types (positive/negative supervision edges injected by ABLP) are never
+    sampled -- the samplers skip them during traversal (see
     ``DistNeighborSampler._sample_from_nodes`` and ``DistPPRNeighborSampler``), so they
-    need no fanout entry. Any label edge type a caller supplies by accident is dropped.
+    take no fanout. Callers must not specify them: any label edge type in ``num_neighbors``
+    raises ``ValueError``.
 
     For homogeneous datasets (``edge_types`` is None) the fanout list is returned unchanged.
 
@@ -71,6 +72,10 @@ def patch_fanout_for_sampling(
     Returns:
         Union[list[int], dict[EdgeType, list[int]]]: Normalized fanout. A list[int] for
             homogeneous datasets, otherwise a dict[EdgeType, list[int]] over message-passing edges.
+    Raises:
+        ValueError: If a label edge type is supplied in ``num_neighbors``, if the dataset has
+            no message-passing edge types to fan out around, or on malformed fanout (extra or
+            missing edge types, inconsistent hop counts, or negative fanout).
     """
     if edge_types is None:
         if isinstance(num_neighbors, abc.Mapping):
@@ -99,18 +104,25 @@ def patch_fanout_for_sampling(
             edge_type: original_fanout for edge_type in message_passing_edge_types
         }
     else:
+        # Label (positive/negative supervision) edges are injected internally and are
+        # never sampled, so callers must not specify them in the fanout. Reject them
+        # explicitly: they are part of the dataset edge types, so the extra-edge-types
+        # check below would not catch them.
+        provided_label_edge_types = {
+            edge_type for edge_type in num_neighbors if is_label_edge_type(edge_type)
+        }
+        if provided_label_edge_types:
+            raise ValueError(
+                f"Label edge types {provided_label_edge_types} were provided in num_neighbors. "
+                "Label (positive/negative supervision) edges are injected internally and are never "
+                "sampled, so they must not be specified in the fanout."
+            )
         extra_edge_types = set(num_neighbors.keys()) - set(edge_types)
         if extra_edge_types:
             raise ValueError(
                 f"Found extra edge types {extra_edge_types} in fanout which is not in dataset edge types {edge_types}."
             )
-        # Label edges are injected internally and are never sampled; drop any the
-        # caller supplied so the fanout dict only contains message-passing edges.
-        num_neighbors = {
-            edge_type: deepcopy(fanout)
-            for edge_type, fanout in num_neighbors.items()
-            if not is_label_edge_type(edge_type)
-        }
+        num_neighbors = deepcopy(num_neighbors)
         missing_edge_types = set(message_passing_edge_types) - set(num_neighbors.keys())
         if missing_edge_types:
             raise ValueError(
