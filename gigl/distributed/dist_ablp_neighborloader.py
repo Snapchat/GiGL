@@ -8,11 +8,17 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
+from graphlearn_torch.sampler import SamplingType
+from graphlearn_torch.typing import as_str
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
+from gigl.distributed._collate_dispatch import (
+    collate_cpp_heterogeneous,
+    collate_cpp_homogeneous,
+)
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -24,6 +30,7 @@ from gigl.distributed.sampler import (
     ABLPNodeSamplerInput,
 )
 from gigl.distributed.sampler_options import (
+    PPRSamplerOptions,
     SamplerOptions,
     resolve_sampler_options,
 )
@@ -1049,6 +1056,46 @@ class DistABLPLoader(BaseDistLoader):
             data.y_negative = output_negative_labels
         return data
 
+    def _collate_glt_body(self, stripped_msg: SampleMessage) -> Union[Data, HeteroData]:
+        """Run the GLT collate body via the configured implementation.
+
+        ``GIGL_COLLATE_IMPL`` selects between the original GLT Python body
+        (``python``/``vectorized``) and the C++ kernel (``cpp``). The C++ path
+        falls back to the Python body when a PPR sampler is active, because PPR
+        rewrites edges downstream and is out of scope for the C++ kernel (v1).
+
+        Args:
+            stripped_msg: SampleMessage with ``#META.`` keys already removed.
+
+        Returns:
+            Union[Data, HeteroData]: The collated batch before GiGL wrappers.
+        """
+        impl = resolve_collate_impl()
+        if impl != "cpp" or isinstance(self._sampler_options, PPRSamplerOptions):
+            return super()._collate_fn(stripped_msg)
+        is_hetero = bool(stripped_msg["#IS_HETERO"])
+        has_batch = self.sampling_config.sampling_type in (
+            SamplingType.NODE,
+            SamplingType.SUBGRAPH,
+        )
+        if is_hetero:
+            return collate_cpp_heterogeneous(
+                msg=stripped_msg,
+                node_types=[as_str(nt) for nt in self._node_types],
+                edge_type_str_to_rev=self._etype_str_to_rev,
+                reversed_edge_types=self._reversed_edge_types,
+                input_type=as_str(self._input_type),
+                has_batch=has_batch,
+                batch_size=self.batch_size,
+                to_device=self.to_device,
+            )
+        return collate_cpp_homogeneous(
+            msg=stripped_msg,
+            batch_size=self.batch_size,
+            has_batch=has_batch,
+            to_device=self.to_device,
+        )
+
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
         # extract_metadata separates #META. keys from the message to work
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
@@ -1056,7 +1103,7 @@ class DistABLPLoader(BaseDistLoader):
         # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
 
-        data = super()._collate_fn(stripped_msg)
+        data = self._collate_glt_body(stripped_msg)
 
         data = set_missing_features(
             data=data,
