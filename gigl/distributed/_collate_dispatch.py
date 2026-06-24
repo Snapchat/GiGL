@@ -154,7 +154,10 @@ def _move_msg_to_device(
 
 
 def collate_cpp_homogeneous(
-    msg: dict[str, torch.Tensor], batch_size: int, has_batch: bool, to_device: torch.device
+    msg: dict[str, torch.Tensor],
+    batch_size: int,
+    has_batch: bool,
+    to_device: torch.device,
 ) -> Data:
     """Collate a homogeneous (metadata-stripped) sampler message via the C++ kernel.
 

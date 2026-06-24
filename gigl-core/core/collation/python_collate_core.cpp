@@ -65,14 +65,13 @@ py::dict collateHomogeneousBinding(const torch::Tensor& ids,
     return homogeneousToDict(result);
 }
 
-gigl::collation::HeterogeneousCollateResult collateHeterogeneousBinding(
-    const py::dict& msg,
-    const std::vector<std::string>& nodeTypes,
-    const py::dict& edgeTypeStrToRev,
-    const py::list& reversedEdgeTypes,
-    const std::string& inputType,
-    bool hasBatch,
-    int64_t batchSize) {
+gigl::collation::HeterogeneousCollateResult collateHeterogeneousBinding(const py::dict& msg,
+                                                                        const std::vector<std::string>& nodeTypes,
+                                                                        const py::dict& edgeTypeStrToRev,
+                                                                        const py::list& reversedEdgeTypes,
+                                                                        const std::string& inputType,
+                                                                        bool hasBatch,
+                                                                        int64_t batchSize) {
     // Convert Python containers to C++ types (GIL held here).
     std::unordered_map<std::string, torch::Tensor> msgCpp;
     for (auto item : msg) {
@@ -89,76 +88,95 @@ gigl::collation::HeterogeneousCollateResult collateHeterogeneousBinding(
     gigl::collation::HeterogeneousCollateResult result;
     {
         py::gil_scoped_release release;
-        result = gigl::collation::collateHeterogeneous(
-            msgCpp, nodeTypes, mapCpp, revCpp, inputType, hasBatch, batchSize);
+        result =
+            gigl::collation::collateHeterogeneous(msgCpp, nodeTypes, mapCpp, revCpp, inputType, hasBatch, batchSize);
     }
     return result;
 }
 
-}  // namespace
+} // namespace
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "Generic collation kernel for distributed neighbor loaders.";
 
     py::class_<gigl::collation::HeterogeneousCollateResult>(m, "CollateHeteroResult")
         .def_property_readonly("node",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.node) d[py::str(k)] = v;
-                return d;
-            })
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.node)
+                                       d[py::str(k)] = v;
+                                   return d;
+                               })
         .def_property_readonly("edge_index",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.edgeIndex) d[fromEdgeTypeArray(k)] = v;
-                return d;
-            })
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.edgeIndex)
+                                       d[fromEdgeTypeArray(k)] = v;
+                                   return d;
+                               })
         .def_property_readonly("edge",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.edge) d[fromEdgeTypeArray(k)] = v;
-                return d;
-            })
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.edge)
+                                       d[fromEdgeTypeArray(k)] = v;
+                                   return d;
+                               })
         .def_property_readonly("x",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.x) d[py::str(k)] = v;
-                return d;
-            })
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.x)
+                                       d[py::str(k)] = v;
+                                   return d;
+                               })
         .def_property_readonly("edge_attr",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.edgeAttr) d[fromEdgeTypeArray(k)] = v;
-                return d;
-            })
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.edgeAttr)
+                                       d[fromEdgeTypeArray(k)] = v;
+                                   return d;
+                               })
         .def_property_readonly("batch",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.batch) d[py::str(k)] = v;
-                return d;
-            })
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.batch)
+                                       d[py::str(k)] = v;
+                                   return d;
+                               })
         .def_property_readonly("num_sampled_nodes",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.numSampledNodes) d[py::str(k)] = v;
-                return d;
-            })
-        .def_property_readonly("num_sampled_edges",
-            [](const gigl::collation::HeterogeneousCollateResult& r) {
-                py::dict d;
-                for (const auto& [k, v] : r.numSampledEdges) d[fromEdgeTypeArray(k)] = v;
-                return d;
-            });
+                               [](const gigl::collation::HeterogeneousCollateResult& r) {
+                                   py::dict d;
+                                   for (const auto& [k, v] : r.numSampledNodes)
+                                       d[py::str(k)] = v;
+                                   return d;
+                               })
+        .def_property_readonly("num_sampled_edges", [](const gigl::collation::HeterogeneousCollateResult& r) {
+            py::dict d;
+            for (const auto& [k, v] : r.numSampledEdges)
+                d[fromEdgeTypeArray(k)] = v;
+            return d;
+        });
 
-    m.def("collate_homogeneous", &collateHomogeneousBinding,
-          py::arg("ids"), py::arg("rows"), py::arg("cols"), py::arg("eids"),
-          py::arg("nfeats"), py::arg("efeats"), py::arg("batch"),
-          py::arg("num_sampled_nodes"), py::arg("num_sampled_edges"),
+    m.def("collate_homogeneous",
+          &collateHomogeneousBinding,
+          py::arg("ids"),
+          py::arg("rows"),
+          py::arg("cols"),
+          py::arg("eids"),
+          py::arg("nfeats"),
+          py::arg("efeats"),
+          py::arg("batch"),
+          py::arg("num_sampled_nodes"),
+          py::arg("num_sampled_edges"),
           "Collate a homogeneous sampler message into component tensors.");
 
-    m.def("collate_heterogeneous", &collateHeterogeneousBinding,
-          py::arg("msg"), py::arg("node_types"), py::arg("edge_type_str_to_rev"),
-          py::arg("reversed_edge_types"), py::arg("input_type"), py::arg("has_batch"),
+    m.def("collate_heterogeneous",
+          &collateHeterogeneousBinding,
+          py::arg("msg"),
+          py::arg("node_types"),
+          py::arg("edge_type_str_to_rev"),
+          py::arg("reversed_edge_types"),
+          py::arg("input_type"),
+          py::arg("has_batch"),
           py::arg("batch_size"),
           "Collate a heterogeneous sampler message into component tensors.");
 }

@@ -5,8 +5,7 @@
 namespace {
 
 // Look up a key in the message; return nullopt if absent (mirrors `key in msg`).
-std::optional<torch::Tensor> tryGet(
-    const std::unordered_map<std::string, torch::Tensor>& msg, const std::string& key) {
+std::optional<torch::Tensor> tryGet(const std::unordered_map<std::string, torch::Tensor>& msg, const std::string& key) {
     auto it = msg.find(key);
     if (it == msg.end()) {
         return std::nullopt;
@@ -14,7 +13,7 @@ std::optional<torch::Tensor> tryGet(
     return it->second;
 }
 
-}  // namespace
+} // namespace
 
 namespace gigl {
 namespace collation {
@@ -34,16 +33,15 @@ torch::Tensor zeroCount(int64_t targetLen, const torch::TensorOptions& options) 
     return torch::zeros({targetLen}, options);
 }
 
-HomogeneousCollateResult collateHomogeneous(
-    const torch::Tensor& ids,
-    const torch::Tensor& rows,
-    const torch::Tensor& cols,
-    const std::optional<torch::Tensor>& eids,
-    const std::optional<torch::Tensor>& nfeats,
-    const std::optional<torch::Tensor>& efeats,
-    const std::optional<torch::Tensor>& batch,
-    const std::optional<torch::Tensor>& numSampledNodes,
-    const std::optional<torch::Tensor>& numSampledEdges) {
+HomogeneousCollateResult collateHomogeneous(const torch::Tensor& ids,
+                                            const torch::Tensor& rows,
+                                            const torch::Tensor& cols,
+                                            const std::optional<torch::Tensor>& eids,
+                                            const std::optional<torch::Tensor>& nfeats,
+                                            const std::optional<torch::Tensor>& efeats,
+                                            const std::optional<torch::Tensor>& batch,
+                                            const std::optional<torch::Tensor>& numSampledNodes,
+                                            const std::optional<torch::Tensor>& numSampledEdges) {
     HomogeneousCollateResult result;
     result.node = ids;
     result.edgeIndex = torch::stack({rows, cols});
@@ -75,7 +73,7 @@ HeterogeneousCollateResult collateHeterogeneous(
             result.x[ntype] = *nfeat;
         }
         if (auto nsn = tryGet(msg, ntype + ".num_sampled_nodes")) {
-            result.numSampledNodes[ntype] = *nsn;  // padded below
+            result.numSampledNodes[ntype] = *nsn; // padded below
         }
     }
 
@@ -94,7 +92,7 @@ HeterogeneousCollateResult collateHeterogeneous(
             result.edge[revEtype] = *eids;
         }
         if (auto nse = tryGet(msg, etypeStr + ".num_sampled_edges")) {
-            result.numSampledEdges[revEtype] = *nse;  // padded below
+            result.numSampledEdges[revEtype] = *nse; // padded below
         }
         if (auto efeat = tryGet(msg, etypeStr + ".efeats")) {
             result.edgeAttr[revEtype] = *efeat;
@@ -114,8 +112,7 @@ HeterogeneousCollateResult collateHeterogeneous(
         } else {
             // Slice the first batchSize anchor node ids (matches node_dict[inputType][:batch_size]).
             auto nodeIt = result.node.find(inputType);
-            TORCH_CHECK(nodeIt != result.node.end(),
-                        "batch fallback requires anchor node ids for inputType");
+            TORCH_CHECK(nodeIt != result.node.end(), "batch fallback requires anchor node ids for inputType");
             result.batch[inputType] = nodeIt->second.slice(/*dim=*/0, /*start=*/0, /*end=*/batchSize);
         }
     }
@@ -171,7 +168,7 @@ HeterogeneousCollateResult collateHeterogeneous(
     for (const auto& ntype : nodeTypes) {
         auto nodeIt = result.node.find(ntype);
         if (nodeIt == result.node.end()) {
-            continue;  // node type absent from this batch's node dict
+            continue; // node type absent from this batch's node dict
         }
         auto nodeDevice = nodeIt->second.device();
         auto countOpts = torch::TensorOptions().dtype(torch::kInt64).device(nodeDevice);
@@ -186,5 +183,5 @@ HeterogeneousCollateResult collateHeterogeneous(
     return result;
 }
 
-}  // namespace collation
-}  // namespace gigl
+} // namespace collation
+} // namespace gigl
