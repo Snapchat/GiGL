@@ -18,7 +18,6 @@ assembled object inherits the tensors' device.
 from typing import Final, Optional, Protocol
 
 import torch
-from gigl_core import collate_core
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
@@ -178,6 +177,8 @@ def collate_cpp_homogeneous(
     Returns:
         Data: The assembled homogeneous batch.
     """
+    from gigl_core import collate_core
+
     msg = _move_msg_to_device(msg, to_device)
     batch = msg.get("batch") if has_batch else None
     if has_batch and batch is None:
@@ -231,6 +232,8 @@ def collate_cpp_heterogeneous(
     Returns:
         HeteroData: The assembled heterogeneous batch.
     """
+    from gigl_core import collate_core
+
     msg = _move_msg_to_device(msg, to_device)
     result = collate_core.collate_heterogeneous(
         msg=msg,
