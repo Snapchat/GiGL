@@ -75,6 +75,36 @@ class CollateEquivalenceHelperTest(TestCase):
         with self.assertRaises(AssertionError):
             assert_collated_equal(a, b)
 
+    def _make_heterogeneous(self) -> HeteroData:
+        data = HeteroData()
+        data["a"].node = torch.tensor([10])
+        data["a"].batch = torch.tensor([10])
+        data["a"].batch_size = 1
+        data["b"].node = torch.tensor([11, 12, 13, 14])
+        edge_type = ("a", "to", "b")
+        data[edge_type].edge_index = torch.tensor([[0, 0], [0, 1]])
+        data.num_sampled_nodes = {"a": torch.tensor([1]), "b": torch.tensor([0, 4])}
+        data.num_sampled_edges = {edge_type: torch.tensor([2])}
+        data.y_positive = {edge_type: {0: torch.tensor([2, 3])}}
+        return data
+
+    def test_collated_equal_passes_for_identical_heterogeneous(self) -> None:
+        assert_collated_equal(self._make_heterogeneous(), self._make_heterogeneous())
+
+    def test_collated_equal_raises_on_hetero_node_type_mismatch(self) -> None:
+        a = self._make_heterogeneous()
+        b = self._make_heterogeneous()
+        b["b"].node = torch.tensor([11, 12, 13, 99])
+        with self.assertRaises(Exception):
+            assert_collated_equal(a, b)
+
+    def test_collated_equal_raises_on_hetero_label_edge_type_mismatch(self) -> None:
+        a = self._make_heterogeneous()
+        b = self._make_heterogeneous()
+        b.y_positive = {("a", "to", "b"): {0: torch.tensor([2])}}  # dropped index 3
+        with self.assertRaises(Exception):
+            assert_collated_equal(a, b)
+
 
 if __name__ == "__main__":
     absltest.main()

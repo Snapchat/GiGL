@@ -174,7 +174,9 @@ def _assert_homogeneous_equal(actual: Data, expected: Data) -> None:
     _assert_optional_tensor_equal(actual, expected, "num_sampled_edges")
     _assert_optional_tensor_equal(actual, expected, "batch")
 
-    assert getattr(actual, "batch_size", None) == getattr(expected, "batch_size", None), (
+    assert getattr(actual, "batch_size", None) == getattr(
+        expected, "batch_size", None
+    ), (
         f"batch_size differs: {getattr(actual, 'batch_size', None)} != "
         f"{getattr(expected, 'batch_size', None)}"
     )
@@ -196,7 +198,72 @@ def _assert_homogeneous_equal(actual: Data, expected: Data) -> None:
 
 
 def _assert_heterogeneous_equal(actual: HeteroData, expected: HeteroData) -> None:
-    raise NotImplementedError("Implemented in Task 2.")
+    """Assert two heterogeneous ``HeteroData`` batches are field-for-field identical.
+
+    Compares per-node-type ``node``/``x``/``batch``/``batch_size``,
+    per-edge-type ``edge_index``/``edge_attr`` connectivity,
+    the ``num_sampled_nodes``/``num_sampled_edges`` per-type dicts (matched absence ok),
+    and the nested ``y_positive``/``y_negative`` label fields.
+
+    Args:
+        actual: ``HeteroData`` produced by the implementation under test.
+        expected: Oracle ``HeteroData``.
+
+    Raises:
+        AssertionError: On any field mismatch.
+    """
+    assert set(actual.node_types) == set(expected.node_types), (
+        f"node type sets differ: {set(actual.node_types)} != {set(expected.node_types)}"
+    )
+    for node_type in expected.node_types:
+        # EXACT (dim=None) — see _assert_homogeneous_equal: sorting `node` decouples
+        # local->global identity from labels/coo and is a false-pass hole.
+        assert_tensor_equality(actual[node_type].node, expected[node_type].node)
+        _assert_optional_tensor_equal(actual[node_type], expected[node_type], "x")
+        _assert_optional_tensor_equal(actual[node_type], expected[node_type], "batch")
+        actual_bs = getattr(actual[node_type], "batch_size", None)
+        expected_bs = getattr(expected[node_type], "batch_size", None)
+        assert actual_bs == expected_bs, (
+            f"batch_size for {node_type} differs: {actual_bs} != {expected_bs}"
+        )
+
+    assert set(actual.edge_types) == set(expected.edge_types), (
+        f"edge type sets differ: {set(actual.edge_types)} != {set(expected.edge_types)}"
+    )
+    # coo() returns (dst_dict, src_dict, *rest) keyed by edge type for HeteroData.
+    actual_dst, actual_src, *_ = actual.coo()
+    expected_dst, expected_src, *_ = expected.coo()
+    assert set(actual_dst.keys()) == set(expected_dst.keys()), (
+        f"coo() edge-type key sets differ: {set(actual_dst.keys())} != {set(expected_dst.keys())}"
+    )
+    for edge_type in expected_dst:
+        # `node` per type is asserted bit-identical above, so the local edge-index
+        # tensors share a local id space — compare local endpoints EXACTLY (no sort;
+        # sorting src and dst independently would decouple them). See homogeneous note.
+        assert_tensor_equality(actual_src[edge_type], expected_src[edge_type])
+        assert_tensor_equality(actual_dst[edge_type], expected_dst[edge_type])
+        _assert_optional_tensor_equal(
+            actual[edge_type], expected[edge_type], "edge_attr"
+        )
+
+    # num_sampled_* are per-type dicts on HeteroData (matched absence allowed).
+    for attr in ("num_sampled_nodes", "num_sampled_edges"):
+        has_actual = hasattr(actual, attr) and getattr(actual, attr) is not None
+        has_expected = hasattr(expected, attr) and getattr(expected, attr) is not None
+        assert has_actual == has_expected, (
+            f"'{attr}' presence differs: actual={has_actual} expected={has_expected}"
+        )
+        if has_expected:
+            actual_map = getattr(actual, attr)
+            expected_map = getattr(expected, attr)
+            assert set(actual_map.keys()) == set(expected_map.keys()), (
+                f"'{attr}' key sets differ: {set(actual_map.keys())} != {set(expected_map.keys())}"
+            )
+            for key in expected_map:
+                assert_tensor_equality(actual_map[key], expected_map[key])
+
+    _assert_label_field_equal(actual, expected, "y_positive")
+    _assert_label_field_equal(actual, expected, "y_negative")
 
 
 def assert_collated_equal(
