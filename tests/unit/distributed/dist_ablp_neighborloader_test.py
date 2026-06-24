@@ -12,11 +12,14 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_ablp_neighborloader import AnchorLabels, DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
-from gigl.distributed.utils.neighborloader import COLLATE_IMPL_ENV_VAR
+from gigl.distributed.utils.neighborloader import (
+    ABLP_LABEL_FORMAT_ENV_VAR,
+    COLLATE_IMPL_ENV_VAR,
+)
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -522,6 +525,62 @@ def _collect_hetero_labels(
                 f"{collate_impl}: expected no negatives, got {datum.y_negative}"
             )
     return_dict[collate_impl] = (positive, negative)
+    shutdown_rpc()
+
+
+def _collect_homogeneous_labels_edge_list(
+    _: int,
+    return_dict,
+    dataset: DistDataset,
+    input_nodes: torch.Tensor,
+    batch_size: int,
+    has_negatives: bool,
+):
+    """Child-side: run the loader under GIGL_ABLP_LABEL_FORMAT=edge_list.
+
+    Translates AnchorLabels back to global ids using datum.node so the result
+    is directly comparable to the dict-format output from
+    _collect_homogeneous_labels.
+    """
+    os.environ[ABLP_LABEL_FORMAT_ENV_VAR] = "edge_list"
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+    )
+    collected_positive: dict[int, list[int]] = {}
+    collected_negative: dict[int, list[int]] = {}
+    for datum in loader:
+        assert isinstance(datum, Data)
+        node = datum.node
+        assert isinstance(datum.y_positive, AnchorLabels), (
+            f"Expected AnchorLabels under edge_list format, got {type(datum.y_positive)}"
+        )
+        y_positive_dict = datum.y_positive.to_dict()
+        for local_anchor, local_nodes in y_positive_dict.items():
+            global_anchor = int(node[local_anchor].item())
+            collected_positive[global_anchor] = sorted(
+                int(g.item()) for g in node[local_nodes]
+            )
+        if has_negatives:
+            assert isinstance(datum.y_negative, AnchorLabels), (
+                f"Expected AnchorLabels under edge_list format, got {type(datum.y_negative)}"
+            )
+            y_negative_dict = datum.y_negative.to_dict()
+            for local_anchor, local_nodes in y_negative_dict.items():
+                global_anchor = int(node[local_anchor].item())
+                collected_negative[global_anchor] = sorted(
+                    int(g.item()) for g in node[local_nodes]
+                )
+        else:
+            # No negative-label edge type: y_negative must be absent.
+            assert not hasattr(datum, "y_negative"), (
+                f"edge_list: expected no negatives, got {getattr(datum, 'y_negative', None)}"
+            )
+    return_dict["edge_list"] = (collected_positive, collected_negative)
     shutdown_rpc()
 
 
@@ -1160,6 +1219,98 @@ class DistABLPLoaderTest(TestCase):
                 positive = return_dict[collate_impl][0]
                 self.assertIn(empty_positive_anchor, positive)
                 self.assertEqual(positive[empty_positive_anchor], [])
+
+    @parameterized.expand(
+        [
+            param(
+                "positive and negative",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=True,
+            ),
+            param(
+                "positive only",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=False,
+            ),
+        ]
+    )
+    def test_label_format_edge_list_equivalence(
+        self,
+        _,
+        labeled_edges,
+        input_nodes,
+        batch_size,
+        has_negatives,
+    ):
+        """GIGL_ABLP_LABEL_FORMAT=edge_list produces AnchorLabels whose .to_dict()
+        matches the dict-format (python collate impl) output exactly.
+        """
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [[10, 10, 11, 11, 15, 15, 16, 16], [11, 12, 13, 17, 13, 14, 12, 14]]
+            ),
+        }
+        edge_index.update(labeled_edges)
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        return_dict = manager.dict()
+
+        # Collect dict-format baseline with the python collate impl.
+        mp.spawn(
+            fn=_collect_homogeneous_labels,
+            args=(
+                return_dict,
+                "python",
+                dataset,
+                input_nodes,
+                batch_size,
+                has_negatives,
+            ),
+        )
+
+        # Collect edge_list format (AnchorLabels), expanded back to dicts.
+        mp.spawn(
+            fn=_collect_homogeneous_labels_edge_list,
+            args=(
+                return_dict,
+                dataset,
+                input_nodes,
+                batch_size,
+                has_negatives,
+            ),
+        )
+
+        self.assertEqual(return_dict["python"][0], return_dict["edge_list"][0])
+        self.assertEqual(return_dict["python"][1], return_dict["edge_list"][1])
 
     @parameterized.expand(
         [

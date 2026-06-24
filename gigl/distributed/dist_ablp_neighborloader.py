@@ -41,6 +41,7 @@ from gigl.distributed.utils.neighborloader import (
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    resolve_ablp_label_format,
     resolve_collate_impl,
     set_missing_features,
     shard_nodes_by_process,
@@ -571,6 +572,11 @@ class DistABLPLoader(BaseDistLoader):
         e.g. if there are supervision edge types: (a, to, b) and (a, to, c), then the label fields could be:
             - `y_positive`: {(a, to, b): {0: torch.tensor([1])}, (a, to, c): {0: torch.tensor([2])}}
             - `y_negative`: {(a, to, b): {0: torch.tensor([3])}, (a, to, c): {0: torch.tensor([4])}}
+
+        When ``GIGL_ABLP_LABEL_FORMAT=edge_list`` (opt-in), ``y_positive`` and
+        ``y_negative`` are instead :class:`AnchorLabels` (single supervision edge
+        type) or ``dict[EdgeType, AnchorLabels]`` (multiple), a dense edge-list
+        form. ``AnchorLabels.to_dict()`` recovers the ragged dict above.
 
         Args:
             dataset (Union[DistDataset, RemoteDistDataset]): The dataset to sample from.
@@ -1211,7 +1217,10 @@ class DistABLPLoader(BaseDistLoader):
             )
 
         collate_impl = resolve_collate_impl()
-        if collate_impl == "vectorized" or collate_impl == "cpp":
+        label_format = resolve_ablp_label_format()
+        if label_format == "edge_list":
+            label_remap = edge_list_set_labels
+        elif collate_impl == "vectorized" or collate_impl == "cpp":
             # The C++ collate path reuses the vectorized PyTorch label remap; the
             # C++ core (sub-plan C) does not reimplement label remapping.
             label_remap = vectorized_set_labels
