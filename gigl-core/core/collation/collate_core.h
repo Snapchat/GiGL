@@ -19,5 +19,14 @@ namespace collation {
 // Sentinel used by the scaffold import test; removed once real entry points land.
 int ping();
 
+// Right-pad a 1-D per-hop count tensor with zeros to `targetLen` on its own device.
+// Mirrors torch.nn.functional.pad(t, (0, targetLen - t.size(0))).
+// Precondition: counts.dim() == 1 and counts.size(0) <= targetLen.
+torch::Tensor padCount(const torch::Tensor& counts, int64_t targetLen);
+
+// Build a length-`targetLen` zero count vector with the given options (dtype/device).
+// Mirrors torch.tensor([0]*targetLen, device=...).
+torch::Tensor zeroCount(int64_t targetLen, const torch::TensorOptions& options);
+
 }  // namespace collation
 }  // namespace gigl
