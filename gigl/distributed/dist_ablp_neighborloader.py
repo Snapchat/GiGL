@@ -417,6 +417,78 @@ def vectorized_set_labels(
     return output_positive_labels, output_negative_labels
 
 
+def edge_list_set_labels(
+    node_local_to_global_by_type: dict[NodeType, torch.Tensor],
+    positive_labels_by_edge_type: dict[EdgeType, torch.Tensor],
+    negative_labels_by_edge_type: dict[EdgeType, torch.Tensor],
+    supervision_edge_types: list[EdgeType],
+    to_device: torch.device,
+) -> tuple[dict[EdgeType, AnchorLabels], dict[EdgeType, AnchorLabels]]:
+    """Dense edge-list label remap from global label ids to local node indices.
+
+    Drop-in alternative to :func:`vectorized_set_labels` that emits, per label
+    edge type, an :class:`AnchorLabels` dense edge-list instead of a ragged
+    ``dict[int, torch.Tensor]``. Membership semantics are identical; expanding
+    each result via :meth:`AnchorLabels.to_dict` reproduces
+    :func:`_loop_set_labels` bit-for-bit.
+
+    Precondition (REQUIRED): each ``node`` local->global map must contain UNIQUE
+    global ids -- see :func:`vectorized_set_labels` for the rationale.
+
+    Args:
+        node_local_to_global_by_type (dict[NodeType, torch.Tensor]): Per node
+            type, a ``[N]`` tensor whose ``i``-th entry is the global id of
+            local node ``i``. Global ids MUST be unique within each map.
+        positive_labels_by_edge_type (dict[EdgeType, torch.Tensor]): Per
+            positive-label edge type, a ``[N_anchors, M]`` ``-1``-padded tensor
+            of global label ids.
+        negative_labels_by_edge_type (dict[EdgeType, torch.Tensor]): As above,
+            for negative-label edge types. May be empty.
+        supervision_edge_types (list[EdgeType]): Accepted for signature parity
+            with the other kernels; unused here.
+        to_device (torch.device): Device for every output tensor.
+
+    Returns:
+        Tuple ``(y_positive, y_negative)``, each a
+        ``dict[message_passing_edge_type, AnchorLabels]`` with NO entry for a
+        zero-anchor label tensor (matching the loop's defaultdict).
+    """
+    del supervision_edge_types  # Accepted for signature parity; not needed here.
+    edge_index = 2  # Supervision edge types are (anchor, to, supervision).
+    sorted_cache: dict[NodeType, tuple[torch.Tensor, torch.Tensor]] = {}
+
+    def _sorted_for(node_type: NodeType) -> tuple[torch.Tensor, torch.Tensor]:
+        if node_type not in sorted_cache:
+            sorted_cache[node_type] = torch.sort(
+                node_local_to_global_by_type[node_type]
+            )
+        return sorted_cache[node_type]
+
+    output_positive_labels: dict[EdgeType, AnchorLabels] = {}
+    for edge_type, label_tensor in positive_labels_by_edge_type.items():
+        if label_tensor.size(0) == 0:
+            continue
+        sorted_node, sort_perm = _sorted_for(edge_type[edge_index])
+        output_positive_labels[
+            label_edge_type_to_message_passing_edge_type(edge_type)
+        ] = _remap_one_label_tensor_edge_list(
+            label_tensor, sorted_node, sort_perm, to_device
+        )
+
+    output_negative_labels: dict[EdgeType, AnchorLabels] = {}
+    for edge_type, label_tensor in negative_labels_by_edge_type.items():
+        if label_tensor.size(0) == 0:
+            continue
+        sorted_node, sort_perm = _sorted_for(edge_type[edge_index])
+        output_negative_labels[
+            label_edge_type_to_message_passing_edge_type(edge_type)
+        ] = _remap_one_label_tensor_edge_list(
+            label_tensor, sorted_node, sort_perm, to_device
+        )
+
+    return output_positive_labels, output_negative_labels
+
+
 class DistABLPLoader(BaseDistLoader):
     # Counts instantiations of this class, per process.
     # This is needed so we can generate unique worker key for each instance, for graph store mode.
