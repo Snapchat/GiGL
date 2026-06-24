@@ -1,5 +1,6 @@
 """Shared functionality for launching Vertex AI jobs for training and inference."""
 
+import os
 from collections.abc import Mapping
 from typing import Final, Optional
 
@@ -104,6 +105,7 @@ def launch_single_pool_job(
                 cuda_docker_uri=cuda_docker_uri,
                 component=component,
             ),
+            *_collate_impl_passthrough_env_vars(),
         ],
         labels=resource_config_wrapper.get_resource_labels(component=component),
     )
@@ -195,6 +197,7 @@ def launch_graph_store_enabled_job(
             cuda_docker_uri=cuda_docker_uri,
             component=component,
         ),
+        *_collate_impl_passthrough_env_vars(),
     ]
 
     labels = resource_config_wrapper.get_resource_labels(component=component)
@@ -348,6 +351,31 @@ def _build_vertex_ai_job_name(job_name: str, component: GiGLComponents) -> str:
     raise ValueError(
         f"Invalid component: {component}. Expected one of: {_LAUNCHABLE_COMPONENTS}"
     )
+
+
+# Name of the collate-implementation selection env var read by the distributed
+# loaders' collate path. Forwarded verbatim into worker containers so a value
+# set on the launcher process reaches the workers (worker containers do not
+# inherit the launcher's process environment). Generic passthrough: no value
+# validation here (the loader validates / defaults).
+_COLLATE_IMPL_ENV_NAME = "GIGL_COLLATE_IMPL"
+
+
+def _collate_impl_passthrough_env_vars() -> list[env_var.EnvVar]:
+    """Return the collate-impl env var to inject into worker containers.
+
+    Forwards ``GIGL_COLLATE_IMPL`` from the launcher process environment into
+    the Vertex AI worker spec when it is set to a non-empty value; otherwise
+    returns an empty list so default behavior is unchanged.
+
+    Returns:
+        A single-element list with the passthrough ``EnvVar`` when the variable
+        is set, else an empty list.
+    """
+    value = os.environ.get(_COLLATE_IMPL_ENV_NAME)
+    if not value:
+        return []
+    return [env_var.EnvVar(name=_COLLATE_IMPL_ENV_NAME, value=value)]
 
 
 def _build_common_gigl_env_vars(
