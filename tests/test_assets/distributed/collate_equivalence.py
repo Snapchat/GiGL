@@ -6,11 +6,15 @@ so callers can assert that two collation implementations produce identical outpu
 They are shared by the collate-equivalence unit tests across implementations.
 """
 
+import gc
+import os
+from collections.abc import Callable, Iterable, Sequence
 from typing import Union
 
 import torch
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.utils.neighborloader import COLLATE_IMPL_ENV_VAR, COLLATE_IMPLS
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
@@ -292,3 +296,98 @@ def assert_collated_equal(
         _assert_homogeneous_equal(actual, expected)
     else:
         _assert_heterogeneous_equal(actual, expected)
+
+
+def collect_batches(
+    loader_factory: Callable[[], Iterable[Union[Data, HeteroData]]],
+    impl: str,
+) -> list[Union[Data, HeteroData]]:
+    """Collect all batches from a loader under a given collate implementation.
+
+    Sets :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPL_ENV_VAR`
+    to ``impl``, iterates the loader returned by ``loader_factory``, collects
+    every batch into a list, then restores the previous env-var value and calls
+    ``gc.collect()`` to release the loader.
+
+    Args:
+        loader_factory: Zero-argument callable that returns an iterable of
+            ``Data`` or ``HeteroData`` batches.  Called once per invocation;
+            must honour the current value of
+            :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPL_ENV_VAR`
+            when producing batches.
+        impl: Collate implementation name, e.g. ``"python"`` or
+            ``"vectorized"``.  Must be a member of
+            :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPLS`.
+
+    Returns:
+        list[Union[Data, HeteroData]]: All batches produced by the loader, in
+        iteration order.
+
+    Raises:
+        ValueError: If ``impl`` is not in
+            :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPLS`.
+    """
+    if impl not in COLLATE_IMPLS:
+        raise ValueError(f"impl must be one of {COLLATE_IMPLS}, got {impl!r}.")
+    prev = os.environ.get(COLLATE_IMPL_ENV_VAR)
+    try:
+        os.environ[COLLATE_IMPL_ENV_VAR] = impl
+        loader = loader_factory()
+        batches: list[Union[Data, HeteroData]] = list(loader)
+    finally:
+        if prev is None:
+            os.environ.pop(COLLATE_IMPL_ENV_VAR, None)
+        else:
+            os.environ[COLLATE_IMPL_ENV_VAR] = prev
+        gc.collect()
+    return batches
+
+
+def assert_impls_equivalent(
+    loader_factory: Callable[[], Iterable[Union[Data, HeteroData]]],
+    impls: Sequence[str] = ("python", "vectorized"),
+) -> None:
+    """Assert that all collate implementations produce identical batches.
+
+    Runs ``loader_factory`` once per entry in ``impls`` via
+    :func:`collect_batches`, then compares every batch produced by the first
+    impl against the corresponding batch from every other impl using
+    :func:`assert_collated_equal`.
+
+    The first element of ``impls`` is treated as the oracle (reference
+    implementation).  All subsequent impls are compared against it.
+
+    Args:
+        loader_factory: Zero-argument callable that returns an iterable of
+            ``Data`` or ``HeteroData`` batches.  Must honour
+            :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPL_ENV_VAR`
+            when producing batches.
+        impls: Sequence of implementation names to exercise.  Defaults to
+            ``("python", "vectorized")``.  Must contain at least one element;
+            all elements must be in
+            :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPLS`.
+
+    Raises:
+        ValueError: If ``impls`` is empty or contains an unknown implementation.
+        AssertionError: If any two implementations produce different batches,
+            or if the batch counts differ across implementations.
+    """
+    if len(impls) == 0:
+        raise ValueError("impls must contain at least one implementation name.")
+
+    reference_impl = impls[0]
+    reference_batches = collect_batches(loader_factory, reference_impl)
+
+    for other_impl in impls[1:]:
+        other_batches = collect_batches(loader_factory, other_impl)
+        assert len(reference_batches) == len(other_batches), (
+            f"batch count differs between {reference_impl!r} ({len(reference_batches)}) "
+            f"and {other_impl!r} ({len(other_batches)})"
+        )
+        for batch_idx, (ref_batch, other_batch) in enumerate(
+            zip(reference_batches, other_batches)
+        ):
+            assert_collated_equal(
+                actual=other_batch,
+                expected=ref_batch,
+            )

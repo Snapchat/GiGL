@@ -1,9 +1,14 @@
+import os
+from collections.abc import Iterator
+
 import torch
 from absl.testing import absltest
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.utils.neighborloader import COLLATE_IMPL_ENV_VAR
 from tests.test_assets.distributed.collate_equivalence import (
     assert_collated_equal,
+    assert_impls_equivalent,
     assert_label_dict_equal,
 )
 from tests.test_assets.test_case import TestCase
@@ -104,6 +109,41 @@ class CollateEquivalenceHelperTest(TestCase):
         b.y_positive = {("a", "to", "b"): {0: torch.tensor([2])}}  # dropped index 3
         with self.assertRaises(Exception):
             assert_collated_equal(a, b)
+
+    def test_assert_impls_equivalent_passes_for_homogeneous(self) -> None:
+        # Fake loader that always returns the same homogeneous batch regardless of impl.
+        expected = self._make_homogeneous()
+
+        def _homo_loader_factory() -> Iterator[Data]:
+            yield self._make_homogeneous()
+
+        assert_impls_equivalent(_homo_loader_factory, impls=("python", "vectorized"))
+        # Verify the expected batch is unchanged (sanity check on factory isolation).
+        assert_collated_equal(self._make_homogeneous(), expected)
+
+    def test_assert_impls_equivalent_passes_for_heterogeneous(self) -> None:
+        # Fake loader that always returns the same heterogeneous batch regardless of impl.
+        def _hetero_loader_factory() -> Iterator[HeteroData]:
+            yield self._make_heterogeneous()
+
+        assert_impls_equivalent(_hetero_loader_factory, impls=("python", "vectorized"))
+
+    def test_assert_impls_equivalent_raises_on_mismatch(self) -> None:
+        # Fake loader that returns different node tensors depending on the active impl.
+        # When GIGL_COLLATE_IMPL is "vectorized" it mutates one node value to expose a
+        # disagreement that assert_impls_equivalent must catch.
+        def _mismatched_loader_factory() -> Iterator[Data]:
+            data = self._make_homogeneous()
+            if os.environ.get(COLLATE_IMPL_ENV_VAR) == "vectorized":
+                data.node = torch.tensor(
+                    [10, 11, 99]
+                )  # differs from python's [10,11,12]
+            yield data
+
+        with self.assertRaises(Exception):
+            assert_impls_equivalent(
+                _mismatched_loader_factory, impls=("python", "vectorized")
+            )
 
 
 if __name__ == "__main__":
