@@ -267,6 +267,21 @@ class BaseDistLoader(DistLoader):
         self._num_recv = 0
         self._epoch = 0
 
+        # Opt-in, workload-agnostic per-batch timing accumulators. When
+        # ``_collect_loader_timings`` is True, ``__next__`` brackets the channel
+        # receive and the collate step separately so callers can attribute
+        # ``next()`` wall time to channel-wait vs. collation. Disabled by default
+        # so the hot path is byte-identical to the parent loader otherwise.
+        # ``_sync_cuda_for_timings`` (also opt-in) forces a CUDA sync at each
+        # timing boundary so asynchronously-launched GPU work is attributed to
+        # the correct bucket; it perturbs prefetch overlap, so it is OFF by
+        # default and only used for a dedicated attribution pass.
+        self._collect_loader_timings: bool = False
+        self._sync_cuda_for_timings: bool = False
+        self._recv_time_s: float = 0.0
+        self._collate_time_s: float = 0.0
+        self._timed_batches: int = 0
+
         # --- Mode-specific attributes and connection initialization ---
         if (
             isinstance(dataset, DistDataset)
@@ -996,6 +1011,73 @@ class BaseDistLoader(DistLoader):
             # the message.
             torch.cuda.current_stream().synchronize()
         return super()._collate_fn(msg)
+
+    def reset_loader_timings(self) -> None:
+        """Zero the opt-in collate/recv timing accumulators.
+
+        Call before a measured phase so cumulative ``_recv_time_s`` /
+        ``_collate_time_s`` / ``_timed_batches`` reflect only that phase. A no-op
+        on correctness; safe to call repeatedly.
+        """
+        self._recv_time_s = 0.0
+        self._collate_time_s = 0.0
+        self._timed_batches = 0
+
+    def _maybe_sync_cuda_for_timings(self) -> None:
+        """Synchronize CUDA at a timing boundary when honest GPU attribution is on.
+
+        No-op unless ``_sync_cuda_for_timings`` is set and CUDA is available.
+        Forces queued GPU work to complete so the wall time on each side of the
+        boundary reflects finished computation rather than async dispatch. This
+        perturbs prefetch overlap, hence it is opt-in.
+        """
+        if self._sync_cuda_for_timings and torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    def __next__(self) -> Union[Data, HeteroData]:
+        """Fetch and collate the next sampled batch.
+
+        Mirrors the parent loader's control flow exactly. When
+        ``_collect_loader_timings`` is enabled, separately accumulates the wall
+        time spent receiving the raw message (channel ``recv`` or colocated
+        ``sample``) versus collating it into a ``Data`` / ``HeteroData``, so the
+        per-batch ``next()`` cost can be attributed to channel-wait vs.
+        collation. Disabled by default, in which case behavior is identical to
+        the parent loader.
+
+        On CUDA the collate step launches asynchronous kernels; set
+        ``_sync_cuda_for_timings`` to insert a ``torch.cuda.synchronize()`` at
+        each boundary for honest GPU attribution (at the cost of prefetch
+        overlap). See the CUDA-timing caveat in this task's Interfaces.
+        """
+        if self._num_recv == self._num_expected:
+            raise StopIteration
+
+        if not self._collect_loader_timings:
+            if self._with_channel:
+                msg = self._channel.recv()
+            else:
+                msg = self._collocated_producer.sample()
+            result = self._collate_fn(msg)
+            self._num_recv += 1
+            return result
+
+        recv_start = time.perf_counter()
+        if self._with_channel:
+            msg = self._channel.recv()
+        else:
+            msg = self._collocated_producer.sample()
+        self._maybe_sync_cuda_for_timings()
+        recv_end = time.perf_counter()
+        result = self._collate_fn(msg)
+        self._maybe_sync_cuda_for_timings()
+        collate_end = time.perf_counter()
+
+        self._recv_time_s += recv_end - recv_start
+        self._collate_time_s += collate_end - recv_end
+        self._timed_batches += 1
+        self._num_recv += 1
+        return result
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
