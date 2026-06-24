@@ -50,6 +50,45 @@ def resolve_collate_impl() -> CollateImpl:
     return value  # ty: ignore[invalid-return-type]
 
 
+ABLP_LABEL_FORMAT_ENV_VAR: Final[str] = "GIGL_ABLP_LABEL_FORMAT"
+AblpLabelFormat = Literal["dict", "edge_list"]
+ABLP_LABEL_FORMATS: Final[tuple[AblpLabelFormat, ...]] = ("dict", "edge_list")
+
+
+def resolve_ablp_label_format() -> AblpLabelFormat:
+    """Resolve the ABLP label-output format from the environment.
+
+    Reads ``GIGL_ABLP_LABEL_FORMAT`` (:data:`ABLP_LABEL_FORMAT_ENV_VAR`) and
+    lowercases it.
+
+    Returns ``"dict"`` (the validated-output default, a per-anchor ragged
+    ``dict[int, Tensor]``) when the variable is unset or empty.
+
+    The ``"edge_list"`` value selects the dense
+    :class:`gigl.distributed.dist_ablp_neighborloader.AnchorLabels` output.
+
+    This selector is orthogonal to ``GIGL_COLLATE_IMPL``: the collate-impl
+    selector chooses the collate BODY, this one chooses the LABEL container.
+
+    Returns:
+        AblpLabelFormat: One of ``"dict"``, ``"edge_list"``.
+
+    Raises:
+        ValueError: If the variable is set to a value outside
+            :data:`ABLP_LABEL_FORMATS`.
+    """
+    raw = os.environ.get(ABLP_LABEL_FORMAT_ENV_VAR)
+    if not raw:
+        return "dict"
+    value = raw.lower()
+    if value not in ABLP_LABEL_FORMATS:
+        raise ValueError(
+            f"{ABLP_LABEL_FORMAT_ENV_VAR} must be one of {ABLP_LABEL_FORMATS}, "
+            f"got {raw!r}."
+        )
+    return value  # ty: ignore[invalid-return-type]
+
+
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
 
 
