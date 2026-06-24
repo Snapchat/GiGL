@@ -25,4 +25,23 @@ TEST(ZeroCount, BuildsZeroVectorOfTargetLength) {
     EXPECT_TRUE(torch::equal(out, expected));
 }
 
+TEST(CollateHomogeneous, StacksEdgeIndexFromProvidedRowCol) {
+    // Caller passes rows/cols already in stack order (row first). The GLT homogeneous
+    // path passes cols as row and rows as col (dist_loader.py:446); here we verify the
+    // kernel stacks [rowsArg, colsArg] verbatim so the caller controls the swap.
+    auto ids = torch::tensor({10, 11, 12}, torch::kInt64);
+    auto rowsArg = torch::tensor({0, 1}, torch::kInt64);
+    auto colsArg = torch::tensor({1, 2}, torch::kInt64);
+    auto res = gigl::collation::collateHomogeneous(
+        ids, rowsArg, colsArg,
+        /*eids=*/c10::nullopt, /*nfeats=*/c10::nullopt, /*efeats=*/c10::nullopt,
+        /*batch=*/c10::nullopt, /*numSampledNodes=*/c10::nullopt,
+        /*numSampledEdges=*/c10::nullopt);
+    auto expectedEdgeIndex = torch::stack({rowsArg, colsArg});
+    EXPECT_TRUE(torch::equal(res.edgeIndex, expectedEdgeIndex));
+    EXPECT_TRUE(torch::equal(res.node, ids));
+    EXPECT_FALSE(res.eid.has_value());
+    EXPECT_FALSE(res.numSampledNodes.has_value());
+}
+
 }  // namespace

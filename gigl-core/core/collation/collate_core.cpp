@@ -24,5 +24,27 @@ torch::Tensor zeroCount(int64_t targetLen, const torch::TensorOptions& options) 
     return torch::zeros({targetLen}, options);
 }
 
+HomogeneousCollateResult collateHomogeneous(
+    const torch::Tensor& ids,
+    const torch::Tensor& rows,
+    const torch::Tensor& cols,
+    const std::optional<torch::Tensor>& eids,
+    const std::optional<torch::Tensor>& nfeats,
+    const std::optional<torch::Tensor>& efeats,
+    const std::optional<torch::Tensor>& batch,
+    const std::optional<torch::Tensor>& numSampledNodes,
+    const std::optional<torch::Tensor>& numSampledEdges) {
+    HomogeneousCollateResult result;
+    result.node = ids;
+    result.edgeIndex = torch::stack({rows, cols});
+    result.eid = eids;
+    result.x = nfeats;
+    result.edgeAttr = efeats;
+    result.batch = batch;
+    result.numSampledNodes = numSampledNodes;
+    result.numSampledEdges = numSampledEdges;
+    return result;
+}
+
 }  // namespace collation
 }  // namespace gigl
