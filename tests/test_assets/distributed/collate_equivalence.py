@@ -14,7 +14,10 @@ from typing import Union
 import torch
 from torch_geometric.data import Data, HeteroData
 
-from gigl.distributed.utils.neighborloader import COLLATE_IMPL_ENV_VAR, COLLATE_IMPLS
+from gigl.distributed.utils.neighborloader import (  # noqa: F401  (re-exported for tests)
+    COLLATE_IMPL_ENV_VAR,
+    COLLATE_IMPLS,
+)
 from tests.test_assets.distributed.utils import assert_tensor_equality
 
 
@@ -345,7 +348,7 @@ def collect_batches(
 
 def assert_impls_equivalent(
     loader_factory: Callable[[], Iterable[Union[Data, HeteroData]]],
-    impls: Sequence[str] = ("python", "vectorized"),
+    impls: Sequence[str] = COLLATE_IMPLS,
 ) -> None:
     """Assert that all collate implementations produce identical batches.
 
@@ -363,7 +366,7 @@ def assert_impls_equivalent(
             :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPL_ENV_VAR`
             when producing batches.
         impls: Sequence of implementation names to exercise.  Defaults to
-            ``("python", "vectorized")``.  Must contain at least one element;
+            ``COLLATE_IMPLS``.  Must contain at least one element;
             all elements must be in
             :data:`~gigl.distributed.utils.neighborloader.COLLATE_IMPLS`.
 
@@ -384,7 +387,7 @@ def assert_impls_equivalent(
             f"batch count differs between {reference_impl!r} ({len(reference_batches)}) "
             f"and {other_impl!r} ({len(other_batches)})"
         )
-        for batch_idx, (ref_batch, other_batch) in enumerate(
+        for _, (ref_batch, other_batch) in enumerate(
             zip(reference_batches, other_batches)
         ):
             assert_collated_equal(
