@@ -571,6 +571,30 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             )
         )
 
+    def test_forward_supports_cls_readout_in_ppr_mode(self) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+            sequence_positional_encoding_type="sinusoidal",
+            readout_mode="cls",
+            anchor_based_attention_bias_attr_names=["ppr_weight"],
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertIsNotNone(encoder._cls_token)
+        self.assertEqual(embeddings.shape, (3, 6))
+        self.assertFalse(torch.isnan(embeddings).any())
+
     def test_forward_supports_anchor_relative_and_ppr_token_input_features(
         self,
     ) -> None:

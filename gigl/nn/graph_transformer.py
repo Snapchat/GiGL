@@ -1,6 +1,6 @@
 """Graph Transformer encoder for heterogeneous graphs.
 
-Adapted from RelGT's LocalModule (https://github.com/snap-stanford/relgt).
+Adapted from RelGT's LocalModule.
 Converts heterogeneous graph data into fixed-length sequences via
 ``heterodata_to_graph_transformer_input``, processes through a stack of pre-norm
 transformer encoder layers, then produces per-node embeddings via
@@ -27,6 +27,8 @@ from gigl.transforms.graph_transformer import (
     TokenInputData,
     heterodata_to_graph_transformer_input,
 )
+
+_GRAPH_TRANSFORMER_READOUT_MODES = {"anchor_attention", "cls"}
 
 
 def _get_node_type_positional_encodings(
@@ -402,6 +404,10 @@ class GraphTransformerEncoder(nn.Module):
         attention_dropout_rate: Dropout probability for attention weights.
         should_l2_normalize_embedding_layer_output: Whether to L2 normalize
             output embeddings.
+        readout_mode: Sequence readout strategy. ``"anchor_attention"`` keeps
+            the historical anchor plus learned neighbor aggregation behavior,
+            ``"cls"`` prepends a learned sequence token and returns it after the
+            transformer stack.
         pe_attr_names: List of node-level positional encoding attribute names.
             In ``"concat"`` mode these are concatenated to sequence features.
             In ``"add"`` mode they are projected to ``hid_dim`` and added to
@@ -490,6 +496,7 @@ class GraphTransformerEncoder(nn.Module):
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         should_l2_normalize_embedding_layer_output: bool = False,
+        readout_mode: Literal["anchor_attention", "cls"] = "anchor_attention",
         pe_attr_names: Optional[list[str]] = None,
         anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
         anchor_based_input_attr_names: Optional[list[str]] = None,
@@ -531,6 +538,11 @@ class GraphTransformerEncoder(nn.Module):
                 "{None, 'sinusoidal'}, "
                 f"got '{sequence_positional_encoding_type}'"
             )
+        if readout_mode not in _GRAPH_TRANSFORMER_READOUT_MODES:
+            raise ValueError(
+                f"readout_mode must be one of {sorted(_GRAPH_TRANSFORMER_READOUT_MODES)}, "
+                f"got '{readout_mode}'"
+            )
         if (
             sequence_construction_method == "khop"
             and sequence_positional_encoding_type is not None
@@ -558,6 +570,7 @@ class GraphTransformerEncoder(nn.Module):
             )
         self._sequence_construction_method = sequence_construction_method
         self._sequence_positional_encoding_type = sequence_positional_encoding_type
+        self._readout_mode = readout_mode
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
         )
@@ -605,6 +618,11 @@ class GraphTransformerEncoder(nn.Module):
                 None,
                 persistent=False,
             )
+        if self._readout_mode == "cls":
+            self._cls_token = nn.Parameter(torch.zeros(1, 1, hid_dim))
+            nn.init.normal_(self._cls_token, mean=0.0, std=0.02)
+        else:
+            self.register_parameter("_cls_token", None)
 
         # Per-node-type input projection to hid_dim (like HGT's lin_dict)
         self._node_projection_dict = nn.ModuleDict(
@@ -793,7 +811,11 @@ class GraphTransformerEncoder(nn.Module):
         ) = heterodata_to_graph_transformer_input(
             data=projected_data,
             batch_size=num_anchor_nodes,
-            max_seq_len=self._max_seq_len,
+            max_seq_len=(
+                self._max_seq_len - 1
+                if self._readout_mode == "cls"
+                else self._max_seq_len
+            ),
             anchor_node_type=anchor_node_type,
             anchor_node_ids=anchor_node_ids,
             hop_distance=self._hop_distance,
@@ -820,6 +842,15 @@ class GraphTransformerEncoder(nn.Module):
                 valid_mask=valid_mask,
             )
 
+        if self._readout_mode == "cls":
+            sequences, valid_mask, sequence_auxiliary_data = (
+                self._prepend_cls_token_to_sequence(
+                    sequences=sequences,
+                    valid_mask=valid_mask,
+                    sequence_auxiliary_data=sequence_auxiliary_data,
+                )
+            )
+
         sequence_positional_encoding = self._get_sequence_positional_encoding(
             valid_mask=valid_mask,
             sequences=sequences,
@@ -844,6 +875,72 @@ class GraphTransformerEncoder(nn.Module):
             embeddings = F.normalize(embeddings, p=2, dim=-1)
 
         return embeddings
+
+    def _prepend_cls_token_to_sequence(
+        self,
+        sequences: Tensor,
+        valid_mask: Tensor,
+        sequence_auxiliary_data: SequenceAuxiliaryData,
+    ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
+        """Prepend a learned CLS token and zero-valued auxiliary features."""
+        if self._cls_token is None:
+            raise ValueError("CLS token is not initialized.")
+
+        batch_size = sequences.size(0)
+        cls_token = self._cls_token.to(
+            device=sequences.device,
+            dtype=sequences.dtype,
+        ).expand(batch_size, -1, -1)
+        sequences = torch.cat([cls_token, sequences], dim=1)
+
+        cls_valid_mask = torch.ones(
+            (batch_size, 1),
+            dtype=valid_mask.dtype,
+            device=valid_mask.device,
+        )
+        valid_mask = torch.cat([cls_valid_mask, valid_mask], dim=1)
+
+        anchor_bias = sequence_auxiliary_data["anchor_bias"]
+        if anchor_bias is not None:
+            cls_anchor_bias = torch.zeros(
+                batch_size,
+                1,
+                anchor_bias.size(-1),
+                dtype=anchor_bias.dtype,
+                device=anchor_bias.device,
+            )
+            anchor_bias = torch.cat([cls_anchor_bias, anchor_bias], dim=1)
+
+        pairwise_bias = sequence_auxiliary_data["pairwise_bias"]
+        if pairwise_bias is not None:
+            cls_key_bias = torch.zeros(
+                batch_size,
+                pairwise_bias.size(1),
+                1,
+                pairwise_bias.size(-1),
+                dtype=pairwise_bias.dtype,
+                device=pairwise_bias.device,
+            )
+            pairwise_bias = torch.cat([cls_key_bias, pairwise_bias], dim=2)
+            cls_query_bias = torch.zeros(
+                batch_size,
+                1,
+                pairwise_bias.size(2),
+                pairwise_bias.size(-1),
+                dtype=pairwise_bias.dtype,
+                device=pairwise_bias.device,
+            )
+            pairwise_bias = torch.cat([cls_query_bias, pairwise_bias], dim=1)
+
+        return (
+            sequences,
+            valid_mask,
+            {
+                "anchor_bias": anchor_bias,
+                "pairwise_bias": pairwise_bias,
+                "token_input": sequence_auxiliary_data["token_input"],
+            },
+        )
 
     def _get_sequence_positional_encoding(
         self,
@@ -1031,6 +1128,40 @@ class GraphTransformerEncoder(nn.Module):
 
         return attn_bias
 
+    def _readout_from_encoded_sequences(
+        self,
+        x: Tensor,
+        valid_mask: Tensor,
+    ) -> Tensor:
+        if self._readout_mode == "cls":
+            return x[:, 0, :]
+
+        anchor = x[:, 0, :].unsqueeze(1)
+
+        # Historical readout: anchor token plus attention-weighted neighbors.
+        neighbors = x[:, 1:, :]
+        neighbor_valid_mask = valid_mask[:, 1:]
+        seq_minus_one = neighbors.size(1)
+
+        if seq_minus_one == 0:
+            return anchor.squeeze(1)
+
+        anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
+        readout_scores = self._readout_attention(
+            torch.cat([anchor_expanded, neighbors], dim=-1)
+        )
+        readout_scores = readout_scores.masked_fill(
+            ~neighbor_valid_mask.unsqueeze(-1),
+            torch.finfo(readout_scores.dtype).min,
+        )
+        readout_weights = F.softmax(readout_scores, dim=1)
+        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
+        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
+            readout_weights.dtype
+        )
+        neighbor_aggregation = (neighbors * readout_weights).sum(dim=1, keepdim=True)
+        return (anchor + neighbor_aggregation).squeeze(1)
+
     def _encode_and_readout(
         self,
         sequences: Tensor,
@@ -1056,36 +1187,4 @@ class GraphTransformerEncoder(nn.Module):
         x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
-        # Readout: anchor (position 0) + attention-weighted neighbor aggregation
-        anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
-        neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
-        neighbor_valid_mask = valid_mask[:, 1:]
-        seq_minus_one = neighbors.size(1)
-
-        if seq_minus_one == 0:
-            return anchor.squeeze(1)
-
-        # Expand anchor to match neighbor dimension for concatenation
-        anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
-
-        # Compute attention scores over neighbors
-        readout_scores = self._readout_attention(
-            torch.cat([anchor_expanded, neighbors], dim=-1)
-        )  # (batch, seq-1, 1)
-        readout_scores = readout_scores.masked_fill(
-            ~neighbor_valid_mask.unsqueeze(-1),
-            torch.finfo(readout_scores.dtype).min,
-        )
-        readout_weights = F.softmax(readout_scores, dim=1)  # (batch, seq-1, 1)
-        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
-        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
-            readout_weights.dtype
-        )
-
-        neighbor_aggregation = (neighbors * readout_weights).sum(
-            dim=1, keepdim=True
-        )  # (batch, 1, hid_dim)
-
-        output = (anchor + neighbor_aggregation).squeeze(1)  # (batch, hid_dim)
-
-        return output
+        return self._readout_from_encoded_sequences(x=x, valid_mask=valid_mask)
