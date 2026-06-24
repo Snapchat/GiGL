@@ -353,29 +353,32 @@ def _build_vertex_ai_job_name(job_name: str, component: GiGLComponents) -> str:
     )
 
 
-# Name of the collate-implementation selection env var read by the distributed
-# loaders' collate path. Forwarded verbatim into worker containers so a value
-# set on the launcher process reaches the workers (worker containers do not
-# inherit the launcher's process environment). Generic passthrough: no value
-# validation here (the loader validates / defaults).
+# Names of distributed-loader selection env vars forwarded verbatim into worker
+# containers so a value set on the launcher process reaches the workers (worker
+# containers do not inherit the launcher's process environment). Generic
+# passthrough: no value validation here (the loader validates / defaults).
 _COLLATE_IMPL_ENV_NAME = "GIGL_COLLATE_IMPL"
+_ABLP_LABEL_FORMAT_ENV_NAME = "GIGL_ABLP_LABEL_FORMAT"
 
 
 def _collate_impl_passthrough_env_vars() -> list[env_var.EnvVar]:
-    """Return the collate-impl env var to inject into worker containers.
+    """Return loader-selection env vars to inject into worker containers.
 
-    Forwards ``GIGL_COLLATE_IMPL`` from the launcher process environment into
-    the Vertex AI worker spec when it is set to a non-empty value; otherwise
-    returns an empty list so default behavior is unchanged.
+    Forwards ``GIGL_COLLATE_IMPL`` and ``GIGL_ABLP_LABEL_FORMAT`` from the
+    launcher process environment into the Vertex AI worker spec when they are
+    set to non-empty values; otherwise omits them so default behavior is
+    unchanged.
 
     Returns:
-        A single-element list with the passthrough ``EnvVar`` when the variable
-        is set, else an empty list.
+        A list of passthrough ``EnvVar`` entries (one per set variable).
+        Empty when none of the forwarded variables are set.
     """
-    value = os.environ.get(_COLLATE_IMPL_ENV_NAME)
-    if not value:
-        return []
-    return [env_var.EnvVar(name=_COLLATE_IMPL_ENV_NAME, value=value)]
+    result: list[env_var.EnvVar] = []
+    for name in (_COLLATE_IMPL_ENV_NAME, _ABLP_LABEL_FORMAT_ENV_NAME):
+        value = os.environ.get(name)
+        if value:
+            result.append(env_var.EnvVar(name=name, value=value))
+    return result
 
 
 def _build_common_gigl_env_vars(
