@@ -15,9 +15,10 @@ The C++ kernel consumes already-on-device tensors and never issues transfers; th
 assembled object inherits the tensors' device.
 """
 
-from typing import Optional, Protocol
+from typing import Final, Optional, Protocol
 
 import torch
+from gigl_core import collate_core
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
@@ -116,3 +117,125 @@ def assemble_heterogeneous(result: CollateHeteroResultProtocol) -> HeteroData:
     data.num_sampled_nodes = dict(result.num_sampled_nodes)
     data.num_sampled_edges = dict(result.num_sampled_edges)
     return data
+
+
+# Keys whose tensors GLT keeps on their ARRIVAL device (it does not call .to on these):
+# num_sampled_nodes / num_sampled_edges, both homogeneous and per-type hetero
+# (dist_loader.py:365, 379, 428-429). Everything else is moved to to_device.
+_COUNT_KEY_SUFFIXES: Final[tuple[str, ...]] = ("num_sampled_nodes", "num_sampled_edges")
+
+
+def _move_msg_to_device(
+    msg: dict[str, torch.Tensor], to_device: torch.device
+) -> dict[str, torch.Tensor]:
+    """Move every message tensor to ``to_device`` EXCEPT the per-hop count tensors.
+
+    Reproduces GLT's device placement (``dist_loader.py:359-440``): ids/rows/cols/eids/
+    nfeats/efeats/batch get ``.to(to_device)``; ``num_sampled_*`` stay on their arrival
+    device. Mirrors the bulk move at ``base_dist_loader.py:991-993`` but is correct on
+    EVERY path (CPU; CUDA with or without ``non_blocking_transfers``), since the kernel
+    itself issues no transfers. Tensors already on ``to_device`` are returned as-is (no copy).
+
+    Args:
+        msg: SampleMessage with ``#META.`` keys already removed.
+        to_device: Target device for graph/feature/id tensors.
+
+    Returns:
+        dict[str, torch.Tensor]: A new dict with tensors placed per GLT's contract.
+    """
+    moved: dict[str, torch.Tensor] = {}
+    for key, value in msg.items():
+        is_count = any(key == s or key.endswith("." + s) for s in _COUNT_KEY_SUFFIXES)
+        if is_count or value.device == to_device:
+            moved[key] = value
+        else:
+            moved[key] = value.to(to_device)
+    return moved
+
+
+def collate_cpp_homogeneous(
+    msg: dict[str, torch.Tensor], batch_size: int, has_batch: bool, to_device: torch.device
+) -> Data:
+    """Collate a homogeneous (metadata-stripped) sampler message via the C++ kernel.
+
+    Reproduces the GLT homogeneous collate body (``dist_loader.py:423-449``): the
+    edge index is reversed (``cols`` becomes row, ``rows`` becomes col), so we pass
+    ``cols`` as the ``rows`` argument and ``rows`` as the ``cols`` argument to the
+    kernel, which stacks them verbatim.
+
+    Tensors are first placed on ``to_device`` per GLT's contract (the kernel issues no
+    transfers), so the output device matches the Python oracle on every loader path.
+
+    Args:
+        msg: SampleMessage with ``#META.`` keys already removed.
+        batch_size: Loader batch size (used when no ``batch`` key is present).
+        has_batch: Whether NODE/SUBGRAPH sampling produced a batch (vs. link sampling).
+        to_device: Target device (``self.to_device``); graph/id/feature tensors are moved here.
+
+    Returns:
+        Data: The assembled homogeneous batch.
+    """
+    msg = _move_msg_to_device(msg, to_device)
+    batch = msg.get("batch") if has_batch else None
+    if has_batch and batch is None:
+        batch = msg["ids"][:batch_size]
+    components = collate_core.collate_homogeneous(
+        ids=msg["ids"],
+        rows=msg["cols"],  # reversed: cols -> row
+        cols=msg["rows"],  # reversed: rows -> col
+        eids=msg.get("eids"),
+        nfeats=msg.get("nfeats"),
+        efeats=msg.get("efeats"),
+        batch=batch,
+        num_sampled_nodes=msg.get("num_sampled_nodes"),
+        num_sampled_edges=msg.get("num_sampled_edges"),
+    )
+    return assemble_homogeneous(components)
+
+
+def collate_cpp_heterogeneous(
+    msg: dict[str, torch.Tensor],
+    node_types: list[str],
+    edge_type_str_to_rev: dict[str, tuple[str, str, str]],
+    reversed_edge_types: list[tuple[str, str, str]],
+    input_type: str,
+    has_batch: bool,
+    batch_size: int,
+    to_device: torch.device,
+) -> HeteroData:
+    """Collate a heterogeneous (metadata-stripped) sampler message via the C++ kernel.
+
+    ``node_types``, ``edge_type_str_to_rev``, ``reversed_edge_types`` and
+    ``input_type`` mirror GLT ``DistLoader`` state (``dist_loader.py:318-330, 356, 367``).
+
+    Tensors are first placed on ``to_device`` per GLT's contract (``num_sampled_*`` kept on
+    arrival device); the kernel issues no transfers, so the output device matches the
+    Python oracle on every loader path.
+
+    Args:
+        msg: SampleMessage with ``#META.`` keys already removed.
+        node_types: All node-type strings, in the loader's order.
+        edge_type_str_to_rev: Map from message edge-type string to the reversed EdgeType.
+        reversed_edge_types: The reversed edge-type list (drives empty-edge filling).
+        input_type: The anchor node-type string.
+        has_batch: Whether NODE/SUBGRAPH sampling produced a batch.
+        batch_size: Loader batch size; used for the ``node[input_type][:batch_size]``
+            fallback when the ``{input_type}.batch`` key is absent
+            (``dist_loader.py:397-399``; GLT omits the key when ``output.batch`` is None,
+            ``dist_neighbor_sampler.py:781-783``).
+        to_device: Target device (``self.to_device``); graph/id/feature tensors are moved here.
+
+    Returns:
+        HeteroData: The assembled heterogeneous batch.
+    """
+    msg = _move_msg_to_device(msg, to_device)
+    result = collate_core.collate_heterogeneous(
+        msg=msg,
+        node_types=node_types,
+        edge_type_str_to_rev=edge_type_str_to_rev,
+        reversed_edge_types=reversed_edge_types,
+        input_type=input_type,
+        has_batch=has_batch,
+        batch_size=batch_size,
+    )
+    return assemble_heterogeneous(result)

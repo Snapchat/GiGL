@@ -49,3 +49,52 @@ class TestAssembleHeterogeneous(TestCase):
         )
         self.assertEqual(data["u"].batch_size, 2)
         torch.testing.assert_close(data.num_sampled_nodes["u"], torch.tensor([2, 0]))
+
+
+class TestCollateCppHomogeneous(TestCase):
+    def test_homogeneous_end_to_end(self) -> None:
+        msg = {
+            "ids": torch.tensor([10, 11, 12]),
+            "rows": torch.tensor([0, 1]),
+            "cols": torch.tensor([1, 2]),
+            "num_sampled_nodes": torch.tensor([2, 1]),
+            "num_sampled_edges": torch.tensor([2]),
+            "batch": torch.tensor([10, 11]),
+        }
+        data = cd.collate_cpp_homogeneous(
+            msg, batch_size=2, has_batch=True, to_device=torch.device("cpu")
+        )
+        # GLT homogeneous reverses: edge_index = stack([cols, rows]) (dist_loader.py:446).
+        torch.testing.assert_close(
+            data.edge_index, torch.stack([msg["cols"], msg["rows"]])
+        )
+        torch.testing.assert_close(data.node, msg["ids"])
+        self.assertEqual(data.batch_size, 2)
+
+
+class TestCollateCppHeterogeneous(TestCase):
+    def test_heterogeneous_end_to_end(self) -> None:
+        msg = {
+            "u.ids": torch.tensor([100, 101]),
+            "i.ids": torch.tensor([200, 201, 202]),
+            "u.num_sampled_nodes": torch.tensor([2]),
+            "i.num_sampled_nodes": torch.tensor([3]),
+            "u__to__i.rows": torch.tensor([0, 1]),
+            "u__to__i.cols": torch.tensor([0, 2]),
+            "u__to__i.num_sampled_edges": torch.tensor([2]),
+        }
+        data = cd.collate_cpp_heterogeneous(
+            msg=msg,
+            node_types=["u", "i"],
+            edge_type_str_to_rev={"u__to__i": ("i", "rev_to", "u")},
+            reversed_edge_types=[("i", "rev_to", "u")],
+            input_type="u",
+            has_batch=False,
+            batch_size=0,
+            to_device=torch.device("cpu"),
+        )
+        torch.testing.assert_close(
+            data["i", "rev_to", "u"].edge_index,
+            torch.stack([msg["u__to__i.cols"], msg["u__to__i.rows"]]),
+        )
+        torch.testing.assert_close(data["u"].node, msg["u.ids"])
