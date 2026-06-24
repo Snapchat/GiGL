@@ -1,4 +1,5 @@
 from collections import abc, defaultdict
+from dataclasses import dataclass
 from itertools import count
 from typing import Optional, Union
 
@@ -61,6 +62,49 @@ from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
+
+
+@dataclass(frozen=True)
+class AnchorLabels:
+    """Dense edge-list ABLP labels for one label edge type.
+
+    Replaces the ragged per-anchor ``dict[int, torch.Tensor]`` with two parallel
+    1-D ``long`` tensors. Pair ``k`` asserts that local anchor row
+    ``anchor_index[k]`` has label node ``label_index[k]``.
+
+    Pairs are ordered ascending by anchor, ties broken ascending by label
+    column -- identical to ``torch.nonzero`` over the ``[N_anchors, M]`` padded
+    label tensor, so concatenating the legacy dict's values in anchor order
+    yields ``label_index`` and the matching anchor repeats yield
+    ``anchor_index``.
+
+    Anchors with no in-subgraph labels contribute zero pairs; ``num_anchors``
+    records the full anchor count so empty anchors remain recoverable.
+
+    Args:
+        anchor_index (torch.Tensor): ``[E]`` long tensor of local anchor rows.
+        label_index (torch.Tensor): ``[E]`` long tensor of local label node ids.
+        num_anchors (int): Total number of anchors ``N`` (rows of the source
+            padded label tensor).
+    """
+
+    anchor_index: torch.Tensor
+    label_index: torch.Tensor
+    num_anchors: int
+
+    def to_dict(self) -> dict[int, torch.Tensor]:
+        """Expand to the legacy ragged ``dict[int, torch.Tensor]`` form.
+
+        Every anchor ``0..num_anchors-1`` receives a key; anchors with no labels
+        map to an empty ``long`` tensor on the same device as ``label_index``.
+
+        Returns:
+            Mapping from anchor index to its 1-D ``long`` tensor of local label
+            node ids.
+        """
+        counts = torch.bincount(self.anchor_index, minlength=self.num_anchors)
+        per_anchor = torch.split(self.label_index, counts.tolist())
+        return {anchor: per_anchor[anchor] for anchor in range(self.num_anchors)}
 
 
 def _loop_set_labels(
@@ -216,6 +260,72 @@ def _remap_one_label_tensor(
         anchor: per_anchor[anchor].to(to_device).to(torch.long)
         for anchor in range(num_anchors)
     }
+
+
+def _remap_one_label_tensor_edge_list(
+    label_tensor: torch.Tensor,
+    sorted_node: torch.Tensor,
+    sort_perm: torch.Tensor,
+    to_device: torch.device,
+) -> AnchorLabels:
+    """Vectorized edge-list remap of one ``[N_anchors, M]`` padded label tensor.
+
+    Identical membership semantics to :func:`_remap_one_label_tensor`, but emits
+    the dense :class:`AnchorLabels` edge-list directly instead of splitting into
+    a per-anchor dict -- strictly less work (no ``torch.split``, no per-anchor
+    Python comprehension, one device copy for the whole tensor).
+
+    Args:
+        label_tensor (torch.Tensor): ``[N_anchors, M]`` ``-1``-padded global
+            label ids.
+        sorted_node (torch.Tensor): ``torch.sort`` of the supervision node map.
+        sort_perm (torch.Tensor): Permutation from ``torch.sort`` mapping sorted
+            positions back to original local indices.
+        to_device (torch.device): Device for the output tensors.
+
+    Returns:
+        AnchorLabels with ``anchor_index``/``label_index`` in
+        :func:`torch.nonzero` order and ``num_anchors == label_tensor.size(0)``.
+    """
+    num_anchors = int(label_tensor.size(0))
+    num_nodes = int(sorted_node.size(0))
+    empty = AnchorLabels(
+        anchor_index=torch.empty(0, dtype=torch.long, device=to_device),
+        label_index=torch.empty(0, dtype=torch.long, device=to_device),
+        num_anchors=num_anchors,
+    )
+    if num_anchors == 0:
+        return empty
+
+    num_labels = int(label_tensor.size(1))
+    flat = label_tensor.reshape(-1)
+    anchor_of_entry = torch.arange(num_anchors).repeat_interleave(num_labels)
+
+    valid = flat != PADDING_NODE
+    flat = flat[valid]
+    anchor_of_entry = anchor_of_entry[valid]
+
+    if num_nodes == 0 or flat.numel() == 0:
+        return empty
+
+    if __debug__:
+        assert int(torch.unique(sorted_node).numel()) == num_nodes, (
+            "edge_list_set_labels requires a unique node local->global map; "
+            "duplicate global ids break the searchsorted membership lookup."
+        )
+    positions = torch.searchsorted(sorted_node, flat)
+    positions = positions.clamp_(max=num_nodes - 1)
+    found = sorted_node[positions] == flat
+    local_idx = sort_perm[positions][found]
+    anchor_kept = anchor_of_entry[found]
+
+    composite_key = anchor_kept * (num_nodes + 1) + local_idx
+    order = torch.argsort(composite_key, stable=True)
+    return AnchorLabels(
+        anchor_index=anchor_kept[order].to(to_device).to(torch.long),
+        label_index=local_idx[order].to(to_device).to(torch.long),
+        num_anchors=num_anchors,
+    )
 
 
 def vectorized_set_labels(
