@@ -19,10 +19,6 @@ std::optional<torch::Tensor> tryGet(
 namespace gigl {
 namespace collation {
 
-int ping() {
-    return 0;
-}
-
 torch::Tensor padCount(const torch::Tensor& counts, int64_t targetLen) {
     TORCH_CHECK(counts.dim() == 1, "per-hop count tensor must be 1-D");
     const int64_t current = counts.size(0);
