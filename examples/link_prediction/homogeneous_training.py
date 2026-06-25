@@ -134,6 +134,9 @@ def _setup_dataloaders(
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        # Return labels as a dense AnchorLabels edge-list so the loss reads
+        # anchor/label indices directly without a per-anchor Python loop.
+        use_list_output=True,
     )
 
     logger.info(f"---Rank {rank} finished setting up main loader")
@@ -190,18 +193,15 @@ def _compute_loss(
     query_node_idx: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_negative_batch_size = random_negative_data.batch_size
 
-    # main_data.y_positive is a dict[query_node_local_index: int, labeled_node_local_indices: torch.Tensor]
-    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    # We also extract a repeated query node index tensor which upsamples each query node based on the number of positives it has
-    repeated_query_node_idx = query_node_idx.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
+    # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True).
+    # label_index holds the local label node per (anchor, label) pair; anchor_index
+    # holds the matching local anchor row. Pairs are ordered ascending by anchor,
+    # so this is equivalent to the historical dict read
+    # (torch.cat(list(values())) + repeat_interleave over per-anchor lengths).
+    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
+    repeated_query_node_idx = query_node_idx[main_data.y_positive.anchor_index.to(device)]
     if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = torch.cat(
-            list(main_data.y_negative.values())
-        ).to(device)
+        hard_negative_idx: torch.Tensor = main_data.y_negative.label_index.to(device)
     else:
         hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
 
