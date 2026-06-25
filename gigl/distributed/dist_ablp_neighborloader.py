@@ -1,4 +1,5 @@
 from collections import abc, defaultdict
+from dataclasses import dataclass
 from itertools import count
 from typing import Optional, Union
 
@@ -53,6 +54,49 @@ from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
+
+
+@dataclass(frozen=True)
+class AnchorLabels:
+    """Dense edge-list ABLP labels for one label edge type.
+
+    Replaces the ragged per-anchor ``dict[int, torch.Tensor]`` with two parallel
+    1-D ``long`` tensors. Pair ``k`` asserts that local anchor row
+    ``anchor_index[k]`` has label node ``label_index[k]``.
+
+    Pairs are ordered ascending by anchor, ties broken ascending by label
+    column -- identical to ``torch.nonzero`` over the ``[N_anchors, M]`` padded
+    label tensor, so concatenating the legacy dict's values in anchor order
+    yields ``label_index`` and the matching anchor repeats yield
+    ``anchor_index``.
+
+    Anchors with no in-subgraph labels contribute zero pairs; ``num_anchors``
+    records the full anchor count so empty anchors remain recoverable.
+
+    Args:
+        anchor_index (torch.Tensor): ``[E]`` long tensor of local anchor rows.
+        label_index (torch.Tensor): ``[E]`` long tensor of local label node ids.
+        num_anchors (int): Total number of anchors ``N`` (rows of the source
+            padded label tensor).
+    """
+
+    anchor_index: torch.Tensor
+    label_index: torch.Tensor
+    num_anchors: int
+
+    def to_dict(self) -> dict[int, torch.Tensor]:
+        """Expand to the legacy ragged ``dict[int, torch.Tensor]`` form.
+
+        Every anchor ``0..num_anchors-1`` receives a key; anchors with no labels
+        map to an empty ``long`` tensor on the same device as ``label_index``.
+
+        Returns:
+            Mapping from anchor index to its 1-D ``long`` tensor of local label
+            node ids.
+        """
+        counts = torch.bincount(self.anchor_index, minlength=self.num_anchors)
+        per_anchor = torch.split(self.label_index, counts.tolist())
+        return {anchor: per_anchor[anchor] for anchor in range(self.num_anchors)}
 
 
 def _loop_set_labels(
@@ -332,6 +376,114 @@ def vectorized_set_labels(
         output_negative_labels[
             label_edge_type_to_message_passing_edge_type(edge_type)
         ] = _remap_one_label_tensor(label_tensor, sorted_node, sort_perm, to_device)
+
+    return output_positive_labels, output_negative_labels
+
+
+def _remap_one_label_tensor_edge_list(
+    label_tensor: torch.Tensor,
+    sorted_node: torch.Tensor,
+    sort_perm: torch.Tensor,
+    to_device: torch.device,
+) -> AnchorLabels:
+    """Vectorized edge-list remap of one ``[N_anchors, M]`` padded label tensor.
+
+    Thin wrapper over the shared :func:`_membership_remap`: wraps the returned
+    ``(anchor_index, local_index)`` pair stream directly into a dense
+    :class:`AnchorLabels`. This is strictly less work than the dict builder (no
+    ``torch.bincount``/``torch.split``, no per-anchor Python comprehension);
+    ``_membership_remap`` already moved both tensors to ``to_device`` as ``long``.
+
+    Args:
+        label_tensor (torch.Tensor): ``[N_anchors, M]`` ``-1``-padded global
+            label ids.
+        sorted_node (torch.Tensor): ``torch.sort`` of the supervision node map.
+        sort_perm (torch.Tensor): Permutation from ``torch.sort`` mapping sorted
+            positions back to original local indices.
+        to_device (torch.device): Device for the output tensors.
+
+    Returns:
+        AnchorLabels with ``anchor_index``/``label_index`` in
+        :func:`torch.nonzero` order and ``num_anchors == label_tensor.size(0)``.
+    """
+    anchor_index, label_index, num_anchors = _membership_remap(
+        label_tensor, sorted_node, sort_perm, to_device
+    )
+    return AnchorLabels(
+        anchor_index=anchor_index,
+        label_index=label_index,
+        num_anchors=num_anchors,
+    )
+
+
+def edge_list_set_labels(
+    node_local_to_global_by_type: dict[NodeType, torch.Tensor],
+    positive_labels_by_edge_type: dict[EdgeType, torch.Tensor],
+    negative_labels_by_edge_type: dict[EdgeType, torch.Tensor],
+    supervision_edge_types: list[EdgeType],
+    to_device: torch.device,
+) -> tuple[dict[EdgeType, AnchorLabels], dict[EdgeType, AnchorLabels]]:
+    """Dense edge-list label remap from global label ids to local node indices.
+
+    Drop-in alternative to :func:`vectorized_set_labels` that emits, per label
+    edge type, an :class:`AnchorLabels` dense edge-list instead of a ragged
+    ``dict[int, torch.Tensor]``. Membership semantics are identical; expanding
+    each result via :meth:`AnchorLabels.to_dict` reproduces
+    :func:`_loop_set_labels` bit-for-bit.
+
+    Precondition (REQUIRED): each ``node`` local->global map must contain UNIQUE
+    global ids -- see :func:`vectorized_set_labels` for the rationale.
+
+    Args:
+        node_local_to_global_by_type (dict[NodeType, torch.Tensor]): Per node
+            type, a ``[N]`` tensor whose ``i``-th entry is the global id of
+            local node ``i``. Global ids MUST be unique within each map.
+        positive_labels_by_edge_type (dict[EdgeType, torch.Tensor]): Per
+            positive-label edge type, a ``[N_anchors, M]`` ``-1``-padded tensor
+            of global label ids.
+        negative_labels_by_edge_type (dict[EdgeType, torch.Tensor]): As above,
+            for negative-label edge types. May be empty.
+        supervision_edge_types (list[EdgeType]): Accepted for signature parity
+            with the other kernels; unused here.
+        to_device (torch.device): Device for every output tensor.
+
+    Returns:
+        Tuple ``(y_positive, y_negative)``, each a
+        ``dict[message_passing_edge_type, AnchorLabels]`` with NO entry for a
+        zero-anchor label tensor (matching the loop's defaultdict).
+    """
+    del supervision_edge_types  # Accepted for signature parity; not needed here.
+    edge_index = 2  # Supervision edge types are (anchor, to, supervision).
+    sorted_cache: dict[NodeType, tuple[torch.Tensor, torch.Tensor]] = {}
+
+    def _sorted_for(node_type: NodeType) -> tuple[torch.Tensor, torch.Tensor]:
+        if node_type not in sorted_cache:
+            sorted_cache[node_type] = torch.sort(
+                node_local_to_global_by_type[node_type]
+            )
+        return sorted_cache[node_type]
+
+    output_positive_labels: dict[EdgeType, AnchorLabels] = {}
+    for edge_type, label_tensor in positive_labels_by_edge_type.items():
+        if label_tensor.size(0) == 0:
+            continue
+        sorted_node, sort_perm = _sorted_for(edge_type[edge_index])
+        output_positive_labels[
+            label_edge_type_to_message_passing_edge_type(edge_type)
+        ] = _remap_one_label_tensor_edge_list(
+            label_tensor, sorted_node, sort_perm, to_device
+        )
+
+    output_negative_labels: dict[EdgeType, AnchorLabels] = {}
+    for edge_type, label_tensor in negative_labels_by_edge_type.items():
+        if label_tensor.size(0) == 0:
+            continue
+        sorted_node, sort_perm = _sorted_for(edge_type[edge_index])
+        output_negative_labels[
+            label_edge_type_to_message_passing_edge_type(edge_type)
+        ] = _remap_one_label_tensor_edge_list(
+            label_tensor, sorted_node, sort_perm, to_device
+        )
 
     return output_positive_labels, output_negative_labels
 
