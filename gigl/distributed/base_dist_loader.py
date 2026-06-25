@@ -267,6 +267,18 @@ class BaseDistLoader(DistLoader):
         self._num_recv = 0
         self._epoch = 0
 
+        # --- Opt-in per-batch collate timing ---
+        # Off by default: when False, _collate_fn adds zero bookkeeping. A
+        # benchmarking caller sets _collect_loader_timings = True and calls
+        # reset_loader_timings() before iterating, then reads _collate_time_s /
+        # _timed_batches after the loop. _recv_time_s is initialized here but is
+        # filled by the caller (recv = per-batch next() time - collate time);
+        # this class does not time the channel receive.
+        self._collect_loader_timings: bool = False
+        self._recv_time_s: float = 0.0
+        self._collate_time_s: float = 0.0
+        self._timed_batches: int = 0
+
         # --- Mode-specific attributes and connection initialization ---
         if (
             isinstance(dataset, DistDataset)
@@ -968,21 +980,44 @@ class BaseDistLoader(DistLoader):
 
         return data, metadata
 
-    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
-        """Override GLT's _collate_fn to optionally batch-transfer tensors with non_blocking=True.
+    def reset_loader_timings(self) -> None:
+        """Zero the opt-in collate-timing accumulators.
 
-        When ``_non_blocking_transfers`` is enabled (default), moves all tensors
-        in the SampleMessage to the target CUDA device using non-blocking copies
-        before delegating to the parent ``_collate_fn``.  This is effective when
-        source tensors reside in pinned memory, allowing host-to-device transfers
-        to overlap with other work on the default CUDA stream.
-
-        When ``_non_blocking_transfers`` is disabled, the bulk transfer is skipped
-        entirely and GLT's default (blocking) device placement is used instead.
-
-        See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
-        for background on pinned memory and non-blocking transfers.
+        Call once before an iteration when ``_collect_loader_timings`` is True.
+        ``_recv_time_s`` is included so a caller that derives recv = next - collate
+        can reset all three counters in one call.
         """
+        self._recv_time_s = 0.0
+        self._collate_time_s = 0.0
+        self._timed_batches = 0
+
+    def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        """Collate one SampleMessage into Data/HeteroData, optionally timed.
+
+        When ``_collect_loader_timings`` is True, the collation duration (device
+        transfer + parent collate) is added to ``_collate_time_s`` and
+        ``_timed_batches`` is incremented. When False this is a thin pass-through
+        to ``_collate_inner`` with no bookkeeping. A CUDA sync is issued before
+        stopping the timer (only when timing AND on a CUDA device) so the measured
+        time includes the async device work; the untimed path adds no sync.
+        """
+        if not self._collect_loader_timings:
+            return self._collate_inner(msg)
+        t0 = time.perf_counter()
+        out = self._collate_inner(msg)
+        if (
+            self.to_device is not None
+            and getattr(self.to_device, "type", None) == "cuda"
+        ):
+            torch.cuda.synchronize()
+        self._collate_time_s += time.perf_counter() - t0
+        self._timed_batches += 1
+        return out
+
+    def _collate_inner(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        """The actual collation: optional non-blocking device transfer, then
+        delegate to graphlearn_torch's ``_collate_fn``. (Former ``_collate_fn``
+        body, unchanged.)"""
         if (
             self._non_blocking_transfers
             and self.to_device is not None
