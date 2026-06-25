@@ -24,7 +24,7 @@ make unit_test_py                                    # All Python unit tests (in
 # NOTE: PY_TEST_FILES should *only* be the filename, *not* the full path.
 # e.g. if you want to test `tests/unit/common/foo_test.py` then you should run `make unit_test_py PY_TEST_FILES="foo_test.py"
 make unit_test_py PY_TEST_FILES="specific_test.py"   # Single test file
-make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one at a time, slow)
+make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one at a time, slow; builds a fresh src-cpu image from current source so Vertex-AI-launching tests run against current code)
 
 # Formatting & Linting
 make format              # Auto-fix Python, Scala, Markdown
@@ -197,7 +197,10 @@ Use `tests.test_assets.test_case.TestCase` as the base class, **NOT** `unittest.
 ### Test Organization
 
 - **Unit tests**: `tests/unit/` - Fast, isolated tests
-- **Integration tests**: `tests/integration/` - Component interaction tests, require cloud resources
+- **Integration tests**: `tests/integration/` - Component interaction tests, require cloud resources. Some tests launch
+  real Vertex AI jobs. `make integration_test` builds a fresh `src-cpu` image from current source and points those tests
+  at it (via `GIGL_CPU_DOCKER_URI`), so worker-side source changes are caught on the PR rather than only after a
+  release.
 - **E2E tests**: Defined in `tests/e2e_tests/e2e_tests.yaml`
 - **Test assets**: `tests/test_assets/` (configs in `configs/`, test graphs in `small_graph/`)
 

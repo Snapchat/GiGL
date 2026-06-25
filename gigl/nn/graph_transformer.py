@@ -239,6 +239,15 @@ class GraphTransformerEncoderLayer(nn.Module):
         activation: Activation function for the feed-forward network.
             Supported values: "gelu" (default), "relu", "silu", "tanh",
             "geglu", "swiglu", "reglu".
+        relation_attention_mode: Optional relation-aware augmentation strategy
+            for attention scores. ``"none"`` preserves the default shared
+            self-attention path. ``"edge_type_bilinear"`` adds a learned
+            per-edge-type bilinear term for sampled directed graph edges. This
+            changes attention weights, not value/message content.
+            ``"edge_type_hgt"`` replaces the base query/key score on relation
+            edges with an HGT-style relation transform and relation prior.
+        num_relations: Number of relation channels expected in
+            ``pairwise_relation_indices`` when relation-aware attention is enabled.
 
     Raises:
         ValueError: If model_dim is not divisible by num_heads.
@@ -252,16 +261,38 @@ class GraphTransformerEncoderLayer(nn.Module):
         dropout_rate: float = 0.1,
         attention_dropout_rate: float = 0.0,
         activation: str = "gelu",
+        relation_attention_mode: Literal[
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        ] = "none",
+        num_relations: int = 0,
     ) -> None:
         super().__init__()
         if model_dim % num_heads != 0:
             raise ValueError(
                 f"model_dim ({model_dim}) must be divisible by num_heads ({num_heads})"
             )
+        if relation_attention_mode not in {
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        }:
+            raise ValueError(
+                "relation_attention_mode must be one of "
+                "{'none', 'edge_type_bilinear', 'edge_type_hgt'}, "
+                f"got '{relation_attention_mode}'"
+            )
+        if relation_attention_mode != "none" and num_relations <= 0:
+            raise ValueError(
+                "Relation-aware attention mode requires num_relations > 0."
+            )
 
         self._num_heads = num_heads
         self._head_dim = model_dim // num_heads
         self._attention_dropout_rate = attention_dropout_rate
+        self._relation_attention_mode = relation_attention_mode
+        self._num_relations = num_relations
 
         self._attention_norm = nn.LayerNorm(model_dim)
         self._query_projection = nn.Linear(model_dim, model_dim)
@@ -269,6 +300,26 @@ class GraphTransformerEncoderLayer(nn.Module):
         self._value_projection = nn.Linear(model_dim, model_dim)
         self._output_projection = nn.Linear(model_dim, model_dim)
         self._dropout = nn.Dropout(dropout_rate)
+        self._relation_attention_matrices: Optional[nn.Parameter] = None
+        if relation_attention_mode == "edge_type_bilinear":
+            # score(target, source, relation) += q_target^T W_relation k_source
+            # Zero init keeps startup behavior identical to shared attention.
+            self._relation_attention_matrices = nn.Parameter(
+                torch.zeros(num_relations, num_heads, self._head_dim, self._head_dim)
+            )
+        self._relation_hgt_attention_matrices: Optional[nn.Parameter] = None
+        self._relation_hgt_attention_priors: Optional[nn.Parameter] = None
+        if relation_attention_mode == "edge_type_hgt":
+            # Replaces the base score on relation edges with
+            # mu_relation * q_target^T W_relation k_source. Identity/one init
+            # preserves the base query/key score at startup.
+            self._relation_hgt_attention_matrices = nn.Parameter(
+                torch.empty(num_relations, self._head_dim, self._head_dim)
+            )
+            self._relation_hgt_attention_priors = nn.Parameter(
+                torch.empty(num_relations)
+            )
+            self._reset_hgt_relation_attention_parameters()
 
         self._ffn_norm = nn.LayerNorm(model_dim)
         self._ffn = FeedForwardNetwork(
@@ -287,14 +338,35 @@ class GraphTransformerEncoderLayer(nn.Module):
             nn.init.xavier_uniform_(projection.weight)
             if projection.bias is not None:
                 nn.init.zeros_(projection.bias)
+        if self._relation_attention_matrices is not None:
+            nn.init.zeros_(self._relation_attention_matrices)
+        self._reset_hgt_relation_attention_parameters()
         self._ffn_norm.reset_parameters()
         self._ffn.reset_parameters()
+
+    def _reset_hgt_relation_attention_parameters(self) -> None:
+        if self._relation_hgt_attention_matrices is None:
+            return
+        if self._relation_hgt_attention_priors is None:
+            raise ValueError("Relation HGT attention priors are not initialized.")
+
+        with torch.no_grad():
+            relation_identity = torch.eye(
+                self._head_dim,
+                dtype=self._relation_hgt_attention_matrices.dtype,
+                device=self._relation_hgt_attention_matrices.device,
+            )
+            self._relation_hgt_attention_matrices.copy_(
+                relation_identity.expand(self._num_relations, -1, -1)
+            )
+            self._relation_hgt_attention_priors.fill_(1.0)
 
     def forward(
         self,
         x: Tensor,
         attn_bias: Optional[Tensor] = None,
         valid_mask: Optional[Tensor] = None,
+        pairwise_relation_indices: Optional[Tensor] = None,
     ) -> Tensor:
         """Forward pass.
 
@@ -305,6 +377,9 @@ class GraphTransformerEncoderLayer(nn.Module):
                 Added as an additive mask to attention scores.
             valid_mask: Optional boolean tensor of shape ``(batch, seq)`` used
                 to zero out padded token states after each residual block.
+            pairwise_relation_indices: Optional long tensor of shape
+                ``(num_relation_edges, 4)`` with sparse
+                ``(batch_idx, query_pos, key_pos, relation_idx)`` coordinates.
 
         Returns:
             Output tensor of shape ``(batch, seq, model_dim)``.
@@ -330,13 +405,12 @@ class GraphTransformerEncoderLayer(nn.Module):
             batch_size, seq_len, self._num_heads, self._head_dim
         ).transpose(1, 2)
 
-        attention_output = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            attn_mask=attn_bias,
-            dropout_p=self._attention_dropout_rate if self.training else 0.0,
-            is_causal=False,
+        attention_output = self._run_attention(
+            query=query,
+            key=key,
+            value=value,
+            attn_bias=attn_bias,
+            pairwise_relation_indices=pairwise_relation_indices,
         )
 
         # Reshape back to (batch, seq, model_dim)
@@ -359,6 +433,193 @@ class GraphTransformerEncoderLayer(nn.Module):
             x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
         return x
+
+    def _run_attention(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attn_bias: Optional[Tensor],
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Tensor:
+        if self._relation_attention_mode in {"edge_type_bilinear", "edge_type_hgt"}:
+            attn_bias = self._add_relation_attention_bias(
+                attn_bias=attn_bias,
+                query=query,
+                key=key,
+                pairwise_relation_indices=pairwise_relation_indices,
+            )
+
+        return F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_bias,
+            dropout_p=self._attention_dropout_rate if self.training else 0.0,
+            is_causal=False,
+        )
+
+    def _build_relation_attention_bias(
+        self,
+        query: Tensor,
+        key: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Optional[Tensor]:
+        if (
+            pairwise_relation_indices is not None
+            and pairwise_relation_indices.numel() == 0
+        ):
+            return None
+
+        batch_size, _, seq_len, _ = query.shape
+        empty_bias = query.new_zeros((batch_size, self._num_heads, seq_len, seq_len))
+        return self._add_relation_attention_bias(
+            attn_bias=empty_bias,
+            query=query,
+            key=key,
+            pairwise_relation_indices=pairwise_relation_indices,
+        )
+
+    def _add_relation_attention_bias(
+        self,
+        attn_bias: Optional[Tensor],
+        query: Tensor,
+        key: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Optional[Tensor]:
+        if pairwise_relation_indices is None:
+            raise ValueError(
+                "pairwise_relation_indices is required when "
+                "relation_attention_mode is relation-aware."
+            )
+        if pairwise_relation_indices.numel() == 0:
+            return attn_bias
+        if (
+            pairwise_relation_indices.dim() != 2
+            or pairwise_relation_indices.size(-1) != 4
+        ):
+            raise ValueError(
+                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+            )
+
+        pairwise_relation_indices = pairwise_relation_indices.to(
+            device=query.device,
+            dtype=torch.long,
+        )
+        batch_indices = pairwise_relation_indices[:, 0]
+        query_indices = pairwise_relation_indices[:, 1]
+        key_indices = pairwise_relation_indices[:, 2]
+        relation_indices = pairwise_relation_indices[:, 3]
+        if (
+            relation_indices.min().item() < 0
+            or relation_indices.max().item() >= self._num_relations
+        ):
+            raise ValueError(
+                "pairwise_relation_indices contains relation ids outside "
+                f"[0, {self._num_relations})."
+            )
+
+        batch_size, _, seq_len, _ = query.shape
+        if attn_bias is None:
+            attn_bias = query.new_zeros((batch_size, self._num_heads, seq_len, seq_len))
+        elif attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+            attn_bias = attn_bias.expand(
+                batch_size,
+                self._num_heads,
+                seq_len,
+                seq_len,
+            ).clone()
+        else:
+            attn_bias = attn_bias.clone()
+
+        attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+        query_by_position = query.transpose(1, 2)
+        key_by_position = key.transpose(1, 2)
+
+        unique_relation_indices, relation_counts = torch.unique_consecutive(
+            relation_indices,
+            return_counts=True,
+        )
+        relation_start = 0
+        for relation_idx_tensor, relation_count_tensor in zip(
+            unique_relation_indices,
+            relation_counts,
+        ):
+            relation_idx = int(relation_idx_tensor.item())
+            relation_end = relation_start + int(relation_count_tensor.item())
+            relation_batch_indices = batch_indices[relation_start:relation_end]
+            relation_query_indices = query_indices[relation_start:relation_end]
+            relation_key_indices = key_indices[relation_start:relation_end]
+
+            selected_query = query_by_position[
+                relation_batch_indices,
+                relation_query_indices,
+            ]
+            selected_key = key_by_position[
+                relation_batch_indices,
+                relation_key_indices,
+            ]
+            relation_scores = self._compute_relation_attention_scores(
+                selected_query=selected_query,
+                selected_key=selected_key,
+                relation_idx=relation_idx,
+            )
+            attn_bias_by_position.index_put_(
+                (
+                    relation_batch_indices,
+                    relation_query_indices,
+                    relation_key_indices,
+                ),
+                relation_scores.to(dtype=attn_bias.dtype),
+                accumulate=True,
+            )
+            relation_start = relation_end
+
+        return attn_bias
+
+    def _compute_relation_attention_scores(
+        self,
+        selected_query: Tensor,
+        selected_key: Tensor,
+        relation_idx: int,
+    ) -> Tensor:
+        if self._relation_attention_mode == "edge_type_bilinear":
+            if self._relation_attention_matrices is None:
+                raise ValueError("Relation attention matrices are not initialized.")
+            relation_matrices = self._relation_attention_matrices.to(
+                dtype=selected_query.dtype
+            )
+            relation_scores = torch.einsum(
+                "ehd,hdf,ehf->eh",
+                selected_query,
+                relation_matrices[relation_idx],
+                selected_key,
+            )
+        elif self._relation_attention_mode == "edge_type_hgt":
+            if self._relation_hgt_attention_matrices is None:
+                raise ValueError("Relation HGT attention matrices are not initialized.")
+            if self._relation_hgt_attention_priors is None:
+                raise ValueError("Relation HGT attention priors are not initialized.")
+            relation_matrices = self._relation_hgt_attention_matrices.to(
+                dtype=selected_query.dtype
+            )
+            relation_priors = self._relation_hgt_attention_priors.to(
+                dtype=selected_query.dtype
+            )
+            hgt_scores = torch.einsum(
+                "ehd,df,ehf->eh",
+                selected_query,
+                relation_matrices[relation_idx],
+                selected_key,
+            )
+            base_scores = (selected_query * selected_key).sum(dim=-1)
+            relation_scores = relation_priors[relation_idx] * hgt_scores - base_scores
+        else:
+            raise ValueError(
+                "Relation attention scores requested when relation_attention_mode "
+                f"is '{self._relation_attention_mode}'."
+            )
+        return relation_scores / math.sqrt(self._head_dim)
 
 
 class GraphTransformerEncoder(nn.Module):
@@ -461,6 +722,12 @@ class GraphTransformerEncoder(nn.Module):
             uses 4.0 for standard activations and 8/3 (~2.67) for XGLU variants,
             following the convention that XGLU's gating doubles the effective
             parameters, so a smaller ratio maintains similar parameter count.
+        relation_attention_mode: Optional relation-aware augmentation for
+            attention scores. ``"none"`` preserves the current transformer path.
+            ``"edge_type_bilinear"`` adds a learned per-edge-type bilinear score
+            term for sampled directed edges. ``"edge_type_hgt"`` replaces base
+            query/key scores on relation edges with an HGT-style relation
+            transform and relation prior.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -515,6 +782,11 @@ class GraphTransformerEncoder(nn.Module):
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
         feedforward_ratio: Optional[float] = None,
+        relation_attention_mode: Literal[
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        ] = "none",
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -573,6 +845,16 @@ class GraphTransformerEncoder(nn.Module):
                 "sequence_construction_method='ppr' because khop sequences do not "
                 "enforce a stable token order."
             )
+        if relation_attention_mode not in {
+            "none",
+            "edge_type_bilinear",
+            "edge_type_hgt",
+        }:
+            raise ValueError(
+                "relation_attention_mode must be one of "
+                "{'none', 'edge_type_bilinear', 'edge_type_hgt'}, "
+                f"got '{relation_attention_mode}'"
+            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
@@ -605,6 +887,16 @@ class GraphTransformerEncoder(nn.Module):
         self._feature_embedding_layer_dict = feature_embedding_layer_dict
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
+        self._relation_attention_mode = relation_attention_mode
+        self._edge_type_to_feat_dim_map = {
+            edge_type: edge_type_to_feat_dim_map[edge_type]
+            for edge_type in sorted(edge_type_to_feat_dim_map.keys())
+        }
+        self._relation_attention_edge_types = (
+            list(self._edge_type_to_feat_dim_map.keys())
+            if relation_attention_mode in {"edge_type_bilinear", "edge_type_hgt"}
+            else []
+        )
         anchor_input_embedding_attr_names = (
             set(anchor_based_input_embedding_dict.keys())
             if anchor_based_input_embedding_dict is not None
@@ -674,11 +966,15 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         self._pairwise_pe_attention_bias_projection: Optional[nn.Linear] = None
+        self._pairwise_nonmissing_attention_bias: Optional[nn.Parameter] = None
         if self._pairwise_attention_bias_attr_names:
             self._pairwise_pe_attention_bias_projection = nn.Linear(
                 len(self._pairwise_attention_bias_attr_names),
                 num_heads,
                 bias=False,
+            )
+            self._pairwise_nonmissing_attention_bias = nn.Parameter(
+                torch.zeros(num_heads)
             )
 
         # Transformer encoder layers
@@ -698,6 +994,8 @@ class GraphTransformerEncoder(nn.Module):
                     dropout_rate=dropout_rate,
                     attention_dropout_rate=attention_dropout_rate,
                     activation=activation,
+                    relation_attention_mode=relation_attention_mode,
+                    num_relations=len(self._relation_attention_edge_types),
                 )
                 for _ in range(num_layers)
             ]
@@ -838,6 +1136,12 @@ class GraphTransformerEncoder(nn.Module):
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
+            relation_edge_types=(
+                self._relation_attention_edge_types
+                if self._relation_attention_mode
+                in {"edge_type_bilinear", "edge_type_hgt"}
+                else None
+            ),
         )
 
         # Free memory after sequences are built
@@ -874,6 +1178,9 @@ class GraphTransformerEncoder(nn.Module):
             sequences=sequences,
             valid_mask=valid_mask,
             attn_bias=attn_bias,
+            pairwise_relation_indices=sequence_auxiliary_data[
+                "pairwise_relation_indices"
+            ],
         )
         embeddings = self._output_projection(embeddings)
 
@@ -1003,6 +1310,7 @@ class GraphTransformerEncoder(nn.Module):
             attention_bias_data: Dictionary containing optional PE tensors:
                 - "anchor_bias": (batch, seq, num_anchor_attrs) or None
                 - "pairwise_bias": (batch, seq, seq, num_pairwise_attrs) or None
+                - "pairwise_nonmissing_indices": (num_pairs, 3) or None
 
         Returns:
             Combined attention bias tensor of shape (batch_size, num_heads, seq_len, seq_len)
@@ -1066,6 +1374,40 @@ class GraphTransformerEncoder(nn.Module):
             )  # (batch, num_heads, seq, seq)
             attn_bias = attn_bias + pairwise_bias
 
+        pairwise_nonmissing_indices = attention_bias_data.get(
+            "pairwise_nonmissing_indices"
+        )
+        if pairwise_nonmissing_indices is not None:
+            if self._pairwise_nonmissing_attention_bias is None:
+                raise ValueError(
+                    "Pairwise nonmissing attention bias is not initialized."
+                )
+            if pairwise_nonmissing_indices.numel() > 0:
+                if attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+                    attn_bias = attn_bias.expand(
+                        batch_size,
+                        self._num_heads,
+                        seq_len,
+                        seq_len,
+                    ).clone()
+                pairwise_nonmissing_indices = pairwise_nonmissing_indices.to(
+                    device=device,
+                    dtype=torch.long,
+                )
+                attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
+                nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
+                    dtype=attn_bias.dtype
+                ).view(1, -1)
+                attn_bias_by_position.index_put_(
+                    (
+                        pairwise_nonmissing_indices[:, 0],
+                        pairwise_nonmissing_indices[:, 1],
+                        pairwise_nonmissing_indices[:, 2],
+                    ),
+                    nonmissing_bias.expand(pairwise_nonmissing_indices.size(0), -1),
+                    accumulate=True,
+                )
+
         return attn_bias
 
     def _encode_and_readout(
@@ -1073,6 +1415,7 @@ class GraphTransformerEncoder(nn.Module):
         sequences: Tensor,
         valid_mask: Tensor,
         attn_bias: Optional[Tensor] = None,
+        pairwise_relation_indices: Optional[Tensor] = None,
     ) -> Tensor:
         """Process sequences through transformer layers and attention readout.
 
@@ -1081,6 +1424,8 @@ class GraphTransformerEncoder(nn.Module):
             valid_mask: Boolean mask of shape ``(batch_size, max_seq_len)``.
             attn_bias: Optional additive attention bias broadcastable to
                 ``(batch_size, num_heads, seq, seq)``.
+            pairwise_relation_indices: Optional sparse relation coordinates shaped
+                ``(num_relation_edges, 4)``.
 
         Returns:
             Output embeddings of shape ``(batch_size, hid_dim)``.
@@ -1088,7 +1433,12 @@ class GraphTransformerEncoder(nn.Module):
         x = sequences * valid_mask.unsqueeze(-1).to(sequences.dtype)
 
         for encoder_layer in self._encoder_layers:
-            x = encoder_layer(x, attn_bias=attn_bias, valid_mask=valid_mask)
+            x = encoder_layer(
+                x,
+                attn_bias=attn_bias,
+                pairwise_relation_indices=pairwise_relation_indices,
+                valid_mask=valid_mask,
+            )
 
         x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)

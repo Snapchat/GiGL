@@ -241,6 +241,10 @@ make integration_test
 
 Note: These tests may take a while to run!
 
+`make integration_test` builds a fresh `src-cpu` image from the current source and points the tests that launch GiGL
+workers at it (via `GIGL_CPU_DOCKER_URI`), so worker-side source changes are validated against current code rather than
+only after a release.
+
 <details>
 <summary>More Commands and Details</summary>
 
