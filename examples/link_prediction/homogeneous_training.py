@@ -199,7 +199,9 @@ def _compute_loss(
     # so this is equivalent to the historical dict read
     # (torch.cat(list(values())) + repeat_interleave over per-anchor lengths).
     positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
-    repeated_query_node_idx = query_node_idx[main_data.y_positive.anchor_index.to(device)]
+    repeated_query_node_idx = query_node_idx[
+        main_data.y_positive.anchor_index.to(device)
+    ]
     if hasattr(main_data, "y_negative"):
         hard_negative_idx: torch.Tensor = main_data.y_negative.label_index.to(device)
     else:

@@ -485,9 +485,7 @@ def _collect_homogeneous_labels(
                 [positive_dict[a] for a in range(datum.batch_size)]
             )
             legacy_repeated_query = query_node_idx.repeat_interleave(
-                torch.tensor(
-                    [len(positive_dict[a]) for a in range(datum.batch_size)]
-                )
+                torch.tensor([len(positive_dict[a]) for a in range(datum.batch_size)])
             )
             torch.testing.assert_close(
                 datum.y_positive.label_index, legacy_positive_idx
