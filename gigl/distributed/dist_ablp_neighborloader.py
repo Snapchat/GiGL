@@ -523,6 +523,7 @@ class DistABLPLoader(BaseDistLoader):
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         non_blocking_transfers: bool = True,
+        use_list_output: bool = False,
     ):
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -646,11 +647,19 @@ class DistABLPLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
+            use_list_output (bool): If False (default), ``y_positive`` and
+                ``y_negative`` are the legacy ragged ``dict[int, torch.Tensor]``
+                per-anchor dicts.  If True, they are :class:`AnchorLabels` dense
+                edge-list objects (single supervision edge type) or
+                ``dict[EdgeType, AnchorLabels]`` (multiple supervision edge
+                types), which expose ``anchor_index``, ``label_index``, and
+                ``num_anchors`` directly and provide a ``.to_dict()`` conversion.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
+        self._use_list_output = use_list_output
 
         sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
@@ -1208,7 +1217,14 @@ class DistABLPLoader(BaseDistLoader):
             node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = (
                 data.node
             )
-        output_positive_labels, output_negative_labels = _loop_set_labels(
+        # Vectorized remap is the production path: bit-for-bit equivalent to the
+        # _loop_set_labels oracle, GPU-safe, and faster than the per-anchor loop
+        # (the gap grows with batch size). When use_list_output is set, emit the
+        # dense AnchorLabels edge-list instead of the ragged per-anchor dict.
+        label_remap = (
+            edge_list_set_labels if self._use_list_output else vectorized_set_labels
+        )
+        output_positive_labels, output_negative_labels = label_remap(
             node_local_to_global_by_type=node_type_to_local_node_to_global_node,
             positive_labels_by_edge_type=positive_labels_by_label_edge_type,
             negative_labels_by_edge_type=negative_labels_by_label_edge_type,

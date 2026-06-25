@@ -11,7 +11,7 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_ablp_neighborloader import AnchorLabels, DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -416,6 +416,103 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
     shutdown_rpc()
 
 
+def _ordered_global_pairs(
+    node: torch.Tensor, label_dict: dict[int, torch.Tensor]
+) -> list[tuple[int, int]]:
+    """Flatten a per-anchor label dict to an ORDERED (global_anchor, global_label)
+    pair stream.
+
+    Iterates anchors in ascending key order and labels in their stored order
+    WITHOUT sorting, so a change in pair order (e.g. a kernel that emitted
+    columns or sorted-position order) changes the returned list. This is the
+    silent-mistraining mode a per-anchor sorted-set comparison would miss.
+    """
+    pairs: list[tuple[int, int]] = []
+    for local_anchor in sorted(label_dict.keys()):
+        global_anchor = int(node[local_anchor].item())
+        for local_label in label_dict[local_anchor].tolist():
+            pairs.append((global_anchor, int(node[local_label].item())))
+    return pairs
+
+
+def _collect_homogeneous_labels(
+    _,
+    return_dict,
+    use_list_output: bool,
+    dataset: DistDataset,
+    input_nodes: torch.Tensor,
+    batch_size: int,
+    has_negatives: bool,
+):
+    """Child-side: run the loader, return the ORDERED global-id pair streams.
+
+    Local node indices differ run-to-run, so labels are translated back to
+    global ids via ``datum.node``. The streams preserve pair ORDER (see
+    ``_ordered_global_pairs``) so dict-vs-edge-list equality in the parent
+    catches an order regression, not just a set regression.
+
+    When ``use_list_output`` is True the labels arrive as :class:`AnchorLabels`.
+    This branch ALSO asserts in-process that the exact tensors the example
+    training loss reads from the edge-list match the legacy dict read: the
+    edge-list ``label_index`` must equal the dict's ``torch.cat(values())`` and
+    ``query_node_idx[anchor_index]`` must equal the legacy
+    ``repeat_interleave`` over per-anchor lengths. A drift here is exactly the
+    example-training bug we are guarding against.
+    """
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+        use_list_output=use_list_output,
+    )
+    positive_pairs: list[tuple[int, int]] = []
+    negative_pairs: list[tuple[int, int]] = []
+    for datum in loader:
+        assert isinstance(datum, Data)
+        node = datum.node
+        if use_list_output:
+            assert isinstance(datum.y_positive, AnchorLabels), (
+                f"expected AnchorLabels, got {type(datum.y_positive)}"
+            )
+            positive_dict = datum.y_positive.to_dict()
+            # Direct check that the example-training read matches the legacy read,
+            # within this single batch, EXACTLY (order included).
+            query_node_idx = torch.arange(datum.batch_size)
+            legacy_positive_idx = torch.cat(
+                [positive_dict[a] for a in range(datum.batch_size)]
+            )
+            legacy_repeated_query = query_node_idx.repeat_interleave(
+                torch.tensor(
+                    [len(positive_dict[a]) for a in range(datum.batch_size)]
+                )
+            )
+            torch.testing.assert_close(
+                datum.y_positive.label_index, legacy_positive_idx
+            )
+            torch.testing.assert_close(
+                query_node_idx[datum.y_positive.anchor_index], legacy_repeated_query
+            )
+        else:
+            positive_dict = datum.y_positive
+        positive_pairs.extend(_ordered_global_pairs(node, positive_dict))
+        if has_negatives:
+            if use_list_output:
+                assert isinstance(datum.y_negative, AnchorLabels)
+                negative_dict = datum.y_negative.to_dict()
+            else:
+                negative_dict = datum.y_negative
+            negative_pairs.extend(_ordered_global_pairs(node, negative_dict))
+        else:
+            assert not hasattr(datum, "y_negative"), (
+                f"expected no negatives, got {getattr(datum, 'y_negative', None)}"
+            )
+    return_dict[use_list_output] = (positive_pairs, negative_pairs)
+    shutdown_rpc()
+
+
 class DistABLPLoaderTest(TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
@@ -555,6 +652,102 @@ class DistABLPLoaderTest(TestCase):
                 expected_negative_labels,
             ),
         )
+
+    @parameterized.expand(
+        [
+            param(
+                "positive and negative",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=True,
+            ),
+            param(
+                "positive only",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=False,
+            ),
+            # Anchor 11 has message-passing edges (11 -> {13, 17}) but is the
+            # source of NO positive-label edge, so its positive-label row is
+            # all-padding and y_positive[11] is a guaranteed-empty tensor. This
+            # exercises the empty-anchor branch end-to-end for both outputs.
+            param(
+                "guaranteed empty positive anchor",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 11, 15]),
+                batch_size=3,
+                has_negatives=True,
+            ),
+        ]
+    )
+    def test_use_list_output_matches_dict_output(
+        self, _, labeled_edges, input_nodes, batch_size, has_negatives
+    ):
+        """``use_list_output=True`` yields AnchorLabels whose ``.to_dict()`` matches
+        the default dict output as an ORDERED (global_anchor, global_label) pair
+        stream -- not merely a per-anchor set, so a pair-order regression fails.
+
+        Sampling is deterministic here (``shuffle`` defaults to False and the
+        input is fixed), so the two loader runs emit batches in the same order
+        and the streams are directly comparable. The child process additionally
+        asserts the exact tensors the example-training loss reads from the
+        edge-list equal the legacy dict read (see ``_collect_homogeneous_labels``).
+        """
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [[10, 10, 11, 11, 15, 15, 16, 16], [11, 12, 13, 17, 13, 14, 12, 14]]
+            ),
+        }
+        edge_index.update(labeled_edges)
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        for use_list_output in (False, True):
+            mp.spawn(
+                fn=_collect_homogeneous_labels,
+                args=(
+                    return_dict,
+                    use_list_output,
+                    dataset,
+                    input_nodes,
+                    batch_size,
+                    has_negatives,
+                ),
+            )
+        self.assertEqual(return_dict[False][0], return_dict[True][0])
+        self.assertEqual(return_dict[False][1], return_dict[True][1])
 
     def test_cora_supervised(self):
         create_test_process_group()
