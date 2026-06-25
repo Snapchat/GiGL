@@ -217,7 +217,13 @@ def _remap_one_label_tensor(
 
     num_labels = int(label_tensor.size(1))
     flat = label_tensor.reshape(-1)
-    anchor_of_entry = torch.arange(num_anchors).repeat_interleave(num_labels)
+    # Create on the label tensor's device: it is indexed below by `valid`
+    # (derived from `label_tensor`), so on GPU a CPU arange would raise
+    # "indices should be either on cpu or on the same device as the indexed
+    # tensor". CPU-only unit tests cannot catch this; see the CUDA-gated test.
+    anchor_of_entry = torch.arange(
+        num_anchors, device=label_tensor.device
+    ).repeat_interleave(num_labels)
 
     # Mask the padding sentinel BEFORE any search so we never gather with -1.
     valid = flat != PADDING_NODE
@@ -300,7 +306,13 @@ def _remap_one_label_tensor_edge_list(
 
     num_labels = int(label_tensor.size(1))
     flat = label_tensor.reshape(-1)
-    anchor_of_entry = torch.arange(num_anchors).repeat_interleave(num_labels)
+    # Create on the label tensor's device: it is indexed below by `valid`
+    # (derived from `label_tensor`), so on GPU a CPU arange would raise
+    # "indices should be either on cpu or on the same device as the indexed
+    # tensor". CPU-only unit tests cannot catch this; see the CUDA-gated test.
+    anchor_of_entry = torch.arange(
+        num_anchors, device=label_tensor.device
+    ).repeat_interleave(num_labels)
 
     valid = flat != PADDING_NODE
     flat = flat[valid]
