@@ -572,6 +572,20 @@ class DistABLPLoader(BaseDistLoader):
             - `y_positive`: {(a, to, b): {0: torch.tensor([1])}, (a, to, c): {0: torch.tensor([2])}}
             - `y_negative`: {(a, to, b): {0: torch.tensor([3])}, (a, to, c): {0: torch.tensor([4])}}
 
+        Label remapping (the conversion of global label ids to the local
+        indices stored in `y_positive`/`y_negative`) is vectorized internally;
+        the output is identical to the historical per-anchor implementation.
+
+        When `use_list_output=True`, `y_positive` and `y_negative` are instead a
+        dense edge-list `AnchorLabels` (single supervision edge type) or
+        `dict[EdgeType, AnchorLabels]` (multiple). An `AnchorLabels` holds
+        `anchor_index` ([E] long), `label_index` ([E] long), and `num_anchors`
+        (int): pair `k` means local anchor row `anchor_index[k]` has local label
+        node `label_index[k]`. Pairs are ordered ascending by anchor (ties by
+        ascending label column). `AnchorLabels.to_dict()` reproduces the ragged
+        `dict[int, torch.Tensor]` form above. With `use_list_output=False`
+        (default) the output is the ragged dict, fully backward-compatible.
+
         Args:
             dataset (Union[DistDataset, RemoteDistDataset]): The dataset to sample from.
                 If this is a `RemoteDistDataset`, then we are in "Graph Store" mode.
@@ -647,13 +661,16 @@ class DistABLPLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
-            use_list_output (bool): If False (default), ``y_positive`` and
-                ``y_negative`` are the legacy ragged ``dict[int, torch.Tensor]``
-                per-anchor dicts.  If True, they are :class:`AnchorLabels` dense
-                edge-list objects (single supervision edge type) or
-                ``dict[EdgeType, AnchorLabels]`` (multiple supervision edge
-                types), which expose ``anchor_index``, ``label_index``, and
-                ``num_anchors`` directly and provide a ``.to_dict()`` conversion.
+            use_list_output (bool): If True, return labels as a dense
+                ``AnchorLabels`` edge-list (or ``dict[EdgeType, AnchorLabels]``
+                for multiple supervision edge types) instead of the ragged
+                ``dict[anchor_local_index, torch.Tensor]``. The edge-list form
+                lets the loss read labels without a per-anchor Python loop
+                (``y.label_index`` and ``query_idx[y.anchor_index]`` instead of
+                ``torch.cat(list(y.values()))`` and a ``repeat_interleave`` over
+                per-anchor lengths). ``AnchorLabels.to_dict()`` recovers the
+                ragged form. Defaults to ``False`` (ragged dict; fully
+                backward-compatible).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
