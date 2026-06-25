@@ -303,8 +303,9 @@ def _compute_loss(
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
     # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True).
-    # Pairs are ordered ascending by anchor, so reading label_index/anchor_index
-    # directly is equivalent to the historical dict read.
+    # Pairs are grouped by anchor, so reading label_index/anchor_index directly
+    # yields the same (query, label) pairs as the historical dict read; the
+    # within-anchor order may differ, but the loss is order-invariant.
     positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
     repeated_query_node_idx = query_node_idx[
         main_data.y_positive.anchor_index.to(device)

@@ -195,9 +195,11 @@ def _compute_loss(
 
     # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True).
     # label_index holds the local label node per (anchor, label) pair; anchor_index
-    # holds the matching local anchor row. Pairs are ordered ascending by anchor,
-    # so this is equivalent to the historical dict read
-    # (torch.cat(list(values())) + repeat_interleave over per-anchor lengths).
+    # holds the matching local anchor row. Pairs are grouped by anchor, so reading
+    # label_index/anchor_index directly yields the same (query, label) pairs as the
+    # historical dict read (torch.cat(list(values())) + repeat_interleave over
+    # per-anchor lengths). The within-anchor label order may differ, but the
+    # contrastive loss is order-invariant, so the result is equivalent.
     positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
     repeated_query_node_idx = query_node_idx[
         main_data.y_positive.anchor_index.to(device)
