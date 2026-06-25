@@ -211,6 +211,9 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        # Return labels as a dense AnchorLabels edge-list so the loss reads
+        # anchor/label indices directly without a per-anchor Python loop.
+        use_list_output=True,
     )
 
     print(f"---Rank {rank} finished setting up main loader for split={split}")
@@ -299,16 +302,13 @@ def _compute_loss(
     ).to(device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    repeated_query_node_idx = query_node_idx.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
+    # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True).
+    # Pairs are ordered ascending by anchor, so reading label_index/anchor_index
+    # directly is equivalent to the historical dict read.
+    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
+    repeated_query_node_idx = query_node_idx[main_data.y_positive.anchor_index.to(device)]
     if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = torch.cat(
-            list(main_data.y_negative.values())
-        ).to(device)
+        hard_negative_idx: torch.Tensor = main_data.y_negative.label_index.to(device)
     else:
         hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
 
