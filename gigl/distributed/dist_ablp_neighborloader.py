@@ -49,10 +49,82 @@ from gigl.types.graph import (
     reverse_edge_type,
     select_label_edge_types,
 )
-from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.data_splitters import PADDING_NODE, get_labels_for_anchor_nodes
 from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
+
+
+def _loop_set_labels(
+    node_local_to_global_by_type: dict[NodeType, torch.Tensor],
+    positive_labels_by_edge_type: dict[EdgeType, torch.Tensor],
+    negative_labels_by_edge_type: dict[EdgeType, torch.Tensor],
+    supervision_edge_types: list[EdgeType],
+    to_device: torch.device,
+) -> tuple[
+    dict[EdgeType, dict[int, torch.Tensor]],
+    dict[EdgeType, dict[int, torch.Tensor]],
+]:
+    """Per-anchor (loop) label remap from global label ids to local node indices.
+
+    Reference implementation retained as the equivalence oracle for
+    :func:`vectorized_set_labels`. The production path uses the vectorized
+    kernel; this loop is exercised only by tests.
+
+    For each label edge type and each anchor row of its ``[N_anchors, M]``
+    ``-1``-padded label tensor, emits the ascending local indices into the
+    supervision node type's ``node`` map whose global id appears in that row, in
+    :func:`torch.nonzero` multiplicity.
+
+    Args:
+        node_local_to_global_by_type (dict[NodeType, torch.Tensor]): Per node
+            type, a ``[N]`` tensor whose ``i``-th entry is the global id of
+            local node ``i``.
+        positive_labels_by_edge_type (dict[EdgeType, torch.Tensor]): Per
+            positive-label edge type, a ``[N_anchors, M]`` ``-1``-padded tensor
+            of global label ids.
+        negative_labels_by_edge_type (dict[EdgeType, torch.Tensor]): As above,
+            for negative-label edge types. May be empty.
+        supervision_edge_types (list[EdgeType]): Supervision edge types (unused
+            here; accepted for signature parity with the vectorized kernel).
+        to_device (torch.device): Device for every output tensor.
+
+    Returns:
+        Tuple ``(y_positive, y_negative)``, each a
+        ``dict[message_passing_edge_type, dict[anchor_index, local_index_tensor]]``
+        with an entry for every anchor index ``0..N_anchors-1``.
+    """
+    del supervision_edge_types  # Parity with vectorized_set_labels; not needed.
+    output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(dict)
+    output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(dict)
+    # Supervision edge types are (anchor_node_type, to, supervision_node_type),
+    # so the supervision node type is at index 2.
+    edge_index = 2
+    for edge_type, label_tensor in positive_labels_by_edge_type.items():
+        message_passing_edge_type = label_edge_type_to_message_passing_edge_type(
+            edge_type
+        )
+        supervision_node_map = node_local_to_global_by_type[edge_type[edge_index]]
+        for local_anchor_node_id in range(label_tensor.size(0)):
+            positive_mask = (
+                supervision_node_map.unsqueeze(1) == label_tensor[local_anchor_node_id]
+            )
+            output_positive_labels[message_passing_edge_type][local_anchor_node_id] = (
+                torch.nonzero(positive_mask)[:, 0].to(to_device)
+            )
+    for edge_type, label_tensor in negative_labels_by_edge_type.items():
+        message_passing_edge_type = label_edge_type_to_message_passing_edge_type(
+            edge_type
+        )
+        supervision_node_map = node_local_to_global_by_type[edge_type[edge_index]]
+        for local_anchor_node_id in range(label_tensor.size(0)):
+            negative_mask = (
+                supervision_node_map.unsqueeze(1) == label_tensor[local_anchor_node_id]
+            )
+            output_negative_labels[message_passing_edge_type][local_anchor_node_id] = (
+                torch.nonzero(negative_mask)[:, 0].to(to_device)
+            )
+    return dict(output_positive_labels), dict(output_negative_labels)
 
 
 class DistABLPLoader(BaseDistLoader):
@@ -775,48 +847,13 @@ class DistABLPLoader(BaseDistLoader):
             node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = (
                 data.node
             )
-        output_positive_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
-            dict
+        output_positive_labels, output_negative_labels = _loop_set_labels(
+            node_local_to_global_by_type=node_type_to_local_node_to_global_node,
+            positive_labels_by_edge_type=positive_labels_by_label_edge_type,
+            negative_labels_by_edge_type=negative_labels_by_label_edge_type,
+            supervision_edge_types=self._supervision_edge_types,
+            to_device=self.to_device,
         )
-        output_negative_labels: dict[EdgeType, dict[int, torch.Tensor]] = defaultdict(
-            dict
-        )
-        # We always have supervision edge types of the form (anchor_node_type, to, supervision_node_type)
-        # So we can index into the edge type accordingly.
-        edge_index = 2
-        for edge_type, label_tensor in positive_labels_by_label_edge_type.items():
-            for local_anchor_node_id in range(label_tensor.size(0)):
-                positive_mask = (
-                    node_type_to_local_node_to_global_node[
-                        edge_type[edge_index]
-                    ].unsqueeze(1)
-                    == label_tensor[local_anchor_node_id]
-                )  # shape [N, P], where N is the number of nodes and P is the number of positive labels for the current anchor node
-
-                # Gets the indexes of the items in local_node_to_global_node which match any of the positive labels for the current anchor node
-                output_positive_labels[
-                    label_edge_type_to_message_passing_edge_type(edge_type)
-                ][local_anchor_node_id] = torch.nonzero(positive_mask)[:, 0].to(
-                    self.to_device
-                )
-                # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the positive labels for the current anchor node
-
-        for edge_type, label_tensor in negative_labels_by_label_edge_type.items():
-            for local_anchor_node_id in range(label_tensor.size(0)):
-                negative_mask = (
-                    node_type_to_local_node_to_global_node[
-                        edge_type[edge_index]
-                    ].unsqueeze(1)
-                    == label_tensor[local_anchor_node_id]
-                )  # shape [N, M], where N is the number of nodes and M is the number of negative labels for the current anchor node
-
-                # Gets the indexes of the items in local_node_to_global_node which match any of the negative labels for the current anchor node
-                output_negative_labels[
-                    label_edge_type_to_message_passing_edge_type(edge_type)
-                ][local_anchor_node_id] = torch.nonzero(negative_mask)[:, 0].to(
-                    self.to_device
-                )
-                # Shape [X], where X is the number of indexes in the original local_node_to_global_node which match a node in the negative labels for the current anchor node
         if not output_positive_labels:
             raise ValueError("No positive labels were found in the data!")
         elif len(output_positive_labels) == 1:
