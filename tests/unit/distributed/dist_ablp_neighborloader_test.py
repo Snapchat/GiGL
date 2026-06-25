@@ -1145,7 +1145,7 @@ class DistABLPLoaderTest(TestCase):
             # source of NO positive-label edge, so its positive-label CSR row is
             # all-padding and y_positive[11] is a guaranteed-empty tensor. This
             # exercises the empty-anchor branch of both label-remap impls at the
-            # loader level (see brief's required empty-anchor case).
+            # loader level.
             param(
                 "guaranteed empty positive anchor",
                 labeled_edges={

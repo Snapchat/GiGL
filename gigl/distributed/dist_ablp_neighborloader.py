@@ -1234,7 +1234,7 @@ class DistABLPLoader(BaseDistLoader):
             label_remap = edge_list_set_labels
         elif collate_impl == "vectorized" or collate_impl == "cpp":
             # The C++ collate path reuses the vectorized PyTorch label remap; the
-            # C++ core (sub-plan C) does not reimplement label remapping.
+            # C++ core does not reimplement label remapping.
             label_remap = vectorized_set_labels
         else:
             label_remap = _loop_set_labels

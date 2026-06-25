@@ -8,7 +8,7 @@ assignment happens for the C++ path; it mirrors GLT's ``to_data`` /
 
 Flag resolution is NOT defined here. ``resolve_collate_impl`` / ``COLLATE_IMPL_ENV_VAR``
 / ``CollateImpl`` are imported from the canonical module
-``gigl.distributed.utils.neighborloader`` (workstream B). This module must never
+``gigl.distributed.utils.neighborloader``. This module must never
 define its own copy of those symbols.
 
 The C++ kernel consumes already-on-device tensors and never issues transfers; the

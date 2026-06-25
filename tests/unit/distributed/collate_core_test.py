@@ -107,9 +107,9 @@ def _run_cora_ablp_equivalence(
             pin_memory_device=torch.device("cpu"),
         )
 
-    # Skip "vectorized" on real CORA: the vectorized label-remap is 50x slower than
-    # python on CORA-scale inputs (13+ minutes vs 15 seconds for 64 batches) due to
-    # an O(n*m) scatter pattern in vectorized_set_labels.  The "python" vs "cpp" gate
+    # Skip "vectorized" on real CORA: its label-remap carries a fixed per-call
+    # overhead that makes it slower than "python" at this test's small scale, so it
+    # would dominate the runtime here without adding coverage.  The "python" vs "cpp" gate
     # is the CI-blocking correctness check; "vectorized" equivalence is covered by the
     # synthetic collate_equivalence_ablp_test.py suite which runs on tiny graphs.
     assert_impls_equivalent(make_loader, impls=("python", "cpp"))
@@ -388,8 +388,6 @@ class TestCollateEquivalence(TestCase):
             args=(dataset, seed_nodes),
         )
 
-    # TODO: Failing on Google Cloud Build due to GCS access - skipping for now.
-    @unittest.skip("Failing on Google Cloud Build - skipping for now")
     def test_heterogeneous_dblp_ablp_python_vs_cpp(self) -> None:
         """Assert python / vectorized / cpp produce identical batches on DBLP ABLP.
 

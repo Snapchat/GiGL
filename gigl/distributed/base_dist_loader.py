@@ -1048,7 +1048,7 @@ class BaseDistLoader(DistLoader):
         On CUDA the collate step launches asynchronous kernels; set
         ``_sync_cuda_for_timings`` to insert a ``torch.cuda.synchronize()`` at
         each boundary for honest GPU attribution (at the cost of prefetch
-        overlap). See the CUDA-timing caveat in this task's Interfaces.
+        overlap).
         """
         if self._num_recv == self._num_expected:
             raise StopIteration
