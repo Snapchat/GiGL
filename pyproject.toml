@@ -136,7 +136,7 @@ docs = [
   "sphinx-rtd-theme==2.0.0",
   "pydata-sphinx-theme==0.16.1",
   "sphinx-tabs==3.4.5",
-
+  "sphinxcontrib-mermaid==2.0.2",
 ]
 typing-stubs = [
   "pandas-stubs==2.2.2.240807",
