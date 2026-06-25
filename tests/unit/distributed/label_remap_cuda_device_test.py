@@ -33,11 +33,11 @@ def _inputs(device: torch.device):
     """A small case exercising every on-device code path.
 
     The node map is UNSORTED (so ``torch.sort`` yields a non-identity
-    ``sort_perm`` -- the gather through it must run on-device), and anchor 0 has
-    a DUPLICATE label column ([15, 15]) so the stable-argsort tie-break over the
-    composite key runs on-device. Local layout: g15->0, g10->1, g16->2, g11->3,
-    g12->4. Anchor rows: [15, 15] -> local 0 twice; [16, -1] -> local 2;
-    [-1, -1] -> empty.
+    ``sort_perm`` -- the gather through it must run on-device). Anchor 0 has a
+    DUPLICATE label column ([15, 15]) to exercise duplicate handling and
+    verify multiplicity is preserved (local 0 appears twice). Local layout:
+    g15->0, g10->1, g16->2, g11->3, g12->4. Anchor rows: [15, 15] -> local 0
+    twice; [16, -1] -> local 2; [-1, -1] -> empty.
     """
     node_map = {_STORY: torch.tensor([15, 10, 16, 11, 12], device=device)}
     positives = {

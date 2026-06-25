@@ -48,10 +48,18 @@ def _dict_from_edge_list(
     return {et: labels.to_dict() for et, labels in edge_list_by_type.items()}
 
 
-def _assert_label_dicts_equal(
+def _assert_label_dicts_set_equal(
     actual: dict[PyGEdgeType, dict[int, torch.Tensor]],
     expected: dict[PyGEdgeType, dict[int, torch.Tensor]],
 ) -> None:
+    """Assert per-anchor SET equality (with multiplicity) between two label dicts.
+
+    The edge-list kernel emits pairs in column-visit order; the loop oracle emits
+    them in ascending-local order.  Both are valid: the ABLP contrastive loss is
+    permutation-invariant over the pair stream.  This helper normalises order via
+    ``sorted()`` so it catches membership and multiplicity errors while remaining
+    invariant to within-anchor permutations.
+    """
     assert set(actual.keys()) == set(expected.keys()), (
         f"{set(actual.keys())} != {set(expected.keys())}"
     )
@@ -61,7 +69,10 @@ def _assert_label_dicts_equal(
         for anchor, expected_tensor in inner.items():
             got = actual_inner[anchor]
             assert got.dtype == torch.long
-            torch.testing.assert_close(got, expected_tensor)
+            assert sorted(got.tolist()) == sorted(expected_tensor.tolist()), (
+                f"{edge_type}[{anchor}]: got {got.tolist()}, "
+                f"expected {expected_tensor.tolist()} (as sets)"
+            )
 
 
 class AnchorLabelsTest(TestCase):
@@ -80,11 +91,14 @@ class AnchorLabelsTest(TestCase):
 
 
 class RemapOneEdgeListTest(TestCase):
-    def test_matches_nonzero_order_with_padding_and_empty(self) -> None:
+    def test_column_order_with_padding_and_empty(self) -> None:
+        # When the node map is sorted, column order and ascending-local order
+        # coincide, so this verifies exact output.
+        # anchor 0: [15, -1] -> local 5 ; anchor 1: [15, 16] -> local 5, 6
+        #   (column order == ascending-local here because node is already sorted);
+        # anchor 2: [-1, -1] -> empty ; anchor 3: [99, -1] -> empty (99 absent).
         node = torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])
         sorted_node, sort_perm = torch.sort(node)
-        # anchor 0: [15, -1] -> local 5 ; anchor 1: [15, 16] -> local 5,6 ;
-        # anchor 2: [-1, -1] -> empty ; anchor 3: [99, -1] -> empty (99 absent).
         label_tensor = torch.tensor(
             [[15, -1], [15, 16], [-1, -1], [99, -1]], dtype=torch.long
         )
@@ -99,14 +113,14 @@ class RemapOneEdgeListTest(TestCase):
             result.label_index, torch.tensor([5, 5, 6], dtype=torch.long)
         )
 
-    def test_unsorted_node_map_nontrivial_sort_perm(self) -> None:
+    def test_unsorted_node_map_correct_membership(self) -> None:
         # node map is UNSORTED, so torch.sort yields a non-identity sort_perm.
-        # node[i]=global id of local i: g15->local0, g10->local1, g16->local2,
-        # g11->local3. The label row is high-id-first ([16, 15]); the edge-list
-        # must emit ascending LOCAL index (g15=local0 before g16=local2), proving
-        # the result is mapped through sort_perm and is not in column or sorted
-        # order. A port that dropped the sort_perm gather would emit [0, 2] mapped
-        # to the wrong locals (or sorted-position indices 1 and 3) and fail here.
+        # node[i] = global id of local i: g15->local0, g10->local1, g16->local2,
+        # g11->local3. The label row is high-id-first ([16, 15]); the kernel emits
+        # pairs in column order (g16=local2 first, g15=local0 second) -> [2, 0].
+        # The loop oracle would emit ascending-local order -> [0, 2]. Both are
+        # SET-equal to {0, 2}. A port that dropped the sort_perm gather would emit
+        # sorted-position indices (1 and 3) and fail the membership check.
         node = torch.tensor([15, 10, 16, 11])
         sorted_node, sort_perm = torch.sort(node)
         label_tensor = torch.tensor([[16, 15]], dtype=torch.long)
@@ -117,8 +131,9 @@ class RemapOneEdgeListTest(TestCase):
         torch.testing.assert_close(
             result.anchor_index, torch.tensor([0, 0], dtype=torch.long)
         )
+        # Column order: g16 (local2) first, g15 (local0) second.
         torch.testing.assert_close(
-            result.label_index, torch.tensor([0, 2], dtype=torch.long)
+            result.label_index, torch.tensor([2, 0], dtype=torch.long)
         )
 
 
@@ -147,9 +162,11 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                 negatives={},
                 supervision_edge_types=[_USER_TO_STORY],
             ),
-            # UNSORTED node map + reversed label columns -- non-identity sort_perm
-            # (see the vectorized test for the rationale). Guards against a port
-            # that emits sorted/column order instead of ascending local index.
+            # UNSORTED node map + reversed label columns -- non-identity sort_perm.
+            # The kernel emits column order (g16=local2 first, g15=local0 second);
+            # the loop oracle emits ascending-local order (local0, local2).
+            # The per-anchor SET is {0, 2} for both, guarding against a port that
+            # emits sorted-position indices (1, 3) instead of sort_perm-mapped locals.
             param(
                 "unsorted_node_map_reversed_columns",
                 node_map={_STORY: torch.tensor([15, 10, 16, 11])},
@@ -228,8 +245,8 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
             supervision_edge_types=supervision_edge_types,
             to_device=_CPU,
         )
-        _assert_label_dicts_equal(_dict_from_edge_list(el_pos), loop_pos)
-        _assert_label_dicts_equal(_dict_from_edge_list(el_neg), loop_neg)
+        _assert_label_dicts_set_equal(_dict_from_edge_list(el_pos), loop_pos)
+        _assert_label_dicts_set_equal(_dict_from_edge_list(el_neg), loop_neg)
 
     def test_duplicate_node_map_raises_assertion(self) -> None:
         # NOTE: the uniqueness check is gated on `__debug__`, so this is a no-op

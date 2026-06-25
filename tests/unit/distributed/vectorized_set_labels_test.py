@@ -42,10 +42,23 @@ def _neg(edge_type: EdgeType) -> EdgeType:
     return message_passing_to_negative_label(edge_type)
 
 
-def _assert_label_dicts_equal(
+def _assert_label_dicts_set_equal(
     actual: dict[EdgeType, dict[int, torch.Tensor]],
     expected: dict[EdgeType, dict[int, torch.Tensor]],
 ) -> None:
+    """Assert per-anchor SET equality (with multiplicity) between two label dicts.
+
+    The vectorized kernel emits pairs in column-visit order; the loop oracle emits
+    them in ascending-local order.  These differ when a row's local indices are not
+    monotone in column order (e.g. an unsorted node map with reversed label columns).
+    Both are valid: the ABLP contrastive loss is permutation-invariant over the pair
+    stream (``CrossEntropyLoss(reduction="sum")`` with value-based collision masks),
+    so within-anchor label order carries no meaning.
+
+    This helper uses ``sorted(...)`` to normalise order before comparing, so it
+    catches membership errors and multiplicity errors (duplicate labels) while
+    remaining invariant to within-anchor permutations.
+    """
     assert set(actual.keys()) == set(expected.keys()), (
         f"{set(actual.keys())} != {set(expected.keys())}"
     )
@@ -57,7 +70,12 @@ def _assert_label_dicts_equal(
         for anchor, expected_tensor in inner.items():
             got = actual_inner[anchor]
             assert got.dtype == torch.long, f"{edge_type}[{anchor}] dtype {got.dtype}"
-            torch.testing.assert_close(got, expected_tensor)
+            # Sort both tensors so the comparison is order-independent but still
+            # catches missing/extra entries and multiplicity (duplicate labels).
+            assert sorted(got.tolist()) == sorted(expected_tensor.tolist()), (
+                f"{edge_type}[{anchor}]: got {got.tolist()}, "
+                f"expected {expected_tensor.tolist()} (as sets)"
+            )
 
 
 class LoopSetLabelsContractTest(TestCase):
@@ -88,7 +106,7 @@ class LoopSetLabelsContractTest(TestCase):
                 3: torch.tensor([], dtype=torch.long),
             }
         }
-        _assert_label_dicts_equal(y_pos, expected)
+        _assert_label_dicts_set_equal(y_pos, expected)
         self.assertEqual(y_neg, {})
 
     def test_duplicate_label_columns_preserve_multiplicity(self) -> None:
@@ -136,10 +154,11 @@ class VectorizedSetLabelsEquivalenceTest(TestCase):
             # `sort_perm` is the identity and a broken port that emits sorted (or
             # global) order would still pass; here `torch.sort` permutes nontrivially
             # (15->local0, 10->local1, 16->local2, 11->local3), and the label row is
-            # given high-id-first ([16, 15]). The loop oracle emits ascending LOCAL
-            # index regardless of column order, i.e. local 0 (g15) before local 2
-            # (g16) -> [0, 2]; a kernel that forgot to map through `sort_perm`, or
-            # that preserved column order, would diverge.
+            # given high-id-first ([16, 15]).  The kernel emits pairs in column-visit
+            # order (g16=local2 first, then g15=local0), while the loop oracle emits
+            # ascending-local order (local0, local2).  The SET is {0, 2} for both --
+            # a kernel that forgot to map through `sort_perm` would emit the wrong
+            # locals (e.g. sorted positions 1 and 3) and fail the set check.
             param(
                 "unsorted_node_map_reversed_columns",
                 node_map={_STORY: torch.tensor([15, 10, 16, 11])},
@@ -252,13 +271,16 @@ class VectorizedSetLabelsEquivalenceTest(TestCase):
             supervision_edge_types=supervision_edge_types,
             to_device=_CPU,
         )
-        _assert_label_dicts_equal(vec_pos, loop_pos)
-        _assert_label_dicts_equal(vec_neg, loop_neg)
+        _assert_label_dicts_set_equal(vec_pos, loop_pos)
+        _assert_label_dicts_set_equal(vec_neg, loop_neg)
 
-    def test_unsorted_node_map_exact_order(self) -> None:
+    def test_unsorted_node_map_correct_membership(self) -> None:
         # Belt-and-suspenders on top of the parameterized case: assert the EXACT
-        # tensor (not just equality-to-loop) so the expected ascending-local order
-        # is visible and a regression to sorted/column order is unmistakable.
+        # local-index SET for the unsorted-node-map case so a regression to
+        # wrong locals (e.g. sorted-position indices instead of sort_perm-mapped
+        # locals) is unmistakable, even if within-anchor order is not pinned.
+        # Layout: node = [15, 10, 16, 11] -> g15=local0, g10=local1, g16=local2,
+        # g11=local3. Labels: [16, 15] -> expected SET {local0, local2} = {0, 2}.
         node_map = {_STORY: torch.tensor([15, 10, 16, 11])}
         positives = {_pos(_USER_TO_STORY): torch.tensor([[16, 15]], dtype=torch.long)}
         vec_pos, _ = vectorized_set_labels(
@@ -268,10 +290,10 @@ class VectorizedSetLabelsEquivalenceTest(TestCase):
             supervision_edge_types=[_USER_TO_STORY],
             to_device=_CPU,
         )
-        # g15 is local 0, g16 is local 2 -> ascending local order is [0, 2].
-        torch.testing.assert_close(
-            vec_pos[_USER_TO_STORY][0], torch.tensor([0, 2], dtype=torch.long)
-        )
+        # The kernel emits column order (g16 first, g15 second) -> [2, 0].
+        # The loop oracle emits ascending-local order -> [0, 2].
+        # Both are SET-equal to {0, 2}; only membership and co-indexing matter.
+        assert sorted(vec_pos[_USER_TO_STORY][0].tolist()) == [0, 2]
 
     def test_duplicate_node_map_raises_assertion(self) -> None:
         # NOTE: the uniqueness check is gated on `__debug__`, so this assertion is
