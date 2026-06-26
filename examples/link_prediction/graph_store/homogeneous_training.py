@@ -241,8 +241,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
-        # Return labels as a dense AnchorLabels edge-list so the loss reads
-        # anchor/label indices directly without a per-anchor Python loop.
+        # Labels as an AnchorLabels edge-list; see the AnchorLabels class docstring.
         use_list_output=True,
     )
 
@@ -308,10 +307,8 @@ def _compute_loss(
     query_node_idx: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_negative_batch_size = random_negative_data.batch_size
 
-    # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True).
-    # Pairs are grouped by anchor, so reading label_index/anchor_index directly
-    # yields the same (query, label) pairs as the historical dict read; the
-    # within-anchor order may differ, but the loss is order-invariant.
+    # main_data.y_positive is an AnchorLabels edge-list; read label_index and
+    # query_node_idx[anchor_index] directly (see the AnchorLabels class docstring).
     positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
     repeated_query_node_idx = query_node_idx[
         main_data.y_positive.anchor_index.to(device)

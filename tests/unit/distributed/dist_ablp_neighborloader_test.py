@@ -423,10 +423,10 @@ def _global_pair_set(
     pair list for set-equality comparison.
 
     Pairs are collected in anchor-ascending order and sorted within each anchor
-    by global label value, so the result is canonical regardless of the
-    within-anchor label order emitted by the kernel (column-visit order) vs the
-    loop oracle (ascending-local order). Multiplicity is preserved: duplicate
-    label columns produce duplicate entries in the list.
+    by global label value, so the result is canonical regardless of the order in
+    which the kernel emits an anchor's labels (which is unspecified by contract).
+    Multiplicity is preserved: duplicate label columns produce duplicate entries
+    in the list.
 
     Use ``collections.Counter`` or ``sorted(...)`` equality rather than
     positional ``==`` if pair-level multiplicity without anchor grouping matters.
@@ -454,19 +454,17 @@ def _collect_homogeneous_labels(
 
     Local node indices differ run-to-run, so labels are translated back to
     global ids via ``datum.node``. Pairs are sorted within each anchor (see
-    ``_global_pair_set``) for canonical set-equality comparison in the parent:
-    the vectorized kernel emits column-visit order while the loop oracle emits
-    ascending-local order; both are correct since the ABLP loss is
-    permutation-invariant over the pair stream.
+    ``_global_pair_set``) for canonical set-equality comparison in the parent,
+    since the order in which an anchor's labels are emitted is unspecified -- the
+    ABLP loss is permutation-invariant over the pairs.
 
     When ``use_list_output`` is True the labels arrive as :class:`AnchorLabels`.
-    This branch ALSO asserts in-process that the exact tensors the example
-    training loss reads from the edge-list match the legacy dict read: the
-    edge-list ``label_index`` must equal the dict's ``torch.cat(values())`` and
-    ``query_node_idx[anchor_index]`` must equal the legacy
-    ``repeat_interleave`` over per-anchor lengths. Both paths draw from the same
-    :func:`_membership_remap` pair stream (column-visit order), so they are
-    identical -- a drift here is exactly the example-training bug we guard against.
+    This branch ALSO asserts in-process that reading labels straight off the
+    edge-list agrees with reading them via the dict view: ``label_index`` must
+    equal the dict's ``torch.cat(values())``, and ``query_node_idx[anchor_index]``
+    must equal a ``repeat_interleave`` of the anchors over their per-anchor label
+    counts. Both views come from the same edge-list, so any drift between the two
+    read patterns is a real bug, not just a reordering.
     """
     create_test_process_group()
     loader = DistABLPLoader(
@@ -487,20 +485,20 @@ def _collect_homogeneous_labels(
                 f"expected AnchorLabels, got {type(datum.y_positive)}"
             )
             positive_dict = datum.y_positive.to_dict()
-            # Direct check that the example-training read matches the legacy read,
-            # within this single batch, EXACTLY (order included).
+            # The direct edge-list read must match the dict-view read within this
+            # single batch, EXACTLY (order included).
             query_node_idx = torch.arange(datum.batch_size)
-            legacy_positive_idx = torch.cat(
+            dict_view_label_idx = torch.cat(
                 [positive_dict[a] for a in range(datum.batch_size)]
             )
-            legacy_repeated_query = query_node_idx.repeat_interleave(
+            dict_view_repeated_query = query_node_idx.repeat_interleave(
                 torch.tensor([len(positive_dict[a]) for a in range(datum.batch_size)])
             )
             torch.testing.assert_close(
-                datum.y_positive.label_index, legacy_positive_idx
+                datum.y_positive.label_index, dict_view_label_idx
             )
             torch.testing.assert_close(
-                query_node_idx[datum.y_positive.anchor_index], legacy_repeated_query
+                query_node_idx[datum.y_positive.anchor_index], dict_view_repeated_query
             )
         else:
             positive_dict = datum.y_positive
@@ -711,11 +709,11 @@ class DistABLPLoaderTest(TestCase):
         False), so the two loader runs emit batches in the same order and the sorted
         pair sets are directly comparable.
 
-        The child process additionally asserts the exact tensors the example-training
-        loss reads from the edge-list equal the legacy dict read (see
+        The child process additionally asserts that reading labels straight off the
+        edge-list equals reading them through the dict view (see
         ``_collect_homogeneous_labels``): ``label_index`` equals the dict's
         ``torch.cat(values())`` and ``query_node_idx[anchor_index]`` equals the
-        legacy ``repeat_interleave``.
+        matching ``repeat_interleave`` over per-anchor counts.
         """
         edge_index = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(

@@ -134,8 +134,7 @@ def _setup_dataloaders(
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
-        # Return labels as a dense AnchorLabels edge-list so the loss reads
-        # anchor/label indices directly without a per-anchor Python loop.
+        # Labels as an AnchorLabels edge-list; see the AnchorLabels class docstring.
         use_list_output=True,
     )
 

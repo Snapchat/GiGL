@@ -144,8 +144,7 @@ def _setup_dataloaders(
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
-        # Return labels as a dense AnchorLabels edge-list so the loss reads
-        # anchor/label indices directly without a per-anchor Python loop.
+        # Labels as an AnchorLabels edge-list; see the AnchorLabels class docstring.
         use_list_output=True,
     )
 
@@ -226,12 +225,8 @@ def _compute_loss(
     ).to(device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True),
-    # even in the heterogeneous setting (single supervision edge type per loss
-    # call). label_index holds the local label node per (anchor, label) pair;
-    # anchor_index holds the matching local anchor row. Pairs are grouped by
-    # anchor, so this yields the same (query, label) pairs as the historical dict
-    # read; the within-anchor order may differ, but the loss is order-invariant.
+    # main_data.y_positive is an AnchorLabels edge-list; read label_index and
+    # query_node_idx[anchor_index] directly (see homogeneous_training._compute_loss).
     positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
     repeated_query_node_idx = query_node_idx[
         main_data.y_positive.anchor_index.to(device)

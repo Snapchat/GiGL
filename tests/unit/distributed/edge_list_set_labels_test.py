@@ -1,7 +1,18 @@
-"""Unit tests for the dense edge-list ABLP label container and kernel.
+"""Unit tests for the ABLP label-remap kernel and its edge-list container.
 
 These exercise the pure-tensor label-remap logic directly (no GLT, no
 distributed runtime), so they run in-process without ``mp.spawn``.
+
+``edge_list_set_labels`` is the loader's single label-remap path; it turns padded
+blocks of global label ids into per-edge-type :class:`AnchorLabels` edge lists.
+We assert against constructed expected values rather than a second reference
+implementation, and we check both the edge-list tensors and their
+:meth:`AnchorLabels.to_dict` view, since the loader uses both forms.
+
+Within an anchor the kernel emits labels in column-visit order, which is left
+unspecified by contract (the ABLP loss is order-invariant). We therefore pin
+exact tensors only where the node map is sorted -- there column order coincides
+with ascending-local order -- and otherwise compare per-anchor label *sets*.
 """
 
 import unittest
@@ -12,12 +23,12 @@ from torch_geometric.typing import EdgeType as PyGEdgeType
 
 from gigl.distributed.dist_ablp_neighborloader import (
     AnchorLabels,
-    _loop_set_labels,
-    _remap_one_label_tensor_edge_list,
     edge_list_set_labels,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
 )
@@ -42,33 +53,27 @@ def _neg(edge_type: EdgeType) -> EdgeType:
     return message_passing_to_negative_label(edge_type)
 
 
-def _dict_from_edge_list(
-    edge_list_by_type: dict[PyGEdgeType, AnchorLabels],
-) -> dict[PyGEdgeType, dict[int, torch.Tensor]]:
-    return {et: labels.to_dict() for et, labels in edge_list_by_type.items()}
-
-
-def _assert_label_dicts_set_equal(
+def _assert_dict_sets_equal(
     actual: dict[PyGEdgeType, dict[int, torch.Tensor]],
     expected: dict[PyGEdgeType, dict[int, torch.Tensor]],
 ) -> None:
     """Assert per-anchor SET equality (with multiplicity) between two label dicts.
 
-    The edge-list kernel emits pairs in column-visit order; the loop oracle emits
-    them in ascending-local order.  Both are valid: the ABLP contrastive loss is
-    permutation-invariant over the pair stream.  This helper normalises order via
-    ``sorted()`` so it catches membership and multiplicity errors while remaining
-    invariant to within-anchor permutations.
+    Comparison is order-independent within an anchor (the kernel does not pin
+    within-anchor order) but still catches missing/extra labels and multiplicity
+    (duplicate label columns), and asserts each value tensor is ``long``.
     """
     assert set(actual.keys()) == set(expected.keys()), (
         f"{set(actual.keys())} != {set(expected.keys())}"
     )
     for edge_type, inner in expected.items():
         actual_inner = actual[edge_type]
-        assert set(actual_inner.keys()) == set(inner.keys())
+        assert set(actual_inner.keys()) == set(inner.keys()), (
+            f"{edge_type}: {set(actual_inner.keys())} != {set(inner.keys())}"
+        )
         for anchor, expected_tensor in inner.items():
             got = actual_inner[anchor]
-            assert got.dtype == torch.long
+            assert got.dtype == torch.long, f"{edge_type}[{anchor}] dtype {got.dtype}"
             assert sorted(got.tolist()) == sorted(expected_tensor.tolist()), (
                 f"{edge_type}[{anchor}]: got {got.tolist()}, "
                 f"expected {expected_tensor.tolist()} (as sets)"
@@ -76,8 +81,9 @@ def _assert_label_dicts_set_equal(
 
 
 class AnchorLabelsTest(TestCase):
-    def test_to_dict_round_trips_empty_and_multi(self) -> None:
+    def test_to_dict_expands_empty_and_multi_label_anchors(self) -> None:
         # 3 anchors: anchor 0 -> [5], anchor 1 -> [] (empty), anchor 2 -> [7, 8].
+        # Every anchor must get a key, including the empty one in the middle.
         labels = AnchorLabels(
             anchor_index=torch.tensor([0, 2, 2], dtype=torch.long),
             label_index=torch.tensor([5, 7, 8], dtype=torch.long),
@@ -89,59 +95,26 @@ class AnchorLabelsTest(TestCase):
         torch.testing.assert_close(as_dict[1], torch.empty(0, dtype=torch.long))
         torch.testing.assert_close(as_dict[2], torch.tensor([7, 8], dtype=torch.long))
 
-
-class RemapOneEdgeListTest(TestCase):
-    def test_column_order_with_padding_and_empty(self) -> None:
-        # When the node map is sorted, column order and ascending-local order
-        # coincide, so this verifies exact output.
-        # anchor 0: [15, -1] -> local 5 ; anchor 1: [15, 16] -> local 5, 6
-        #   (column order == ascending-local here because node is already sorted);
-        # anchor 2: [-1, -1] -> empty ; anchor 3: [99, -1] -> empty (99 absent).
-        node = torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])
-        sorted_node, sort_perm = torch.sort(node)
-        label_tensor = torch.tensor(
-            [[15, -1], [15, 16], [-1, -1], [99, -1]], dtype=torch.long
+    def test_to_dict_all_empty(self) -> None:
+        # No pairs at all: every anchor still gets an empty tensor.
+        labels = AnchorLabels(
+            anchor_index=torch.empty(0, dtype=torch.long),
+            label_index=torch.empty(0, dtype=torch.long),
+            num_anchors=2,
         )
-        result = _remap_one_label_tensor_edge_list(
-            label_tensor, sorted_node, sort_perm, _CPU
-        )
-        self.assertEqual(result.num_anchors, 4)
-        torch.testing.assert_close(
-            result.anchor_index, torch.tensor([0, 1, 1], dtype=torch.long)
-        )
-        torch.testing.assert_close(
-            result.label_index, torch.tensor([5, 5, 6], dtype=torch.long)
-        )
-
-    def test_unsorted_node_map_correct_membership(self) -> None:
-        # node map is UNSORTED, so torch.sort yields a non-identity sort_perm.
-        # node[i] = global id of local i: g15->local0, g10->local1, g16->local2,
-        # g11->local3. The label row is high-id-first ([16, 15]); the kernel emits
-        # pairs in column order (g16=local2 first, g15=local0 second) -> [2, 0].
-        # The loop oracle would emit ascending-local order -> [0, 2]. Both are
-        # SET-equal to {0, 2}. A port that dropped the sort_perm gather would emit
-        # sorted-position indices (1 and 3) and fail the membership check.
-        node = torch.tensor([15, 10, 16, 11])
-        sorted_node, sort_perm = torch.sort(node)
-        label_tensor = torch.tensor([[16, 15]], dtype=torch.long)
-        result = _remap_one_label_tensor_edge_list(
-            label_tensor, sorted_node, sort_perm, _CPU
-        )
-        self.assertEqual(result.num_anchors, 1)
-        torch.testing.assert_close(
-            result.anchor_index, torch.tensor([0, 0], dtype=torch.long)
-        )
-        # Column order: g16 (local2) first, g15 (local0) second.
-        torch.testing.assert_close(
-            result.label_index, torch.tensor([2, 0], dtype=torch.long)
-        )
+        as_dict = labels.to_dict()
+        self.assertEqual(set(as_dict.keys()), {0, 1})
+        torch.testing.assert_close(as_dict[0], torch.empty(0, dtype=torch.long))
+        torch.testing.assert_close(as_dict[1], torch.empty(0, dtype=torch.long))
 
 
-class EdgeListSetLabelsEquivalenceTest(TestCase):
+class EdgeListSetLabelsTest(TestCase):
     @parameterized.expand(
         [
+            # Sorted node map -> exact tensors are pinned. Covers present labels,
+            # a fully-padded (empty) anchor, and an absent global id (also empty).
             param(
-                "homogeneous_present_empty_and_padded",
+                "sorted_present_empty_and_padded",
                 node_map={_STORY: torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])},
                 positives={
                     _pos(_USER_TO_STORY): torch.tensor(
@@ -149,10 +122,20 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                     )
                 },
                 negatives={},
-                supervision_edge_types=[_USER_TO_STORY],
+                expected_positive={
+                    _USER_TO_STORY: {
+                        0: [5],
+                        1: [5, 6],
+                        2: [],
+                        3: [],
+                    }
+                },
+                expected_negative={},
             ),
+            # Duplicate label columns must keep multiplicity: a node matching two
+            # identical columns appears twice in its anchor's labels.
             param(
-                "homogeneous_duplicate_labels",
+                "duplicate_label_columns_keep_multiplicity",
                 node_map={_STORY: torch.tensor([10, 11, 12, 13, 14, 15])},
                 positives={
                     _pos(_USER_TO_STORY): torch.tensor(
@@ -160,24 +143,32 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                     )
                 },
                 negatives={},
-                supervision_edge_types=[_USER_TO_STORY],
+                expected_positive={_USER_TO_STORY: {0: [5, 5], 1: [1, 1]}},
+                expected_negative={},
             ),
-            # UNSORTED node map + reversed label columns -- non-identity sort_perm.
-            # The kernel emits column order (g16=local2 first, g15=local0 second);
-            # the loop oracle emits ascending-local order (local0, local2).
-            # The per-anchor SET is {0, 2} for both, guarding against a port that
-            # emits sorted-position indices (1, 3) instead of sort_perm-mapped locals.
+            # Real homogeneous keying: the loader keys the node map by
+            # DEFAULT_HOMOGENEOUS_NODE_TYPE and uses DEFAULT_HOMOGENEOUS_EDGE_TYPE.
+            # Exercise that exact keying, not just a custom NodeType. Node map is
+            # unsorted here, so we compare per-anchor sets.
             param(
-                "unsorted_node_map_reversed_columns",
-                node_map={_STORY: torch.tensor([15, 10, 16, 11])},
+                "default_homogeneous_keying",
+                node_map={
+                    DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.tensor([20, 10, 30, 11, 15])
+                },
                 positives={
-                    _pos(_USER_TO_STORY): torch.tensor([[16, 15]], dtype=torch.long)
+                    message_passing_to_positive_label(
+                        DEFAULT_HOMOGENEOUS_EDGE_TYPE
+                    ): torch.tensor([[30, 10], [-1, -1]], dtype=torch.long)
                 },
                 negatives={},
-                supervision_edge_types=[_USER_TO_STORY],
+                # g30->local2, g10->local1 ; second anchor fully padded.
+                expected_positive={DEFAULT_HOMOGENEOUS_EDGE_TYPE: {0: [2, 1], 1: []}},
+                expected_negative={},
             ),
+            # Negatives travel the same path and must remap independently of the
+            # positives. Sorted node map -> exact sets are unambiguous.
             param(
-                "homogeneous_with_negatives",
+                "with_negatives",
                 node_map={_STORY: torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])},
                 positives={
                     _pos(_USER_TO_STORY): torch.tensor([[15], [16]], dtype=torch.long)
@@ -187,10 +178,13 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                         [[13, 16], [17, -1]], dtype=torch.long
                     )
                 },
-                supervision_edge_types=[_USER_TO_STORY],
+                expected_positive={_USER_TO_STORY: {0: [5], 1: [6]}},
+                expected_negative={_USER_TO_STORY: {0: [3, 6], 1: [7]}},
             ),
+            # Multiple supervision edge types: each gets its own key and remaps
+            # against its own supervision node type's map.
             param(
-                "heterogeneous_multi_edge_type",
+                "multi_edge_type",
                 node_map={
                     _A: torch.tensor([10]),
                     _B: torch.tensor([11, 12, 13, 14, 20, 21]),
@@ -201,8 +195,39 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                     _pos(_A_TO_C): torch.tensor([[22, 23]], dtype=torch.long),
                 },
                 negatives={},
-                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                expected_positive={
+                    _A_TO_B: {0: [2, 3]},  # g13->local2, g14->local3 in _B
+                    _A_TO_C: {0: [2, 3]},  # g22->local2, g23->local3 in _C
+                },
+                expected_negative={},
             ),
+            # Multiple edge types WITH negatives on each.
+            param(
+                "multi_edge_type_with_negatives",
+                node_map={
+                    _A: torch.tensor([10]),
+                    _B: torch.tensor([11, 12, 13, 14, 15, 16]),
+                    _C: torch.tensor([20, 21, 22, 23, 24, 25]),
+                },
+                positives={
+                    _pos(_A_TO_B): torch.tensor([[13, 14]], dtype=torch.long),
+                    _pos(_A_TO_C): torch.tensor([[22, 23]], dtype=torch.long),
+                },
+                negatives={
+                    _neg(_A_TO_B): torch.tensor([[15, 16]], dtype=torch.long),
+                    _neg(_A_TO_C): torch.tensor([[24, 25]], dtype=torch.long),
+                },
+                expected_positive={
+                    _A_TO_B: {0: [2, 3]},
+                    _A_TO_C: {0: [2, 3]},
+                },
+                expected_negative={
+                    _A_TO_B: {0: [4, 5]},  # g15->local4, g16->local5 in _B
+                    _A_TO_C: {0: [4, 5]},  # g24->local4, g25->local5 in _C
+                },
+            ),
+            # Every anchor empty (one fully padded, one with only absent ids):
+            # the edge type still appears, with an empty tensor per anchor.
             param(
                 "all_anchors_empty",
                 node_map={_STORY: torch.tensor([10, 11, 12])},
@@ -212,47 +237,131 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                     )
                 },
                 negatives={},
-                supervision_edge_types=[_USER_TO_STORY],
-            ),
-            param(
-                "zero_anchors",
-                node_map={_STORY: torch.tensor([10, 11, 12])},
-                positives={_pos(_USER_TO_STORY): torch.empty((0, 0), dtype=torch.long)},
-                negatives={},
-                supervision_edge_types=[_USER_TO_STORY],
+                expected_positive={_USER_TO_STORY: {0: [], 1: []}},
+                expected_negative={},
             ),
         ]
     )
-    def test_edge_list_to_dict_matches_loop(
+    def test_to_dict_matches_constructed_expected(
         self,
         _,
         node_map: dict[NodeType, torch.Tensor],
         positives: dict[EdgeType, torch.Tensor],
         negatives: dict[EdgeType, torch.Tensor],
-        supervision_edge_types: list[EdgeType],
+        expected_positive: dict[PyGEdgeType, dict[int, list[int]]],
+        expected_negative: dict[PyGEdgeType, dict[int, list[int]]],
     ) -> None:
-        loop_pos, loop_neg = _loop_set_labels(
+        pos, neg = edge_list_set_labels(
             node_local_to_global_by_type=node_map,
             positive_labels_by_edge_type=positives,
             negative_labels_by_edge_type=negatives,
-            supervision_edge_types=supervision_edge_types,
             to_device=_CPU,
         )
-        el_pos, el_neg = edge_list_set_labels(
+        for labels in pos.values():
+            self.assertIsInstance(labels, AnchorLabels)
+        for labels in neg.values():
+            self.assertIsInstance(labels, AnchorLabels)
+        expected_pos_tensors = {
+            et: {a: torch.tensor(v, dtype=torch.long) for a, v in inner.items()}
+            for et, inner in expected_positive.items()
+        }
+        expected_neg_tensors = {
+            et: {a: torch.tensor(v, dtype=torch.long) for a, v in inner.items()}
+            for et, inner in expected_negative.items()
+        }
+        _assert_dict_sets_equal(
+            {et: labels.to_dict() for et, labels in pos.items()},
+            expected_pos_tensors,
+        )
+        _assert_dict_sets_equal(
+            {et: labels.to_dict() for et, labels in neg.items()},
+            expected_neg_tensors,
+        )
+
+    def test_sorted_node_map_pins_exact_edge_list_tensors(self) -> None:
+        # With a sorted node map column-visit order coincides with ascending-local
+        # order, so the kernel's AnchorLabels tensors are fully determined: pin
+        # them exactly. This locks the (anchor_index, label_index) co-indexing the
+        # loss relies on. Covers present labels, a multi-label anchor, and a
+        # fully-padded (empty) anchor.
+        node_map = {_STORY: torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])}
+        positives = {
+            _pos(_USER_TO_STORY): torch.tensor(
+                [[15, -1], [15, 16], [-1, -1]], dtype=torch.long
+            )
+        }
+        pos, _ = edge_list_set_labels(
             node_local_to_global_by_type=node_map,
             positive_labels_by_edge_type=positives,
-            negative_labels_by_edge_type=negatives,
-            supervision_edge_types=supervision_edge_types,
+            negative_labels_by_edge_type={},
             to_device=_CPU,
         )
-        _assert_label_dicts_set_equal(_dict_from_edge_list(el_pos), loop_pos)
-        _assert_label_dicts_set_equal(_dict_from_edge_list(el_neg), loop_neg)
+        labels = pos[_USER_TO_STORY]
+        self.assertEqual(labels.num_anchors, 3)
+        torch.testing.assert_close(
+            labels.anchor_index, torch.tensor([0, 1, 1], dtype=torch.long)
+        )
+        torch.testing.assert_close(
+            labels.label_index, torch.tensor([5, 5, 6], dtype=torch.long)
+        )
+
+    def test_unsorted_node_map_correct_membership(self) -> None:
+        # The node map is UNSORTED, so torch.sort yields a non-identity sort_perm
+        # and the kernel must map sorted positions back through it to recover real
+        # local indices. We assert the per-anchor SET (within-anchor order is
+        # unspecified by contract): a regression that emitted sorted-position
+        # indices instead of sort_perm-mapped locals would produce {1, 3} here and
+        # fail, so this proves the local indices are real node indices.
+        # node = [15, 10, 16, 11] -> g15=local0, g10=local1, g16=local2, g11=local3.
+        # Labels [16, 15] -> SET {local0, local2} = {0, 2}.
+        node_map = {_STORY: torch.tensor([15, 10, 16, 11])}
+        positives = {_pos(_USER_TO_STORY): torch.tensor([[16, 15]], dtype=torch.long)}
+        pos, _ = edge_list_set_labels(
+            node_local_to_global_by_type=node_map,
+            positive_labels_by_edge_type=positives,
+            negative_labels_by_edge_type={},
+            to_device=_CPU,
+        )
+        self.assertEqual(sorted(pos[_USER_TO_STORY].to_dict()[0].tolist()), [0, 2])
+
+    def test_zero_anchor_tensor_yields_no_edge_type_key(self) -> None:
+        # A zero-anchor label tensor means there were no anchors for that edge
+        # type this batch, so it must NOT appear in the output at all (not as an
+        # empty entry).
+        node_map = {_STORY: torch.tensor([10, 11, 12])}
+        positives = {_pos(_USER_TO_STORY): torch.empty((0, 0), dtype=torch.long)}
+        pos, neg = edge_list_set_labels(
+            node_local_to_global_by_type=node_map,
+            positive_labels_by_edge_type=positives,
+            negative_labels_by_edge_type={},
+            to_device=_CPU,
+        )
+        self.assertEqual(pos, {})
+        self.assertEqual(neg, {})
+
+    def test_device_placement_cpu(self) -> None:
+        # The output index tensors must land on the requested device. (CPU here;
+        # the CUDA counterpart lives in label_remap_cuda_device_test.py.)
+        node_map = {_STORY: torch.tensor([10, 11, 12, 13, 14, 15])}
+        positives = {_pos(_USER_TO_STORY): torch.tensor([[15], [11]], dtype=torch.long)}
+        pos, _ = edge_list_set_labels(
+            node_local_to_global_by_type=node_map,
+            positive_labels_by_edge_type=positives,
+            negative_labels_by_edge_type={},
+            to_device=_CPU,
+        )
+        labels = pos[_USER_TO_STORY]
+        self.assertEqual(labels.anchor_index.device.type, "cpu")
+        self.assertEqual(labels.label_index.device.type, "cpu")
+        self.assertEqual(labels.anchor_index.dtype, torch.long)
+        self.assertEqual(labels.label_index.dtype, torch.long)
 
     def test_duplicate_node_map_raises_assertion(self) -> None:
-        # NOTE: the uniqueness check is gated on `__debug__`, so this is a no-op
-        # under `python -O` / `PYTHONOPTIMIZE`. GiGL node maps are unique by
-        # construction; the guard catches misuse only. The test asserts it fires
-        # under the default (non-optimized) interpreter used by the test suite.
+        # The membership lookup requires unique global ids; a duplicate would
+        # silently drop a local index. The guard is gated on ``__debug__`` (a
+        # no-op under ``python -O``), and GiGL node maps are unique by
+        # construction, so this only catches misuse. Assert it fires under the
+        # default (non-optimized) interpreter the suite runs on.
         node_map = {_STORY: torch.tensor([10, 10, 11])}
         positives = {_pos(_USER_TO_STORY): torch.tensor([[10, 11]], dtype=torch.long)}
         with self.assertRaises(AssertionError):
@@ -260,7 +369,6 @@ class EdgeListSetLabelsEquivalenceTest(TestCase):
                 node_local_to_global_by_type=node_map,
                 positive_labels_by_edge_type=positives,
                 negative_labels_by_edge_type={},
-                supervision_edge_types=[_USER_TO_STORY],
                 to_device=_CPU,
             )
 
