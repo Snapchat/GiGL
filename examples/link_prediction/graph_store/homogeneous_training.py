@@ -307,11 +307,12 @@ def _compute_loss(
     query_node_idx: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_negative_batch_size = random_negative_data.batch_size
 
-    # main_data.y_positive is an AnchorLabels edge-list; read label_index and
-    # query_node_idx[anchor_index] directly (see the AnchorLabels class docstring).
-    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
+    # main_data.y_positive is an AnchorLabels edge-list; read the co-indexed [E]
+    # label_index and query_node_idx[anchor_index] directly. See
+    # homogeneous_training._compute_loss for why this equals the historical dict read.
+    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)  # [E]
     repeated_query_node_idx = query_node_idx[
-        main_data.y_positive.anchor_index.to(device)
+        main_data.y_positive.anchor_index.to(device)  # [E]
     ]
     if hasattr(main_data, "y_negative"):
         hard_negative_idx: torch.Tensor = main_data.y_negative.label_index.to(device)

@@ -192,16 +192,18 @@ def _compute_loss(
     query_node_idx: torch.Tensor = torch.arange(main_data.batch_size).to(device)
     random_negative_batch_size = random_negative_data.batch_size
 
-    # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True).
-    # label_index holds the local label node per (anchor, label) pair; anchor_index
-    # holds the matching local anchor row. Pairs are grouped by anchor, so reading
-    # label_index/anchor_index directly yields the same (query, label) pairs as the
-    # historical dict read (torch.cat(list(values())) + repeat_interleave over
-    # per-anchor lengths). The within-anchor label order may differ, but the
-    # contrastive loss is order-invariant, so the result is equivalent.
-    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)
+    # main_data.y_positive is an AnchorLabels edge-list (use_list_output=True), two
+    # co-indexed [E] tensors: label_index holds the local label node per
+    # (anchor, label) pair, anchor_index the matching local anchor row. Pairs are
+    # grouped by anchor, so reading label_index/anchor_index directly yields the same
+    # (query, label) pairs as the historical dict read (torch.cat(list(values())) +
+    # repeat_interleave over per-anchor lengths). The within-anchor label order may
+    # differ, but the contrastive loss is order-invariant, so the result is
+    # equivalent. (This is the canonical explanation; the other link-prediction
+    # examples point here rather than restating it.)
+    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)  # [E]
     repeated_query_node_idx = query_node_idx[
-        main_data.y_positive.anchor_index.to(device)
+        main_data.y_positive.anchor_index.to(device)  # [E]
     ]
     if hasattr(main_data, "y_negative"):
         hard_negative_idx: torch.Tensor = main_data.y_negative.label_index.to(device)
