@@ -1,5 +1,6 @@
 """Shared functionality for launching Vertex AI jobs for training and inference."""
 
+import os
 from collections.abc import Mapping
 from typing import Final, Optional
 
@@ -104,6 +105,7 @@ def launch_single_pool_job(
                 cuda_docker_uri=cuda_docker_uri,
                 component=component,
             ),
+            *_collate_impl_passthrough_env_vars(),
         ],
         labels=resource_config_wrapper.get_resource_labels(component=component),
     )
@@ -195,6 +197,7 @@ def launch_graph_store_enabled_job(
             cuda_docker_uri=cuda_docker_uri,
             component=component,
         ),
+        *_collate_impl_passthrough_env_vars(),
     ]
 
     labels = resource_config_wrapper.get_resource_labels(component=component)
@@ -348,6 +351,34 @@ def _build_vertex_ai_job_name(job_name: str, component: GiGLComponents) -> str:
     raise ValueError(
         f"Invalid component: {component}. Expected one of: {_LAUNCHABLE_COMPONENTS}"
     )
+
+
+# Names of distributed-loader selection env vars forwarded verbatim into worker
+# containers so a value set on the launcher process reaches the workers (worker
+# containers do not inherit the launcher's process environment). Generic
+# passthrough: no value validation here (the loader validates / defaults).
+_COLLATE_IMPL_ENV_NAME = "GIGL_COLLATE_IMPL"
+_ABLP_LABEL_FORMAT_ENV_NAME = "GIGL_ABLP_LABEL_FORMAT"
+
+
+def _collate_impl_passthrough_env_vars() -> list[env_var.EnvVar]:
+    """Return loader-selection env vars to inject into worker containers.
+
+    Forwards ``GIGL_COLLATE_IMPL`` and ``GIGL_ABLP_LABEL_FORMAT`` from the
+    launcher process environment into the Vertex AI worker spec when they are
+    set to non-empty values; otherwise omits them so default behavior is
+    unchanged.
+
+    Returns:
+        A list of passthrough ``EnvVar`` entries (one per set variable).
+        Empty when none of the forwarded variables are set.
+    """
+    result: list[env_var.EnvVar] = []
+    for name in (_COLLATE_IMPL_ENV_NAME, _ABLP_LABEL_FORMAT_ENV_NAME):
+        value = os.environ.get(name)
+        if value:
+            result.append(env_var.EnvVar(name=name, value=value))
+    return result
 
 
 def _build_common_gigl_env_vars(
