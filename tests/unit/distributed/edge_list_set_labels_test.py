@@ -356,15 +356,15 @@ class EdgeListSetLabelsTest(TestCase):
         self.assertEqual(labels.anchor_index.dtype, torch.long)
         self.assertEqual(labels.label_index.dtype, torch.long)
 
-    def test_duplicate_node_map_raises_assertion(self) -> None:
+    def test_duplicate_node_map_raises(self) -> None:
         # The membership lookup requires unique global ids; a duplicate would
-        # silently drop a local index. The guard is gated on ``__debug__`` (a
-        # no-op under ``python -O``), and GiGL node maps are unique by
-        # construction, so this only catches misuse. Assert it fires under the
-        # default (non-optimized) interpreter the suite runs on.
+        # silently drop a local index and corrupt the loss. The guard is an
+        # always-on ``ValueError`` (not ``__debug__``), so it fires even under
+        # ``python -O``. GiGL node maps are unique by construction, so this only
+        # catches misuse of the now-public kernel.
         node_map = {_STORY: torch.tensor([10, 10, 11])}
         positives = {_pos(_USER_TO_STORY): torch.tensor([[10, 11]], dtype=torch.long)}
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             edge_list_set_labels(
                 node_local_to_global_by_type=node_map,
                 positive_labels_by_edge_type=positives,

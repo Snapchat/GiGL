@@ -124,6 +124,12 @@ class AnchorLabels:
         Every anchor ``0..num_anchors-1`` receives a key; anchors with no labels
         map to an empty ``long`` tensor on the same device as ``label_index``.
 
+        ``anchor_index`` MUST be non-decreasing (grouped by anchor). This holds for
+        every :class:`AnchorLabels` produced by :func:`edge_list_set_labels`, whose
+        row-major construction already groups pairs by anchor. The split below
+        relies on that ordering and is not validated; passing an ungrouped
+        ``anchor_index`` would silently assign labels to the wrong anchors.
+
         Returns:
             Mapping from anchor index to its 1-D ``long`` tensor of local label
             node ids.
@@ -225,11 +231,14 @@ def _membership_remap(
     if num_nodes == 0 or flat.numel() == 0:
         return empty, empty, num_anchors
 
-    if __debug__:
-        # Precondition for step 1 (see docstring): `sorted_node` is already sorted,
-        # so uniqueness is equivalent to being strictly increasing -- a cheap
-        # adjacent-difference check, no re-sort.
-        assert bool((sorted_node[1:] > sorted_node[:-1]).all()), (
+    # Precondition for step 1 (see docstring): `sorted_node` is already sorted, so
+    # uniqueness is equivalent to being strictly increasing -- a cheap adjacent-
+    # difference check, no re-sort. Always-on (not `__debug__`) so it still fires
+    # under `python -O`: a duplicate would silently drop labels and corrupt the loss.
+    # `sorted_node` has at least one entry here (`num_nodes == 0` returned above), so
+    # the empty-slice comparison is `True` for a 1-element map.
+    if not bool((sorted_node[1:] > sorted_node[:-1]).all()):
+        raise ValueError(
             "vectorized label remap requires a unique node local->global map; "
             "duplicate global ids break the searchsorted membership lookup."
         )
@@ -427,6 +436,19 @@ class DistABLPLoader(BaseDistLoader):
         no padding or per-anchor Python loop; within-anchor order is unspecified
         but the ABLP loss is order-invariant, and `AnchorLabels.to_dict()` recovers
         the dict form.
+
+        When `use_list_output=True`, the same example graph above (sampling around
+        node `0`) produces this format instead:
+            - `y_positive`: AnchorLabels(anchor_index=torch.tensor([0]), label_index=torch.tensor([1]), num_anchors=1)
+            - `y_negative`: AnchorLabels(anchor_index=torch.tensor([0]), label_index=torch.tensor([2]), num_anchors=1)
+
+        And, as above, the label fields are instead `dict[EdgeType, AnchorLabels]` if multiple supervision edge types are provided.
+        e.g. for supervision edge types (a, to, b) and (a, to, c):
+            - `y_positive`: {(a, to, b): AnchorLabels(anchor_index=torch.tensor([0]), label_index=torch.tensor([1]), num_anchors=1), (a, to, c): AnchorLabels(anchor_index=torch.tensor([0]), label_index=torch.tensor([2]), num_anchors=1)}
+            - `y_negative`: {(a, to, b): AnchorLabels(anchor_index=torch.tensor([0]), label_index=torch.tensor([3]), num_anchors=1), (a, to, c): AnchorLabels(anchor_index=torch.tensor([0]), label_index=torch.tensor([4]), num_anchors=1)}
+
+        These hold the same labels as the `use_list_output=False` example, in a different container:
+        `AnchorLabels.to_dict()` on each value recovers the corresponding ragged dict (e.g. `{0: torch.tensor([1])}`).
 
         Args:
             dataset (Union[DistDataset, RemoteDistDataset]): The dataset to sample from.
