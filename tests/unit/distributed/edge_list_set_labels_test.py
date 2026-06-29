@@ -3,11 +3,10 @@
 These exercise the pure-tensor label-remap logic directly (no GLT, no
 distributed runtime), so they run in-process without ``mp.spawn``.
 
-``edge_list_set_labels`` is the loader's single label-remap path; it turns padded
-blocks of global label ids into per-edge-type :class:`AnchorLabels` edge lists.
-We assert against constructed expected values rather than a second reference
-implementation, and we check both the edge-list tensors and their
-:meth:`AnchorLabels.to_dict` view, since the loader uses both forms.
+``edge_list_set_labels`` is the loader's label-remap path; it turns padded blocks
+of global label ids into per-edge-type :class:`AnchorLabels` edge lists. We assert
+against constructed expected values, and we check both the edge-list tensors and
+their :meth:`AnchorLabels.to_dict` view, since the loader uses both forms.
 
 Within an anchor the kernel emits labels in column-visit order, which is left
 unspecified by contract (the ABLP loss is order-invariant). We therefore pin
@@ -358,10 +357,9 @@ class EdgeListSetLabelsTest(TestCase):
 
     def test_duplicate_node_map_raises(self) -> None:
         # The membership lookup requires unique global ids; a duplicate would
-        # silently drop a local index and corrupt the loss. The guard is an
-        # always-on ``ValueError`` (not ``__debug__``), so it fires even under
-        # ``python -O``. GiGL node maps are unique by construction, so this only
-        # catches misuse of the now-public kernel.
+        # silently drop a local index and corrupt the loss, so the kernel raises
+        # ``ValueError``. GiGL node maps are unique by construction, so this only
+        # guards misuse of the public kernel.
         node_map = {_STORY: torch.tensor([10, 10, 11])}
         positives = {_pos(_USER_TO_STORY): torch.tensor([[10, 11]], dtype=torch.long)}
         with self.assertRaises(ValueError):

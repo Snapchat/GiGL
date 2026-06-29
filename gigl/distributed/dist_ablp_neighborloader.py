@@ -152,10 +152,9 @@ def _membership_remap(
     :class:`AnchorLabels` for the ``N_anchors`` / ``M`` / ``N_nodes`` / ``K`` / ``E``
     dimension vocabulary used below.)
 
-    The lookup is a sorted-membership join rather than a per-anchor scan, which is
-    what lets the loader remap labels without a Python loop over anchors: it trades
-    an ``O(N_anchors * M * N_nodes)`` broadcast-compare for a single
-    ``O(K log N_nodes)`` search.
+    The lookup is a sorted-membership join: a single ``O(K log N_nodes)``
+    ``searchsorted`` over the sorted node map resolves every candidate label at
+    once, so the loader remaps labels with no Python loop over anchors.
 
     Worked example (generic ids)::
 
@@ -179,16 +178,16 @@ def _membership_remap(
     ``local_index``; :class:`AnchorLabels` stores that same tensor as ``label_index``.
 
     Because ``anchor_of_*`` is built row-major (step 0) and every mask preserves
-    order, the result is already grouped by anchor (non-decreasing ``anchor_index``)
-    with no argsort; order *within* an anchor is unspecified by contract, since the
-    loss does not care (see :class:`AnchorLabels`).
+    order, the result is already grouped by anchor (non-decreasing ``anchor_index``);
+    order *within* an anchor is unspecified by contract, since the loss does not care
+    (see :class:`AnchorLabels`).
 
     The lookup is only correct if ``sorted_node`` has unique values:
     :func:`torch.searchsorted` returns the left-most equal position, so a repeated
     global id would map every match to the same local index and silently drop the
     rest. GiGL ``node`` maps are unique by construction (one entry per subgraph
-    node), so this holds in production; the ``__debug__`` assertion guards against
-    misuse with a cheap adjacent-difference check on the already-sorted map.
+    node), so this holds in production; a cheap adjacent-difference check on the
+    already-sorted map raises ``ValueError`` if a caller violates it.
 
     Args:
         label_tensor (torch.Tensor): ``[N_anchors, M]`` ``-1``-padded global
@@ -233,8 +232,8 @@ def _membership_remap(
 
     # Precondition for step 1 (see docstring): `sorted_node` is already sorted, so
     # uniqueness is equivalent to being strictly increasing -- a cheap adjacent-
-    # difference check, no re-sort. Always-on (not `__debug__`) so it still fires
-    # under `python -O`: a duplicate would silently drop labels and corrupt the loss.
+    # difference check, no re-sort. A duplicate global id would silently drop labels
+    # and corrupt the loss, so reject it.
     # `sorted_node` has at least one entry here (`num_nodes == 0` returned above), so
     # the empty-slice comparison is `True` for a 1-element map.
     if not bool((sorted_node[1:] > sorted_node[:-1]).all()):
@@ -259,8 +258,8 @@ def _membership_remap(
     anchor_of_matched = anchor_of_entry[is_exact_match]  # [E]
 
     # Result rows stay grouped by anchor (step 0 tagging was row-major and the masks
-    # preserve order), so no argsort is needed; within-anchor order is unspecified --
-    # the ABLP loss is order-invariant (see AnchorLabels).
+    # preserve order); within-anchor order is unspecified -- the ABLP loss is
+    # order-invariant (see AnchorLabels).
     return (
         anchor_of_matched.to(to_device).to(torch.long),
         local_index.to(to_device).to(torch.long),
@@ -1117,11 +1116,10 @@ class DistABLPLoader(BaseDistLoader):
             node_type_to_local_node_to_global_node[DEFAULT_HOMOGENEOUS_NODE_TYPE] = (
                 data.node
             )
-        # The edge-list kernel is the single remap path; the ragged dict is just
-        # one view of it (AnchorLabels.to_dict), so when the caller wants the dict
-        # we expand here rather than maintaining a second kernel. Both forms feed
-        # an order-invariant contrastive loss, so the choice is purely about the
-        # consumer's preferred shape.
+        # The edge-list kernel is the remap path; the ragged dict is one view of it
+        # (AnchorLabels.to_dict), expanded here when the caller wants the dict. Both
+        # forms feed an order-invariant contrastive loss, so the choice is purely
+        # about the consumer's preferred shape.
         output_positive_labels, output_negative_labels = edge_list_set_labels(
             node_local_to_global_by_type=node_type_to_local_node_to_global_node,
             positive_labels_by_edge_type=positive_labels_by_label_edge_type,
