@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Callable, cast
 
+import tensorflow as tf
 from tensorflow_metadata.proto.v0.schema_pb2 import Schema
+from tensorflow_metadata.proto.v0.schema_pb2 import Feature as SchemaFeature
 
 import gigl.common.utils.local_fs as LocalFsUtils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
@@ -65,9 +67,25 @@ class PreprocessedMetadataPbWrapper:
         for condensed_node_type, node_metadata in dict(
             self.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata
         ).items():
+            dequantized_feature_keys: list[str] = []
+            if node_metadata.HasField("quantized_feature_metadata"):
+                quantized_metadata = node_metadata.quantized_feature_metadata
+                dequantized_feature_keys = list(
+                    quantized_metadata.dequantized_feature_keys
+                )
+                if (
+                    quantized_metadata.dequantized_feature_dim
+                    != len(dequantized_feature_keys)
+                ):
+                    raise ValueError(
+                        f"Expected quantized feature metadata for condensed node type {condensed_node_type} "
+                        f"to have one dequantized_feature_key per output feature dimension, got "
+                        f"{len(dequantized_feature_keys)} keys and dimension "
+                        f"{quantized_metadata.dequantized_feature_dim}."
+                    )
             condensed_node_type_to_feature_dim_map[
                 CondensedNodeType(condensed_node_type)
-            ] = node_metadata.feature_dim
+            ] = node_metadata.feature_dim + len(dequantized_feature_keys)
 
             # Note that sorting the node feature/label keys breaks training with DDP. The root cause for why this is happening
             # is still under investigation. TODO (mkolodner-sc): Once the reason for why sorting the feature/label keys
@@ -82,6 +100,12 @@ class PreprocessedMetadataPbWrapper:
                 ),
                 feature_keys=node_feature_keys + label_keys,
             )
+            if dequantized_feature_keys:
+                node_feature_schema = self.__append_dequantized_feature_schema(
+                    feature_schema=node_feature_schema,
+                    dequantized_feature_keys=dequantized_feature_keys,
+                    label_keys=label_keys,
+                )
             condensed_node_type_to_feature_schema_map[
                 CondensedNodeType(condensed_node_type)
             ] = node_feature_schema
@@ -274,6 +298,52 @@ class PreprocessedMetadataPbWrapper:
             feature_spec=feature_spec,
             feature_index=feature_spec_to_feature_index_map(feature_spec),
             feature_vocab=feature_vocab,
+        )
+
+    def __append_dequantized_feature_schema(
+        self,
+        feature_schema: FeatureSchema,
+        dequantized_feature_keys: list[str],
+        label_keys: list[str],
+    ) -> FeatureSchema:
+        """Append synthetic fp32 schema entries for dequantized node features."""
+        label_key_set = set(label_keys)
+        schema: FeatureSchemaDict = {}
+        feature_spec: FeatureSpecDict = {}
+
+        for feature_key in dequantized_feature_keys:
+            if feature_key in feature_schema.feature_spec:
+                raise ValueError(
+                    f"Dequantized feature key {feature_key} already exists in raw feature schema."
+                )
+
+        def add_dequantized_features() -> None:
+            for dequantized_feature_key in dequantized_feature_keys:
+                schema[dequantized_feature_key] = SchemaFeature(
+                    name=dequantized_feature_key
+                )
+                feature_spec[dequantized_feature_key] = tf.io.FixedLenFeature(
+                    shape=[], dtype=tf.float32
+                )
+
+        inserted_dequantized_features = False
+        for feature_key, raw_feature_spec in feature_schema.feature_spec.items():
+            if feature_key in label_key_set and not inserted_dequantized_features:
+                add_dequantized_features()
+                inserted_dequantized_features = True
+            if feature_key in feature_spec:
+                raise ValueError(f"Duplicate feature key {feature_key} in schema.")
+            schema[feature_key] = feature_schema.schema[feature_key]
+            feature_spec[feature_key] = raw_feature_spec
+
+        if not inserted_dequantized_features:
+            add_dequantized_features()
+
+        return FeatureSchema(
+            schema=schema,
+            feature_spec=feature_spec,
+            feature_index=feature_spec_to_feature_index_map(feature_spec),
+            feature_vocab=feature_schema.feature_vocab,
         )
 
     def __get_feature_to_vocab_list_map(

@@ -180,6 +180,10 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_node_features(
             node_features=loaded_graph_tensors.node_features
         )
+    if loaded_graph_tensors.node_quantized_features is not None:
+        partitioner.register_node_quantized_features(
+            node_quantized_features=loaded_graph_tensors.node_quantized_features
+        )
     if loaded_graph_tensors.node_labels is not None:
         partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
     if loaded_graph_tensors.edge_weights is not None:
@@ -205,6 +209,7 @@ def _load_and_build_partitioned_dataset(
     del (
         loaded_graph_tensors.node_ids,
         loaded_graph_tensors.node_features,
+        loaded_graph_tensors.node_quantized_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
         loaded_graph_tensors.edge_weights,
@@ -222,6 +227,7 @@ def _load_and_build_partitioned_dataset(
     dataset.build(
         partition_output=partition_output,
         splitter=splitter,
+        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
     )
 
     return dataset

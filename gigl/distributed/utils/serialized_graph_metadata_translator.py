@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -9,7 +9,7 @@ from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
-from gigl.types.graph import to_homogeneous
+from gigl.types.graph import NodeQuantizationMetadata, to_homogeneous
 from snapchat.research.gbml.preprocessed_metadata_pb2 import PreprocessedMetadata
 
 
@@ -33,16 +33,72 @@ def _build_serialized_tfrecord_entity_info(
     Returns:
         SerializedTFRecordInfo: Stored metadata for current entity
     """
+    quantized_feature_keys: list[str] = []
+    quantized_feature_dim = 0
+    if isinstance(preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput):
+        if preprocessed_metadata.HasField("quantized_feature_metadata"):
+            quantized_metadata = preprocessed_metadata.quantized_feature_metadata
+            quantized_feature_keys = list(quantized_metadata.packed_feature_keys)
+            quantized_feature_dim = quantized_metadata.packed_feature_dim
+
+    stored_keys = set(preprocessed_metadata.feature_keys)
+    stored_keys.update(preprocessed_metadata.label_keys)
+    stored_keys.update(quantized_feature_keys)
+    filtered_feature_spec_dict = {
+        feature_key: feature_spec
+        for feature_key, feature_spec in feature_spec_dict.items()
+        if feature_key in stored_keys
+    }
+
     return SerializedTFRecordInfo(
         tfrecord_uri_prefix=UriFactory.create_uri(
             preprocessed_metadata.tfrecord_uri_prefix
         ),
         feature_keys=list(preprocessed_metadata.feature_keys),
-        feature_spec=feature_spec_dict,
+        feature_spec=filtered_feature_spec_dict,
         feature_dim=preprocessed_metadata.feature_dim,
         entity_key=entity_key,
+        quantized_feature_keys=quantized_feature_keys,
+        quantized_feature_dim=quantized_feature_dim,
         label_keys=list(preprocessed_metadata.label_keys),
         tfrecord_uri_pattern=tfrecord_uri_pattern,
+    )
+
+
+def _build_node_quantization_metadata(
+    node_metadata: PreprocessedMetadata.NodeMetadataOutput,
+) -> Optional[NodeQuantizationMetadata]:
+    if not node_metadata.HasField("quantized_feature_metadata"):
+        return None
+
+    quantized_metadata = node_metadata.quantized_feature_metadata
+    state = quantized_metadata.WhichOneof("state")
+    if quantized_metadata.bits == 1:
+        if state != "centroid":
+            raise ValueError("Expected centroid quantization state for 1-bit features.")
+        return NodeQuantizationMetadata(
+            bits=quantized_metadata.bits,
+            packed_feature_dim=quantized_metadata.packed_feature_dim,
+            dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
+            dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
+            bucket_0_value=quantized_metadata.centroid.bucket_0_value,
+            bucket_1_value=quantized_metadata.centroid.bucket_1_value,
+        )
+    if quantized_metadata.bits not in {2, 4, 8}:
+        raise ValueError(
+            f"Expected quantized feature bits to be one of 1, 2, 4, or 8, got {quantized_metadata.bits}."
+        )
+    if state != "linear":
+        raise ValueError(
+            f"Expected linear quantization state for {quantized_metadata.bits}-bit features."
+        )
+    return NodeQuantizationMetadata(
+        bits=quantized_metadata.bits,
+        packed_feature_dim=quantized_metadata.packed_feature_dim,
+        dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
+        dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
+        clip_min=quantized_metadata.linear.clip_min,
+        clip_max=quantized_metadata.linear.clip_max,
     )
 
 
@@ -65,6 +121,7 @@ def convert_pb_to_serialized_graph_metadata(
     edge_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
     positive_label_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
     negative_label_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
+    node_quantization_metadata: dict[NodeType, NodeQuantizationMetadata] = {}
 
     preprocessed_metadata_pb = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
 
@@ -92,6 +149,9 @@ def convert_pb_to_serialized_graph_metadata(
             entity_key=node_key,
             tfrecord_uri_pattern=tfrecord_uri_pattern,
         )
+        quantization_metadata = _build_node_quantization_metadata(node_metadata)
+        if quantization_metadata is not None:
+            node_quantization_metadata[node_type] = quantization_metadata
 
     for edge_type in graph_metadata_pb_wrapper.edge_types:
         condensed_edge_type = (
@@ -159,6 +219,9 @@ def convert_pb_to_serialized_graph_metadata(
             negative_label_entity_info=to_homogeneous(negative_label_entity_info)
             if len(negative_label_entity_info) > 0
             else None,
+            node_quantization_metadata=to_homogeneous(node_quantization_metadata)
+            if len(node_quantization_metadata) > 0
+            else None,
         )
     else:
         return SerializedGraphMetadata(
@@ -169,5 +232,8 @@ def convert_pb_to_serialized_graph_metadata(
             else None,
             negative_label_entity_info=negative_label_entity_info
             if len(negative_label_entity_info) > 0
+            else None,
+            node_quantization_metadata=node_quantization_metadata
+            if len(node_quantization_metadata) > 0
             else None,
         )
