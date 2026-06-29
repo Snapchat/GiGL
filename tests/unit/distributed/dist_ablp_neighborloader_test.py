@@ -11,7 +11,7 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_ablp_neighborloader import AnchorLabels, DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -424,6 +424,108 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
     shutdown_rpc()
 
 
+def _global_pair_set(
+    node: torch.Tensor, label_dict: dict[int, torch.Tensor]
+) -> list[tuple[int, int]]:
+    """Flatten a per-anchor label dict to a sorted (global_anchor, global_label)
+    pair list for set-equality comparison.
+
+    Pairs are collected in anchor-ascending order and sorted within each anchor
+    by global label value, so the result is canonical regardless of the order in
+    which the kernel emits an anchor's labels (which is unspecified by contract).
+    Multiplicity is preserved: duplicate label columns produce duplicate entries
+    in the list.
+
+    Use ``collections.Counter`` or ``sorted(...)`` equality rather than
+    positional ``==`` if pair-level multiplicity without anchor grouping matters.
+    The current callers use ``list ==`` after sorting within anchor, which is
+    equivalent to Counter equality for these tests.
+    """
+    pairs: list[tuple[int, int]] = []
+    for local_anchor in sorted(label_dict.keys()):
+        global_anchor = int(node[local_anchor].item())
+        for local_label in sorted(label_dict[local_anchor].tolist()):
+            pairs.append((global_anchor, int(node[local_label].item())))
+    return pairs
+
+
+def _collect_homogeneous_labels(
+    _,
+    return_dict,
+    use_list_output: bool,
+    dataset: DistDataset,
+    input_nodes: torch.Tensor,
+    batch_size: int,
+    has_negatives: bool,
+):
+    """Child-side: run the loader, return sorted global-id pair sets.
+
+    Local node indices differ run-to-run, so labels are translated back to
+    global ids via ``datum.node``. Pairs are sorted within each anchor (see
+    ``_global_pair_set``) for canonical set-equality comparison in the parent,
+    since the order in which an anchor's labels are emitted is unspecified -- the
+    ABLP loss is permutation-invariant over the pairs.
+
+    When ``use_list_output`` is True the labels arrive as :class:`AnchorLabels`.
+    This branch ALSO asserts in-process that reading labels straight off the
+    edge-list agrees with reading them via the dict view: ``label_index`` must
+    equal the dict's ``torch.cat(values())``, and ``query_node_idx[anchor_index]``
+    must equal a ``repeat_interleave`` of the anchors over their per-anchor label
+    counts. Both views come from the same edge-list, so any drift between the two
+    read patterns is a real bug, not just a reordering.
+    """
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+        use_list_output=use_list_output,
+    )
+    positive_pairs: list[tuple[int, int]] = []
+    negative_pairs: list[tuple[int, int]] = []
+    for datum in loader:
+        assert isinstance(datum, Data)
+        node = datum.node
+        if use_list_output:
+            assert isinstance(datum.y_positive, AnchorLabels), (
+                f"expected AnchorLabels, got {type(datum.y_positive)}"
+            )
+            positive_dict = datum.y_positive.to_dict()
+            # The direct edge-list read must match the dict-view read within this
+            # single batch, EXACTLY (order included).
+            query_node_idx = torch.arange(datum.batch_size)
+            dict_view_label_idx = torch.cat(
+                [positive_dict[a] for a in range(datum.batch_size)]
+            )
+            dict_view_repeated_query = query_node_idx.repeat_interleave(
+                torch.tensor([len(positive_dict[a]) for a in range(datum.batch_size)])
+            )
+            torch.testing.assert_close(
+                datum.y_positive.label_index, dict_view_label_idx
+            )
+            torch.testing.assert_close(
+                query_node_idx[datum.y_positive.anchor_index], dict_view_repeated_query
+            )
+        else:
+            positive_dict = datum.y_positive
+        positive_pairs.extend(_global_pair_set(node, positive_dict))
+        if has_negatives:
+            if use_list_output:
+                assert isinstance(datum.y_negative, AnchorLabels)
+                negative_dict = datum.y_negative.to_dict()
+            else:
+                negative_dict = datum.y_negative
+            negative_pairs.extend(_global_pair_set(node, negative_dict))
+        else:
+            assert not hasattr(datum, "y_negative"), (
+                f"expected no negatives, got {getattr(datum, 'y_negative', None)}"
+            )
+    return_dict[use_list_output] = (positive_pairs, negative_pairs)
+    shutdown_rpc()
+
+
 class DistABLPLoaderTest(TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
@@ -563,6 +665,107 @@ class DistABLPLoaderTest(TestCase):
                 expected_negative_labels,
             ),
         )
+
+    @parameterized.expand(
+        [
+            param(
+                "positive and negative",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=True,
+            ),
+            param(
+                "positive only",
+                labeled_edges={_POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]])},
+                input_nodes=torch.tensor([10, 15]),
+                batch_size=2,
+                has_negatives=False,
+            ),
+            # Anchor 11 has message-passing edges (11 -> {13, 17}) but is the
+            # source of NO positive-label edge, so its positive-label row is
+            # all-padding and y_positive[11] is a guaranteed-empty tensor. This
+            # exercises the empty-anchor branch end-to-end for both outputs.
+            param(
+                "guaranteed empty positive anchor",
+                labeled_edges={
+                    _POSITIVE_EDGE_TYPE: torch.tensor([[10, 15], [15, 16]]),
+                    _NEGATIVE_EDGE_TYPE: torch.tensor(
+                        [[10, 10, 11, 15], [13, 16, 14, 17]]
+                    ),
+                },
+                input_nodes=torch.tensor([10, 11, 15]),
+                batch_size=3,
+                has_negatives=True,
+            ),
+        ]
+    )
+    def test_use_list_output_matches_dict_output(
+        self, _, labeled_edges, input_nodes, batch_size, has_negatives
+    ):
+        """``use_list_output=True`` yields AnchorLabels whose ``.to_dict()`` produces
+        a per-anchor SET-equal result to the default dict output.
+
+        Both paths draw from the same :func:`_membership_remap` column-visit pair
+        stream, so they are in fact identical; the test confirms no membership or
+        co-indexing regression. Sampling is deterministic (``shuffle`` defaults to
+        False), so the two loader runs emit batches in the same order and the sorted
+        pair sets are directly comparable.
+
+        The child process additionally asserts that reading labels straight off the
+        edge-list equals reading them through the dict view (see
+        ``_collect_homogeneous_labels``): ``label_index`` equals the dict's
+        ``torch.cat(values())`` and ``query_node_idx[anchor_index]`` equals the
+        matching ``repeat_interleave`` over per-anchor counts.
+        """
+        edge_index = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: torch.tensor(
+                [[10, 10, 11, 11, 15, 15, 16, 16], [11, 12, 13, 17, 13, 14, 12, 14]]
+            ),
+        }
+        edge_index.update(labeled_edges)
+        partition_output = PartitionOutput(
+            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        for use_list_output in (False, True):
+            mp.spawn(
+                fn=_collect_homogeneous_labels,
+                args=(
+                    return_dict,
+                    use_list_output,
+                    dataset,
+                    input_nodes,
+                    batch_size,
+                    has_negatives,
+                ),
+            )
+        self.assertEqual(return_dict[False][0], return_dict[True][0])
+        self.assertEqual(return_dict[False][1], return_dict[True][1])
 
     def test_cora_supervised(self):
         create_test_process_group()
