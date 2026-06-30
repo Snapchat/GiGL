@@ -375,9 +375,9 @@ def materialize_quantized_node_features(
 
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):
-            quantization_metadata = node_quantization_metadata.get(
+            quantization_metadata = node_quantization_metadata[
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
-            )
+            ]
             metadata_key = (
                 f"{NODE_QUANTIZED_FEATURES_METADATA_KEY}."
                 f"{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
@@ -385,20 +385,13 @@ def materialize_quantized_node_features(
         else:
             quantization_metadata = node_quantization_metadata
             metadata_key = NODE_QUANTIZED_FEATURES_METADATA_KEY
-        if quantization_metadata is None:
-            return data, metadata
         packed_features = metadata.pop(metadata_key, None)
         if packed_features is None:
-            packed_features = metadata.pop(NODE_QUANTIZED_FEATURES_METADATA_KEY, None)
-        if packed_features is None:
-            return data, metadata
+            raise ValueError(
+                f"Missing packed quantized node features in metadata key {metadata_key}."
+            )
         materialize_node_store(data, packed_features, quantization_metadata)
         return data, metadata
-
-    if isinstance(node_quantization_metadata, FeatureQuantizationMetadata):
-        raise ValueError(
-            "Expected per-node-type quantization metadata for heterogeneous data."
-        )
 
     for node_type, quantization_metadata in node_quantization_metadata.items():
         metadata_key = f"{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{node_type}"
