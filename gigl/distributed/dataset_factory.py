@@ -222,14 +222,16 @@ def _load_and_build_partitioned_dataset(
     partition_output = partitioner.partition()
 
     logger.info(f"Initializing DistDataset instance with edge direction {edge_dir}")
-    dataset = DistDataset(rank=rank, world_size=world_size, edge_dir=edge_dir)
+    dataset = DistDataset(
+        rank=rank,
+        world_size=world_size,
+        edge_dir=edge_dir,
+        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
+    )
 
     dataset.build(
         partition_output=partition_output,
         splitter=splitter,
-    )
-    dataset.node_quantization_metadata = (
-        serialized_graph_metadata.node_quantization_metadata
     )
 
     return dataset

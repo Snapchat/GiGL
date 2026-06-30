@@ -353,18 +353,6 @@ class DistDataset(glt.distributed.DistDataset):
     ]:
         return self._node_quantization_metadata
 
-    @node_quantization_metadata.setter
-    def node_quantization_metadata(
-        self,
-        new_node_quantization_metadata: Optional[
-            Union[
-                FeatureQuantizationMetadata,
-                dict[NodeType, FeatureQuantizationMetadata],
-            ]
-        ],
-    ) -> None:
-        self._node_quantization_metadata = new_node_quantization_metadata
-
     @property
     def edge_feature_info(
         self,
