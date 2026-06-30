@@ -16,7 +16,7 @@ from gigl.common.logger import Logger
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
-    NodeQuantizationMetadata,
+    FeatureQuantizationMetadata,
     is_label_edge_type,
 )
 
@@ -54,7 +54,9 @@ class DatasetSchema:
     ]
     # Quantization metadata for append-only packed node features.
     node_quantization_metadata: Optional[
-        Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+        Union[
+            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
+        ]
     ]
     # Edge feature info.
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
@@ -340,7 +342,7 @@ def set_missing_features(
 
 def _unpack_quantized_features(
     packed_features: torch.Tensor,
-    quantization_metadata: NodeQuantizationMetadata,
+    quantization_metadata: FeatureQuantizationMetadata,
 ) -> torch.Tensor:
     bits = quantization_metadata.bits
     dequantized_feature_dim = quantization_metadata.dequantized_feature_dim
@@ -371,7 +373,7 @@ def _unpack_quantized_features(
 
 def _dequantize_node_features(
     packed_features: torch.Tensor,
-    quantization_metadata: NodeQuantizationMetadata,
+    quantization_metadata: FeatureQuantizationMetadata,
 ) -> torch.Tensor:
     codes = _unpack_quantized_features(packed_features, quantization_metadata)
     if quantization_metadata.bits == 1:
@@ -414,7 +416,9 @@ def append_dequantized_node_features(
     data: _GraphType,
     metadata: dict[str, torch.Tensor],
     node_quantization_metadata: Optional[
-        Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+        Union[
+            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
+        ]
     ],
 ) -> tuple[_GraphType, dict[str, torch.Tensor]]:
     """Append dequantized packed node features to PyG node feature tensors."""
@@ -456,7 +460,7 @@ def append_dequantized_node_features(
             data.x = torch.cat([data_x.to(torch.float32), dequantized_features], dim=1)
         return data, metadata
 
-    if isinstance(node_quantization_metadata, NodeQuantizationMetadata):
+    if isinstance(node_quantization_metadata, FeatureQuantizationMetadata):
         raise ValueError(
             "Expected per-node-type quantization metadata for heterogeneous data."
         )

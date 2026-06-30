@@ -27,10 +27,12 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         CLIP_MAX_FIELD_NUMBER: builtins.int
         clip_min: builtins.float
         """Value produced by quantized code 0. Inputs are clipped to this value
-        before linear quantization."""
+        before linear quantization.
+        """
         clip_max: builtins.float
         """Value produced by the largest quantized code. Inputs are clipped to this
-        value before linear quantization."""
+        value before linear quantization.
+        """
         def __init__(
             self,
             *,
@@ -56,7 +58,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         ) -> None: ...
         def ClearField(self, field_name: typing_extensions.Literal["bucket_0_value", b"bucket_0_value", "bucket_1_value", b"bucket_1_value"]) -> None: ...
 
-    class NodeQuantizedFeatureMetadata(google.protobuf.message.Message):
+    class FeatureQuantizationMetadata(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
         PACKED_FEATURE_KEYS_FIELD_NUMBER: builtins.int
@@ -93,8 +95,8 @@ class PreprocessedMetadata(google.protobuf.message.Message):
             linear: global___PreprocessedMetadata.LinearQuantizationState | None = ...,
             centroid: global___PreprocessedMetadata.CentroidQuantizationState | None = ...,
         ) -> None: ...
-        def HasField(self, field_name: typing_extensions.Literal["centroid", b"centroid", "linear", b"linear"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "centroid", b"centroid", "dequantized_feature_dim", b"dequantized_feature_dim", "dequantized_feature_keys", b"dequantized_feature_keys", "linear", b"linear", "packed_feature_dim", b"packed_feature_dim", "packed_feature_keys", b"packed_feature_keys"]) -> None: ...
+        def HasField(self, field_name: typing_extensions.Literal["centroid", b"centroid", "linear", b"linear", "state", b"state"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "centroid", b"centroid", "dequantized_feature_dim", b"dequantized_feature_dim", "dequantized_feature_keys", b"dequantized_feature_keys", "linear", b"linear", "packed_feature_dim", b"packed_feature_dim", "packed_feature_keys", b"packed_feature_keys", "state", b"state"]) -> None: ...
         def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["linear", "centroid"] | None: ...
 
     class NodeMetadataOutput(google.protobuf.message.Message):
@@ -133,7 +135,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         transform_fn_assets_uri: builtins.str
         """Contains categorical feature vocabularies"""
         @property
-        def quantized_feature_metadata(self) -> global___PreprocessedMetadata.NodeQuantizedFeatureMetadata:
+        def quantized_feature_metadata(self) -> global___PreprocessedMetadata.FeatureQuantizationMetadata:
             """Optional append-only quantized node feature sidecar metadata."""
         def __init__(
             self,
@@ -147,7 +149,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
             enumerated_node_data_bq_table: builtins.str = ...,
             feature_dim: builtins.int | None = ...,
             transform_fn_assets_uri: builtins.str = ...,
-            quantized_feature_metadata: global___PreprocessedMetadata.NodeQuantizedFeatureMetadata | None = ...,
+            quantized_feature_metadata: global___PreprocessedMetadata.FeatureQuantizationMetadata | None = ...,
         ) -> None: ...
         def HasField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "feature_dim", b"feature_dim", "quantized_feature_metadata", b"quantized_feature_metadata"]) -> builtins.bool: ...
         def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_node_data_bq_table", b"enumerated_node_data_bq_table", "enumerated_node_ids_bq_table", b"enumerated_node_ids_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "node_id_key", b"node_id_key", "quantized_feature_metadata", b"quantized_feature_metadata", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...

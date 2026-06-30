@@ -2,8 +2,7 @@ from dataclasses import dataclass, field
 from typing import Callable, cast
 
 import tensorflow as tf
-from tensorflow_metadata.proto.v0.schema_pb2 import Schema
-from tensorflow_metadata.proto.v0.schema_pb2 import Feature as SchemaFeature
+from tensorflow_metadata.proto.v0.schema_pb2 import Feature, Schema
 
 import gigl.common.utils.local_fs as LocalFsUtils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
@@ -250,7 +249,7 @@ class PreprocessedMetadataPbWrapper:
         """
         all_features_in_feature_spec = list(feature_spec.keys())
         return {
-            feature: SchemaFeature(name=feature)
+            feature: Feature(name=feature)
             if feature in synthetic_feature_keys
             else feature_schema.feature[all_features_in_feature_spec.index(feature)]
             for feature in feature_keys
@@ -277,11 +276,12 @@ class PreprocessedMetadataPbWrapper:
             if schema_uri.uri
             else (None, {})
         )
+
         for synthetic_feature_key in synthetic_feature_keys:
             if synthetic_feature_key in raw_feature_spec:
                 raise ValueError(
                     f"Synthetic feature key {synthetic_feature_key} already exists "
-                    "in raw feature schema."
+                    "in raw schema; dequantized keys must not overlap normal keys."
                 )
 
         # Dequantized features are materialized later from packed uint8 tensors,

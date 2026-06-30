@@ -24,7 +24,7 @@ from gigl.types.graph import (
     FeatureInfo,
     FeaturePartitionData,
     GraphPartitionData,
-    NodeQuantizationMetadata,
+    FeatureQuantizationMetadata,
     PartitionOutput,
 )
 from gigl.utils.data_splitters import (
@@ -85,7 +85,10 @@ class DistDataset(glt.distributed.DistDataset):
             Union[FeatureInfo, dict[NodeType, FeatureInfo]]
         ] = None,
         node_quantization_metadata: Optional[
-            Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+            Union[
+                FeatureQuantizationMetadata,
+                dict[NodeType, FeatureQuantizationMetadata],
+            ]
         ] = None,
         edge_feature_info: Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
@@ -121,7 +124,7 @@ class DistDataset(glt.distributed.DistDataset):
             node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension of node features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             node_quantized_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension and dtype for packed uint8 node features.
-            node_quantization_metadata: Optional[Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]]: Metadata required for dequantizing packed node features.
+            node_quantization_metadata: Metadata for packed node features.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
             degree_tensor: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
@@ -344,7 +347,9 @@ class DistDataset(glt.distributed.DistDataset):
     def node_quantization_metadata(
         self,
     ) -> Optional[
-        Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+        Union[
+            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
+        ]
     ]:
         return self._node_quantization_metadata
 
@@ -907,7 +912,10 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output: PartitionOutput,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
         node_quantization_metadata: Optional[
-            Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+            Union[
+                FeatureQuantizationMetadata,
+                dict[NodeType, FeatureQuantizationMetadata],
+            ]
         ] = None,
     ) -> None:
         """
@@ -1057,7 +1065,10 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[
-            Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+            Union[
+                FeatureQuantizationMetadata,
+                dict[NodeType, FeatureQuantizationMetadata],
+            ]
         ],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
         Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
@@ -1085,7 +1096,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Packed uint8 node feature dim and dtype
-            Optional[Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]]: Node quantization metadata
+            Optional node quantization metadata.
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Degree tensors
             Optional[int]: Optional per-anchor label cap for ABLP label fetching
@@ -1409,7 +1420,10 @@ def _rebuild_distributed_dataset(
             Union[FeatureInfo, dict[NodeType, FeatureInfo]]
         ],  # Packed uint8 node feature dim and dtype
         Optional[
-            Union[NodeQuantizationMetadata, dict[NodeType, NodeQuantizationMetadata]]
+            Union[
+                FeatureQuantizationMetadata,
+                dict[NodeType, FeatureQuantizationMetadata],
+            ]
         ],  # Node quantization metadata
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]

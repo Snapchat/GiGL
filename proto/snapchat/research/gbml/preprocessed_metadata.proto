@@ -19,7 +19,7 @@ message PreprocessedMetadata{
     float bucket_1_value = 2;
   }
 
-  message NodeQuantizedFeatureMetadata{
+  message FeatureQuantizationMetadata{
     // Packed uint8 fields in output TFRecords.
     repeated string packed_feature_keys = 1;
     // Model-visible feature names produced after dequantizing and appending.
@@ -58,7 +58,7 @@ message PreprocessedMetadata{
     // Contains categorical feature vocabularies
     string transform_fn_assets_uri = 9;
     // Optional append-only quantized node feature sidecar metadata.
-    NodeQuantizedFeatureMetadata quantized_feature_metadata = 10;
+    FeatureQuantizationMetadata quantized_feature_metadata = 10;
   }
 
   // Houses metadata of edge features output from DataPreprocessor

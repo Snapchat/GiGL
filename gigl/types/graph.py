@@ -114,8 +114,8 @@ class FeatureInfo:
 
 
 @dataclass(frozen=True)
-class NodeQuantizationMetadata:
-    """Metadata needed to unpack/dequantize append-only node features."""
+class FeatureQuantizationMetadata:
+    """Metadata needed to unpack/dequantize append-only packed features."""
 
     bits: int
     packed_feature_dim: int
