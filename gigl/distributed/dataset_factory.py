@@ -227,7 +227,9 @@ def _load_and_build_partitioned_dataset(
     dataset.build(
         partition_output=partition_output,
         splitter=splitter,
-        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
+    )
+    dataset.node_quantization_metadata = (
+        serialized_graph_metadata.node_quantization_metadata
     )
 
     return dataset

@@ -353,6 +353,18 @@ class DistDataset(glt.distributed.DistDataset):
     ]:
         return self._node_quantization_metadata
 
+    @node_quantization_metadata.setter
+    def node_quantization_metadata(
+        self,
+        new_node_quantization_metadata: Optional[
+            Union[
+                FeatureQuantizationMetadata,
+                dict[NodeType, FeatureQuantizationMetadata],
+            ]
+        ],
+    ) -> None:
+        self._node_quantization_metadata = new_node_quantization_metadata
+
     @property
     def edge_feature_info(
         self,
@@ -911,12 +923,6 @@ class DistDataset(glt.distributed.DistDataset):
         self,
         partition_output: PartitionOutput,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
-        node_quantization_metadata: Optional[
-            Union[
-                FeatureQuantizationMetadata,
-                dict[NodeType, FeatureQuantizationMetadata],
-            ]
-        ] = None,
     ) -> None:
         """
         Provided some partition graph information, this method stores these tensors inside of the class for
@@ -931,7 +937,6 @@ class DistDataset(glt.distributed.DistDataset):
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
                                                Optional as not all datasets need to be split on, e.g. if we're doing inference.
-            node_quantization_metadata: Optional metadata for append-only packed node features.
         """
         logger.info(
             f"Rank {self._rank} starting building dataset class from partitioned graph ..."
@@ -1009,7 +1014,6 @@ class DistDataset(glt.distributed.DistDataset):
             node_partition_book=partition_output.node_partition_book,
             partitioned_node_quantized_features=partition_output.partitioned_node_quantized_features,
         )
-        self._node_quantization_metadata = node_quantization_metadata
         partition_output.partitioned_node_quantized_features = None
         gc.collect()
 
