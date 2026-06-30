@@ -107,6 +107,8 @@ class DistDataset(glt.distributed.DistDataset):
             rank (int): Rank of the current process
             world_size (int): World size of the current process
             edge_dir (Literal["in", "out"]): Edge direction of the provied graph
+            node_quantization_metadata: Metadata for packed node features.
+                May be provided during initial construction or IPC rebuild.
         The below arguments are only expected to be provided when re-serializing an instance of the DistDataset class after build() has been called
             graph_partition (Optional[Union[Graph, dict[EdgeType, Graph]]]): Partitioned Graph Data
             node_feature_partition (Optional[Union[Feature, dict[NodeType, Feature]]]): Partitioned Node Feature Data
@@ -124,7 +126,6 @@ class DistDataset(glt.distributed.DistDataset):
             node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension of node features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
             node_quantized_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension and dtype for packed uint8 node features.
-            node_quantization_metadata: Metadata for packed node features.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
             degree_tensor: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
