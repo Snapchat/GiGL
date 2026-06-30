@@ -98,14 +98,9 @@ class PreprocessedMetadataPbWrapper:
                 transform_fn_assets_uri=UriFactory.create_uri(
                     node_metadata.transform_fn_assets_uri
                 ),
-                feature_keys=node_feature_keys + label_keys,
+                feature_keys=node_feature_keys + dequantized_feature_keys + label_keys,
+                synthetic_feature_keys=set(dequantized_feature_keys),
             )
-            if dequantized_feature_keys:
-                node_feature_schema = self.__append_dequantized_feature_schema(
-                    feature_schema=node_feature_schema,
-                    dequantized_feature_keys=dequantized_feature_keys,
-                    label_keys=label_keys,
-                )
             condensed_node_type_to_feature_schema_map[
                 CondensedNodeType(condensed_node_type)
             ] = node_feature_schema
@@ -228,25 +223,36 @@ class PreprocessedMetadataPbWrapper:
         )
 
     def __get_feature_spec_for_feature_keys(
-        self, feature_spec: FeatureSpecDict, feature_keys: list[str]
+        self,
+        feature_spec: FeatureSpecDict,
+        feature_keys: list[str],
+        synthetic_feature_keys: set[str],
     ) -> FeatureSpecDict:
         """
         Return feature spec for the given feature keys
         """
-        return {feature: feature_spec[feature] for feature in feature_keys}
+        return {
+            feature: tf.io.FixedLenFeature(shape=[], dtype=tf.float32)
+            if feature in synthetic_feature_keys
+            else feature_spec[feature]
+            for feature in feature_keys
+        }
 
     def __get_schema_for_feature_keys(
         self,
         feature_schema: Schema,
         feature_spec: FeatureSpecDict,
         feature_keys: list[str],
+        synthetic_feature_keys: set[str],
     ) -> FeatureSchemaDict:
         """
         Return feature schema for the given feature keys
         """
         all_features_in_feature_spec = list(feature_spec.keys())
         return {
-            feature: feature_schema.feature[all_features_in_feature_spec.index(feature)]
+            feature: SchemaFeature(name=feature)
+            if feature in synthetic_feature_keys
+            else feature_schema.feature[all_features_in_feature_spec.index(feature)]
             for feature in feature_keys
         }
 
@@ -255,6 +261,7 @@ class PreprocessedMetadataPbWrapper:
         schema_uri: Uri,
         transform_fn_assets_uri: Uri,
         feature_keys: list[str],
+        synthetic_feature_keys: set[str] | None = None,
     ) -> FeatureSchema:
         """
         Return FeatureSchema NamedTuple for the given feature keys
@@ -264,15 +271,26 @@ class PreprocessedMetadataPbWrapper:
         feature_spec will be based on the order of feature keys in preprocessed metadata
         which is also how SGS processes the features currently into float vectors
         """
+        synthetic_feature_keys = synthetic_feature_keys or set()
         raw_feature_schema, raw_feature_spec = (
             load_tf_schema_uri_str_to_feature_spec(uri=schema_uri)
             if schema_uri.uri
             else (None, {})
         )
+        for synthetic_feature_key in synthetic_feature_keys:
+            if synthetic_feature_key in raw_feature_spec:
+                raise ValueError(
+                    f"Synthetic feature key {synthetic_feature_key} already exists "
+                    "in raw feature schema."
+                )
 
+        # Dequantized features are materialized later from packed uint8 tensors,
+        # so they need logical fp32 schema entries even though TFT did not write them.
         feature_spec = (
             self.__get_feature_spec_for_feature_keys(
-                feature_spec=raw_feature_spec, feature_keys=feature_keys
+                feature_spec=raw_feature_spec,
+                feature_keys=feature_keys,
+                synthetic_feature_keys=synthetic_feature_keys,
             )
             if feature_keys and raw_feature_schema
             else {}
@@ -282,6 +300,7 @@ class PreprocessedMetadataPbWrapper:
                 feature_schema=raw_feature_schema,
                 feature_spec=raw_feature_spec,
                 feature_keys=feature_keys,
+                synthetic_feature_keys=synthetic_feature_keys,
             )
             if feature_keys and raw_feature_schema
             else {}
@@ -298,52 +317,6 @@ class PreprocessedMetadataPbWrapper:
             feature_spec=feature_spec,
             feature_index=feature_spec_to_feature_index_map(feature_spec),
             feature_vocab=feature_vocab,
-        )
-
-    def __append_dequantized_feature_schema(
-        self,
-        feature_schema: FeatureSchema,
-        dequantized_feature_keys: list[str],
-        label_keys: list[str],
-    ) -> FeatureSchema:
-        """Append synthetic fp32 schema entries for dequantized node features."""
-        label_key_set = set(label_keys)
-        schema: FeatureSchemaDict = {}
-        feature_spec: FeatureSpecDict = {}
-
-        for feature_key in dequantized_feature_keys:
-            if feature_key in feature_schema.feature_spec:
-                raise ValueError(
-                    f"Dequantized feature key {feature_key} already exists in raw feature schema."
-                )
-
-        def add_dequantized_features() -> None:
-            for dequantized_feature_key in dequantized_feature_keys:
-                schema[dequantized_feature_key] = SchemaFeature(
-                    name=dequantized_feature_key
-                )
-                feature_spec[dequantized_feature_key] = tf.io.FixedLenFeature(
-                    shape=[], dtype=tf.float32
-                )
-
-        inserted_dequantized_features = False
-        for feature_key, raw_feature_spec in feature_schema.feature_spec.items():
-            if feature_key in label_key_set and not inserted_dequantized_features:
-                add_dequantized_features()
-                inserted_dequantized_features = True
-            if feature_key in feature_spec:
-                raise ValueError(f"Duplicate feature key {feature_key} in schema.")
-            schema[feature_key] = feature_schema.schema[feature_key]
-            feature_spec[feature_key] = raw_feature_spec
-
-        if not inserted_dequantized_features:
-            add_dequantized_features()
-
-        return FeatureSchema(
-            schema=schema,
-            feature_spec=feature_spec,
-            feature_index=feature_spec_to_feature_index_map(feature_spec),
-            feature_vocab=feature_schema.feature_vocab,
         )
 
     def __get_feature_to_vocab_list_map(
