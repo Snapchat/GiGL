@@ -120,6 +120,7 @@ def run_distributed_partitioner(
         del node_features
         (
             output_node_features,
+            output_quantized_node_features, # TODO(jchmura-sc): Update tests once API is decided on
             output_node_labels,
         ) = dist_partitioner.partition_node_features_and_labels(
             node_partition_book=output_node_partition_book

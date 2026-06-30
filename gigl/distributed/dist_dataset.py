@@ -23,8 +23,8 @@ from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to
 from gigl.types.graph import (
     FeatureInfo,
     FeaturePartitionData,
-    GraphPartitionData,
     FeatureQuantizationMetadata,
+    GraphPartitionData,
     PartitionOutput,
 )
 from gigl.utils.data_splitters import (
@@ -348,9 +348,7 @@ class DistDataset(glt.distributed.DistDataset):
     def node_quantization_metadata(
         self,
     ) -> Optional[
-        Union[
-            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
-        ]
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ]:
         return self._node_quantization_metadata
 
@@ -810,8 +808,8 @@ class DistDataset(glt.distributed.DistDataset):
             for node_type, features_per_node_type in node_quantized_features.items():
                 assert not isinstance(node_type, EdgeType)
                 self._node_quantized_feature_info[node_type] = FeatureInfo(
-                    dim=features_per_node_type.size(1),
-                    dtype=features_per_node_type.dtype,
+                    dim=features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    dtype=features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 )
             logger.info(
                 f"Initialized node quantized features for heterogeneous graph to dataset with node types: {node_quantized_features.keys()}"
@@ -1347,7 +1345,7 @@ def _build_feature_store(
         return {
             entity_key: Feature(
                 feature_tensor=features,
-                id2index=id2idx[entity_key],
+                id2index=id2idx[entity_key], # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 with_gpu=False,
                 dtype=dtype,
             )

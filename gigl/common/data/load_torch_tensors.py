@@ -18,8 +18,8 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    LoadedGraphTensors,
     FeatureQuantizationMetadata,
+    LoadedGraphTensors,
 )
 from gigl.utils.share_memory import share_memory
 
@@ -117,9 +117,7 @@ class SerializedGraphMetadata:
     ] = None
     # Optional node quantization metadata.
     node_quantization_metadata: Optional[
-        Union[
-            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
-        ]
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ] = None
 
 

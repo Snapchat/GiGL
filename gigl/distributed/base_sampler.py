@@ -16,8 +16,8 @@ from graphlearn_torch.typing import NodeType, as_str
 from graphlearn_torch.utils import reverse_edge_type
 
 from gigl.distributed.sampler import (
-    NODE_QUANTIZED_FEATURES_METADATA_KEY,
     NEGATIVE_LABEL_METADATA_KEY,
+    NODE_QUANTIZED_FEATURES_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
@@ -349,10 +349,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     sorted_ntype = sorted(
                         self.dist_node_quantized_feature.feature_pb.keys()
                     )
-                    quantized_nfeat_dict = (
-                        self.dist_node_quantized_feature.get_all2all(
-                            output, sorted_ntype
-                        )
+                    quantized_nfeat_dict = self.dist_node_quantized_feature.get_all2all(
+                        output, sorted_ntype
                     )
                     for ntype, quantized_nfeats in quantized_nfeat_dict.items():
                         result_map[
@@ -433,9 +431,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if self.dist_node_quantized_feature is not None:
                 fut = self.dist_node_quantized_feature.async_get(output.node)
                 quantized_nfeats = await wrap_torch_future(fut)
-                result_map[
-                    f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}"
-                ] = quantized_nfeats
+                result_map[f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}"] = (
+                    quantized_nfeats
+                )
             if self.dist_edge_feature is not None:
                 eids = result_map["eids"]
                 fut = self.dist_edge_feature.async_get(eids)

@@ -6,26 +6,27 @@ def dequantize_feature_tensor(
     *,
     bits: int,
     dequantized_dim: int,
-    clip_min: float | None = None, clip_max: float | None = None,
-    bucket_0_value: float | None = None, bucket_1_value: float | None = None
+    clip_min: float | None = None,
+    clip_max: float | None = None,
+    bucket_0_value: float | None = None,
+    bucket_1_value: float | None = None,
 ) -> torch.Tensor:
     VALID_BITS = (1, 2, 4, 8)
     if bits not in VALID_BITS:
         raise ValueError(f"Expected bits to be one of {VALID_BITS}, got {bits}.")
-    if bits == 1:
-        if bucket_0_value is None or bucket_1_value is None:
-            raise ValueError(
-                "Expected bucket_0_value and bucket_1_value for 1-bit dequantization."
-            )
-    elif clip_min is None or clip_max is None:
-        raise ValueError(
-            f"Expected clip_min and clip_max for {bits}-bit dequantization."
-        )
 
     codes = _unpack_features(packed_features, dim=dequantized_dim, bits=bits).float()
     if bits == 1:
+        if bucket_0_value is None or bucket_1_value is None:
+            raise ValueError(
+                "bucket_0_value and bucket_1_value required for 1-bit dequantization."
+            )
         return torch.where(codes.bool(), bucket_1_value, bucket_0_value)
     else:
+        if clip_min is None or clip_max is None:
+            raise ValueError(
+                f"clip_min and clip_max required for {bits}-bit dequantization."
+            )
         levels = (1 << bits) - 1
         return clip_min + (codes / levels) * (clip_max - clip_min)
 

@@ -374,7 +374,7 @@ class TFRecordDataLoader:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         Returns:
-            LoadedEntityTensors: The (id_tensor, feature_tensor, label_tensor) for the loaded entities.
+            LoadedEntityTensors: The (id_tensor, feature_tensor, quantized_feature_tensor, label_tensor) for the loaded entities.
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys

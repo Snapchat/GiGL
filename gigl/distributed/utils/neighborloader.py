@@ -5,7 +5,7 @@ from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Optional, TypeVar, Union
+from typing import Literal, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -55,9 +55,7 @@ class DatasetSchema:
     ]
     # Quantization metadata for append-only packed node features.
     node_quantization_metadata: Optional[
-        Union[
-            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
-        ]
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ]
     # Edge feature info.
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
@@ -345,9 +343,7 @@ def materialize_quantized_node_features(
     data: _GraphType,
     metadata: dict[str, torch.Tensor],
     node_quantization_metadata: Optional[
-        Union[
-            FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]
-        ]
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ],
 ) -> tuple[_GraphType, dict[str, torch.Tensor]]:
     """Materialize packed quantized node features into PyG node feature tensors."""
@@ -358,9 +354,13 @@ def materialize_quantized_node_features(
         node_store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
     ) -> None:
         dequantized = dequantize_feature_tensor(
-            packed_features, bits=q.bits, dequantized_dim=q.dequantized_feature_dim,
-            clip_min=q.clip_min, clip_max=q.clip_max,
-            bucket_0_value=q.bucket_0_value, bucket_1_value=q.bucket_1_value
+            packed_features,
+            bits=q.bits,
+            dequantized_dim=q.dequantized_feature_dim,
+            clip_min=q.clip_min,
+            clip_max=q.clip_max,
+            bucket_0_value=q.bucket_0_value,
+            bucket_1_value=q.bucket_1_value,
         )
         x = getattr(node_store, "x", None)
         if x is None:
@@ -375,7 +375,11 @@ def materialize_quantized_node_features(
 
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):
-            quantization_metadata = node_quantization_metadata[
+            homogeneous_quantization_metadata = cast(
+                dict[NodeType, FeatureQuantizationMetadata],
+                node_quantization_metadata,
+            )
+            quantization_metadata = homogeneous_quantization_metadata[
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
             ]
             metadata_key = (
@@ -393,6 +397,12 @@ def materialize_quantized_node_features(
         materialize_node_store(data, packed_features, quantization_metadata)
         return data, metadata
 
+    assert isinstance(node_quantization_metadata, dict), (
+        "Expected per-node-type quantization metadata for heterogeneous data."
+    )
+    node_quantization_metadata = cast(
+        dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
+    )
     for node_type, quantization_metadata in node_quantization_metadata.items():
         metadata_key = f"{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{node_type}"
         packed_features = metadata.pop(metadata_key, None)

@@ -291,7 +291,7 @@ class TFRecordDataLoaderTest(TestCase):
     ):
         """Test TFRecordDataLoader's ability to load features and optionally labels."""
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        node_ids, feature_tensor, quantized_feature_tensor, label_tensor = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
                 feature_spec=feature_spec,
@@ -396,7 +396,7 @@ class TFRecordDataLoaderTest(TestCase):
         self.addCleanup(temp_dir.cleanup)
 
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        node_ids, feature_tensor, quantized_feature_tensor, label_tensor = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
                 feature_spec={},  # Doesn't matter what this is.
@@ -470,7 +470,7 @@ class TFRecordDataLoaderTest(TestCase):
             condensed_node_type
         ]
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        _, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        _, feature_tensor, quantized_feature_tensor, label_tensor = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(
                     node_metadata.tfrecord_uri_prefix

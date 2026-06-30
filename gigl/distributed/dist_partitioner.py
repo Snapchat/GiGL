@@ -582,9 +582,9 @@ class DistPartitioner:
         )
         self._node_quantized_feat_dim = {}
         for node_type in input_node_quantized_features:
-            self._node_quantized_feat_dim[node_type] = (
-                input_node_quantized_features[node_type].shape[1]
-            )
+            self._node_quantized_feat_dim[node_type] = input_node_quantized_features[
+                node_type
+            ].shape[1]
 
     def register_node_labels(
         self, node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
@@ -1129,9 +1129,7 @@ class DistPartitioner:
             if has_node_features:
                 assert node_feature_ind is not None
                 node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat(
-                        [r[node_feature_ind] for r in partitioned_results]
-                    ),
+                    feats=torch.cat([r[node_feature_ind] for r in partitioned_results]),
                     ids=partitioned_ids,
                 )
 
@@ -1170,9 +1168,7 @@ class DistPartitioner:
 
             if node_quantized_feat_dim is not None:
                 node_quantized_feature_partition_data = FeaturePartitionData(
-                    feats=torch.empty(
-                        (0, node_quantized_feat_dim), dtype=torch.uint8
-                    ),
+                    feats=torch.empty((0, node_quantized_feat_dim), dtype=torch.uint8),
                     ids=torch.empty(0),
                 )
             else:

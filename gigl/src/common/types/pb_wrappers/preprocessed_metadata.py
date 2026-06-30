@@ -72,9 +72,8 @@ class PreprocessedMetadataPbWrapper:
                 dequantized_feature_keys = list(
                     quantized_metadata.dequantized_feature_keys
                 )
-                if (
-                    quantized_metadata.dequantized_feature_dim
-                    != len(dequantized_feature_keys)
+                if quantized_metadata.dequantized_feature_dim != len(
+                    dequantized_feature_keys
                 ):
                     raise ValueError(
                         f"Expected quantized feature metadata for condensed node type {condensed_node_type} "
