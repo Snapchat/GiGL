@@ -8,6 +8,7 @@ from gigl.utils.share_memory import share_memory
 
 POSITIVE_LABEL_METADATA_KEY: Final[str] = "gigl_positive_labels."
 NEGATIVE_LABEL_METADATA_KEY: Final[str] = "gigl_negative_labels."
+NODE_QUANTIZED_FEATURES_METADATA_KEY: Final[str] = "node_quantized_features"
 
 
 class ABLPNodeSamplerInput(NodeSamplerInput):

@@ -13,6 +13,8 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization import dequantize_feature_tensor
+from gigl.distributed.sampler import NODE_QUANTIZED_FEATURES_METADATA_KEY
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
@@ -23,7 +25,6 @@ from gigl.types.graph import (
 logger = Logger()
 
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
-NODE_QUANTIZED_FEATURES_METADATA_KEY = "node_quantized_features"
 
 
 class SamplingClusterSetup(Enum):
@@ -340,79 +341,7 @@ def set_missing_features(
     return data
 
 
-def _unpack_quantized_features(
-    packed_features: torch.Tensor,
-    quantization_metadata: FeatureQuantizationMetadata,
-) -> torch.Tensor:
-    bits = quantization_metadata.bits
-    dequantized_feature_dim = quantization_metadata.dequantized_feature_dim
-    if bits not in {1, 2, 4, 8}:
-        raise ValueError(f"Expected bits to be one of 1, 2, 4, or 8, got {bits}.")
-
-    if bits == 8:
-        if packed_features.size(1) < dequantized_feature_dim:
-            raise ValueError(
-                f"Packed feature dim {packed_features.size(1)} is smaller than dequantized dim {dequantized_feature_dim}."
-            )
-        return packed_features[:, :dequantized_feature_dim].to(torch.float32)
-
-    values_per_byte = 8 // bits
-    feature_indices = torch.arange(
-        dequantized_feature_dim, device=packed_features.device
-    )
-    byte_indices = torch.div(
-        feature_indices, values_per_byte, rounding_mode="floor"
-    )
-    bit_offsets = ((feature_indices % values_per_byte) * bits).to(torch.int16)
-    selected_bytes = packed_features[:, byte_indices].to(torch.int16)
-    return torch.bitwise_and(
-        torch.bitwise_right_shift(selected_bytes, bit_offsets),
-        (1 << bits) - 1,
-    ).to(torch.float32)
-
-
-def _dequantize_node_features(
-    packed_features: torch.Tensor,
-    quantization_metadata: FeatureQuantizationMetadata,
-) -> torch.Tensor:
-    codes = _unpack_quantized_features(packed_features, quantization_metadata)
-    if quantization_metadata.bits == 1:
-        if (
-            quantization_metadata.bucket_0_value is None
-            or quantization_metadata.bucket_1_value is None
-        ):
-            raise ValueError("Centroid quantization requires both bucket values.")
-        return torch.where(
-            codes.bool(),
-            torch.tensor(
-                quantization_metadata.bucket_1_value,
-                dtype=torch.float32,
-                device=packed_features.device,
-            ),
-            torch.tensor(
-                quantization_metadata.bucket_0_value,
-                dtype=torch.float32,
-                device=packed_features.device,
-            ),
-        )
-
-    if quantization_metadata.clip_min is None or quantization_metadata.clip_max is None:
-        raise ValueError("Linear quantization requires both clip bounds.")
-    levels = (1 << quantization_metadata.bits) - 1
-    clip_min = torch.tensor(
-        quantization_metadata.clip_min,
-        dtype=torch.float32,
-        device=packed_features.device,
-    )
-    clip_max = torch.tensor(
-        quantization_metadata.clip_max,
-        dtype=torch.float32,
-        device=packed_features.device,
-    )
-    return clip_min + (codes / levels) * (clip_max - clip_min)
-
-
-def append_dequantized_node_features(
+def materialize_quantized_node_features(
     data: _GraphType,
     metadata: dict[str, torch.Tensor],
     node_quantization_metadata: Optional[
@@ -421,13 +350,32 @@ def append_dequantized_node_features(
         ]
     ],
 ) -> tuple[_GraphType, dict[str, torch.Tensor]]:
-    """Append dequantized packed node features to PyG node feature tensors."""
+    """Materialize packed quantized node features into PyG node feature tensors."""
     if node_quantization_metadata is None:
         return data, metadata
 
+    def materialize_node_store(
+        node_store,
+        packed_features: torch.Tensor,
+        quantization_metadata: FeatureQuantizationMetadata,
+    ) -> None:
+        dequantized_features = dequantize_feature_tensor(
+            packed_features=packed_features,
+            quantization_metadata=quantization_metadata,
+        )
+        node_x = getattr(node_store, "x", None)
+        if node_x is None:
+            node_store.x = dequantized_features
+            return
+        if node_x.size(0) != dequantized_features.size(0):
+            raise ValueError(
+                "Cannot materialize quantized features with "
+                f"{dequantized_features.size(0)} rows into existing x with "
+                f"{node_x.size(0)} rows."
+            )
+        node_store.x = torch.cat([node_x, dequantized_features], dim=1)
+
     if isinstance(data, Data):
-        quantization_metadata = node_quantization_metadata
-        metadata_key = NODE_QUANTIZED_FEATURES_METADATA_KEY
         if isinstance(node_quantization_metadata, dict):
             quantization_metadata = node_quantization_metadata.get(
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -436,6 +384,9 @@ def append_dequantized_node_features(
                 f"{NODE_QUANTIZED_FEATURES_METADATA_KEY}."
                 f"{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
             )
+        else:
+            quantization_metadata = node_quantization_metadata
+            metadata_key = NODE_QUANTIZED_FEATURES_METADATA_KEY
         if quantization_metadata is None:
             return data, metadata
         packed_features = metadata.pop(metadata_key, None)
@@ -443,21 +394,7 @@ def append_dequantized_node_features(
             packed_features = metadata.pop(NODE_QUANTIZED_FEATURES_METADATA_KEY, None)
         if packed_features is None:
             return data, metadata
-        dequantized_features = _dequantize_node_features(
-            packed_features=packed_features,
-            quantization_metadata=quantization_metadata,
-        )
-        data_x = data.x
-        if data_x is None:
-            data.x = dequantized_features
-        else:
-            if data_x.size(0) != dequantized_features.size(0):
-                raise ValueError(
-                    "Cannot append dequantized features with "
-                    f"{dequantized_features.size(0)} rows to existing x with "
-                    f"{data_x.size(0)} rows."
-                )
-            data.x = torch.cat([data_x.to(torch.float32), dequantized_features], dim=1)
+        materialize_node_store(data, packed_features, quantization_metadata)
         return data, metadata
 
     if isinstance(node_quantization_metadata, FeatureQuantizationMetadata):
@@ -470,24 +407,7 @@ def append_dequantized_node_features(
         packed_features = metadata.pop(metadata_key, None)
         if packed_features is None:
             continue
-        dequantized_features = _dequantize_node_features(
-            packed_features=packed_features,
-            quantization_metadata=quantization_metadata,
-        )
-        node_data = data[node_type]
-        node_x = getattr(node_data, "x", None)
-        if node_x is None:
-            node_data.x = dequantized_features
-        else:
-            if node_x.size(0) != dequantized_features.size(0):
-                raise ValueError(
-                    "Cannot append dequantized features with "
-                    f"{dequantized_features.size(0)} rows to existing x with "
-                    f"{node_x.size(0)} rows."
-                )
-            node_data.x = torch.cat(
-                [node_x.to(torch.float32), dequantized_features], dim=1
-            )
+        materialize_node_store(data[node_type], packed_features, quantization_metadata)
     return data, metadata
 
 

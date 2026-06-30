@@ -30,10 +30,10 @@ from gigl.distributed.sampler_options import (
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
-    append_dequantized_node_features,
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_node_features,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
@@ -881,7 +881,7 @@ class DistABLPLoader(BaseDistLoader):
         data = self._set_labels(data, positive_labels, negative_labels)
 
         data, metadata = self._apply_ppr_outputs(data, metadata)
-        data, metadata = append_dequantized_node_features(
+        data, metadata = materialize_quantized_node_features(
             data=data,
             metadata=metadata,
             node_quantization_metadata=self._node_quantization_metadata,

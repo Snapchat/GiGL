@@ -16,11 +16,11 @@ from graphlearn_torch.typing import NodeType, as_str
 from graphlearn_torch.utils import reverse_edge_type
 
 from gigl.distributed.sampler import (
+    NODE_QUANTIZED_FEATURES_METADATA_KEY,
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
-from gigl.distributed.utils.neighborloader import NODE_QUANTIZED_FEATURES_METADATA_KEY
 from gigl.utils.data_splitters import PADDING_NODE
 
 
@@ -101,6 +101,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             and data is not None
             and getattr(data, "node_quantized_features", None) is not None
         ):
+            # Mirrors GLT's dist_node_feature initialization:
+            # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L162-L167
             self.dist_node_quantized_feature = DistFeature(
                 data.num_partitions,
                 data.partition_idx,
