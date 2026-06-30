@@ -355,25 +355,23 @@ def materialize_quantized_node_features(
         return data, metadata
 
     def materialize_node_store(
-        node_store,
-        packed_features: torch.Tensor,
-        quantization_metadata: FeatureQuantizationMetadata,
+        node_store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
     ) -> None:
-        dequantized_features = dequantize_feature_tensor(
-            packed_features=packed_features,
-            quantization_metadata=quantization_metadata,
+        dequantized = dequantize_feature_tensor(
+            packed_features, bits=q.bits, dequantized_dim=q.dequantized_feature_dim,
+            clip_min=q.clip_min, clip_max=q.clip_max,
+            bucket_0_value=q.bucket_0_value, bucket_1_value=q.bucket_1_value
         )
-        node_x = getattr(node_store, "x", None)
-        if node_x is None:
-            node_store.x = dequantized_features
+        x = getattr(node_store, "x", None)
+        if x is None:
+            node_store.x = dequantized
             return
-        if node_x.size(0) != dequantized_features.size(0):
+        if x.size(0) != dequantized.size(0):
             raise ValueError(
                 "Cannot materialize quantized features with "
-                f"{dequantized_features.size(0)} rows into existing x with "
-                f"{node_x.size(0)} rows."
+                f"{dequantized.size(0)} rows into existing x with {x.size(0)} rows."
             )
-        node_store.x = torch.cat([node_x, dequantized_features], dim=1)
+        node_store.x = torch.cat([x, dequantized], dim=1)
 
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):

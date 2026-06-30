@@ -1,76 +1,50 @@
-"""Tensor utilities for feature quantization."""
-
 import torch
-
-from gigl.types.graph import FeatureQuantizationMetadata
-
-
-def _unpack_quantized_features(
-    packed_features: torch.Tensor,
-    quantization_metadata: FeatureQuantizationMetadata,
-) -> torch.Tensor:
-    bits = quantization_metadata.bits
-    dequantized_feature_dim = quantization_metadata.dequantized_feature_dim
-    if bits not in {1, 2, 4, 8}:
-        raise ValueError(f"Expected bits to be one of 1, 2, 4, or 8, got {bits}.")
-
-    if bits == 8:
-        if packed_features.size(1) < dequantized_feature_dim:
-            raise ValueError(
-                f"Packed feature dim {packed_features.size(1)} is smaller than "
-                f"dequantized dim {dequantized_feature_dim}."
-            )
-        return packed_features[:, :dequantized_feature_dim].to(torch.float32)
-
-    values_per_byte = 8 // bits
-    feature_indices = torch.arange(
-        dequantized_feature_dim, device=packed_features.device
-    )
-    byte_indices = torch.div(feature_indices, values_per_byte, rounding_mode="floor")
-    bit_offsets = ((feature_indices % values_per_byte) * bits).to(torch.int16)
-    selected_bytes = packed_features[:, byte_indices].to(torch.int16)
-    return torch.bitwise_and(
-        torch.bitwise_right_shift(selected_bytes, bit_offsets),
-        (1 << bits) - 1,
-    ).to(torch.float32)
 
 
 def dequantize_feature_tensor(
     packed_features: torch.Tensor,
-    quantization_metadata: FeatureQuantizationMetadata,
+    *,
+    bits: int,
+    dequantized_dim: int,
+    clip_min: float | None = None, clip_max: float | None = None,
+    bucket_0_value: float | None = None, bucket_1_value: float | None = None
 ) -> torch.Tensor:
-    codes = _unpack_quantized_features(packed_features, quantization_metadata)
-    if quantization_metadata.bits == 1:
-        if (
-            quantization_metadata.bucket_0_value is None
-            or quantization_metadata.bucket_1_value is None
-        ):
-            raise ValueError("Centroid quantization requires both bucket values.")
-        return torch.where(
-            codes.bool(),
-            torch.tensor(
-                quantization_metadata.bucket_1_value,
-                dtype=torch.float32,
-                device=packed_features.device,
-            ),
-            torch.tensor(
-                quantization_metadata.bucket_0_value,
-                dtype=torch.float32,
-                device=packed_features.device,
-            ),
-        )
+    codes = _unpack_codes(packed_features, bits=bits, dim=dequantized_dim)
+    if bits == 1:
+        if bucket_0_value is None or bucket_1_value is None:
+            raise ValueError(
+                "Expected bucket_0_value and bucket_1_value for 1-bit centroid "
+                "dequantization."
+            )
+        return torch.where(codes.bool(), bucket_1_value, bucket_0_value)
 
-    if quantization_metadata.clip_min is None or quantization_metadata.clip_max is None:
-        raise ValueError("Linear quantization requires both clip bounds.")
-    levels = (1 << quantization_metadata.bits) - 1
-    clip_min = torch.tensor(
-        quantization_metadata.clip_min,
-        dtype=torch.float32,
-        device=packed_features.device,
-    )
-    clip_max = torch.tensor(
-        quantization_metadata.clip_max,
-        dtype=torch.float32,
-        device=packed_features.device,
-    )
+    if clip_min is None or clip_max is None:
+        raise ValueError(
+            f"Expected clip_min and clip_max for {bits}-bit linear dequantization."
+        )
+    levels = (1 << bits) - 1
     return clip_min + (codes / levels) * (clip_max - clip_min)
+
+
+def _unpack_codes(
+    packed_features: torch.Tensor, *, bits: int, dim: int
+) -> torch.Tensor:
+    if bits not in {1, 2, 4, 8}:
+        raise ValueError(f"Expected bits to be one of 1, 2, 4, or 8, got {bits}.")
+
+    per_byte = 8 // bits
+    packed_dim = (dim + per_byte - 1) // per_byte
+    if packed_features.size(1) != packed_dim:
+        raise ValueError(
+            f"Expected packed feature dim {packed_dim} for {dim} {bits}-bit "
+            f"features, got {packed_features.size(1)}."
+        )
+    if bits == 8:
+        return packed_features.to(torch.float32)
+
+    idx = torch.arange(dim, device=packed_features.device)
+    byte_idx = torch.div(idx, per_byte, rounding_mode="floor")
+    offsets = ((idx % per_byte) * bits).to(torch.int16)
+    bytes_ = packed_features[:, byte_idx].to(torch.int16)
+    shifted = torch.bitwise_right_shift(bytes_, offsets)
+    return torch.bitwise_and(shifted, (1 << bits) - 1).to(torch.float32)
