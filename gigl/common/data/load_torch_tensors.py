@@ -30,7 +30,7 @@ _FEATURE_FMT = "{entity}_features"
 _LABEL_FMT = "{entity}_labels"
 _EDGE_WEIGHTS_KEY = "edge_weights"
 _NODE_KEY = "node"
-_NODE_QUANTIZED_KEY = "node_quantized"
+_NODE_QUANTIZED_KEY = "node_quantized_features"
 
 
 def _extract_weight_col(
@@ -344,7 +344,7 @@ def _data_loading_process(
                 list(features.values())[0] if is_input_homogeneous else features
             )
         if quantized_features and entity_type == _NODE_KEY:
-            output_dict[_FEATURE_FMT.format(entity=_NODE_QUANTIZED_KEY)] = (
+            output_dict[_NODE_QUANTIZED_KEY] = (
                 list(quantized_features.values())[0]
                 if is_input_homogeneous
                 else quantized_features
@@ -519,9 +519,7 @@ def load_torch_tensors_from_tf_record(
 
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
     node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
-    node_quantized_features = node_output_dict.get(
-        _FEATURE_FMT.format(entity=_NODE_QUANTIZED_KEY), None
-    )
+    node_quantized_features = node_output_dict.get(_NODE_QUANTIZED_KEY, None)
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
