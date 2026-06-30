@@ -139,6 +139,7 @@ def _concatenate_features_by_names(
     feature_key_to_tf_tensor: dict[str, tf.Tensor],
     feature_keys: Sequence[str],
     label_keys: Sequence[str],
+    dtype: tf.dtypes.DType = tf.float32,
 ) -> tuple[Optional[tf.Tensor], Optional[tf.Tensor]]:
     """
     Concatenates feature tensors in the order specified by feature names.
@@ -150,6 +151,7 @@ def _concatenate_features_by_names(
         feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
         feature_keys (Sequence[str]): A list of feature names specifying the order in which tensors should be concatenated.
         label_keys (Sequence[str]): Name of the label columns for the current entity.
+        dtype (tf.dtypes.DType): Type to cast concatenated tensors to.
 
     Returns:
         Tuple[
@@ -169,13 +171,15 @@ def _concatenate_features_by_names(
     for feature_key in feature_iterable:
         tensor = feature_key_to_tf_tensor[feature_key]
 
-        # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
-        # Features may be stored as int type. We cast it to float here and will need to subsequently convert
-        # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
-        # For large int values, we will need to round it when converting back
-        # from float, as otherwise there will be precision loss.
-        if tensor.dtype != tf.float32:
-            tensor = tf.cast(tensor, tf.float32)
+        if tensor.dtype != dtype:
+            # TODO(kmonte, xgao, zfan): We will need to add support for this
+            # if we're trying to scale up. Features may be stored as int type.
+            # We cast it to float here and will need to subsequently convert
+            # it back to int. Note that this is ok for small int values (less
+            # than 2^24, or ~16 million).
+            # For large int values, we will need to round it when converting back
+            # from float, as otherwise there will be precision loss.
+            tensor = tf.cast(tensor, dtype)
 
         # Reshape 1D tensor to column vector
         if len(tensor.shape) == 1:
@@ -190,25 +194,6 @@ def _concatenate_features_by_names(
     combined_feature_tensor = tf.concat(features, axis=1)
 
     return _get_labels_from_features(combined_feature_tensor, label_dim)
-
-
-def _concatenate_quantized_features_by_names(
-    feature_key_to_tf_tensor: dict[str, tf.Tensor],
-    feature_keys: Sequence[str],
-) -> Optional[tf.Tensor]:
-    """Concatenate packed quantized feature tensors as uint8 columns."""
-    if not feature_keys:
-        return None
-
-    features: list[tf.Tensor] = []
-    for feature_key in feature_keys:
-        tensor = feature_key_to_tf_tensor[feature_key]
-        if tensor.dtype != tf.uint8:
-            tensor = tf.cast(tensor, tf.uint8)
-        if len(tensor.shape) == 1:
-            tensor = tf.expand_dims(tensor, axis=-1)
-        features.append(tensor)
-    return tf.concat(features, axis=1)
 
 
 def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
@@ -516,8 +501,11 @@ class TFRecordDataLoader:
                 if label_tensor is not None:
                     label_tensors.append(label_tensor)
             if quantized_feature_keys:
-                quantized_feature_tensor = _concatenate_quantized_features_by_names(
-                    batch, quantized_feature_keys
+                quantized_feature_tensor, _ = _concatenate_features_by_names(
+                    batch,
+                    quantized_feature_keys,
+                    label_keys=[],
+                    dtype=tf.uint8,
                 )
                 if quantized_feature_tensor is not None:
                     quantized_feature_tensors.append(quantized_feature_tensor)
