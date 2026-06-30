@@ -44,6 +44,9 @@ def _build_serialized_tfrecord_entity_info(
     stored_keys = set(preprocessed_metadata.feature_keys)
     stored_keys.update(preprocessed_metadata.label_keys)
     stored_keys.update(quantized_feature_keys)
+    # PreprocessedMetadataPbWrapper may add synthetic dequantized feature keys
+    # to the logical feature schema. Only keep fields physically stored in
+    # TFRecords here; dequantized features are reconstructed later from uint8.
     filtered_feature_spec_dict = {
         feature_key: feature_spec
         for feature_key, feature_spec in feature_spec_dict.items()
@@ -68,33 +71,31 @@ def _build_serialized_tfrecord_entity_info(
 def _build_feature_quantization_metadata(
     quantized_metadata: PreprocessedMetadata.FeatureQuantizationMetadata,
 ) -> FeatureQuantizationMetadata:
+    bits = quantized_metadata.bits
     state = quantized_metadata.WhichOneof("state")
-    if quantized_metadata.bits == 1:
-        if state != "centroid":
-            raise ValueError("Expected centroid quantization state for 1-bit features.")
-        return FeatureQuantizationMetadata(
-            bits=quantized_metadata.bits,
-            packed_feature_dim=quantized_metadata.packed_feature_dim,
-            dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
-            dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
-            bucket_0_value=quantized_metadata.centroid.bucket_0_value,
-            bucket_1_value=quantized_metadata.centroid.bucket_1_value,
-        )
-    if quantized_metadata.bits not in {2, 4, 8}:
+    if bits not in {1, 2, 4, 8}:
         raise ValueError(
-            f"Expected quantized feature bits to be one of 1, 2, 4, or 8, got {quantized_metadata.bits}."
+            f"Expected quantized feature bits to be one of 1, 2, 4, or 8, got {bits}."
         )
-    if state != "linear":
+    expected_state = "centroid" if bits == 1 else "linear"
+    if state != expected_state:
         raise ValueError(
-            f"Expected linear quantization state for {quantized_metadata.bits}-bit features."
+            f"Expected {expected_state} quantization state for {bits}-bit features."
         )
+
     return FeatureQuantizationMetadata(
-        bits=quantized_metadata.bits,
+        bits=bits,
         packed_feature_dim=quantized_metadata.packed_feature_dim,
         dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
         dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
-        clip_min=quantized_metadata.linear.clip_min,
-        clip_max=quantized_metadata.linear.clip_max,
+        clip_min=quantized_metadata.linear.clip_min if bits != 1 else None,
+        clip_max=quantized_metadata.linear.clip_max if bits != 1 else None,
+        bucket_0_value=quantized_metadata.centroid.bucket_0_value
+        if bits == 1
+        else None,
+        bucket_1_value=quantized_metadata.centroid.bucket_1_value
+        if bits == 1
+        else None,
     )
 
 
