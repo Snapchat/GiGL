@@ -201,6 +201,13 @@ def _data_loading_process(
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
                 )
+            if (
+                serialized_entity_tf_record_info.quantized_feature_keys
+                and not serialized_entity_tf_record_info.is_node_entity
+            ):
+                raise NotImplementedError(
+                    "Quantized feature keys are not supported for edge entities"
+                )
             loaded_entity = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,

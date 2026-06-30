@@ -410,6 +410,8 @@ class TFRecordDataLoader:
                     logger.info(
                         f"Injecting quantized feature key {feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape={feature_shape}, dtype=tf.int64)`"
                     )
+                    # TODO(jchmura-sc): Serialize uint8 packed features as raw
+                    # bytes, then decode string as uint8 to avoid int64.
                     feature_spec_dict[feature_key] = tf.io.FixedLenFeature(
                         shape=feature_shape, dtype=tf.int64
                     )
