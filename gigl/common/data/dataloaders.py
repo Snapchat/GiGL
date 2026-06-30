@@ -171,14 +171,12 @@ def _concatenate_features_by_names(
     for feature_key in feature_iterable:
         tensor = feature_key_to_tf_tensor[feature_key]
 
+        # TODO(kmonte, xgao, zfan): We will need to add support for this if we're trying to scale up.
+        # Features may be stored as int type. We cast it to float here and will need to subsequently convert
+        # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
+        # For large int values, we will need to round it when converting back
+        # from float, as otherwise there will be precision loss.
         if tensor.dtype != dtype:
-            # TODO(kmonte, xgao, zfan): We will need to add support for this
-            # if we're trying to scale up. Features may be stored as int type.
-            # We cast it to float here and will need to subsequently convert
-            # it back to int. Note that this is ok for small int values (less
-            # than 2^24, or ~16 million).
-            # For large int values, we will need to round it when converting back
-            # from float, as otherwise there will be precision loss.
             tensor = tf.cast(tensor, dtype)
 
         # Reshape 1D tensor to column vector
