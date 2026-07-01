@@ -113,7 +113,7 @@ class FeatureInfo:
     dtype: torch.dtype
 
 
-@dataclass(frozen=True)
+@dataclass
 class FeatureQuantizationMetadata:
     """Metadata needed to unpack/dequantize append-only packed features."""
 
@@ -121,10 +121,10 @@ class FeatureQuantizationMetadata:
     packed_feature_dim: int
     dequantized_feature_dim: int
     dequantized_feature_keys: tuple[str, ...]
-    clip_min: Optional[float] = None
-    clip_max: Optional[float] = None
-    bucket_0_value: Optional[float] = None
-    bucket_1_value: Optional[float] = None
+    clip_min: float = float("nan")
+    clip_max: float = float("nan")
+    bucket_0_value: float = float("nan")
+    bucket_1_value: float = float("nan")
 
 
 def _get_label_edges(

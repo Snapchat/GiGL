@@ -83,20 +83,19 @@ def _build_feature_quantization_metadata(
             f"Expected {expected_state} quantization state for {bits}-bit features."
         )
 
-    return FeatureQuantizationMetadata(
+    metadata = FeatureQuantizationMetadata(
         bits=bits,
         packed_feature_dim=quantized_metadata.packed_feature_dim,
         dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
         dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
-        clip_min=quantized_metadata.linear.clip_min if bits != 1 else None,
-        clip_max=quantized_metadata.linear.clip_max if bits != 1 else None,
-        bucket_0_value=quantized_metadata.centroid.bucket_0_value
-        if bits == 1
-        else None,
-        bucket_1_value=quantized_metadata.centroid.bucket_1_value
-        if bits == 1
-        else None,
     )
+    if bits == 1:
+        metadata.bucket_0_value = quantized_metadata.centroid.bucket_0_value
+        metadata.bucket_1_value = quantized_metadata.centroid.bucket_1_value
+    else:
+        metadata.clip_min = quantized_metadata.linear.clip_min
+        metadata.clip_max = quantized_metadata.linear.clip_max
+    return metadata
 
 
 def convert_pb_to_serialized_graph_metadata(

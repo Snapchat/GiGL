@@ -13,7 +13,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
-from gigl.common.utils.feature_quantization import dequantize_feature_tensor
+from gigl.common.utils.feature_quantization import dequantize_torch_tensor
 from gigl.distributed.sampler import NODE_QUANTIZED_FEATURES_METADATA_KEY
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -353,7 +353,7 @@ def materialize_quantized_node_features(
     def materialize_node_store(
         node_store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
     ) -> None:
-        dequantized = dequantize_feature_tensor(packed_features, metadata=q)
+        dequantized = dequantize_torch_tensor(packed_features, metadata=q)
         x = getattr(node_store, "x", None)
         if x is None:
             node_store.x = dequantized

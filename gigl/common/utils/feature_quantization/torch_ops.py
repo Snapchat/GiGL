@@ -1,50 +1,40 @@
+import math
+
 import torch
 
 from gigl.types.graph import FeatureQuantizationMetadata
 
 
-def dequantize_feature_tensor(
+def dequantize_torch_tensor(
     packed_features: torch.Tensor,
-    *,
     metadata: FeatureQuantizationMetadata,
 ) -> torch.Tensor:
     VALID_BITS = (1, 2, 4, 8)
     if metadata.bits not in VALID_BITS:
-        raise ValueError(
-            f"Expected bits to be one of {VALID_BITS}, got {metadata.bits}."
-        )
+        raise ValueError(f"bits must be one of {VALID_BITS}, got {metadata.bits}")
 
-    codes = _unpack_features(
+    codes = _unpack_torch_tensor(
         packed_features,
         dim=metadata.dequantized_feature_dim,
         bits=metadata.bits,
     ).float()
     if metadata.bits == 1:
-        if metadata.bucket_0_value is None or metadata.bucket_1_value is None:
-            raise ValueError(
-                "bucket_0_value and bucket_1_value required for 1-bit dequantization."
-            )
+        if math.isnan(metadata.bucket_0_value) or math.isnan(metadata.bucket_1_value):
+            raise ValueError("1-bit dequantization requires bucket values.")
         return torch.where(
             codes.bool(), metadata.bucket_1_value, metadata.bucket_0_value
         )
-    else:
-        if metadata.clip_min is None or metadata.clip_max is None:
-            raise ValueError(
-                f"clip_min and clip_max required for {metadata.bits}-bit dequantization."
-            )
-        levels = (1 << metadata.bits) - 1
-        return metadata.clip_min + (codes / levels) * (
-            metadata.clip_max - metadata.clip_min
-        )
+    if math.isnan(metadata.clip_min) or math.isnan(metadata.clip_max):
+        raise ValueError(f"{metadata.bits}-bit dequantization requires clip values.")
+    levels = (1 << metadata.bits) - 1
+    return metadata.clip_min + (codes / levels) * (
+        metadata.clip_max - metadata.clip_min
+    )
 
 
-def _unpack_features(
+def _unpack_torch_tensor(
     packed_features: torch.Tensor, *, dim: int, bits: int
 ) -> torch.Tensor:
-    """Unpack codes written high-bits-first within each byte.
-
-    Example: 2-bit codes [a, b, c, d] must be packed as byte: ``a << 6 | b << 4 | c << 2 | d``.
-    """
     per_byte = 8 // bits
     packed_dim = (dim + per_byte - 1) // per_byte
     if packed_features.size(-1) != packed_dim:
