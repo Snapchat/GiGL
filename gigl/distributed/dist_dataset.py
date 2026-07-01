@@ -1345,7 +1345,7 @@ def _build_feature_store(
         return {
             entity_key: Feature(
                 feature_tensor=features,
-                id2index=id2idx[entity_key], # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                id2index=id2idx[entity_key],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                 with_gpu=False,
                 dtype=dtype,
             )

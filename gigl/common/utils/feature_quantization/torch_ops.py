@@ -1,34 +1,41 @@
 import torch
 
+from gigl.types.graph import FeatureQuantizationMetadata
+
 
 def dequantize_feature_tensor(
     packed_features: torch.Tensor,
     *,
-    bits: int,
-    dequantized_dim: int,
-    clip_min: float | None = None,
-    clip_max: float | None = None,
-    bucket_0_value: float | None = None,
-    bucket_1_value: float | None = None,
+    metadata: FeatureQuantizationMetadata,
 ) -> torch.Tensor:
     VALID_BITS = (1, 2, 4, 8)
-    if bits not in VALID_BITS:
-        raise ValueError(f"Expected bits to be one of {VALID_BITS}, got {bits}.")
+    if metadata.bits not in VALID_BITS:
+        raise ValueError(
+            f"Expected bits to be one of {VALID_BITS}, got {metadata.bits}."
+        )
 
-    codes = _unpack_features(packed_features, dim=dequantized_dim, bits=bits).float()
-    if bits == 1:
-        if bucket_0_value is None or bucket_1_value is None:
+    codes = _unpack_features(
+        packed_features,
+        dim=metadata.dequantized_feature_dim,
+        bits=metadata.bits,
+    ).float()
+    if metadata.bits == 1:
+        if metadata.bucket_0_value is None or metadata.bucket_1_value is None:
             raise ValueError(
                 "bucket_0_value and bucket_1_value required for 1-bit dequantization."
             )
-        return torch.where(codes.bool(), bucket_1_value, bucket_0_value)
+        return torch.where(
+            codes.bool(), metadata.bucket_1_value, metadata.bucket_0_value
+        )
     else:
-        if clip_min is None or clip_max is None:
+        if metadata.clip_min is None or metadata.clip_max is None:
             raise ValueError(
-                f"clip_min and clip_max required for {bits}-bit dequantization."
+                f"clip_min and clip_max required for {metadata.bits}-bit dequantization."
             )
-        levels = (1 << bits) - 1
-        return clip_min + (codes / levels) * (clip_max - clip_min)
+        levels = (1 << metadata.bits) - 1
+        return metadata.clip_min + (codes / levels) * (
+            metadata.clip_max - metadata.clip_min
+        )
 
 
 def _unpack_features(

@@ -353,15 +353,7 @@ def materialize_quantized_node_features(
     def materialize_node_store(
         node_store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
     ) -> None:
-        dequantized = dequantize_feature_tensor(
-            packed_features,
-            bits=q.bits,
-            dequantized_dim=q.dequantized_feature_dim,
-            clip_min=q.clip_min,
-            clip_max=q.clip_max,
-            bucket_0_value=q.bucket_0_value,
-            bucket_1_value=q.bucket_1_value,
-        )
+        dequantized = dequantize_feature_tensor(packed_features, metadata=q)
         x = getattr(node_store, "x", None)
         if x is None:
             node_store.x = dequantized
