@@ -14,17 +14,41 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n2snapchat/research/gbml/preprocessed_metadata.proto\x12\x16snapchat.research.gbml\"\xed\x0b\n\x14PreprocessedMetadata\x12\x8f\x01\n,condensed_node_type_to_preprocessed_metadata\x18\x01 \x03(\x0b\x32Y.snapchat.research.gbml.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry\x12\x8f\x01\n,condensed_edge_type_to_preprocessed_metadata\x18\x02 \x03(\x0b\x32Y.snapchat.research.gbml.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry\x1a\x9c\x02\n\x12NodeMetadataOutput\x12\x13\n\x0bnode_id_key\x18\x01 \x01(\t\x12\x14\n\x0c\x66\x65\x61ture_keys\x18\x02 \x03(\t\x12\x12\n\nlabel_keys\x18\x03 \x03(\t\x12\x1b\n\x13tfrecord_uri_prefix\x18\x04 \x01(\t\x12\x12\n\nschema_uri\x18\x05 \x01(\t\x12$\n\x1c\x65numerated_node_ids_bq_table\x18\x06 \x01(\t\x12%\n\x1d\x65numerated_node_data_bq_table\x18\x07 \x01(\t\x12\x18\n\x0b\x66\x65\x61ture_dim\x18\x08 \x01(\rH\x00\x88\x01\x01\x12\x1f\n\x17transform_fn_assets_uri\x18\t \x01(\tB\x0e\n\x0c_feature_dim\x1a\xdf\x01\n\x10\x45\x64geMetadataInfo\x12\x14\n\x0c\x66\x65\x61ture_keys\x18\x01 \x03(\t\x12\x12\n\nlabel_keys\x18\x02 \x03(\t\x12\x1b\n\x13tfrecord_uri_prefix\x18\x03 \x01(\t\x12\x12\n\nschema_uri\x18\x04 \x01(\t\x12%\n\x1d\x65numerated_edge_data_bq_table\x18\x05 \x01(\t\x12\x18\n\x0b\x66\x65\x61ture_dim\x18\x06 \x01(\rH\x00\x88\x01\x01\x12\x1f\n\x17transform_fn_assets_uri\x18\x07 \x01(\tB\x0e\n\x0c_feature_dim\x1a\x8b\x03\n\x12\x45\x64geMetadataOutput\x12\x17\n\x0fsrc_node_id_key\x18\x01 \x01(\t\x12\x17\n\x0f\x64st_node_id_key\x18\x02 \x01(\t\x12U\n\x0emain_edge_info\x18\x03 \x01(\x0b\x32=.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfo\x12^\n\x12positive_edge_info\x18\x04 \x01(\x0b\x32=.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfoH\x00\x88\x01\x01\x12^\n\x12negative_edge_info\x18\x05 \x01(\x0b\x32=.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfoH\x01\x88\x01\x01\x42\x15\n\x13_positive_edge_infoB\x15\n\x13_negative_edge_info\x1a\x8f\x01\n,CondensedNodeTypeToPreprocessedMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\r\x12N\n\x05value\x18\x02 \x01(\x0b\x32?.snapchat.research.gbml.PreprocessedMetadata.NodeMetadataOutput:\x02\x38\x01\x1a\x8f\x01\n,CondensedEdgeTypeToPreprocessedMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\r\x12N\n\x05value\x18\x02 \x01(\x0b\x32?.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataOutput:\x02\x38\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n2snapchat/research/gbml/preprocessed_metadata.proto\x12\x16snapchat.research.gbml\"\xce\x10\n\x14PreprocessedMetadata\x12\x8f\x01\n,condensed_node_type_to_preprocessed_metadata\x18\x01 \x03(\x0b\x32Y.snapchat.research.gbml.PreprocessedMetadata.CondensedNodeTypeToPreprocessedMetadataEntry\x12\x8f\x01\n,condensed_edge_type_to_preprocessed_metadata\x18\x02 \x03(\x0b\x32Y.snapchat.research.gbml.PreprocessedMetadata.CondensedEdgeTypeToPreprocessedMetadataEntry\x1a=\n\x17LinearQuantizationState\x12\x10\n\x08\x63lip_min\x18\x01 \x01(\x02\x12\x10\n\x08\x63lip_max\x18\x02 \x01(\x02\x1aK\n\x19\x43\x65ntroidQuantizationState\x12\x16\n\x0e\x62ucket_0_value\x18\x01 \x01(\x02\x12\x16\n\x0e\x62ucket_1_value\x18\x02 \x01(\x02\x1a\xe4\x02\n\x1b\x46\x65\x61tureQuantizationMetadata\x12\x1b\n\x13packed_feature_keys\x18\x01 \x03(\t\x12 \n\x18\x64\x65quantized_feature_keys\x18\x02 \x03(\t\x12\x1a\n\x12packed_feature_dim\x18\x03 \x01(\r\x12\x1f\n\x17\x64\x65quantized_feature_dim\x18\x04 \x01(\r\x12\x0c\n\x04\x62its\x18\x05 \x01(\r\x12V\n\x06linear\x18\x06 \x01(\x0b\x32\x44.snapchat.research.gbml.PreprocessedMetadata.LinearQuantizationStateH\x00\x12Z\n\x08\x63\x65ntroid\x18\x07 \x01(\x0b\x32\x46.snapchat.research.gbml.PreprocessedMetadata.CentroidQuantizationStateH\x00\x42\x07\n\x05state\x1a\x8a\x03\n\x12NodeMetadataOutput\x12\x13\n\x0bnode_id_key\x18\x01 \x01(\t\x12\x14\n\x0c\x66\x65\x61ture_keys\x18\x02 \x03(\t\x12\x12\n\nlabel_keys\x18\x03 \x03(\t\x12\x1b\n\x13tfrecord_uri_prefix\x18\x04 \x01(\t\x12\x12\n\nschema_uri\x18\x05 \x01(\t\x12$\n\x1c\x65numerated_node_ids_bq_table\x18\x06 \x01(\t\x12%\n\x1d\x65numerated_node_data_bq_table\x18\x07 \x01(\t\x12\x18\n\x0b\x66\x65\x61ture_dim\x18\x08 \x01(\rH\x00\x88\x01\x01\x12\x1f\n\x17transform_fn_assets_uri\x18\t \x01(\t\x12l\n\x1aquantized_feature_metadata\x18\n \x01(\x0b\x32H.snapchat.research.gbml.PreprocessedMetadata.FeatureQuantizationMetadataB\x0e\n\x0c_feature_dim\x1a\xdf\x01\n\x10\x45\x64geMetadataInfo\x12\x14\n\x0c\x66\x65\x61ture_keys\x18\x01 \x03(\t\x12\x12\n\nlabel_keys\x18\x02 \x03(\t\x12\x1b\n\x13tfrecord_uri_prefix\x18\x03 \x01(\t\x12\x12\n\nschema_uri\x18\x04 \x01(\t\x12%\n\x1d\x65numerated_edge_data_bq_table\x18\x05 \x01(\t\x12\x18\n\x0b\x66\x65\x61ture_dim\x18\x06 \x01(\rH\x00\x88\x01\x01\x12\x1f\n\x17transform_fn_assets_uri\x18\x07 \x01(\tB\x0e\n\x0c_feature_dim\x1a\x8b\x03\n\x12\x45\x64geMetadataOutput\x12\x17\n\x0fsrc_node_id_key\x18\x01 \x01(\t\x12\x17\n\x0f\x64st_node_id_key\x18\x02 \x01(\t\x12U\n\x0emain_edge_info\x18\x03 \x01(\x0b\x32=.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfo\x12^\n\x12positive_edge_info\x18\x04 \x01(\x0b\x32=.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfoH\x00\x88\x01\x01\x12^\n\x12negative_edge_info\x18\x05 \x01(\x0b\x32=.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfoH\x01\x88\x01\x01\x42\x15\n\x13_positive_edge_infoB\x15\n\x13_negative_edge_info\x1a\x8f\x01\n,CondensedNodeTypeToPreprocessedMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\r\x12N\n\x05value\x18\x02 \x01(\x0b\x32?.snapchat.research.gbml.PreprocessedMetadata.NodeMetadataOutput:\x02\x38\x01\x1a\x8f\x01\n,CondensedEdgeTypeToPreprocessedMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\r\x12N\n\x05value\x18\x02 \x01(\x0b\x32?.snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataOutput:\x02\x38\x01\x62\x06proto3')
 
 
 
 _PREPROCESSEDMETADATA = DESCRIPTOR.message_types_by_name['PreprocessedMetadata']
+_PREPROCESSEDMETADATA_LINEARQUANTIZATIONSTATE = _PREPROCESSEDMETADATA.nested_types_by_name['LinearQuantizationState']
+_PREPROCESSEDMETADATA_CENTROIDQUANTIZATIONSTATE = _PREPROCESSEDMETADATA.nested_types_by_name['CentroidQuantizationState']
+_PREPROCESSEDMETADATA_FEATUREQUANTIZATIONMETADATA = _PREPROCESSEDMETADATA.nested_types_by_name['FeatureQuantizationMetadata']
 _PREPROCESSEDMETADATA_NODEMETADATAOUTPUT = _PREPROCESSEDMETADATA.nested_types_by_name['NodeMetadataOutput']
 _PREPROCESSEDMETADATA_EDGEMETADATAINFO = _PREPROCESSEDMETADATA.nested_types_by_name['EdgeMetadataInfo']
 _PREPROCESSEDMETADATA_EDGEMETADATAOUTPUT = _PREPROCESSEDMETADATA.nested_types_by_name['EdgeMetadataOutput']
 _PREPROCESSEDMETADATA_CONDENSEDNODETYPETOPREPROCESSEDMETADATAENTRY = _PREPROCESSEDMETADATA.nested_types_by_name['CondensedNodeTypeToPreprocessedMetadataEntry']
 _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY = _PREPROCESSEDMETADATA.nested_types_by_name['CondensedEdgeTypeToPreprocessedMetadataEntry']
 PreprocessedMetadata = _reflection.GeneratedProtocolMessageType('PreprocessedMetadata', (_message.Message,), {
+
+  'LinearQuantizationState' : _reflection.GeneratedProtocolMessageType('LinearQuantizationState', (_message.Message,), {
+    'DESCRIPTOR' : _PREPROCESSEDMETADATA_LINEARQUANTIZATIONSTATE,
+    '__module__' : 'snapchat.research.gbml.preprocessed_metadata_pb2'
+    # @@protoc_insertion_point(class_scope:snapchat.research.gbml.PreprocessedMetadata.LinearQuantizationState)
+    })
+  ,
+
+  'CentroidQuantizationState' : _reflection.GeneratedProtocolMessageType('CentroidQuantizationState', (_message.Message,), {
+    'DESCRIPTOR' : _PREPROCESSEDMETADATA_CENTROIDQUANTIZATIONSTATE,
+    '__module__' : 'snapchat.research.gbml.preprocessed_metadata_pb2'
+    # @@protoc_insertion_point(class_scope:snapchat.research.gbml.PreprocessedMetadata.CentroidQuantizationState)
+    })
+  ,
+
+  'FeatureQuantizationMetadata' : _reflection.GeneratedProtocolMessageType('FeatureQuantizationMetadata', (_message.Message,), {
+    'DESCRIPTOR' : _PREPROCESSEDMETADATA_FEATUREQUANTIZATIONMETADATA,
+    '__module__' : 'snapchat.research.gbml.preprocessed_metadata_pb2'
+    # @@protoc_insertion_point(class_scope:snapchat.research.gbml.PreprocessedMetadata.FeatureQuantizationMetadata)
+    })
+  ,
 
   'NodeMetadataOutput' : _reflection.GeneratedProtocolMessageType('NodeMetadataOutput', (_message.Message,), {
     'DESCRIPTOR' : _PREPROCESSEDMETADATA_NODEMETADATAOUTPUT,
@@ -65,6 +89,9 @@ PreprocessedMetadata = _reflection.GeneratedProtocolMessageType('PreprocessedMet
   # @@protoc_insertion_point(class_scope:snapchat.research.gbml.PreprocessedMetadata)
   })
 _sym_db.RegisterMessage(PreprocessedMetadata)
+_sym_db.RegisterMessage(PreprocessedMetadata.LinearQuantizationState)
+_sym_db.RegisterMessage(PreprocessedMetadata.CentroidQuantizationState)
+_sym_db.RegisterMessage(PreprocessedMetadata.FeatureQuantizationMetadata)
 _sym_db.RegisterMessage(PreprocessedMetadata.NodeMetadataOutput)
 _sym_db.RegisterMessage(PreprocessedMetadata.EdgeMetadataInfo)
 _sym_db.RegisterMessage(PreprocessedMetadata.EdgeMetadataOutput)
@@ -79,15 +106,21 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY._options = None
   _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY._serialized_options = b'8\001'
   _PREPROCESSEDMETADATA._serialized_start=79
-  _PREPROCESSEDMETADATA._serialized_end=1596
-  _PREPROCESSEDMETADATA_NODEMETADATAOUTPUT._serialized_start=396
-  _PREPROCESSEDMETADATA_NODEMETADATAOUTPUT._serialized_end=680
-  _PREPROCESSEDMETADATA_EDGEMETADATAINFO._serialized_start=683
-  _PREPROCESSEDMETADATA_EDGEMETADATAINFO._serialized_end=906
-  _PREPROCESSEDMETADATA_EDGEMETADATAOUTPUT._serialized_start=909
-  _PREPROCESSEDMETADATA_EDGEMETADATAOUTPUT._serialized_end=1304
-  _PREPROCESSEDMETADATA_CONDENSEDNODETYPETOPREPROCESSEDMETADATAENTRY._serialized_start=1307
-  _PREPROCESSEDMETADATA_CONDENSEDNODETYPETOPREPROCESSEDMETADATAENTRY._serialized_end=1450
-  _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY._serialized_start=1453
-  _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY._serialized_end=1596
+  _PREPROCESSEDMETADATA._serialized_end=2205
+  _PREPROCESSEDMETADATA_LINEARQUANTIZATIONSTATE._serialized_start=395
+  _PREPROCESSEDMETADATA_LINEARQUANTIZATIONSTATE._serialized_end=456
+  _PREPROCESSEDMETADATA_CENTROIDQUANTIZATIONSTATE._serialized_start=458
+  _PREPROCESSEDMETADATA_CENTROIDQUANTIZATIONSTATE._serialized_end=533
+  _PREPROCESSEDMETADATA_FEATUREQUANTIZATIONMETADATA._serialized_start=536
+  _PREPROCESSEDMETADATA_FEATUREQUANTIZATIONMETADATA._serialized_end=892
+  _PREPROCESSEDMETADATA_NODEMETADATAOUTPUT._serialized_start=895
+  _PREPROCESSEDMETADATA_NODEMETADATAOUTPUT._serialized_end=1289
+  _PREPROCESSEDMETADATA_EDGEMETADATAINFO._serialized_start=1292
+  _PREPROCESSEDMETADATA_EDGEMETADATAINFO._serialized_end=1515
+  _PREPROCESSEDMETADATA_EDGEMETADATAOUTPUT._serialized_start=1518
+  _PREPROCESSEDMETADATA_EDGEMETADATAOUTPUT._serialized_end=1913
+  _PREPROCESSEDMETADATA_CONDENSEDNODETYPETOPREPROCESSEDMETADATAENTRY._serialized_start=1916
+  _PREPROCESSEDMETADATA_CONDENSEDNODETYPETOPREPROCESSEDMETADATAENTRY._serialized_end=2059
+  _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY._serialized_start=2062
+  _PREPROCESSEDMETADATA_CONDENSEDEDGETYPETOPREPROCESSEDMETADATAENTRY._serialized_end=2205
 # @@protoc_insertion_point(module_scope)

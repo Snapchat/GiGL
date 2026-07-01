@@ -18,6 +18,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureQuantizationMetadata,
     LoadedGraphTensors,
 )
 from gigl.utils.share_memory import share_memory
@@ -29,6 +30,7 @@ _FEATURE_FMT = "{entity}_features"
 _LABEL_FMT = "{entity}_labels"
 _EDGE_WEIGHTS_KEY = "edge_weights"
 _NODE_KEY = "node"
+_NODE_QUANTIZED_KEY = "node_quantized_features"
 
 
 def _extract_weight_col(
@@ -113,6 +115,10 @@ class SerializedGraphMetadata:
     negative_label_entity_info: Optional[
         Union[SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]]
     ] = None
+    # Optional node quantization metadata.
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ] = None
 
 
 def _data_loading_process(
@@ -178,6 +184,7 @@ def _data_loading_process(
 
         ids: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        quantized_features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         weights: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
@@ -192,12 +199,20 @@ def _data_loading_process(
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
                 )
+            if (
+                serialized_entity_tf_record_info.quantized_feature_keys
+                and not serialized_entity_tf_record_info.is_node_entity
+            ):
+                raise NotImplementedError(
+                    "Quantized feature keys are not supported for edge entities"
+                )
             loaded_entity = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,
             )
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
+            entity_quantized_features = loaded_entity.quantized_features
             entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
@@ -211,6 +226,16 @@ def _data_loading_process(
             else:
                 logger.info(
                     f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                )
+
+            if entity_quantized_features is not None:
+                quantized_features[graph_type] = entity_quantized_features
+                logger.info(
+                    f"Rank {rank} finished loading {entity_type} quantized features of shape {entity_quantized_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                )
+            else:
+                logger.info(
+                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
@@ -291,6 +316,12 @@ def _data_loading_process(
             share_memory(features)
             # We convert the features back to homogeneous from the default heterogeneous setup if our provided input was homogeneous
 
+        if quantized_features:
+            logger.info(
+                f"Rank {rank} is attempting to share {entity_type} quantized feature memory for tfrecord directories: {all_tf_record_uris}"
+            )
+            share_memory(quantized_features)
+
         if labels:
             logger.info(
                 f"Rank {rank} is attempting to share {entity_type} label memory for tfrecord directories: {all_tf_record_uris}"
@@ -309,6 +340,12 @@ def _data_loading_process(
         if features:
             output_dict[_FEATURE_FMT.format(entity=entity_type)] = (
                 list(features.values())[0] if is_input_homogeneous else features
+            )
+        if quantized_features and entity_type == _NODE_KEY:
+            output_dict[_NODE_QUANTIZED_KEY] = (
+                list(quantized_features.values())[0]
+                if is_input_homogeneous
+                else quantized_features
             )
         if labels:
             output_dict[_LABEL_FMT.format(entity=entity_type)] = (
@@ -480,6 +517,7 @@ def load_torch_tensors_from_tf_record(
 
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
     node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
+    node_quantized_features = node_output_dict.get(_NODE_QUANTIZED_KEY, None)
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
@@ -507,6 +545,7 @@ def load_torch_tensors_from_tf_record(
     return LoadedGraphTensors(
         node_ids=node_ids,
         node_features=node_features,
+        node_quantized_features=node_quantized_features,
         node_labels=node_labels,
         edge_index=edge_index,
         edge_features=edge_features,

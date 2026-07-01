@@ -17,6 +17,7 @@ from graphlearn_torch.utils import reverse_edge_type
 
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
+    NODE_QUANTIZED_FEATURES_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
@@ -90,6 +91,27 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     Subclasses must override ``_sample_from_nodes`` with their specific
     sampling strategy (e.g., k-hop neighbor sampling, PPR-based sampling).
     """
+
+    def __init__(self, *args, **kwargs):
+        data = kwargs.get("data")
+        super().__init__(*args, **kwargs)
+        self.dist_node_quantized_feature = None
+        if (
+            self.collect_features
+            and data is not None
+            and getattr(data, "node_quantized_features", None) is not None
+        ):
+            # Mirrors GLT's dist_node_feature initialization:
+            # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L162-L167
+            self.dist_node_quantized_feature = DistFeature(
+                data.num_partitions,
+                data.partition_idx,
+                data.node_quantized_features,
+                data.node_quantized_feature_pb,
+                local_only=False,
+                rpc_router=self.rpc_router,
+                device=self.device,
+            )
 
     def _prepare_sample_loop_inputs(
         self,
@@ -322,6 +344,30 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     for ntype, fut in nfeat_fut_dict.items():
                         nfeats = await wrap_torch_future(fut)
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
+            if self.dist_node_quantized_feature is not None:
+                if self.use_all2all:
+                    sorted_ntype = sorted(
+                        self.dist_node_quantized_feature.feature_pb.keys()
+                    )
+                    quantized_nfeat_dict = self.dist_node_quantized_feature.get_all2all(
+                        output, sorted_ntype
+                    )
+                    for ntype, quantized_nfeats in quantized_nfeat_dict.items():
+                        result_map[
+                            f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                        ] = quantized_nfeats
+                else:
+                    quantized_nfeat_fut_dict = {}
+                    for ntype, nodes in output.node.items():
+                        nodes = nodes.to(torch.long)
+                        quantized_nfeat_fut_dict[ntype] = (
+                            self.dist_node_quantized_feature.async_get(nodes, ntype)
+                        )
+                    for ntype, fut in quantized_nfeat_fut_dict.items():
+                        quantized_nfeats = await wrap_torch_future(fut)
+                        result_map[
+                            f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                        ] = quantized_nfeats
             if self.dist_edge_feature is not None and self.with_edge:
                 efeat_fut_dict = {}
                 for etype in self.edge_types:
@@ -382,6 +428,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 fut = self.dist_node_feature.async_get(output.node)
                 nfeats = await wrap_torch_future(fut)
                 result_map["nfeats"] = nfeats
+            if self.dist_node_quantized_feature is not None:
+                fut = self.dist_node_quantized_feature.async_get(output.node)
+                quantized_nfeats = await wrap_torch_future(fut)
+                result_map[f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}"] = (
+                    quantized_nfeats
+                )
             if self.dist_edge_feature is not None:
                 eids = result_map["eids"]
                 fut = self.dist_edge_feature.async_get(eids)

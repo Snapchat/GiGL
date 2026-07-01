@@ -241,6 +241,8 @@ class BaseDistLoader(DistLoader):
             dataset_schema.is_homogeneous_with_labeled_edge_type
         )
         self._node_feature_info = dataset_schema.node_feature_info
+        self._node_quantized_feature_info = dataset_schema.node_quantized_feature_info
+        self._node_quantization_metadata = dataset_schema.node_quantization_metadata
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options

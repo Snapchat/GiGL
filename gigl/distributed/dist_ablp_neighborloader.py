@@ -33,6 +33,7 @@ from gigl.distributed.utils.neighborloader import (
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_node_features,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
@@ -576,6 +577,8 @@ class DistABLPLoader(BaseDistLoader):
                 is_homogeneous_with_labeled_edge_type=is_homogeneous_with_labeled_edge_type,
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
+                node_quantized_feature_info=dataset.node_quantized_feature_info,
+                node_quantization_metadata=dataset.node_quantization_metadata,
                 edge_feature_info=dataset.edge_feature_info,
                 edge_dir=dataset.edge_dir,
             ),
@@ -740,6 +743,8 @@ class DistABLPLoader(BaseDistLoader):
                 is_homogeneous_with_labeled_edge_type=is_homogeneous_with_labeled_edge_type,
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
+                node_quantized_feature_info=None,
+                node_quantization_metadata=None,
                 edge_feature_info=edge_feature_info,
                 edge_dir=dataset.fetch_edge_dir(),
             ),
@@ -876,6 +881,11 @@ class DistABLPLoader(BaseDistLoader):
         data = self._set_labels(data, positive_labels, negative_labels)
 
         data, metadata = self._apply_ppr_outputs(data, metadata)
+        data, metadata = materialize_quantized_node_features(
+            data=data,
+            metadata=metadata,
+            node_quantization_metadata=self._node_quantization_metadata,
+        )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.

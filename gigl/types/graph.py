@@ -98,6 +98,12 @@ class PartitionOutput:
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ]
 
+    # Quantized node features on current rank. These are packed uint8 features
+    # aligned by node id and dequantized/appended in the sampler collate path.
+    partitioned_node_quantized_features: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
+
 
 @dataclass(frozen=True)
 class FeatureInfo:
@@ -105,6 +111,20 @@ class FeatureInfo:
 
     dim: int
     dtype: torch.dtype
+
+
+@dataclass
+class FeatureQuantizationMetadata:
+    """Metadata needed to unpack/dequantize append-only packed features."""
+
+    bits: int
+    packed_feature_dim: int
+    dequantized_feature_dim: int
+    dequantized_feature_keys: tuple[str, ...]
+    clip_min: float = float("nan")
+    clip_max: float = float("nan")
+    bucket_0_value: float = float("nan")
+    bucket_1_value: float = float("nan")
 
 
 def _get_label_edges(
@@ -151,6 +171,10 @@ class LoadedGraphTensors:
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
+    # Unpartitioned packed uint8 node features.
+    node_quantized_features: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """

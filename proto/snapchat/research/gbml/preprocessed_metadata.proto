@@ -3,6 +3,40 @@ syntax = "proto3";
 package snapchat.research.gbml;
 
 message PreprocessedMetadata{
+  message LinearQuantizationState{
+    // Value produced by quantized code 0. Inputs are clipped to this value
+    // before linear quantization.
+    float clip_min = 1;
+    // Value produced by the largest quantized code. Inputs are clipped to this
+    // value before linear quantization.
+    float clip_max = 2;
+  }
+
+  message CentroidQuantizationState{
+    // Value produced by packed bit/code 0.
+    float bucket_0_value = 1;
+    // Value produced by packed bit/code 1.
+    float bucket_1_value = 2;
+  }
+
+  message FeatureQuantizationMetadata{
+    // Packed uint8 fields in output TFRecords.
+    repeated string packed_feature_keys = 1;
+    // Model-visible feature names produced after dequantizing and appending.
+    repeated string dequantized_feature_keys = 2;
+    // Number of uint8 columns in the packed sidecar tensor.
+    uint32 packed_feature_dim = 3;
+    // Number of fp32 columns produced after unpacking/dequantizing.
+    uint32 dequantized_feature_dim = 4;
+    // 1 means centroid; 2, 4, and 8 mean linear buckets.
+    uint32 bits = 5;
+
+    oneof state {
+      LinearQuantizationState linear = 6;
+      CentroidQuantizationState centroid = 7;
+    }
+  }
+
   // Houses metadata about node TFTransform output from DataPreprocessor.
   message NodeMetadataOutput{
     // The field in output TFRecords which references the node identifier.
@@ -23,6 +57,8 @@ message PreprocessedMetadata{
     optional uint32 feature_dim = 8;
     // Contains categorical feature vocabularies
     string transform_fn_assets_uri = 9;
+    // Optional append-only quantized node feature sidecar metadata.
+    FeatureQuantizationMetadata quantized_feature_metadata = 10;
   }
 
   // Houses metadata of edge features output from DataPreprocessor
