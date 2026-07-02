@@ -3,8 +3,20 @@ DEFAULT_ENUMERATED_NODE_ID_FIELD = "int_id"
 
 UNIQUE_NODE_ENUMERATION_QUERY = """
 WITH
+  source_node_ids AS (
+    -- Fail fast if any node id is NULL. Otherwise, NULL would survive SELECT DISTINCT and be
+    -- silently enumerated as its own node, and edges referencing it would fail to map to any
+    -- enumerated node id downstream. See https://github.com/Snapchat/GiGL/issues/288.
+    SELECT
+      IF(
+        {bq_source_table_node_id_col_name} IS NULL,
+        ERROR("Found NULL node id in column `{bq_source_table_node_id_col_name}` of table `{bq_source_table_name}`; node ids must be non-NULL."),
+        {bq_source_table_node_id_col_name}
+      ) AS {original_node_id_field}
+    FROM `{bq_source_table_name}`
+  ),
   unique_nodes AS (
-    SELECT DISTINCT {bq_source_table_node_id_col_name} as {original_node_id_field} FROM `{bq_source_table_name}`
+    SELECT DISTINCT {original_node_id_field} FROM source_node_ids
   )
 SELECT
   {original_node_id_field},

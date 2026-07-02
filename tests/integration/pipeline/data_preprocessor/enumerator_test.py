@@ -16,6 +16,7 @@ from gigl.src.data_preprocessor.lib.enumerate.utils import (
     Enumerator,
     EnumeratorEdgeTypeMetadata,
     EnumeratorNodeTypeMetadata,
+    get_enumerated_node_id_map_bq_table_name,
 )
 from gigl.src.data_preprocessor.lib.ingest.bigquery import (
     BigqueryEdgeDataReference,
@@ -598,6 +599,66 @@ class EnumeratorTest(TestCase):
             node_data_references=sharded_node_references,
             edge_data_references=sharded_edge_references,
         )
+
+    def test_enumeration_fails_on_null_node_ids(self) -> None:
+        """Enumeration should fail loudly if the source node table contains NULL node ids.
+
+        See https://github.com/Snapchat/GiGL/issues/288: previously, a NULL node id would
+        survive SELECT DISTINCT, be silently assigned an enumerated int id, and edges
+        referencing it would not map to any enumerated node id downstream.
+        """
+        null_node_data_reference = BigqueryNodeDataReference(
+            reference_uri=BqUtils.join_path(
+                get_resource_config().project,
+                get_resource_config().temp_assets_bq_dataset_name,
+                f"null_node_features_{self.__applied_task_identifier}",
+            ),
+            node_type=_PERSON_NODE_TYPE,
+            identifier=_PERSON_NODE_IDENTIFIER_FIELD,
+        )
+        self.__bq_tables_to_cleanup_on_teardown.append(
+            null_node_data_reference.reference_uri
+        )
+        # Note: the NULL node id is intentionally not in the first record, since
+        # __upload_records_to_bq infers the BQ schema from the first record's value types.
+        records_with_null_node_id: list[dict[str, Any]] = (
+            _PERSON_NODE_FEATURE_RECORDS
+            + [
+                {
+                    _PERSON_NODE_IDENTIFIER_FIELD: None,
+                    "height": 4.0,
+                    "age": 4.0,
+                    "weight": 4.0,
+                }
+            ]
+        )
+        self.__upload_records_to_bq(
+            data_reference=null_node_data_reference,
+            records=records_with_null_node_id,
+        )
+
+        applied_task_identifier = AppliedTaskIdentifier(
+            f"{self.__applied_task_identifier}_null_node_id_enumeration"
+        )
+        # Register the would-be output table for cleanup in case of a regression where
+        # the enumeration query unexpectedly succeeds.
+        self.__bq_tables_to_cleanup_on_teardown.append(
+            get_enumerated_node_id_map_bq_table_name(
+                applied_task_identifier=applied_task_identifier,
+                node_type=_PERSON_NODE_TYPE,
+            )
+        )
+
+        # Enumerator.run() converts raised exceptions into sys.exit(...), so a failed
+        # enumeration surfaces as SystemExit.
+        with self.assertRaises(SystemExit) as ctx:
+            Enumerator().run(
+                applied_task_identifier=applied_task_identifier,
+                node_data_references=[null_node_data_reference],
+                edge_data_references=[],
+                gcp_project=get_resource_config().project,
+            )
+        self.assertIn("NULL node id", str(ctx.exception))
 
     def tearDown(self) -> None:
         for table_name in self.__bq_tables_to_cleanup_on_teardown:
