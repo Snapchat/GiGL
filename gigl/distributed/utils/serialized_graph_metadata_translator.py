@@ -90,8 +90,8 @@ def _build_feature_quantization_metadata(
         dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
     )
     if bits == 1:
-        metadata.bucket_0_value = quantized_metadata.centroid.bucket_0_value
-        metadata.bucket_1_value = quantized_metadata.centroid.bucket_1_value
+        metadata.neg_mean = quantized_metadata.centroid.neg_mean
+        metadata.pos_mean = quantized_metadata.centroid.pos_mean
     else:
         metadata.clip_min = quantized_metadata.linear.clip_min
         metadata.clip_max = quantized_metadata.linear.clip_max

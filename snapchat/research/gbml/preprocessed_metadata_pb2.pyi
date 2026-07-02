@@ -44,19 +44,19 @@ class PreprocessedMetadata(google.protobuf.message.Message):
     class CentroidQuantizationState(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-        BUCKET_0_VALUE_FIELD_NUMBER: builtins.int
-        BUCKET_1_VALUE_FIELD_NUMBER: builtins.int
-        bucket_0_value: builtins.float
-        """Value produced by packed bit/code 0."""
-        bucket_1_value: builtins.float
-        """Value produced by packed bit/code 1."""
+        NEG_MEAN_FIELD_NUMBER: builtins.int
+        POS_MEAN_FIELD_NUMBER: builtins.int
+        neg_mean: builtins.float
+        """Mean value for negative features, produced by packed bit/code 0."""
+        pos_mean: builtins.float
+        """Mean value for positive features, produced by packed bit/code 1."""
         def __init__(
             self,
             *,
-            bucket_0_value: builtins.float = ...,
-            bucket_1_value: builtins.float = ...,
+            neg_mean: builtins.float = ...,
+            pos_mean: builtins.float = ...,
         ) -> None: ...
-        def ClearField(self, field_name: typing_extensions.Literal["bucket_0_value", b"bucket_0_value", "bucket_1_value", b"bucket_1_value"]) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["neg_mean", b"neg_mean", "pos_mean", b"pos_mean"]) -> None: ...
 
     class FeatureQuantizationMetadata(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor

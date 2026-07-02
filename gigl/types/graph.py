@@ -123,8 +123,8 @@ class FeatureQuantizationMetadata:
     dequantized_feature_keys: tuple[str, ...] = ()
     clip_min: float = float("nan")
     clip_max: float = float("nan")
-    bucket_0_value: float = float("nan")
-    bucket_1_value: float = float("nan")
+    neg_mean: float = float("nan")
+    pos_mean: float = float("nan")
 
 
 def _get_label_edges(

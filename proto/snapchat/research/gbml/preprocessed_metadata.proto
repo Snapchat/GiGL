@@ -13,10 +13,10 @@ message PreprocessedMetadata{
   }
 
   message CentroidQuantizationState{
-    // Value produced by packed bit/code 0.
-    float bucket_0_value = 1;
-    // Value produced by packed bit/code 1.
-    float bucket_1_value = 2;
+    // Mean value for negative features, produced by packed bit/code 0.
+    float neg_mean = 1;
+    // Mean value for positive features, produced by packed bit/code 1.
+    float pos_mean = 2;
   }
 
   message FeatureQuantizationMetadata{
