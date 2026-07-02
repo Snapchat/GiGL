@@ -9,27 +9,24 @@ def dequantize_torch_tensor(
     packed_features: torch.Tensor,
     metadata: FeatureQuantizationMetadata,
 ) -> torch.Tensor:
+    q = metadata
+
     VALID_BITS = (1, 2, 4, 8)
-    if metadata.bits not in VALID_BITS:
-        raise ValueError(f"bits must be one of {VALID_BITS}, got {metadata.bits}")
+    if q.bits not in VALID_BITS:
+        raise ValueError(f"bits must be one of {VALID_BITS}, got {q.bits}")
 
     codes = _unpack_torch_tensor(
-        packed_features,
-        dim=metadata.dequantized_feature_dim,
-        bits=metadata.bits,
+        packed_features, dim=q.dequantized_feature_dim, bits=q.bits
     ).float()
-    if metadata.bits == 1:
-        if math.isnan(metadata.bucket_0_value) or math.isnan(metadata.bucket_1_value):
+    if q.bits == 1:
+        if math.isnan(q.bucket_0_value) or math.isnan(q.bucket_1_value):
             raise ValueError("1-bit dequantization requires bucket values.")
-        return torch.where(
-            codes.bool(), metadata.bucket_1_value, metadata.bucket_0_value
-        )
-    if math.isnan(metadata.clip_min) or math.isnan(metadata.clip_max):
-        raise ValueError(f"{metadata.bits}-bit dequantization requires clip values.")
-    levels = (1 << metadata.bits) - 1
-    return metadata.clip_min + (codes / levels) * (
-        metadata.clip_max - metadata.clip_min
-    )
+        return torch.where(codes.bool(), q.bucket_1_value, q.bucket_0_value)
+    else:
+        if math.isnan(q.clip_min) or math.isnan(q.clip_max):
+            raise ValueError(f"{q.bits}-bit dequantization requires clip values.")
+        levels = (1 << q.bits) - 1
+        return q.clip_min + (codes / levels) * (q.clip_max - q.clip_min)
 
 
 def _unpack_torch_tensor(

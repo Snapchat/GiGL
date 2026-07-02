@@ -120,7 +120,7 @@ class FeatureQuantizationMetadata:
     bits: int
     packed_feature_dim: int
     dequantized_feature_dim: int
-    dequantized_feature_keys: tuple[str, ...]
+    dequantized_feature_keys: tuple[str, ...] = ()
     clip_min: float = float("nan")
     clip_max: float = float("nan")
     bucket_0_value: float = float("nan")

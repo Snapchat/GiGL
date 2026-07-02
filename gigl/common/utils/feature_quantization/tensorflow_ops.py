@@ -1,7 +1,10 @@
 import tensorflow as tf
 import tensorflow_transform as tft
 
+from gigl.common.logger import Logger
 from gigl.types.graph import FeatureQuantizationMetadata
+
+logger = Logger()
 
 
 def quantize_tft_tensor(
@@ -13,6 +16,7 @@ def quantize_tft_tensor(
         raise ValueError(f"bits must be one of {VALID_BITS}, got {bits}")
     if isinstance(x, tf.SparseTensor):
         raise ValueError("Feature quantization expects a dense numerical tensor.")
+
     x = tf.cast(x, tf.float32)
     q = _build_quantization_metadata(x, bits)
     if bits == 1:
@@ -34,19 +38,40 @@ def _build_quantization_metadata(
         raise ValueError("Feature quantization expects a known final dimension.")
     dim = int(dim)
     per_byte = 8 // bits
-    q = FeatureQuantizationMetadata(bits, (dim + per_byte - 1) // per_byte, dim, ())
+    q = FeatureQuantizationMetadata(
+        bits=bits,
+        packed_feature_dim=(dim + per_byte - 1) // per_byte,
+        dequantized_feature_dim=dim,
+    )
     if bits == 1:
-        flat = tf.reshape(x, [-1])
-        neg = tf.cast(flat <= 0, tf.float32)
-        pos = tf.cast(flat > 0, tf.float32)
-        q.bucket_0_value = tf.math.divide_no_nan(tft.sum(flat * neg), tft.sum(neg))
-        q.bucket_1_value = tf.math.divide_no_nan(tft.sum(flat * pos), tft.sum(pos))
+        x = tf.reshape(x, [-1])
+        neg = tf.cast(x <= 0, tf.float32)
+        pos = tf.cast(x > 0, tf.float32)
+        q.bucket_0_value = tf.math.divide_no_nan(tft.sum(x * neg), tft.sum(neg))
+        q.bucket_1_value = tf.math.divide_no_nan(tft.sum(x * pos), tft.sum(pos))
+        q.bucket_0_value = tf.debugging.check_numerics(
+            q.bucket_0_value, "non-finite bucket_0_value."
+        )
+        q.bucket_1_value = tf.debugging.check_numerics(
+            q.bucket_1_value, "non-finite bucket_1_value."
+        )
+        logger.info(
+            "Computed 1-bit centroid stats: "
+            f"bucket_0_value={q.bucket_0_value}, bucket_1_value={q.bucket_1_value}"
+        )
     else:
         x_abs = tf.reshape(tf.abs(x), [-1])
         bounds = tft.quantiles(x_abs, num_buckets=1000, epsilon=0.001)
         # TFT returns boundaries for k / 1000, k=1..999; 0.995 is index 994.
         q.clip_max = tf.maximum(bounds[..., 994], 1e-5)
         q.clip_min = -q.clip_max
+        q.clip_min = tf.debugging.check_numerics(q.clip_min, "non-finite clip_min.")
+        q.clip_max = tf.debugging.check_numerics(q.clip_max, "non-finite clip_max.")
+        logger.info(
+            f"Computed {bits}-bit linear stats: "
+            f"clip_min={q.clip_min}, clip_max={q.clip_max}"
+        )
+    logger.info(f"Built feature quantization metadata: {q}")
     return q
 
 
