@@ -48,6 +48,12 @@ class NodeOutputIdentifier(str):
     """
 
 
+class FeatureQuantizationOutput(NamedTuple):
+    quantized_feature_key: str
+    dequantized_feature_keys: list[str]
+    bits: int
+
+
 class EdgeOutputIdentifier(NamedTuple):
     """
     References the TFTransform output fields / column names for src and dst node ids of an edge.
@@ -72,6 +78,7 @@ class NodeDataPreprocessingSpec(NamedTuple):
     pretrained_tft_model_uri: Optional[Uri] = None
     features_outputs: Optional[list[str]] = None
     labels_outputs: Optional[list[str]] = None
+    feature_quantization_output: Optional[FeatureQuantizationOutput] = None
 
     def __repr__(self) -> str:
         return f"""NodeDataPreprocessingSpec(
@@ -80,7 +87,8 @@ class NodeDataPreprocessingSpec(NamedTuple):
             preprocessing_fn={self.preprocessing_fn},
             pretrained_tft_model_uri={self.pretrained_tft_model_uri},
             features_outputs={self.features_outputs},
-            labels_outputs={self.labels_outputs})
+            labels_outputs={self.labels_outputs},
+            feature_quantization_output={self.feature_quantization_output})
         """
 
 

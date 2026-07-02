@@ -8,6 +8,7 @@ from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.data_preprocessor.lib.types import (
     EdgeOutputIdentifier,
+    FeatureQuantizationOutput,
     NodeOutputIdentifier,
 )
 
@@ -22,6 +23,7 @@ class TransformedFeaturesInfo:
     raw_data_schema_file_path: GcsUri
     tft_temp_directory_path: GcsUri
     transformed_features_file_prefix: GcsUri
+    feature_quantization_metadata_path: GcsUri
     transformed_features_schema_path: GcsUri
     transform_directory_path: GcsUri
     dataflow_console_uri: Optional[HttpUri] = None
@@ -31,6 +33,7 @@ class TransformedFeaturesInfo:
     features_outputs: Optional[list[str]] = None
     label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None
+    feature_quantization_output: Optional[FeatureQuantizationOutput] = None
     custom_identifier: Optional[str] = None
 
     def __init__(
@@ -91,6 +94,9 @@ class TransformedFeaturesInfo:
                 entity_type=entity_type,
                 custom_identifier=custom_identifier,
             )
+        )
+        self.feature_quantization_metadata_path = GcsUri.join(
+            self.transform_directory_path, "feature_quantization_metadata.json"
         )
 
         self.transformed_features_schema_path = (
