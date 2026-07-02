@@ -1,5 +1,3 @@
-import math
-
 import torch
 
 from gigl.types.graph import FeatureQuantizationMetadata
@@ -28,11 +26,11 @@ def dequantize_torch_tensor(
         packed_features, dim=q.dequantized_feature_dim, bits=q.bits
     ).float()
     if q.bits == 1:
-        if math.isnan(q.neg_mean) or math.isnan(q.pos_mean):
+        if q.neg_mean is None or q.pos_mean is None:
             raise ValueError("1-bit dequantization requires pos_mean/neg_mean")
         return torch.where(codes.bool(), q.pos_mean, q.neg_mean)
     else:
-        if math.isnan(q.clip_min) or math.isnan(q.clip_max):
+        if q.clip_min is None or q.clip_max is None:
             raise ValueError(f"{q.bits}-bit dequantization requires clip_min/clip_max")
         levels = (1 << q.bits) - 1
         return q.clip_min + (codes / levels) * (q.clip_max - q.clip_min)
