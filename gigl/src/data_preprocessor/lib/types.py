@@ -51,7 +51,6 @@ class NodeOutputIdentifier(str):
 class FeatureQuantizationSpec(NamedTuple):
     feature_keys: list[str]
     bits: int
-    quantized_feature_key: str
 
 
 class EdgeOutputIdentifier(NamedTuple):

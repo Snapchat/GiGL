@@ -369,21 +369,16 @@ def get_load_data_and_transform_pipeline_component(
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
-            feature_quantization_spec = preprocessing_spec.feature_quantization_spec
+            q_spec = preprocessing_spec.feature_quantization_spec
         else:
-            feature_quantization_spec = None
-        if feature_quantization_spec is not None:
-            quantization_stats = build_feature_quantization_stats(
-                transformed_features=transformed_features,
-                spec=feature_quantization_spec,
-            )
+            q_spec = None
+        if q_spec is not None:
+            logger.info(f"Applying Beam feature quantization with spec: {q_spec}")
+            stats = build_feature_quantization_stats(transformed_features, q_spec)
             _ = (
-                quantization_stats
+                stats
                 | "Build feature quantization metadata JSON"
-                >> beam.Map(
-                    feature_quantization_metadata_json,
-                    spec=feature_quantization_spec,
-                )
+                >> beam.Map(feature_quantization_metadata_json, spec=q_spec)
                 | "Write feature quantization metadata"
                 >> beam.io.WriteToText(
                     transformed_features_info.feature_quantization_metadata_path.uri,
@@ -395,20 +390,20 @@ def get_load_data_and_transform_pipeline_component(
                 "Quantize transformed feature RecordBatches"
                 >> beam.Map(
                     quantize_record_batch,
-                    spec=feature_quantization_spec,
-                    stats=beam.pvalue.AsSingleton(quantization_stats),
+                    spec=q_spec,
+                    stats=beam.pvalue.AsSingleton(stats),
                 )
             )
             if should_use_existing_transform_fn:
                 resolved_transformed_metadata = apply_feature_quantization_schema(
-                    transformed_metadata, spec=feature_quantization_spec
+                    transformed_metadata, spec=q_spec
                 )
             else:
                 quantized_metadata = analyzed_transform_fn[1].deferred_metadata | (
                     "Apply feature quantization schema"
                     >> beam.Map(
                         apply_feature_quantization_schema,
-                        spec=feature_quantization_spec,
+                        spec=q_spec,
                     )
                 )
                 resolved_transformed_metadata = beam.pvalue.AsSingleton(
