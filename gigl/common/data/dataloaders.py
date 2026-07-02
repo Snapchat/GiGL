@@ -402,18 +402,11 @@ class TFRecordDataLoader:
                 )
             for feature_key in quantized_feature_keys:
                 if feature_key not in feature_spec_dict:
-                    feature_shape = (
-                        [serialized_tf_record_info.quantized_feature_dim]
-                        if len(quantized_feature_keys) == 1
-                        else []
-                    )
                     logger.info(
-                        f"Injecting quantized feature key {feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape={feature_shape}, dtype=tf.int64)`"
+                        f"Injecting quantized feature key {feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape=[], dtype=tf.string)`"
                     )
-                    # TODO(jchmura-sc): Serialize uint8 packed features as raw
-                    # bytes, then decode string as uint8 to avoid int64.
                     feature_spec_dict[feature_key] = tf.io.FixedLenFeature(
-                        shape=feature_shape, dtype=tf.int64
+                        shape=[], dtype=tf.string
                     )
         else:
             id_concat_axis = 1
@@ -501,14 +494,18 @@ class TFRecordDataLoader:
                 if label_tensor is not None:
                     label_tensors.append(label_tensor)
             if quantized_feature_keys:
-                quantized_feature_tensor, _ = _concatenate_features_by_names(
-                    batch,
-                    quantized_feature_keys,
-                    label_keys=[],
-                    dtype=tf.uint8,
+                if len(quantized_feature_keys) != 1:
+                    raise ValueError(
+                        f"Expected one quantized feature key, got {quantized_feature_keys}."
+                    )
+                quantized_feature_tensor = tf.io.decode_raw(
+                    batch[quantized_feature_keys[0]], tf.uint8
                 )
-                if quantized_feature_tensor is not None:
-                    quantized_feature_tensors.append(quantized_feature_tensor)
+                quantized_feature_tensor = tf.reshape(
+                    quantized_feature_tensor,
+                    [-1, serialized_tf_record_info.quantized_feature_dim],
+                )
+                quantized_feature_tensors.append(quantized_feature_tensor)
             num_entities_processed += (
                 id_tensors[-1].shape[0]
                 if entity_type == FeatureTypes.NODE

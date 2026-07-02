@@ -1,4 +1,3 @@
-import json
 from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
 import apache_beam as beam
@@ -6,7 +5,6 @@ import pyarrow as pa
 import tensorflow_data_validation as tfdv
 import tensorflow_data_validation.utils.display_util
 import tensorflow_transform
-import tensorflow_transform.tf_metadata.dataset_metadata as dataset_metadata
 import tfx_bsl
 import tfx_bsl.tfxio.tensor_adapter
 import tfx_bsl.tfxio.tf_example_record
@@ -29,6 +27,12 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
+from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    apply_feature_quantization_schema,
+    build_feature_quantization_stats,
+    feature_quantization_metadata_json,
+    quantize_record_batch,
+)
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
@@ -42,49 +46,6 @@ from gigl.src.data_preprocessor.lib.types import (
 )
 
 logger = Logger()
-
-
-def _extract_quantization_stats(
-    record_batch: pa.RecordBatch, stat_keys: list[str]
-) -> Iterable[str]:
-    if record_batch.num_rows == 0:
-        return
-    key_to_index = {name: i for i, name in enumerate(record_batch.schema.names)}
-    yield json.dumps(
-        {
-            key: float(record_batch.column(key_to_index[key])[0].as_py())
-            for key in stat_keys
-        }
-    )
-
-
-def _drop_record_batch_columns(
-    record_batch: pa.RecordBatch, column_names: list[str]
-) -> pa.RecordBatch:
-    columns_to_drop = set(column_names)
-    keep_indices = [
-        i
-        for i, name in enumerate(record_batch.schema.names)
-        if name not in columns_to_drop
-    ]
-    return pa.RecordBatch.from_arrays(
-        [record_batch.column(i) for i in keep_indices],
-        names=[record_batch.schema.names[i] for i in keep_indices],
-    )
-
-
-def _drop_dataset_metadata_features(
-    metadata: dataset_metadata.DatasetMetadata, feature_names: list[str]
-) -> dataset_metadata.DatasetMetadata:
-    features_to_drop = set(feature_names)
-    schema = schema_pb2.Schema()
-    schema.CopyFrom(metadata.schema)
-    kept_features = [
-        feature for feature in schema.feature if feature.name not in features_to_drop
-    ]
-    del schema.feature[:]
-    schema.feature.extend(kept_features)
-    return dataset_metadata.DatasetMetadata(schema)
 
 
 class InstanceDictToTFExample(beam.DoFn):
@@ -407,26 +368,22 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
-        if (
-            isinstance(preprocessing_spec, NodeDataPreprocessingSpec)
-            and preprocessing_spec.feature_quantization_output is not None
-        ):
-            node_quantized_stat_keys = (
-                ["node_quantized_neg_mean", "node_quantized_pos_mean"]
-                if preprocessing_spec.feature_quantization_output.bits == 1
-                else ["node_quantized_clip_min", "node_quantized_clip_max"]
+        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
+            feature_quantization_spec = preprocessing_spec.feature_quantization_spec
+        else:
+            feature_quantization_spec = None
+        if feature_quantization_spec is not None:
+            quantization_stats = build_feature_quantization_stats(
+                transformed_features=transformed_features,
+                spec=feature_quantization_spec,
             )
             _ = (
-                transformed_features
-                | "Extract feature quantization metadata"
-                >> beam.FlatMap(
-                    _extract_quantization_stats,
-                    stat_keys=node_quantized_stat_keys,
+                quantization_stats
+                | "Build feature quantization metadata JSON"
+                >> beam.Map(
+                    feature_quantization_metadata_json,
+                    spec=feature_quantization_spec,
                 )
-                | "Sample feature quantization metadata"
-                >> beam.combiners.Sample.FixedSizeGlobally(1)
-                | "Select feature quantization metadata"
-                >> beam.Map(lambda rows: rows[0])
                 | "Write feature quantization metadata"
                 >> beam.io.WriteToText(
                     transformed_features_info.feature_quantization_metadata_path.uri,
@@ -435,25 +392,27 @@ def get_load_data_and_transform_pipeline_component(
                 )
             )
             transformed_features = transformed_features | (
-                "Drop feature quantization metadata fields"
+                "Quantize transformed feature RecordBatches"
                 >> beam.Map(
-                    _drop_record_batch_columns, column_names=node_quantized_stat_keys
+                    quantize_record_batch,
+                    spec=feature_quantization_spec,
+                    stats=beam.pvalue.AsSingleton(quantization_stats),
                 )
             )
             if should_use_existing_transform_fn:
-                resolved_transformed_metadata = _drop_dataset_metadata_features(
-                    transformed_metadata, feature_names=node_quantized_stat_keys
+                resolved_transformed_metadata = apply_feature_quantization_schema(
+                    transformed_metadata, spec=feature_quantization_spec
                 )
             else:
-                filtered_metadata = analyzed_transform_fn[1].deferred_metadata | (
-                    "Drop feature quantization schema fields"
+                quantized_metadata = analyzed_transform_fn[1].deferred_metadata | (
+                    "Apply feature quantization schema"
                     >> beam.Map(
-                        _drop_dataset_metadata_features,
-                        feature_names=node_quantized_stat_keys,
+                        apply_feature_quantization_schema,
+                        spec=feature_quantization_spec,
                     )
                 )
                 resolved_transformed_metadata = beam.pvalue.AsSingleton(
-                    filtered_metadata
+                    quantized_metadata
                 )
 
         transformed_features | "Write tf record files" >> BetterWriteToTFRecord(

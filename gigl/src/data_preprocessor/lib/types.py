@@ -48,10 +48,10 @@ class NodeOutputIdentifier(str):
     """
 
 
-class FeatureQuantizationOutput(NamedTuple):
-    quantized_feature_key: str
-    dequantized_feature_keys: list[str]
+class FeatureQuantizationSpec(NamedTuple):
+    feature_keys: list[str]
     bits: int
+    quantized_feature_key: str
 
 
 class EdgeOutputIdentifier(NamedTuple):
@@ -78,7 +78,7 @@ class NodeDataPreprocessingSpec(NamedTuple):
     pretrained_tft_model_uri: Optional[Uri] = None
     features_outputs: Optional[list[str]] = None
     labels_outputs: Optional[list[str]] = None
-    feature_quantization_output: Optional[FeatureQuantizationOutput] = None
+    feature_quantization_spec: Optional[FeatureQuantizationSpec] = None
 
     def __repr__(self) -> str:
         return f"""NodeDataPreprocessingSpec(
@@ -88,7 +88,7 @@ class NodeDataPreprocessingSpec(NamedTuple):
             pretrained_tft_model_uri={self.pretrained_tft_model_uri},
             features_outputs={self.features_outputs},
             labels_outputs={self.labels_outputs},
-            feature_quantization_output={self.feature_quantization_output})
+            feature_quantization_spec={self.feature_quantization_spec})
         """
 
 

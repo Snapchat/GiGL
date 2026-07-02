@@ -288,8 +288,8 @@ class DataPreprocessor:
         transformed_features_info.features_outputs = preprocessing_spec.features_outputs
         transformed_features_info.label_outputs = preprocessing_spec.labels_outputs
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
-            transformed_features_info.feature_quantization_output = (
-                preprocessing_spec.feature_quantization_output
+            transformed_features_info.feature_quantization_spec = (
+                preprocessing_spec.feature_quantization_spec
             )
 
         if isinstance(feature_transform_pipeline_result, DataflowPipelineResult):
@@ -486,32 +486,27 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
-            if node_transformed_features_info.feature_quantization_output is not None:
-                feature_quantization_output = (
-                    node_transformed_features_info.feature_quantization_output
-                )
-                bits = feature_quantization_output.bits
-                dim = len(feature_quantization_output.dequantized_feature_keys)
-                per_byte = 8 // bits
-                quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
-                    quantized_feature_key=feature_quantization_output.quantized_feature_key,
-                    dequantized_feature_keys=feature_quantization_output.dequantized_feature_keys,
-                    packed_feature_dim=(dim + per_byte - 1) // per_byte,
-                    dequantized_feature_dim=dim,
-                    bits=bits,
-                )
+            if node_transformed_features_info.feature_quantization_spec is not None:
                 with tf.io.gfile.GFile(
                     node_transformed_features_info.feature_quantization_metadata_path.uri
                 ) as f:
-                    stats = json.loads(f.read())
+                    metadata = json.loads(f.read())
+                bits = metadata["bits"]
+                quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
+                    quantized_feature_key=metadata["quantized_feature_key"],
+                    dequantized_feature_keys=metadata["dequantized_feature_keys"],
+                    packed_feature_dim=metadata["packed_feature_dim"],
+                    dequantized_feature_dim=metadata["dequantized_feature_dim"],
+                    bits=bits,
+                )
                 if bits == 1:
                     centroid = quantized_feature_metadata_pb.centroid
-                    centroid.neg_mean = stats["node_quantized_neg_mean"]
-                    centroid.pos_mean = stats["node_quantized_pos_mean"]
+                    centroid.neg_mean = metadata["neg_mean"]
+                    centroid.pos_mean = metadata["pos_mean"]
                 else:
                     linear = quantized_feature_metadata_pb.linear
-                    linear.clip_min = stats["node_quantized_clip_min"]
-                    linear.clip_max = stats["node_quantized_clip_max"]
+                    linear.clip_min = metadata["clip_min"]
+                    linear.clip_max = metadata["clip_max"]
                 node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
                     quantized_feature_metadata_pb
                 )
