@@ -38,7 +38,7 @@ def _build_serialized_tfrecord_entity_info(
     if isinstance(preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput):
         if preprocessed_metadata.HasField("quantized_feature_metadata"):
             quantized_metadata = preprocessed_metadata.quantized_feature_metadata
-            quantized_feature_keys = list(quantized_metadata.packed_feature_keys)
+            quantized_feature_keys = [quantized_metadata.quantized_feature_key]
             quantized_feature_dim = quantized_metadata.packed_feature_dim
 
     stored_keys = set(preprocessed_metadata.feature_keys)
