@@ -19,7 +19,7 @@ message PreprocessedMetadata{
 
   message FeatureQuantizationMetadata{
     // Field in output TFRecords that stores packed uint8 features.
-    string quantized_feature_key = 1;
+    string packed_feature_key = 1;
     // Model-visible feature names produced after dequantizing and appending.
     repeated string dequantized_feature_keys = 2;
     // Number of fp32 columns produced after unpacking/dequantizing.

@@ -14,7 +14,7 @@ from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
-from gigl.distributed.sampler import NODE_QUANTIZED_FEATURES_METADATA_KEY
+from gigl.distributed.sampler import NODE_PACKED_FEATURES_METADATA_KEY
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
@@ -375,12 +375,12 @@ def materialize_quantized_node_features(
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
             ]
             metadata_key = (
-                f"{NODE_QUANTIZED_FEATURES_METADATA_KEY}."
+                f"{NODE_PACKED_FEATURES_METADATA_KEY}."
                 f"{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
             )
         else:
             quantization_metadata = node_quantization_metadata
-            metadata_key = NODE_QUANTIZED_FEATURES_METADATA_KEY
+            metadata_key = NODE_PACKED_FEATURES_METADATA_KEY
         packed_features = metadata.pop(metadata_key, None)
         if packed_features is None:
             raise ValueError(
@@ -396,7 +396,7 @@ def materialize_quantized_node_features(
         dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
     )
     for node_type, quantization_metadata in node_quantization_metadata.items():
-        metadata_key = f"{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{node_type}"
+        metadata_key = f"{NODE_PACKED_FEATURES_METADATA_KEY}.{node_type}"
         packed_features = metadata.pop(metadata_key, None)
         if packed_features is None:
             continue

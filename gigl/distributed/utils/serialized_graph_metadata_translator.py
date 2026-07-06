@@ -33,19 +33,19 @@ def _build_serialized_tfrecord_entity_info(
     Returns:
         SerializedTFRecordInfo: Stored metadata for current entity
     """
-    quantized_feature_key = None
-    quantized_feature_dim = 0
+    packed_feature_key = None
+    packed_feature_dim = 0
     if isinstance(preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput):
         if preprocessed_metadata.HasField("quantized_feature_metadata"):
             quantized_metadata = preprocessed_metadata.quantized_feature_metadata
             metadata = _build_feature_quantization_metadata(quantized_metadata)
-            quantized_feature_key = quantized_metadata.quantized_feature_key
-            quantized_feature_dim = metadata.packed_feature_dim
+            packed_feature_key = quantized_metadata.packed_feature_key
+            packed_feature_dim = metadata.packed_feature_dim
 
     stored_keys = set(preprocessed_metadata.feature_keys)
     stored_keys.update(preprocessed_metadata.label_keys)
-    if quantized_feature_key is not None:
-        stored_keys.add(quantized_feature_key)
+    if packed_feature_key is not None:
+        stored_keys.add(packed_feature_key)
     # PreprocessedMetadataPbWrapper may add synthetic dequantized feature keys
     # to the logical feature schema. Only keep fields physically stored in
     # TFRecords here; dequantized features are reconstructed later from uint8.
@@ -63,8 +63,8 @@ def _build_serialized_tfrecord_entity_info(
         feature_spec=filtered_feature_spec_dict,
         feature_dim=preprocessed_metadata.feature_dim,
         entity_key=entity_key,
-        quantized_feature_key=quantized_feature_key,
-        quantized_feature_dim=quantized_feature_dim,
+        packed_feature_key=packed_feature_key,
+        packed_feature_dim=packed_feature_dim,
         label_keys=list(preprocessed_metadata.label_keys),
         tfrecord_uri_pattern=tfrecord_uri_pattern,
     )

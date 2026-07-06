@@ -46,9 +46,9 @@ class SerializedTFRecordInfo:
     # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
     entity_key: Union[str, Tuple[str, str]]
     # Packed uint8 feature name to load for the current node entity.
-    quantized_feature_key: Optional[str] = None
+    packed_feature_key: Optional[str] = None
     # Number of packed uint8 columns for the current node entity.
-    quantized_feature_dim: int = 0
+    packed_feature_dim: int = 0
     # Name of the label columns for the current entity, defaults to an empty list.
     label_keys: Sequence[str] = field(default_factory=list)
     # The regex pattern to match the TFRecord files at the specified prefix
@@ -376,7 +376,7 @@ class TFRecordDataLoader:
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
-        quantized_feature_key = serialized_tf_record_info.quantized_feature_key
+        packed_feature_key = serialized_tf_record_info.packed_feature_key
         label_keys = serialized_tf_record_info.label_keys
 
         # We make a deep copy of the feature spec dict so that future modifications don't redirect to the input
@@ -399,13 +399,13 @@ class TFRecordDataLoader:
                     shape=[], dtype=tf.int64
                 )
             if (
-                quantized_feature_key is not None
-                and quantized_feature_key not in feature_spec_dict
+                packed_feature_key is not None
+                and packed_feature_key not in feature_spec_dict
             ):
                 logger.info(
-                    f"Injecting quantized feature key {quantized_feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape=[], dtype=tf.string)`"
+                    f"Injecting packed feature key {packed_feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape=[], dtype=tf.string)`"
                 )
-                feature_spec_dict[quantized_feature_key] = tf.io.FixedLenFeature(
+                feature_spec_dict[packed_feature_key] = tf.io.FixedLenFeature(
                     shape=[], dtype=tf.string
                 )
         else:
@@ -451,9 +451,9 @@ class TFRecordDataLoader:
             else:
                 empty_feature = None
 
-            if quantized_feature_key is not None:
+            if packed_feature_key is not None:
                 empty_quantized_feature = torch.empty(
-                    (0, serialized_tf_record_info.quantized_feature_dim),
+                    (0, serialized_tf_record_info.packed_feature_dim),
                     dtype=torch.uint8,
                 )
             else:
@@ -493,13 +493,13 @@ class TFRecordDataLoader:
                     feature_tensors.append(feature_tensor)
                 if label_tensor is not None:
                     label_tensors.append(label_tensor)
-            if quantized_feature_key is not None:
+            if packed_feature_key is not None:
                 quantized_feature_tensor = tf.io.decode_raw(
-                    batch[quantized_feature_key], tf.uint8
+                    batch[packed_feature_key], tf.uint8
                 )
                 quantized_feature_tensor = tf.reshape(
                     quantized_feature_tensor,
-                    [-1, serialized_tf_record_info.quantized_feature_dim],
+                    [-1, serialized_tf_record_info.packed_feature_dim],
                 )
                 quantized_feature_tensors.append(quantized_feature_tensor)
             num_entities_processed += (

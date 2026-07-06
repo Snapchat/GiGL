@@ -17,7 +17,7 @@ from graphlearn_torch.utils import reverse_edge_type
 
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
-    NODE_QUANTIZED_FEATURES_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
@@ -354,7 +354,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     )
                     for ntype, quantized_nfeats in quantized_nfeat_dict.items():
                         result_map[
-                            f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                            f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
                         ] = quantized_nfeats
                 else:
                     quantized_nfeat_fut_dict = {}
@@ -366,7 +366,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     for ntype, fut in quantized_nfeat_fut_dict.items():
                         quantized_nfeats = await wrap_torch_future(fut)
                         result_map[
-                            f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                            f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
                         ] = quantized_nfeats
             if self.dist_edge_feature is not None and self.with_edge:
                 efeat_fut_dict = {}
@@ -431,7 +431,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if self.dist_node_quantized_feature is not None:
                 fut = self.dist_node_quantized_feature.async_get(output.node)
                 quantized_nfeats = await wrap_torch_future(fut)
-                result_map[f"#META.{NODE_QUANTIZED_FEATURES_METADATA_KEY}"] = (
+                result_map[f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"] = (
                     quantized_nfeats
                 )
             if self.dist_edge_feature is not None:

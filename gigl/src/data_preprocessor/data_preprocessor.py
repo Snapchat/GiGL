@@ -516,7 +516,7 @@ class DataPreprocessor:
                     metadata = json.loads(f.read())
                 bits = metadata["bits"]
                 quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
-                    quantized_feature_key=metadata["quantized_feature_key"],
+                    packed_feature_key=metadata["packed_feature_key"],
                     dequantized_feature_keys=metadata["dequantized_feature_keys"],
                     dequantized_feature_dim=metadata["dequantized_feature_dim"],
                     bits=bits,

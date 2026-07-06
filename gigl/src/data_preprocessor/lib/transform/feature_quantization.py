@@ -12,7 +12,7 @@ from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
-_NODE_QUANTIZED_FEATURE_KEY = "node_quantized_features"
+_NODE_PACKED_FEATURE_KEY = "node_packed_features"
 _CentroidAcc = tuple[float, int, float, int]
 
 
@@ -51,7 +51,7 @@ def quantize_record_batch(
 ) -> pa.RecordBatch:
     features = _build_feature_matrix(batch, spec.feature_keys)
     packed = quantize_ndarray(features, bits=spec.bits, stats=stats)
-    drop_keys = set(spec.feature_keys) | {_NODE_QUANTIZED_FEATURE_KEY}
+    drop_keys = set(spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
     keep_indices = [
         i for i, name in enumerate(batch.schema.names) if name not in drop_keys
     ]
@@ -60,7 +60,7 @@ def quantize_record_batch(
     arrays.append(
         pa.array([[row.tobytes()] for row in packed], type=pa.list_(pa.binary()))
     )
-    names.append(_NODE_QUANTIZED_FEATURE_KEY)
+    names.append(_NODE_PACKED_FEATURE_KEY)
     return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
@@ -70,7 +70,7 @@ def feature_quantization_metadata_json(
 ) -> str:
     dim = len(spec.feature_keys)
     metadata = {
-        "quantized_feature_key": _NODE_QUANTIZED_FEATURE_KEY,
+        "packed_feature_key": _NODE_PACKED_FEATURE_KEY,
         "dequantized_feature_keys": list(spec.feature_keys),
         "dequantized_feature_dim": dim,
         "bits": spec.bits,
@@ -83,7 +83,7 @@ def feature_quantization_metadata_json(
 def apply_feature_quantization_schema(
     schema: schema_pb2.Schema, spec: FeatureQuantizationSpec
 ) -> schema_pb2.Schema:
-    drop_keys = set(spec.feature_keys) | {_NODE_QUANTIZED_FEATURE_KEY}
+    drop_keys = set(spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
     quantized_schema = schema_pb2.Schema()
     quantized_schema.CopyFrom(schema)
     kept_features = [
@@ -91,15 +91,15 @@ def apply_feature_quantization_schema(
     ]
     del quantized_schema.feature[:]
     quantized_schema.feature.extend(kept_features)
-    quantized_feature = quantized_schema.feature.add()
-    quantized_feature.name = _NODE_QUANTIZED_FEATURE_KEY
-    quantized_feature.type = schema_pb2.BYTES
-    quantized_feature.value_count.min = 1
-    quantized_feature.value_count.max = 1
+    packed_feature = quantized_schema.feature.add()
+    packed_feature.name = _NODE_PACKED_FEATURE_KEY
+    packed_feature.type = schema_pb2.BYTES
+    packed_feature.value_count.min = 1
+    packed_feature.value_count.max = 1
     logger.info(
         f"Updated transformed schema for feature quantization: dropped "
         f"{len(spec.feature_keys)} features and added bytes feature "
-        f"{_NODE_QUANTIZED_FEATURE_KEY}."
+        f"{_NODE_PACKED_FEATURE_KEY}."
     )
     return quantized_schema
 

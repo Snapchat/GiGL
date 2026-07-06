@@ -27,7 +27,7 @@ logger = Logger()
 
 _ID_FMT = "{entity}_ids"
 _FEATURE_FMT = "{entity}_features"
-_QUANTIZED_FEATURE_FMT = "{entity}_quantized_features"
+_PACKED_FEATURE_FMT = "{entity}_packed_features"
 _LABEL_FMT = "{entity}_labels"
 _EDGE_WEIGHTS_KEY = "edge_weights"
 _NODE_KEY = "node"
@@ -200,11 +200,11 @@ def _data_loading_process(
                     "Label keys are not supported for edge entities"
                 )
             if (
-                serialized_entity_tf_record_info.quantized_feature_key is not None
+                serialized_entity_tf_record_info.packed_feature_key is not None
                 and not serialized_entity_tf_record_info.is_node_entity
             ):
                 raise NotImplementedError(
-                    "Quantized feature keys are not supported for edge entities"
+                    "Packed feature keys are not supported for edge entities"
                 )
             loaded_entity = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
@@ -342,7 +342,7 @@ def _data_loading_process(
                 list(features.values())[0] if is_input_homogeneous else features
             )
         if quantized_features:
-            output_dict[_QUANTIZED_FEATURE_FMT.format(entity=entity_type)] = (
+            output_dict[_PACKED_FEATURE_FMT.format(entity=entity_type)] = (
                 list(quantized_features.values())[0]
                 if is_input_homogeneous
                 else quantized_features
@@ -518,7 +518,7 @@ def load_torch_tensors_from_tf_record(
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
     node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
     node_quantized_features = node_output_dict.get(
-        _QUANTIZED_FEATURE_FMT.format(entity=_NODE_KEY), None
+        _PACKED_FEATURE_FMT.format(entity=_NODE_KEY), None
     )
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
