@@ -26,13 +26,9 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         CLIP_MIN_FIELD_NUMBER: builtins.int
         CLIP_MAX_FIELD_NUMBER: builtins.int
         clip_min: builtins.float
-        """Value produced by quantized code 0. Inputs are clipped to this value
-        before linear quantization.
-        """
+        """Lower clipping bound; dequantized value for linear code 0."""
         clip_max: builtins.float
-        """Value produced by the largest quantized code. Inputs are clipped to this
-        value before linear quantization.
-        """
+        """Upper clipping bound; dequantized value for max linear code."""
         def __init__(
             self,
             *,

@@ -6,7 +6,6 @@ import numpy as np
 import pyarrow as pa
 from apache_beam.transforms.stats import ApproximateQuantiles
 from tensorflow_metadata.proto.v0 import schema_pb2
-from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 from gigl.common.logger import Logger
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
@@ -92,18 +91,17 @@ def feature_quantization_metadata_json(
 
 
 def apply_feature_quantization_schema(
-    metadata: DatasetMetadata,
-    spec: FeatureQuantizationSpec,
-) -> DatasetMetadata:
+    schema: schema_pb2.Schema, spec: FeatureQuantizationSpec
+) -> schema_pb2.Schema:
     drop_keys = set(spec.feature_keys) | {_NODE_QUANTIZED_FEATURE_KEY}
-    schema = schema_pb2.Schema()
-    schema.CopyFrom(metadata.schema)
+    quantized_schema = schema_pb2.Schema()
+    quantized_schema.CopyFrom(schema)
     kept_features = [
-        feature for feature in schema.feature if feature.name not in drop_keys
+        feature for feature in quantized_schema.feature if feature.name not in drop_keys
     ]
-    del schema.feature[:]
-    schema.feature.extend(kept_features)
-    quantized_feature = schema.feature.add()
+    del quantized_schema.feature[:]
+    quantized_schema.feature.extend(kept_features)
+    quantized_feature = quantized_schema.feature.add()
     quantized_feature.name = _NODE_QUANTIZED_FEATURE_KEY
     quantized_feature.type = schema_pb2.BYTES
     quantized_feature.value_count.min = 1
@@ -113,7 +111,7 @@ def apply_feature_quantization_schema(
         f"{len(spec.feature_keys)} features and added bytes feature "
         f"{_NODE_QUANTIZED_FEATURE_KEY}."
     )
-    return DatasetMetadata(schema)
+    return quantized_schema
 
 
 def _build_abs_feature_values(

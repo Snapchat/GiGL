@@ -11,6 +11,7 @@ import tensorflow as tf
 import tensorflow_data_validation as tfdv
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
+from google.protobuf import text_format
 from tensorflow_transform.tf_metadata import schema_utils
 
 import gigl.common.utils.dataflow
@@ -57,6 +58,9 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     DataReference,
     EdgeDataReference,
     NodeDataReference,
+)
+from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    apply_feature_quantization_schema,
 )
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
@@ -274,23 +278,42 @@ class DataPreprocessor:
                         feature_dimension += feature_shape[0]
             return feature_dimension
 
+        feature_outputs = preprocessing_spec.features_outputs
+        q_spec = (
+            preprocessing_spec.feature_quantization_spec
+            if isinstance(preprocessing_spec, NodeDataPreprocessingSpec)
+            else None
+        )
+        if q_spec is not None:
+            # Feature quantization runs after TFT, so rewrite the trainer-facing
+            # schema to match the final TFRecords rather than the pure TFT output.
+            # TODO(jchmura-sc): Consider writing a separate final schema artifact.
+            schema_path = transformed_features_info.transformed_features_schema_path
+            schema = tfdv.load_schema_text(schema_path.uri)
+            schema = apply_feature_quantization_schema(schema, q_spec)
+            with tf.io.gfile.GFile(schema_path.uri, "w") as f:
+                f.write(text_format.MessageToString(schema))
+            if feature_outputs is not None:
+                q_keys = set(q_spec.feature_keys)
+                feature_outputs = [
+                    feature for feature in feature_outputs if feature not in q_keys
+                ]
+
         # Find and save the feature dimension if there is any
-        if preprocessing_spec.features_outputs is not None:
+        if feature_outputs is not None:
             transformed_features_info.feature_dim_output = __get_feature_dimension_for_single_data_reference(
                 schema_path=transformed_features_info.transformed_features_schema_path,
-                feature_outputs=preprocessing_spec.features_outputs,
+                feature_outputs=feature_outputs,
             )
 
         # Carry forward the identifier, features and label outputs from the preprocessing spec.
         transformed_features_info.identifier_output = (
             preprocessing_spec.identifier_output
         )
-        transformed_features_info.features_outputs = preprocessing_spec.features_outputs
+        transformed_features_info.features_outputs = feature_outputs
         transformed_features_info.label_outputs = preprocessing_spec.labels_outputs
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
-            transformed_features_info.feature_quantization_spec = (
-                preprocessing_spec.feature_quantization_spec
-            )
+            transformed_features_info.feature_quantization_spec = q_spec
 
         if isinstance(feature_transform_pipeline_result, DataflowPipelineResult):
             pipeline_state: str = feature_transform_pipeline_result.state

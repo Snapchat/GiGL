@@ -12,6 +12,7 @@ from apache_beam.pvalue import PBegin, PCollection, PDone
 from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
 from tensorflow_transform import beam as tft_beam
 from tensorflow_transform.tf_metadata import schema_utils
+from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
 
 from gigl.common import GcsUri, LocalUri, Uri
@@ -395,14 +396,18 @@ def get_load_data_and_transform_pipeline_component(
                 )
             )
             if should_use_existing_transform_fn:
-                resolved_transformed_metadata = apply_feature_quantization_schema(
-                    transformed_metadata, spec=q_spec
+                resolved_transformed_metadata = DatasetMetadata(
+                    apply_feature_quantization_schema(
+                        transformed_metadata.schema, spec=q_spec
+                    )
                 )
             else:
                 quantized_metadata = analyzed_transform_fn[1].deferred_metadata | (
                     "Apply feature quantization schema"
                     >> beam.Map(
-                        apply_feature_quantization_schema,
+                        lambda metadata, spec: DatasetMetadata(
+                            apply_feature_quantization_schema(metadata.schema, spec)
+                        ),
                         spec=q_spec,
                     )
                 )

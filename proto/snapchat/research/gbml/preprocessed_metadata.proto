@@ -4,11 +4,9 @@ package snapchat.research.gbml;
 
 message PreprocessedMetadata{
   message LinearQuantizationState{
-    // Value produced by quantized code 0. Inputs are clipped to this value
-    // before linear quantization.
+    // Lower clipping bound; dequantized value for linear code 0.
     float clip_min = 1;
-    // Value produced by the largest quantized code. Inputs are clipped to this
-    // value before linear quantization.
+    // Upper clipping bound; dequantized value for max linear code.
     float clip_max = 2;
   }
 
@@ -28,7 +26,7 @@ message PreprocessedMetadata{
     uint32 dequantized_feature_dim = 3;
     // 1 means centroid; 2, 4, and 8 mean linear buckets.
     uint32 bits = 4;
-
+    // Stats required to dequantize features for the selected bit width.
     oneof state {
       LinearQuantizationState linear = 5;
       CentroidQuantizationState centroid = 6;
