@@ -68,7 +68,9 @@ def quantize_record_batch(
     ]
     arrays = [batch.column(i) for i in keep_indices]
     names = [batch.schema.names[i] for i in keep_indices]
-    arrays.append(pa.array([row.tobytes() for row in packed], type=pa.binary()))
+    arrays.append(
+        pa.array([[row.tobytes()] for row in packed], type=pa.list_(pa.binary()))
+    )
     names.append(_NODE_QUANTIZED_FEATURE_KEY)
     return pa.RecordBatch.from_arrays(arrays, names=names)
 

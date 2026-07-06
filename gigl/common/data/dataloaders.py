@@ -139,7 +139,6 @@ def _concatenate_features_by_names(
     feature_key_to_tf_tensor: dict[str, tf.Tensor],
     feature_keys: Sequence[str],
     label_keys: Sequence[str],
-    dtype: tf.dtypes.DType = tf.float32,
 ) -> tuple[Optional[tf.Tensor], Optional[tf.Tensor]]:
     """
     Concatenates feature tensors in the order specified by feature names.
@@ -151,7 +150,6 @@ def _concatenate_features_by_names(
         feature_key_to_tf_tensor (dict[str, tf.Tensor]): A dictionary mapping feature names to their corresponding tf tensors.
         feature_keys (Sequence[str]): A list of feature names specifying the order in which tensors should be concatenated.
         label_keys (Sequence[str]): Name of the label columns for the current entity.
-        dtype (tf.dtypes.DType): Type to cast concatenated tensors to.
 
     Returns:
         Tuple[
@@ -176,8 +174,8 @@ def _concatenate_features_by_names(
         # it back to int. Note that this is ok for small int values (less than 2^24, or ~16 million).
         # For large int values, we will need to round it when converting back
         # from float, as otherwise there will be precision loss.
-        if tensor.dtype != dtype:
-            tensor = tf.cast(tensor, dtype)
+        if tensor.dtype != tf.float32:
+            tensor = tf.cast(tensor, tf.float32)
 
         # Reshape 1D tensor to column vector
         if len(tensor.shape) == 1:
