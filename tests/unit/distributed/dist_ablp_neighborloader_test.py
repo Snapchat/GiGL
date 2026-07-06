@@ -35,6 +35,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     GraphPartitionData,
     PartitionOutput,
+    is_label_edge_type,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
     to_heterogeneous_node,
@@ -214,7 +215,14 @@ def _run_dblp_supervised(
     assert isinstance(dataset.train_node_ids, dict)
     assert isinstance(dataset.graph, dict)
     fanout = [2, 2]
-    num_neighbors = {edge_type: fanout for edge_type in dataset.graph.keys()}
+    # Label edge types must not be specified in the fanout (they are injected
+    # internally and never sampled), so build num_neighbors over message-passing
+    # edges only.
+    num_neighbors = {
+        edge_type: fanout
+        for edge_type in dataset.graph.keys()
+        if not is_label_edge_type(edge_type)
+    }
     create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
