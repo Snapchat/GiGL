@@ -8,6 +8,7 @@ from apache_beam.transforms.stats import ApproximateQuantiles
 from tensorflow_metadata.proto.v0 import schema_pb2
 
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
@@ -49,18 +50,7 @@ def quantize_record_batch(
     stats: dict[str, float],
 ) -> pa.RecordBatch:
     features = _build_feature_matrix(batch, spec.feature_keys)
-    if spec.bits == 1:
-        # 1-bit quantization keeps only sign; values restore from neg/pos means.
-        codes = (features > 0).astype(np.uint8)
-    else:
-        # Linearly map clipped values into integer buckets.
-        levels = (1 << spec.bits) - 1
-        lo, hi = stats["clip_min"], stats["clip_max"]
-        clipped = np.clip(features, lo, hi)
-        scaled = (clipped - lo) / (hi - lo)
-        codes = np.rint(scaled * levels).astype(np.uint8)
-
-    packed = _pack_codes(codes, spec.bits)
+    packed = quantize_ndarray(features, bits=spec.bits, stats=stats)
     drop_keys = set(spec.feature_keys) | {_NODE_QUANTIZED_FEATURE_KEY}
     keep_indices = [
         i for i, name in enumerate(batch.schema.names) if name not in drop_keys
@@ -138,21 +128,6 @@ def _build_feature_matrix(batch: pa.RecordBatch, feature_keys: list[str]) -> np.
     if not cols:
         return np.empty((batch.num_rows, 0), dtype=np.float32)
     return np.stack(cols, axis=1)
-
-
-def _pack_codes(codes: np.ndarray, bits: int) -> np.ndarray:
-    # Cast to uint16 for integer shift/multiply/sum packing math.
-    per_byte = 8 // bits
-    pad = (-codes.shape[-1]) % per_byte
-    if pad:
-        # Pad only the feature dimension of this 2D [row, feature] array.
-        codes = np.pad(codes, ((0, 0), (0, pad)), constant_values=0)
-    # Group the padded feature dimension into chunks that each form one byte.
-    codes = codes.reshape(codes.shape[0], -1, per_byte).astype(np.uint16)
-    # Place the first code in each chunk into the highest bits of the byte.
-    shifts = bits * np.arange(per_byte - 1, -1, -1, dtype=np.uint16)
-    weights = (1 << shifts).astype(np.uint16)
-    return np.sum(codes * weights, axis=-1).astype(np.uint8)
 
 
 def _linear_stats_from_quantiles(quantiles: list[float]) -> dict[str, float]:

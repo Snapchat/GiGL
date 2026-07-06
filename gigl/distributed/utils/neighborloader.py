@@ -13,7 +13,7 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
-from gigl.common.utils.feature_quantization import dequantize_torch_tensor
+from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.sampler import NODE_QUANTIZED_FEATURES_METADATA_KEY
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
