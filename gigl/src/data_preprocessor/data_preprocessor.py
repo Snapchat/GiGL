@@ -727,7 +727,13 @@ class DataPreprocessor:
                 pretrained_tft_model_uri=input_node_preprocessing_spec.pretrained_tft_model_uri,
                 features_outputs=input_node_preprocessing_spec.features_outputs,
                 labels_outputs=input_node_preprocessing_spec.labels_outputs,
+                feature_quantization_spec=input_node_preprocessing_spec.feature_quantization_spec,
             )
+            if enumerated_node_data_preprocessing_spec.feature_quantization_spec:
+                logger.info(
+                    f"Carrying node feature quantization spec through enumeration: "
+                    f"{enumerated_node_data_preprocessing_spec.feature_quantization_spec}"
+                )
             enumerated_node_refs_to_preprocessing_specs[
                 enumerated_node_metadata.enumerated_node_data_reference
             ] = enumerated_node_data_preprocessing_spec

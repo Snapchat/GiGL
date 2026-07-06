@@ -191,6 +191,12 @@ def _data_loading_process(
             graph_type,
             serialized_entity_tf_record_info,
         ) in serialized_tf_record_info.items():
+            logger.info(
+                f"Rank {rank} loading {entity_type} graph type {graph_type} with "
+                f"{len(serialized_entity_tf_record_info.feature_keys)} feature keys, "
+                f"quantized_feature_keys={serialized_entity_tf_record_info.quantized_feature_keys}, "
+                f"quantized_feature_dim={serialized_entity_tf_record_info.quantized_feature_dim}"
+            )
             # We currently do not support training with labels for edge entities
             if (
                 serialized_entity_tf_record_info.label_keys
@@ -235,7 +241,9 @@ def _data_loading_process(
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}. "
+                    f"Serialized quantized_feature_keys={serialized_entity_tf_record_info.quantized_feature_keys}, "
+                    f"quantized_feature_dim={serialized_entity_tf_record_info.quantized_feature_dim}"
                 )
 
             if entity_labels is not None:
