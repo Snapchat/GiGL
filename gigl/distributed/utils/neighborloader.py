@@ -375,8 +375,7 @@ def materialize_quantized_node_features(
                 DEFAULT_HOMOGENEOUS_NODE_TYPE
             ]
             metadata_key = (
-                f"{NODE_PACKED_FEATURES_METADATA_KEY}."
-                f"{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
+                f"{NODE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
             )
         else:
             quantization_metadata = node_quantization_metadata
