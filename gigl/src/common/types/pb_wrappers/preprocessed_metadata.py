@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Callable, cast
 
 import tensorflow as tf
-from tensorflow_metadata.proto.v0.schema_pb2 import Feature, Schema
+from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
 import gigl.common.utils.local_fs as LocalFsUtils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
@@ -224,35 +224,23 @@ class PreprocessedMetadataPbWrapper:
         self,
         feature_spec: FeatureSpecDict,
         feature_keys: list[str],
-        synthetic_feature_keys: set[str],
     ) -> FeatureSpecDict:
         """
         Return feature spec for the given feature keys
         """
-        return {
-            feature: tf.io.FixedLenFeature(shape=[], dtype=tf.float32)
-            if feature in synthetic_feature_keys
-            else feature_spec[feature]
-            for feature in feature_keys
-        }
+        return {feature: feature_spec[feature] for feature in feature_keys}
 
     def __get_schema_for_feature_keys(
         self,
         feature_schema: Schema,
         feature_spec: FeatureSpecDict,
         feature_keys: list[str],
-        synthetic_feature_keys: set[str],
     ) -> FeatureSchemaDict:
         """
         Return feature schema for the given feature keys
         """
-        all_features_in_feature_spec = list(feature_spec.keys())
-        return {
-            feature: Feature(name=feature)
-            if feature in synthetic_feature_keys
-            else feature_schema.feature[all_features_in_feature_spec.index(feature)]
-            for feature in feature_keys
-        }
+        feature_to_schema = dict(zip(feature_spec.keys(), feature_schema.feature))
+        return {feature: feature_to_schema[feature] for feature in feature_keys}
 
     def __build_feature_schema(
         self,
@@ -276,20 +264,26 @@ class PreprocessedMetadataPbWrapper:
             else (None, {})
         )
 
-        for synthetic_feature_key in synthetic_feature_keys:
-            if synthetic_feature_key in raw_feature_spec:
-                raise ValueError(
-                    f"Synthetic feature key {synthetic_feature_key} already exists "
-                    "in raw schema; dequantized keys must not overlap normal keys."
-                )
-
         # Dequantized features are materialized later from packed uint8 tensors,
         # so they need logical fp32 schema entries even though TFT did not write them.
+        if synthetic_feature_keys:
+            if raw_feature_schema is None:
+                raise ValueError("Synthetic feature keys require a transformed schema.")
+            for synthetic_feature_key in synthetic_feature_keys:
+                if synthetic_feature_key in raw_feature_spec:
+                    raise ValueError(
+                        f"Synthetic feature key {synthetic_feature_key} already exists "
+                        "in raw schema; dequantized keys must not overlap normal keys."
+                    )
+                raw_feature_spec[synthetic_feature_key] = tf.io.FixedLenFeature(
+                    shape=[], dtype=tf.float32
+                )
+                raw_feature_schema.feature.add().name = synthetic_feature_key
+
         feature_spec = (
             self.__get_feature_spec_for_feature_keys(
                 feature_spec=raw_feature_spec,
                 feature_keys=feature_keys,
-                synthetic_feature_keys=synthetic_feature_keys,
             )
             if feature_keys and raw_feature_schema
             else {}
@@ -299,7 +293,6 @@ class PreprocessedMetadataPbWrapper:
                 feature_schema=raw_feature_schema,
                 feature_spec=raw_feature_spec,
                 feature_keys=feature_keys,
-                synthetic_feature_keys=synthetic_feature_keys,
             )
             if feature_keys and raw_feature_schema
             else {}
