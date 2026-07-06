@@ -10,14 +10,9 @@ def dequantize_torch_tensor(
     """Reconstruct approximate float features from packed uint8 codes."""
     q = metadata
 
-    VALID_BITS = (1, 2, 4, 8)
-    if q.bits not in VALID_BITS:
-        raise ValueError(f"bits must be one of {VALID_BITS}, got {q.bits}")
-    per_byte = 8 // q.bits
-    expected_packed_dim = (q.dequantized_feature_dim + per_byte - 1) // per_byte
-    if packed_features.size(-1) != expected_packed_dim:
+    if packed_features.size(-1) != q.packed_feature_dim:
         raise ValueError(
-            f"Expected packed feature dim {expected_packed_dim} for "
+            f"Expected packed feature dim {q.packed_feature_dim} for "
             f"{q.dequantized_feature_dim} {q.bits}-bit features, got "
             f"{packed_features.size(-1)}."
         )

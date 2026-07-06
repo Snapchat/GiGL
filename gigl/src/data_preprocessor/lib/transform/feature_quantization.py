@@ -79,12 +79,10 @@ def feature_quantization_metadata_json(
     stats: dict[str, float],
     spec: FeatureQuantizationSpec,
 ) -> str:
-    per_byte = 8 // spec.bits
     dim = len(spec.feature_keys)
     metadata = {
         "quantized_feature_key": _NODE_QUANTIZED_FEATURE_KEY,
         "dequantized_feature_keys": list(spec.feature_keys),
-        "packed_feature_dim": (dim + per_byte - 1) // per_byte,
         "dequantized_feature_dim": dim,
         "bits": spec.bits,
     }

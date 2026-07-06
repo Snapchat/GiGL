@@ -118,13 +118,27 @@ class FeatureQuantizationMetadata:
     """Metadata needed to unpack/dequantize append-only packed features."""
 
     bits: int
-    packed_feature_dim: int
     dequantized_feature_dim: int
     dequantized_feature_keys: tuple[str, ...] = ()
     clip_min: Optional[float] = None
     clip_max: Optional[float] = None
     neg_mean: Optional[float] = None
     pos_mean: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        valid_bits = (1, 2, 4, 8)
+        if self.bits not in valid_bits:
+            raise ValueError(f"bits must be one of {valid_bits}, got {self.bits}")
+        if self.dequantized_feature_dim < 0:
+            raise ValueError(
+                "dequantized_feature_dim must be non-negative, got "
+                f"{self.dequantized_feature_dim}"
+            )
+
+    @property
+    def packed_feature_dim(self) -> int:
+        per_byte = 8 // self.bits
+        return (self.dequantized_feature_dim + per_byte - 1) // per_byte
 
 
 def _get_label_edges(

@@ -24,16 +24,14 @@ message PreprocessedMetadata{
     string quantized_feature_key = 1;
     // Model-visible feature names produced after dequantizing and appending.
     repeated string dequantized_feature_keys = 2;
-    // Number of uint8 columns in the packed sidecar tensor.
-    uint32 packed_feature_dim = 3;
     // Number of fp32 columns produced after unpacking/dequantizing.
-    uint32 dequantized_feature_dim = 4;
+    uint32 dequantized_feature_dim = 3;
     // 1 means centroid; 2, 4, and 8 mean linear buckets.
-    uint32 bits = 5;
+    uint32 bits = 4;
 
     oneof state {
-      LinearQuantizationState linear = 6;
-      CentroidQuantizationState centroid = 7;
+      LinearQuantizationState linear = 5;
+      CentroidQuantizationState centroid = 6;
     }
   }
 

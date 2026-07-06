@@ -38,8 +38,9 @@ def _build_serialized_tfrecord_entity_info(
     if isinstance(preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput):
         if preprocessed_metadata.HasField("quantized_feature_metadata"):
             quantized_metadata = preprocessed_metadata.quantized_feature_metadata
+            metadata = _build_feature_quantization_metadata(quantized_metadata)
             quantized_feature_keys = [quantized_metadata.quantized_feature_key]
-            quantized_feature_dim = quantized_metadata.packed_feature_dim
+            quantized_feature_dim = metadata.packed_feature_dim
 
     stored_keys = set(preprocessed_metadata.feature_keys)
     stored_keys.update(preprocessed_metadata.label_keys)
@@ -71,25 +72,19 @@ def _build_serialized_tfrecord_entity_info(
 def _build_feature_quantization_metadata(
     quantized_metadata: PreprocessedMetadata.FeatureQuantizationMetadata,
 ) -> FeatureQuantizationMetadata:
-    bits = quantized_metadata.bits
-    state = quantized_metadata.WhichOneof("state")
-    if bits not in {1, 2, 4, 8}:
-        raise ValueError(
-            f"Expected quantized feature bits to be one of 1, 2, 4, or 8, got {bits}."
-        )
-    expected_state = "centroid" if bits == 1 else "linear"
-    if state != expected_state:
-        raise ValueError(
-            f"Expected {expected_state} quantization state for {bits}-bit features."
-        )
-
     metadata = FeatureQuantizationMetadata(
-        bits=bits,
-        packed_feature_dim=quantized_metadata.packed_feature_dim,
+        bits=quantized_metadata.bits,
         dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
         dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
     )
-    if bits == 1:
+    state = quantized_metadata.WhichOneof("state")
+    expected_state = "centroid" if metadata.bits == 1 else "linear"
+    if state != expected_state:
+        raise ValueError(
+            f"Expected {expected_state} quantization state for {metadata.bits}-bit features."
+        )
+
+    if metadata.bits == 1:
         metadata.neg_mean = quantized_metadata.centroid.neg_mean
         metadata.pos_mean = quantized_metadata.centroid.pos_mean
     else:

@@ -63,7 +63,6 @@ class PreprocessedMetadata(google.protobuf.message.Message):
 
         QUANTIZED_FEATURE_KEY_FIELD_NUMBER: builtins.int
         DEQUANTIZED_FEATURE_KEYS_FIELD_NUMBER: builtins.int
-        PACKED_FEATURE_DIM_FIELD_NUMBER: builtins.int
         DEQUANTIZED_FEATURE_DIM_FIELD_NUMBER: builtins.int
         BITS_FIELD_NUMBER: builtins.int
         LINEAR_FIELD_NUMBER: builtins.int
@@ -73,8 +72,6 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         @property
         def dequantized_feature_keys(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
             """Model-visible feature names produced after dequantizing and appending."""
-        packed_feature_dim: builtins.int
-        """Number of uint8 columns in the packed sidecar tensor."""
         dequantized_feature_dim: builtins.int
         """Number of fp32 columns produced after unpacking/dequantizing."""
         bits: builtins.int
@@ -88,14 +85,13 @@ class PreprocessedMetadata(google.protobuf.message.Message):
             *,
             quantized_feature_key: builtins.str = ...,
             dequantized_feature_keys: collections.abc.Iterable[builtins.str] | None = ...,
-            packed_feature_dim: builtins.int = ...,
             dequantized_feature_dim: builtins.int = ...,
             bits: builtins.int = ...,
             linear: global___PreprocessedMetadata.LinearQuantizationState | None = ...,
             centroid: global___PreprocessedMetadata.CentroidQuantizationState | None = ...,
         ) -> None: ...
         def HasField(self, field_name: typing_extensions.Literal["centroid", b"centroid", "linear", b"linear", "state", b"state"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "centroid", b"centroid", "dequantized_feature_dim", b"dequantized_feature_dim", "dequantized_feature_keys", b"dequantized_feature_keys", "linear", b"linear", "packed_feature_dim", b"packed_feature_dim", "quantized_feature_key", b"quantized_feature_key", "state", b"state"]) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "centroid", b"centroid", "dequantized_feature_dim", b"dequantized_feature_dim", "dequantized_feature_keys", b"dequantized_feature_keys", "linear", b"linear", "quantized_feature_key", b"quantized_feature_key", "state", b"state"]) -> None: ...
         def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["linear", "centroid"] | None: ...
 
     class NodeMetadataOutput(google.protobuf.message.Message):
