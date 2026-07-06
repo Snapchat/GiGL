@@ -312,8 +312,6 @@ class DataPreprocessor:
         )
         transformed_features_info.features_outputs = feature_outputs
         transformed_features_info.label_outputs = preprocessing_spec.labels_outputs
-        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
-            transformed_features_info.feature_quantization_spec = q_spec
 
         if isinstance(feature_transform_pipeline_result, DataflowPipelineResult):
             pipeline_state: str = feature_transform_pipeline_result.state
@@ -509,10 +507,12 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
-            if node_transformed_features_info.feature_quantization_spec is not None:
-                with tf.io.gfile.GFile(
-                    node_transformed_features_info.feature_quantization_metadata_path.uri
-                ) as f:
+            metadata_path = (
+                node_transformed_features_info.feature_quantization_metadata_path.uri
+            )
+            if tf.io.gfile.exists(metadata_path):
+                logger.info(f"Adding feature quantization metadata from {metadata_path}")
+                with tf.io.gfile.GFile(metadata_path) as f:
                     metadata = json.loads(f.read())
                 bits = metadata["bits"]
                 quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(

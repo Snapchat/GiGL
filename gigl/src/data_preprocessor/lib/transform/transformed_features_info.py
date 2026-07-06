@@ -8,7 +8,6 @@ from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.data_preprocessor.lib.types import (
     EdgeOutputIdentifier,
-    FeatureQuantizationSpec,
     NodeOutputIdentifier,
 )
 
@@ -33,7 +32,6 @@ class TransformedFeaturesInfo:
     features_outputs: Optional[list[str]] = None
     label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None
-    feature_quantization_spec: Optional[FeatureQuantizationSpec] = None
     custom_identifier: Optional[str] = None
 
     def __init__(
