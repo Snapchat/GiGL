@@ -26,10 +26,6 @@ def quantize_ndarray(
 
 def pack_codes(codes: np.ndarray, bits: int) -> np.ndarray:
     """Pack low-bit feature codes high-bits-first along the final dimension."""
-    if bits not in (1, 2, 4, 8):
-        raise ValueError(f"bits must be one of 1, 2, 4, or 8, got {bits}.")
-    if codes.ndim != 2:
-        raise ValueError(f"Expected a 2D code array, got shape {codes.shape}.")
     per_byte = 8 // bits
     pad = (-codes.shape[-1]) % per_byte
     if pad:
