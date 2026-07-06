@@ -11,7 +11,6 @@ import tensorflow as tf
 import tensorflow_data_validation as tfdv
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
-from google.protobuf import text_format
 from tensorflow_transform.tf_metadata import schema_utils
 
 import gigl.common.utils.dataflow
@@ -19,7 +18,7 @@ import gigl.src.common.constants.gcs as gcs_constants
 import gigl.src.common.constants.local_fs as local_fs_constants
 import gigl.src.data_preprocessor.lib.transform.utils as transform_utils
 from gigl.analytics.graph_validation import BQGraphValidator
-from gigl.common import Uri, UriFactory
+from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
@@ -58,9 +57,6 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     DataReference,
     EdgeDataReference,
     NodeDataReference,
-)
-from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
-    apply_feature_quantization_schema,
 )
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
@@ -226,6 +222,17 @@ class DataPreprocessor:
             entity_type=entity_type,
             custom_identifier=custom_identifier,
         )
+        q_spec = None
+        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
+            q_spec = preprocessing_spec.feature_quantization_spec
+        if q_spec is not None:
+            # Quantization changes the final TFRecord schema after TFT runs, so
+            # write the trainer-facing schema as its own Beam output.
+            transformed_features_info.transformed_features_schema_path = GcsUri.join(
+                transformed_features_info.transform_directory_path,
+                "final_metadata",
+                "schema.pbtxt",
+            )
 
         def __get_feature_preprocessing_job_msgs(
             is_start: bool,
@@ -279,25 +286,9 @@ class DataPreprocessor:
             return feature_dimension
 
         feature_outputs = preprocessing_spec.features_outputs
-        q_spec = (
-            preprocessing_spec.feature_quantization_spec
-            if isinstance(preprocessing_spec, NodeDataPreprocessingSpec)
-            else None
-        )
-        if q_spec is not None:
-            # Feature quantization runs after TFT, so rewrite the trainer-facing
-            # schema to match the final TFRecords rather than the pure TFT output.
-            # TODO(jchmura-sc): Consider writing a separate final schema artifact.
-            schema_path = transformed_features_info.transformed_features_schema_path
-            schema = tfdv.load_schema_text(schema_path.uri)
-            schema = apply_feature_quantization_schema(schema, q_spec)
-            with tf.io.gfile.GFile(schema_path.uri, "w") as f:
-                f.write(text_format.MessageToString(schema))
-            if feature_outputs is not None:
-                q_keys = set(q_spec.feature_keys)
-                feature_outputs = [
-                    feature for feature in feature_outputs if feature not in q_keys
-                ]
+        if q_spec is not None and feature_outputs is not None:
+            q_keys = set(q_spec.feature_keys)
+            feature_outputs = [f for f in feature_outputs if f not in q_keys]
 
         # Find and save the feature dimension if there is any
         if feature_outputs is not None:
@@ -511,7 +502,7 @@ class DataPreprocessor:
                 node_transformed_features_info.feature_quantization_metadata_path.uri
             )
             if tf.io.gfile.exists(metadata_path):
-                logger.info(f"Adding feature quantization metadata from {metadata_path}")
+                logger.info(f"Adding feature quantization metadata: {metadata_path}")
                 with tf.io.gfile.GFile(metadata_path) as f:
                     metadata = json.loads(f.read())
                 bits = metadata["bits"]

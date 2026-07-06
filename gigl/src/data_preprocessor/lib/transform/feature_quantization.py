@@ -5,7 +5,9 @@ import apache_beam as beam
 import numpy as np
 import pyarrow as pa
 from apache_beam.transforms.stats import ApproximateQuantiles
+from google.protobuf import text_format
 from tensorflow_metadata.proto.v0 import schema_pb2
+from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
@@ -16,7 +18,69 @@ _NODE_PACKED_FEATURE_KEY = "node_packed_features"
 _CentroidAcc = tuple[float, int, float, int]
 
 
-def build_feature_quantization_stats(
+def apply_feature_quantization_transform(
+    transformed_features: beam.PCollection[pa.RecordBatch],
+    transformed_metadata: DatasetMetadata,
+    analyzed_metadata: beam.PCollection[DatasetMetadata] | None,
+    spec: FeatureQuantizationSpec,
+    metadata_path: str,
+    schema_path: str,
+):
+    logger.info(f"Applying Beam feature quantization with spec: {spec}")
+    stats = _build_feature_quantization_stats(transformed_features, spec)
+    _ = (
+        stats
+        | "Build feature quantization metadata JSON"
+        >> beam.Map(_feature_quantization_metadata_json, spec=spec)
+        | "Write feature quantization metadata"
+        >> beam.io.WriteToText(
+            metadata_path,
+            num_shards=1,
+            shard_name_template="",
+        )
+    )
+    transformed_features = transformed_features | (
+        "Quantize transformed feature RecordBatches"
+        >> beam.Map(
+            _quantize_record_batch,
+            spec=spec,
+            stats=beam.pvalue.AsSingleton(stats),
+        )
+    )
+    if analyzed_metadata is None:
+        transformed_metadata = DatasetMetadata(
+            _apply_feature_quantization_schema(transformed_metadata.schema, spec)
+        )
+        schema_text = transformed_features.pipeline | (
+            "Create feature quantization schema text"
+            >> beam.Create([text_format.MessageToString(transformed_metadata.schema)])
+        )
+    else:
+        if analyzed_metadata is None:
+            raise ValueError("Expected analyzed metadata for fresh TFTransform fn.")
+        quantized_metadata = analyzed_metadata | (
+            "Apply feature quantization schema"
+            >> beam.Map(
+                lambda metadata, spec: DatasetMetadata(
+                    _apply_feature_quantization_schema(metadata.schema, spec)
+                ),
+                spec=spec,
+            )
+        )
+        schema_text = quantized_metadata | (
+            "Serialize feature quantization schema"
+            >> beam.Map(lambda metadata: text_format.MessageToString(metadata.schema))
+        )
+        transformed_metadata = beam.pvalue.AsSingleton(quantized_metadata)
+    _ = schema_text | "Write feature quantization schema" >> beam.io.WriteToText(
+        schema_path,
+        num_shards=1,
+        shard_name_template="",
+    )
+    return transformed_features, transformed_metadata
+
+
+def _build_feature_quantization_stats(
     record_batches: beam.PCollection[pa.RecordBatch],
     spec: FeatureQuantizationSpec,
 ) -> beam.PCollection[dict[str, float]]:
@@ -44,7 +108,7 @@ def build_feature_quantization_stats(
     )
 
 
-def quantize_record_batch(
+def _quantize_record_batch(
     batch: pa.RecordBatch,
     spec: FeatureQuantizationSpec,
     stats: dict[str, float],
@@ -52,11 +116,10 @@ def quantize_record_batch(
     features = _build_feature_matrix(batch, spec.feature_keys)
     packed = quantize_ndarray(features, bits=spec.bits, stats=stats)
     drop_keys = set(spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
-    keep_indices = [
-        i for i, name in enumerate(batch.schema.names) if name not in drop_keys
-    ]
+    schema_names = batch.schema.names
+    keep_indices = [i for i, name in enumerate(schema_names) if name not in drop_keys]
     arrays = [batch.column(i) for i in keep_indices]
-    names = [batch.schema.names[i] for i in keep_indices]
+    names = [schema_names[i] for i in keep_indices]
     arrays.append(
         pa.array([[row.tobytes()] for row in packed], type=pa.list_(pa.binary()))
     )
@@ -64,23 +127,22 @@ def quantize_record_batch(
     return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
-def feature_quantization_metadata_json(
+def _feature_quantization_metadata_json(
     stats: dict[str, float],
     spec: FeatureQuantizationSpec,
 ) -> str:
-    dim = len(spec.feature_keys)
     metadata = {
         "packed_feature_key": _NODE_PACKED_FEATURE_KEY,
         "dequantized_feature_keys": list(spec.feature_keys),
-        "dequantized_feature_dim": dim,
+        "dequantized_feature_dim": len(spec.feature_keys),
         "bits": spec.bits,
+        **stats,
     }
-    metadata.update(stats)
     logger.info(f"Writing feature quantization metadata: {metadata}")
     return json.dumps(metadata)
 
 
-def apply_feature_quantization_schema(
+def _apply_feature_quantization_schema(
     schema: schema_pb2.Schema, spec: FeatureQuantizationSpec
 ) -> schema_pb2.Schema:
     drop_keys = set(spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
@@ -125,8 +187,6 @@ def _build_feature_matrix(batch: pa.RecordBatch, feature_keys: list[str]) -> np.
                 f"got {key} with shape {values.shape}."
             )
         cols.append(values)
-    if not cols:
-        return np.empty((batch.num_rows, 0), dtype=np.float32)
     return np.stack(cols, axis=1)
 
 
@@ -134,8 +194,7 @@ def _linear_stats_from_quantiles(quantiles: list[float]) -> dict[str, float]:
     if not quantiles:
         raise ValueError("Cannot compute quantization stats from no values.")
     # Store symmetric clip bounds from the approximate 99.5th abs-value percentile.
-    index = round(0.995 * (len(quantiles) - 1))
-    clip_max = max(float(quantiles[index]), 1e-5)
+    clip_max = max(float(quantiles[round(0.995 * (len(quantiles) - 1))]), 1e-5)
     stats = {"clip_min": -clip_max, "clip_max": clip_max}
     logger.info(f"Computed Beam feature quantization stats: {stats}")
     return stats
@@ -174,7 +233,6 @@ class _CentroidStatsFn(beam.CombineFn):
 
     def extract_output(self, accumulator: _CentroidAcc) -> dict[str, float]:
         neg_sum, neg_count, pos_sum, pos_count = accumulator
-        # Store mean values for negative and positive buckets.
         stats = {
             "neg_mean": neg_sum / neg_count if neg_count else 0.0,
             "pos_mean": pos_sum / pos_count if pos_count else 0.0,

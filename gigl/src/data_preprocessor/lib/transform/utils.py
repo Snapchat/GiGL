@@ -12,7 +12,6 @@ from apache_beam.pvalue import PBegin, PCollection, PDone
 from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
 from tensorflow_transform import beam as tft_beam
 from tensorflow_transform.tf_metadata import schema_utils
-from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
 
 from gigl.common import GcsUri, LocalUri, Uri
@@ -29,10 +28,7 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     NodeDataReference,
 )
 from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
-    apply_feature_quantization_schema,
-    build_feature_quantization_stats,
-    feature_quantization_metadata_json,
-    quantize_record_batch,
+    apply_feature_quantization_transform,
 )
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
@@ -369,51 +365,25 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
+        q_spec = None
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
             q_spec = preprocessing_spec.feature_quantization_spec
-        else:
-            q_spec = None
         if q_spec is not None:
-            logger.info(f"Applying Beam feature quantization with spec: {q_spec}")
-            stats = build_feature_quantization_stats(transformed_features, q_spec)
-            _ = (
-                stats
-                | "Build feature quantization metadata JSON"
-                >> beam.Map(feature_quantization_metadata_json, spec=q_spec)
-                | "Write feature quantization metadata"
-                >> beam.io.WriteToText(
-                    transformed_features_info.feature_quantization_metadata_path.uri,
-                    num_shards=1,
-                    shard_name_template="",
-                )
-            )
-            transformed_features = transformed_features | (
-                "Quantize transformed feature RecordBatches"
-                >> beam.Map(
-                    quantize_record_batch,
-                    spec=q_spec,
-                    stats=beam.pvalue.AsSingleton(stats),
-                )
-            )
             if should_use_existing_transform_fn:
-                resolved_transformed_metadata = DatasetMetadata(
-                    apply_feature_quantization_schema(
-                        transformed_metadata.schema, spec=q_spec
-                    )
-                )
+                analyzed_metadata = None
             else:
-                quantized_metadata = analyzed_transform_fn[1].deferred_metadata | (
-                    "Apply feature quantization schema"
-                    >> beam.Map(
-                        lambda metadata, spec: DatasetMetadata(
-                            apply_feature_quantization_schema(metadata.schema, spec)
-                        ),
-                        spec=q_spec,
-                    )
+                analyzed_metadata = analyzed_transform_fn[1].deferred_metadata
+
+            transformed_features, resolved_transformed_metadata = (
+                apply_feature_quantization_transform(
+                    transformed_features=transformed_features,
+                    transformed_metadata=transformed_metadata,
+                    analyzed_metadata=analyzed_metadata,
+                    spec=q_spec,
+                    metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    schema_path=transformed_features_info.transformed_features_schema_path.uri,
                 )
-                resolved_transformed_metadata = beam.pvalue.AsSingleton(
-                    quantized_metadata
-                )
+            )
 
         transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
             file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,
