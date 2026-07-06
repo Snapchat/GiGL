@@ -1,6 +1,6 @@
 import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Callable, NamedTuple, Optional, Sequence, Tuple, Union
 
@@ -50,7 +50,7 @@ class SerializedTFRecordInfo:
     # Number of packed uint8 columns for the current node entity.
     quantized_feature_dim: int = 0
     # Name of the label columns for the current entity, defaults to an empty list.
-    label_keys: Sequence[str] = ()
+    label_keys: Sequence[str] = field(default_factory=list)
     # The regex pattern to match the TFRecord files at the specified prefix
     tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$"
 
