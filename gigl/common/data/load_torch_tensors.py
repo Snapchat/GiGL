@@ -27,10 +27,10 @@ logger = Logger()
 
 _ID_FMT = "{entity}_ids"
 _FEATURE_FMT = "{entity}_features"
+_QUANTIZED_FEATURE_FMT = "{entity}_quantized_features"
 _LABEL_FMT = "{entity}_labels"
 _EDGE_WEIGHTS_KEY = "edge_weights"
 _NODE_KEY = "node"
-_NODE_QUANTIZED_KEY = "node_quantized_features"
 
 
 def _extract_weight_col(
@@ -191,12 +191,6 @@ def _data_loading_process(
             graph_type,
             serialized_entity_tf_record_info,
         ) in serialized_tf_record_info.items():
-            logger.info(
-                f"Rank {rank} loading {entity_type} graph type {graph_type} with "
-                f"{len(serialized_entity_tf_record_info.feature_keys)} feature keys, "
-                f"quantized_feature_keys={serialized_entity_tf_record_info.quantized_feature_keys}, "
-                f"quantized_feature_dim={serialized_entity_tf_record_info.quantized_feature_dim}"
-            )
             # We currently do not support training with labels for edge entities
             if (
                 serialized_entity_tf_record_info.label_keys
@@ -206,7 +200,7 @@ def _data_loading_process(
                     "Label keys are not supported for edge entities"
                 )
             if (
-                serialized_entity_tf_record_info.quantized_feature_keys
+                serialized_entity_tf_record_info.quantized_feature_key is not None
                 and not serialized_entity_tf_record_info.is_node_entity
             ):
                 raise NotImplementedError(
@@ -241,9 +235,7 @@ def _data_loading_process(
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}. "
-                    f"Serialized quantized_feature_keys={serialized_entity_tf_record_info.quantized_feature_keys}, "
-                    f"quantized_feature_dim={serialized_entity_tf_record_info.quantized_feature_dim}"
+                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
@@ -349,8 +341,8 @@ def _data_loading_process(
             output_dict[_FEATURE_FMT.format(entity=entity_type)] = (
                 list(features.values())[0] if is_input_homogeneous else features
             )
-        if quantized_features and entity_type == _NODE_KEY:
-            output_dict[_NODE_QUANTIZED_KEY] = (
+        if quantized_features:
+            output_dict[_QUANTIZED_FEATURE_FMT.format(entity=entity_type)] = (
                 list(quantized_features.values())[0]
                 if is_input_homogeneous
                 else quantized_features
@@ -525,7 +517,9 @@ def load_torch_tensors_from_tf_record(
 
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
     node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
-    node_quantized_features = node_output_dict.get(_NODE_QUANTIZED_KEY, None)
+    node_quantized_features = node_output_dict.get(
+        _QUANTIZED_FEATURE_FMT.format(entity=_NODE_KEY), None
+    )
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
