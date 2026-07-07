@@ -152,7 +152,7 @@ def train(
     max_training_batches: int,
     batch_size: int = 4,
     val_every: int = 20,
-    saved_model_path: str = "/tmp/gigl/dblp_model.pt",
+    model_uri: str = "/tmp/gigl/dblp_model.pt",
 ):
     torch.distributed.init_process_group(
         backend="gloo",  # Use the Gloo backend for CPU training.
@@ -198,8 +198,8 @@ def train(
     )
     logger.info(f"Process {process_number} test loss: {test_loss:.3f}")
     if process_number == 0:
-        logger.info(f"Saving model to {saved_model_path}")
-        save_state_dict(model.module, UriFactory.create_uri(saved_model_path))
+        logger.info(f"Saving model to {model_uri}")
+        save_state_dict(model.module, UriFactory.create_uri(model_uri))
 
 
 if __name__ == "__main__":
@@ -266,11 +266,11 @@ if __name__ == "__main__":
     training_process_port = get_free_port()
     logger.info(f"Will train for {max_training_batches} batches.")
     if strtobool(args.use_local_saved_model):
-        saved_model_uri = LOCAL_SAVED_MODEL_URI
+        model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+        model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
 
-    logger.info(f"Using saved model URI: {saved_model_uri}")
+    logger.info(f"Using saved model URI: {model_uri}")
     torch.multiprocessing.spawn(
         train,
         args=(
@@ -280,7 +280,7 @@ if __name__ == "__main__":
             max_training_batches,  # max_training_batches
             int(args.batch_size),  # batch_size
             int(args.val_every),  # val_every
-            saved_model_uri,  # saved_model_path
+            model_uri,  # model_uri
         ),
         nprocs=process_count,
     )

@@ -74,7 +74,7 @@ class InferenceProcessArgs:
         master_default_process_group_port (int): Port for the default process group.
         dataset (DistDataset): Loaded Distributed Dataset for inference.
         inference_node_type (NodeType): Node type that predicted class labels are generated for.
-        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        model_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Encoder hidden dimension.
         num_classes (int): Number of output classes.
         node_feature_dim (int): Input node feature dimension.
@@ -95,7 +95,7 @@ class InferenceProcessArgs:
     dataset: DistDataset
     inference_node_type: NodeType
 
-    model_state_dict_uri: Uri
+    model_uri: Uri
     hid_dim: int
     num_classes: int
     node_feature_dim: int
@@ -157,7 +157,7 @@ def _inference_process(
     )
 
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=args.model_state_dict_uri, device=device
+        load_from_uri=args.model_uri, device=device
     )
     model = init_example_gigl_homogeneous_node_classification_model(
         node_feature_dim=args.node_feature_dim,
@@ -277,7 +277,7 @@ def _run_example_inference(
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
-    # `model_state_dict_uri` is read from the same `trained_model_metadata.trained_model_uri` slot
+    # `model_uri` is read from the same `trained_model_metadata.trained_model_uri` slot
     # the trainer wrote to (see homogeneous_training.py `model_uri` derivation).
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
@@ -364,7 +364,7 @@ def _run_example_inference(
         master_default_process_group_port=master_default_process_group_port,
         dataset=dataset,
         inference_node_type=graph_metadata.homogeneous_node_type,
-        model_state_dict_uri=model_uri,
+        model_uri=model_uri,
         hid_dim=hid_dim,
         num_classes=num_classes,
         node_feature_dim=node_feature_dim,

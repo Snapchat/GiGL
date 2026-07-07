@@ -65,7 +65,7 @@ def _inference_process(
     master_ip_address: str,
     master_default_process_group_port: int,
     embedding_gcs_path: GcsUri,
-    model_state_dict_uri: GcsUri,
+    model_uri: GcsUri,
     inference_batch_size: int,
     hid_dim: int,
     out_dim: int,
@@ -86,7 +86,7 @@ def _inference_process(
         local_world_size (int): Number of inference processes spawned by each machine
         distributed_context (DistributedContext): Distributed context containing information for master_ip_address, rank, and world size
         embedding_gcs_path (GcsUri): GCS path to load embeddings from
-        model_state_dict_uri (GcsUri): GCS path to load model from
+        model_uri (GcsUri): GCS path to load model from
         inference_batch_size (int): Batch size to use for inference
         hid_dim (int): Hidden dimension of the model
         out_dim (int): Output dimension of the model
@@ -159,7 +159,7 @@ def _inference_process(
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=model_state_dict_uri, device=device
+        load_from_uri=model_uri, device=device
     )
     model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=node_feature_dim,
@@ -379,7 +379,7 @@ def _run_example_inference(
             master_ip_address,  # master_ip_address
             master_default_process_group_port,  # master_default_process_group_port
             embedding_output_gcs_folder,  # embedding_gcs_path
-            model_uri,  # model_state_dict_uri
+            model_uri,  # model_uri
             inference_batch_size,  # inference_batch_size
             hid_dim,  # hid_dim
             out_dim,  # out_dim

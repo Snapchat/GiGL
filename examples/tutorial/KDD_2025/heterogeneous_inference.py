@@ -57,7 +57,7 @@ def inference(
     port: int,
     dataset: DistDataset,
     embedding_output_uri: Uri,
-    saved_model_uri: Uri,
+    model_uri: Uri,
     batch_size: int = 4,
 ):
     """Run inference on the model."""
@@ -74,9 +74,9 @@ def inference(
     # Create the model
     model = init_model()
     # Load the model state
-    model.load_state_dict(load_state_dict_from_uri(saved_model_uri))
+    model.load_state_dict(load_state_dict_from_uri(model_uri))
     logger.info(
-        f"Used saved model at {saved_model_uri} to initialize the model {model}."
+        f"Used saved model at {model_uri} to initialize the model {model}."
     )
     model.eval()
 
@@ -157,10 +157,10 @@ if __name__ == "__main__":
         _tfrecord_uri_pattern=".*tfrecord",
     )
     if strtobool(args.use_local_saved_model):
-        saved_model_uri = LOCAL_SAVED_MODEL_URI
+        model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
-    logger.info(f"Using saved model URI: {saved_model_uri}")
+        model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+    logger.info(f"Using saved model URI: {model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()
     torch.multiprocessing.spawn(
@@ -170,7 +170,7 @@ if __name__ == "__main__":
             inference_port,  # port
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
-            UriFactory.create_uri(saved_model_uri),  # saved_model_uri
+            UriFactory.create_uri(model_uri),  # model_uri
             gbml_config_pb_wrapper.inferencer_config.inference_batch_size,  # batch_size
         ),
         nprocs=int(args.process_count),

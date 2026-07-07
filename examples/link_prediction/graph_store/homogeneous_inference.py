@@ -137,7 +137,7 @@ class InferenceProcessArgs:
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
             information about storage and compute node ranks and addresses.
         embedding_gcs_path (GcsUri): GCS path to write embeddings to.
-        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        model_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_feature_dim (int): Input node feature dimension for the model.
@@ -160,7 +160,7 @@ class InferenceProcessArgs:
 
     # Data paths
     embedding_gcs_path: GcsUri
-    model_state_dict_uri: Uri
+    model_uri: Uri
 
     # Model configuration
     hid_dim: int
@@ -248,7 +248,7 @@ def _inference_process(
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=args.model_state_dict_uri, device=device
+        load_from_uri=args.model_uri, device=device
     )
     model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=args.node_feature_dim,
@@ -523,7 +523,7 @@ def _run_example_inference(
         local_world_size=local_world_size,
         cluster_info=cluster_info,
         embedding_gcs_path=embedding_output_gcs_folder,
-        model_state_dict_uri=model_uri,
+        model_uri=model_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
         node_feature_dim=node_feature_dim,

@@ -143,7 +143,7 @@ class InferenceProcessArgs:
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
             information about storage and compute node ranks and addresses.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
-        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        model_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_type_to_feature_dim (dict[NodeType, int]): Mapping of node types to their feature
@@ -171,7 +171,7 @@ class InferenceProcessArgs:
     inference_node_type: NodeType
 
     # Model
-    model_state_dict_uri: Uri
+    model_uri: Uri
     hid_dim: int
     out_dim: int
     node_type_to_feature_dim: dict[NodeType, int]
@@ -257,7 +257,7 @@ def _inference_process(
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=args.model_state_dict_uri, device=device
+        load_from_uri=args.model_uri, device=device
     )
     model: LinkPredictionGNN = init_example_gigl_heterogeneous_model(
         node_type_to_feature_dim=args.node_type_to_feature_dim,
@@ -535,7 +535,7 @@ def _run_example_inference(
             machine_world_size=cluster_info.num_compute_nodes,
             cluster_info=cluster_info,
             inference_node_type=inference_node_type,
-            model_state_dict_uri=model_uri,
+            model_uri=model_uri,
             hid_dim=hid_dim,
             out_dim=out_dim,
             node_type_to_feature_dim=node_type_to_feature_dim,
