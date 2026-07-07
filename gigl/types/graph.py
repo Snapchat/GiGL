@@ -113,7 +113,7 @@ class FeatureInfo:
     dtype: torch.dtype
 
 
-@dataclass
+@dataclass(frozen=True)
 class FeatureQuantizationMetadata:
     """Metadata needed to unpack/dequantize append-only packed features."""
 
