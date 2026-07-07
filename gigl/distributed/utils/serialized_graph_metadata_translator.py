@@ -99,22 +99,21 @@ def _build_feature_quantization_metadata(
             f"Expected {expected_state} quantization state for {quantized_metadata.bits}-bit features."
         )
 
+    neg_mean = pos_mean = clip_min = clip_max = None
     if quantized_metadata.bits == 1:
-        return FeatureQuantizationMetadata(
-            bits=quantized_metadata.bits,
-            feature_dim=feature_dim,
-            quantized_feature_indices=tuple(
-                quantized_metadata.quantized_feature_indices
-            ),
-            neg_mean=quantized_metadata.centroid.neg_mean,
-            pos_mean=quantized_metadata.centroid.pos_mean,
-        )
+        neg_mean = quantized_metadata.centroid.neg_mean
+        pos_mean = quantized_metadata.centroid.pos_mean
+    else:
+        clip_min = quantized_metadata.linear.clip_min
+        clip_max = quantized_metadata.linear.clip_max
     return FeatureQuantizationMetadata(
         bits=quantized_metadata.bits,
         feature_dim=feature_dim,
         quantized_feature_indices=tuple(quantized_metadata.quantized_feature_indices),
-        clip_min=quantized_metadata.linear.clip_min,
-        clip_max=quantized_metadata.linear.clip_max,
+        clip_min=clip_min,
+        clip_max=clip_max,
+        neg_mean=neg_mean,
+        pos_mean=pos_mean,
     )
 
 
