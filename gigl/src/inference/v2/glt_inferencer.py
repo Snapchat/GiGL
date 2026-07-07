@@ -5,6 +5,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
+from gigl.src.common.custom_launcher import launch_custom
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -16,6 +17,7 @@ from gigl.src.common.vertex_ai_launcher import (
     launch_single_pool_job,
 )
 from snapchat.research.gbml.gigl_resource_config_pb2 import (
+    CustomLauncherConfig,
     LocalResourceConfig,
     VertexAiGraphStoreConfig,
     VertexAiResourceConfig,
@@ -109,6 +111,18 @@ class GLTInferencer:
         if isinstance(resource_config_wrapper.inferencer_config, LocalResourceConfig):
             raise NotImplementedError(
                 f"Local GLT Inferencer is not yet supported, please specify a {VertexAiResourceConfig.__name__} or {VertexAiGraphStoreConfig.__name__} resource config field."
+            )
+        elif isinstance(
+            resource_config_wrapper.inferencer_config, CustomLauncherConfig
+        ):
+            launch_custom(
+                custom_launcher_config=resource_config_wrapper.inferencer_config,
+                applied_task_identifier=applied_task_identifier,
+                task_config_uri=task_config_uri,
+                resource_config_uri=resource_config_uri,
+                cpu_docker_uri=cpu_docker_uri,
+                cuda_docker_uri=cuda_docker_uri,
+                component=GiGLComponents.Inferencer,
             )
         elif isinstance(
             resource_config_wrapper.inferencer_config, VertexAiResourceConfig

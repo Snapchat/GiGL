@@ -79,6 +79,20 @@ def _build_resource_config_with_graph_store_trainer() -> (
     )
 
 
+def _build_resource_config_with_custom_trainer() -> (
+    gigl_resource_config_pb2.GiglResourceConfig
+):
+    return gigl_resource_config_pb2.GiglResourceConfig(
+        shared_resource_config=_build_shared_resource_config(),
+        trainer_resource_config=gigl_resource_config_pb2.TrainerResourceConfig(
+            custom_trainer_config=gigl_resource_config_pb2.CustomLauncherConfig(
+                command="python -m my.custom.trainer",
+                args=["--foo=bar", "--noskip_training"],
+            ),
+        ),
+    )
+
+
 def _build_gbml_config_with_trainer_command() -> gbml_config_pb2.GbmlConfig:
     return gbml_config_pb2.GbmlConfig(
         trainer_config=gbml_config_pb2.GbmlConfig.TrainerConfig(
@@ -174,6 +188,50 @@ class TestGLTTrainerVertexAiDispatch(TestCase):
             dict(call_kwargs["storage_args"]),
             {"dataset_uri": "gs://bucket/dataset"},
         )
+
+    @patch("gigl.src.training.v2.glt_trainer.launch_single_pool_job")
+    @patch("gigl.src.training.v2.glt_trainer.launch_graph_store_enabled_job")
+    @patch("gigl.src.training.v2.glt_trainer.launch_custom")
+    @patch("gigl.src.training.v2.glt_trainer.get_resource_config")
+    def test_custom_launcher_dispatch(
+        self,
+        mock_get_resource_config,
+        mock_launch_custom,
+        mock_launch_graph_store_enabled_job,
+        mock_launch_single_pool_job,
+    ) -> None:
+        resource_config = _build_resource_config_with_custom_trainer()
+        mock_get_resource_config.return_value = GiglResourceConfigWrapper(
+            resource_config=resource_config
+        )
+
+        task_uri = Uri("gs://bucket/task.yaml")
+        resource_uri = Uri("gs://bucket/resource.yaml")
+        GLTTrainer().run(
+            applied_task_identifier=AppliedTaskIdentifier("job_custom"),
+            task_config_uri=task_uri,
+            resource_config_uri=resource_uri,
+            cpu_docker_uri="gcr.io/p/cpu:tag",
+            cuda_docker_uri="gcr.io/p/cuda:tag",
+        )
+
+        mock_launch_custom.assert_called_once()
+        call_kwargs = mock_launch_custom.call_args.kwargs
+        self.assertEqual(
+            call_kwargs["custom_launcher_config"],
+            resource_config.trainer_resource_config.custom_trainer_config,
+        )
+        self.assertEqual(
+            call_kwargs["applied_task_identifier"],
+            AppliedTaskIdentifier("job_custom"),
+        )
+        self.assertEqual(call_kwargs["task_config_uri"], task_uri)
+        self.assertEqual(call_kwargs["resource_config_uri"], resource_uri)
+        self.assertEqual(call_kwargs["cpu_docker_uri"], "gcr.io/p/cpu:tag")
+        self.assertEqual(call_kwargs["cuda_docker_uri"], "gcr.io/p/cuda:tag")
+        self.assertEqual(call_kwargs["component"], GiGLComponents.Trainer)
+        mock_launch_single_pool_job.assert_not_called()
+        mock_launch_graph_store_enabled_job.assert_not_called()
 
 
 if __name__ == "__main__":
