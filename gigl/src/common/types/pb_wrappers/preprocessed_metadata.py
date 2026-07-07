@@ -221,9 +221,7 @@ class PreprocessedMetadataPbWrapper:
         )
 
     def __get_feature_spec_for_feature_keys(
-        self,
-        feature_spec: FeatureSpecDict,
-        feature_keys: list[str],
+        self, feature_spec: FeatureSpecDict, feature_keys: list[str]
     ) -> FeatureSpecDict:
         """
         Return feature spec for the given feature keys
@@ -239,8 +237,11 @@ class PreprocessedMetadataPbWrapper:
         """
         Return feature schema for the given feature keys
         """
-        feature_to_schema = dict(zip(feature_spec.keys(), feature_schema.feature))
-        return {feature: feature_to_schema[feature] for feature in feature_keys}
+        all_features_in_feature_spec = list(feature_spec.keys())
+        return {
+            feature: feature_schema.feature[all_features_in_feature_spec.index(feature)]
+            for feature in feature_keys
+        }
 
     def __build_feature_schema(
         self,
@@ -269,21 +270,21 @@ class PreprocessedMetadataPbWrapper:
         if synthetic_feature_keys:
             if raw_feature_schema is None:
                 raise ValueError("Synthetic feature keys require a transformed schema.")
-            for synthetic_feature_key in synthetic_feature_keys:
-                if synthetic_feature_key in raw_feature_spec:
-                    raise ValueError(
-                        f"Synthetic feature key {synthetic_feature_key} already exists "
-                        "in raw schema; dequantized keys must not overlap normal keys."
-                    )
-                raw_feature_spec[synthetic_feature_key] = tf.io.FixedLenFeature(
+            overlapping_keys = synthetic_feature_keys.intersection(raw_feature_spec)
+            if overlapping_keys:
+                raise ValueError(
+                    "Generated dequantized feature keys must be disjoint from "
+                    f"normal features: {sorted(overlapping_keys)}."
+                )
+            for key in synthetic_feature_keys:
+                raw_feature_spec[key] = tf.io.FixedLenFeature(
                     shape=[], dtype=tf.float32
                 )
-                raw_feature_schema.feature.add().name = synthetic_feature_key
+                raw_feature_schema.feature.add().name = key
 
         feature_spec = (
             self.__get_feature_spec_for_feature_keys(
-                feature_spec=raw_feature_spec,
-                feature_keys=feature_keys,
+                feature_spec=raw_feature_spec, feature_keys=feature_keys
             )
             if feature_keys and raw_feature_schema
             else {}
