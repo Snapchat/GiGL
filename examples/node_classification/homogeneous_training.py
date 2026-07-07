@@ -686,15 +686,10 @@ def _run_example_training(
     )
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
-    preprocessed_metadata_pb_wrapper = (
-        gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
-    )
 
-    node_feature_dim = (
-        preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-            graph_metadata.homogeneous_condensed_node_type
-        ]
-    )
+    node_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map[
+        graph_metadata.homogeneous_node_type
+    ]
 
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri

@@ -340,21 +340,8 @@ def _run_example_inference(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
-    graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
-
-    node_type_to_feature_dim: dict[NodeType, int] = {
-        graph_metadata.condensed_node_type_to_node_type_map[
-            condensed_node_type
-        ]: node_feature_dim
-        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
-    }
-
-    edge_type_to_feature_dim: dict[EdgeType, int] = {
-        graph_metadata.condensed_edge_type_to_edge_type_map[
-            condensed_edge_type
-        ]: edge_feature_dim
-        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
-    }
+    node_type_to_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map
+    edge_type_to_feature_dim = gbml_config_pb_wrapper.edge_type_to_feature_dim_map
 
     inference_node_types = sorted(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()

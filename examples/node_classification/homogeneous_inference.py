@@ -293,14 +293,9 @@ def _run_example_inference(
         applied_task_identifier=AppliedTaskIdentifier(job_name),
         bq_table_path=output_bq_table_path,
     )
-    preprocessed_metadata_pb_wrapper = (
-        gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
-    )
-    node_feature_dim = (
-        preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-            graph_metadata.homogeneous_condensed_node_type
-        ]
-    )
+    node_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map[
+        graph_metadata.homogeneous_node_type
+    ]
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
     # `inference_batch_size` lives on the dedicated proto field, NOT inside the `inferencer_args`
