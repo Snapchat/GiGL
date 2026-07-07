@@ -69,6 +69,10 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
+# Default number of training processes per machine when one isn't provided via
+# `local_world_size` in trainer args and there are no GPUs available.
+DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 1
+
 
 def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     """
@@ -599,13 +603,28 @@ def _run_example_training(
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    local_world_size = int(trainer_args.get("local_world_size", "2"))
-    if torch.cuda.is_available():
-        if local_world_size > torch.cuda.device_count():
-            raise ValueError(
-                f"Specified a local world size of {local_world_size} which exceeds the "
-                f"number of devices {torch.cuda.device_count()}"
-            )
+    arg_local_world_size = trainer_args.get("local_world_size")
+    if arg_local_world_size is not None:
+        local_world_size = int(arg_local_world_size)
+        logger.info(f"Using local_world_size from trainer_args: {local_world_size}")
+    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        # If GPUs are available, we set the local_world_size to the number of GPUs
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
+        )
+    else:
+        logger.info(
+            f"No GPUs detected. Setting local_world_size to "
+            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+        )
+        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
