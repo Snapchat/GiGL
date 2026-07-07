@@ -5,7 +5,6 @@ import apache_beam as beam
 import numpy as np
 import pyarrow as pa
 from apache_beam.transforms.stats import ApproximateQuantiles
-from google.protobuf import text_format
 from tensorflow_metadata.proto.v0 import schema_pb2
 from tensorflow_transform.tf_metadata import schema_utils
 from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
@@ -27,7 +26,6 @@ def apply_feature_quantization_transform(
     spec: FeatureQuantizationSpec,
     feature_keys: list[str],
     metadata_path: str,
-    schema_path: str,
 ):
     logger.info(f"Applying Beam feature quantization with spec: {spec}")
     stats = _build_feature_quantization_stats(transformed_features, spec)
@@ -60,15 +58,12 @@ def apply_feature_quantization_transform(
             stats=beam.pvalue.AsSingleton(stats),
         )
     )
-    # Encode TFRecords with the compact physical schema, but write the original
-    # logical schema to disk because dequantization scatters features back.
+    # Encode TFRecords with the compact physical schema. The persisted schema
+    # remains the original logical TFT schema because dequantization scatters
+    # features back.
     if analyzed_metadata is None:
         physical_metadata = DatasetMetadata(
             _apply_feature_quantization_schema(transformed_metadata.schema, spec)
-        )
-        schema_text = transformed_features.pipeline | (
-            "Create feature quantization schema text"
-            >> beam.Create([text_format.MessageToString(transformed_metadata.schema)])
         )
     else:
         physical_metadata = analyzed_metadata | (
@@ -80,16 +75,7 @@ def apply_feature_quantization_transform(
                 spec=spec,
             )
         )
-        schema_text = analyzed_metadata | (
-            "Serialize logical feature quantization schema"
-            >> beam.Map(lambda metadata: text_format.MessageToString(metadata.schema))
-        )
         physical_metadata = beam.pvalue.AsSingleton(physical_metadata)
-    _ = schema_text | "Write feature quantization schema" >> beam.io.WriteToText(
-        schema_path,
-        num_shards=1,
-        shard_name_template="",
-    )
     return transformed_features, physical_metadata
 
 

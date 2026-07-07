@@ -1,6 +1,6 @@
 import gc
 from collections import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Optional, TypeVar, Union, overload
 
 import torch
@@ -124,6 +124,10 @@ class FeatureQuantizationMetadata:
     clip_max: Optional[float] = None
     neg_mean: Optional[float] = None
     pos_mean: Optional[float] = None
+    _raw_feature_indices: tuple[int, ...] = field(init=False, repr=False)
+    _scatter_index_tensors: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = (
+        field(default_factory=dict, init=False, repr=False)
+    )
 
     def __post_init__(self) -> None:
         valid_bits = (1, 2, 4, 8)
@@ -138,6 +142,10 @@ class FeatureQuantizationMetadata:
             )
         if len(set(indices)) != len(indices):
             raise ValueError(f"quantized_feature_indices contains duplicates: {indices}")
+        quantized_indices = set(indices)
+        self._raw_feature_indices = tuple(
+            i for i in range(self.feature_dim) if i not in quantized_indices
+        )
 
     @property
     def packed_feature_dim(self) -> int:
@@ -146,12 +154,21 @@ class FeatureQuantizationMetadata:
 
     @property
     def raw_feature_indices(self) -> tuple[int, ...]:
-        quantized_indices = set(self.quantized_feature_indices)
-        return tuple(i for i in range(self.feature_dim) if i not in quantized_indices)
+        return self._raw_feature_indices
 
     @property
     def raw_feature_dim(self) -> int:
-        return self.feature_dim - len(self.quantized_feature_indices)
+        return len(self._raw_feature_indices)
+
+    def scatter_index_tensors(
+        self, device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if device not in self._scatter_index_tensors:
+            self._scatter_index_tensors[device] = (
+                torch.tensor(self.quantized_feature_indices, dtype=torch.long, device=device),
+                torch.tensor(self.raw_feature_indices, dtype=torch.long, device=device),
+            )
+        return self._scatter_index_tensors[device]
 
 
 def _get_label_edges(

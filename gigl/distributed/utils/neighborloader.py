@@ -361,15 +361,10 @@ def materialize_quantized_node_features(
                 f"Missing raw node features for {q.raw_feature_dim} unquantized columns."
             )
         out = dequantized.new_empty((dequantized.size(0), q.feature_dim))
-        quantized_indices = torch.tensor(
-            q.quantized_feature_indices, dtype=torch.long, device=dequantized.device
-        )
-        out[:, quantized_indices] = dequantized
+        quantized_idx, raw_idx = q.scatter_index_tensors(out.device)
+        out[:, quantized_idx] = dequantized
         if x is not None:
-            raw_indices = torch.tensor(
-                q.raw_feature_indices, dtype=torch.long, device=x.device
-            )
-            out[:, raw_indices] = x
+            out[:, raw_idx] = x
         store.x = out
 
     if isinstance(data, Data):
