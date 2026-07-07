@@ -49,12 +49,12 @@ class DatasetSchema:
     edge_types: Optional[list[EdgeType]]
     # Node feature info.
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
+    # Edge feature info.
+    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
     # Quantization metadata for append-only packed node features.
     node_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ]
-    # Edge feature info.
-    edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
     # Edge direction.
     edge_dir: Union[str, Literal["in", "out"]]
 
