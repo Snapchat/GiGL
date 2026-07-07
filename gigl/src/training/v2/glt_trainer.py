@@ -108,7 +108,7 @@ class GLTTrainer:
         if isinstance(trainer_config, LocalResourceConfig):
             # TODO: (svij) Implement local training
             raise NotImplementedError(
-                f"Local GLT Trainer is not yet supported, please specify a {VertexAiResourceConfig.__name__} or {VertexAiGraphStoreConfig.__name__} resource config field."
+                f"Local GLT Trainer is not yet supported, please specify a {VertexAiResourceConfig.__name__}, {VertexAiGraphStoreConfig.__name__}, or {CustomLauncherConfig.__name__} resource config field."
             )
         elif isinstance(trainer_config, CustomLauncherConfig):
             launch_custom(
@@ -132,7 +132,7 @@ class GLTTrainer:
             )
         else:
             raise NotImplementedError(
-                f"Unsupported resource config for glt training: {type(trainer_config).__name__}"
+                f"Unsupported resource config for glt training: {type(trainer_config).__name__}. Supported: {VertexAiResourceConfig.__name__}, {VertexAiGraphStoreConfig.__name__}, {CustomLauncherConfig.__name__}."
             )
 
 

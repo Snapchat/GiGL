@@ -1,5 +1,7 @@
 """Tests for ``gigl.src.inference.v2.glt_inferencer`` Vertex AI dispatch."""
 
+import os
+import tempfile
 from typing import Final
 from unittest.mock import patch
 
@@ -74,6 +76,21 @@ def _build_resource_config_with_graph_store_inferencer() -> (
                         num_replicas=1,
                     ),
                 )
+            ),
+        ),
+    )
+
+
+def _build_resource_config_with_custom_inferencer(
+    command: str,
+    args: list[str],
+) -> gigl_resource_config_pb2.GiglResourceConfig:
+    return gigl_resource_config_pb2.GiglResourceConfig(
+        shared_resource_config=_build_shared_resource_config(),
+        inferencer_resource_config=gigl_resource_config_pb2.InferencerResourceConfig(
+            custom_inferencer_config=gigl_resource_config_pb2.CustomLauncherConfig(
+                command=command,
+                args=args,
             ),
         ),
     )
@@ -173,6 +190,65 @@ class TestGLTInferencerVertexAiDispatch(TestCase):
         self.assertEqual(
             dict(call_kwargs["storage_args"]),
             {"dataset_uri": "gs://bucket/dataset"},
+        )
+
+
+class TestGLTInferencerCustomLauncherDispatch(TestCase):
+    """Runs the ``CustomLauncherConfig`` branch through a real subprocess.
+
+    Only ``get_resource_config`` is patched (it caches into a module-level
+    global, so real YAML loading is not viable in-process). The configured
+    command actually executes and writes the ``GIGL_*`` env vars plus its
+    ``args[]`` to a temp file, which the test then asserts on.
+    """
+
+    @patch("gigl.src.inference.v2.glt_inferencer.get_resource_config")
+    def test_custom_launcher_dispatch_runs_command(
+        self, mock_get_resource_config
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = os.path.join(temp_dir, "captured.txt")
+            # printf reuses the format string for each remaining argument, so
+            # every env var and every appended args[] element lands on its own
+            # line of the output file.
+            command = (
+                'printf "%s\\n" "$GIGL_APPLIED_TASK_IDENTIFIER" '
+                '"$GIGL_TASK_CONFIG_URI" "$GIGL_RESOURCE_CONFIG_URI" '
+                '"$GIGL_CPU_DOCKER_URI" "$GIGL_CUDA_DOCKER_URI" '
+                f'"$GIGL_COMPONENT" > {output_path}'
+            )
+            mock_get_resource_config.return_value = GiglResourceConfigWrapper(
+                resource_config=_build_resource_config_with_custom_inferencer(
+                    command=command,
+                    args=["--foo=bar", "arg with space"],
+                )
+            )
+
+            GLTInferencer().run(
+                applied_task_identifier=AppliedTaskIdentifier("job_101"),
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                cpu_docker_uri="gcr.io/p/cpu:tag",
+                cuda_docker_uri="gcr.io/p/cuda:tag",
+            )
+
+            with open(output_path) as output_file:
+                captured_lines = output_file.read().splitlines()
+
+        self.assertEqual(
+            captured_lines,
+            [
+                "job_101",
+                "gs://bucket/task.yaml",
+                "gs://bucket/resource.yaml",
+                "gcr.io/p/cpu:tag",
+                "gcr.io/p/cuda:tag",
+                "Inferencer",
+                "--foo=bar",
+                # A single args[] element containing a space stays one shell
+                # argument (shlex.quote), hence one output line.
+                "arg with space",
+            ],
         )
 
 

@@ -110,7 +110,7 @@ class GLTInferencer:
 
         if isinstance(resource_config_wrapper.inferencer_config, LocalResourceConfig):
             raise NotImplementedError(
-                f"Local GLT Inferencer is not yet supported, please specify a {VertexAiResourceConfig.__name__} or {VertexAiGraphStoreConfig.__name__} resource config field."
+                f"Local GLT Inferencer is not yet supported, please specify a {VertexAiResourceConfig.__name__}, {VertexAiGraphStoreConfig.__name__}, or {CustomLauncherConfig.__name__} resource config field."
             )
         elif isinstance(
             resource_config_wrapper.inferencer_config, CustomLauncherConfig
@@ -138,7 +138,7 @@ class GLTInferencer:
             )
         else:
             raise NotImplementedError(
-                f"Unsupported resource config for glt inference: {type(resource_config_wrapper.inferencer_config).__name__}"
+                f"Unsupported resource config for glt inference: {type(resource_config_wrapper.inferencer_config).__name__}. Supported: {VertexAiResourceConfig.__name__}, {VertexAiGraphStoreConfig.__name__}, {CustomLauncherConfig.__name__}."
             )
 
 
