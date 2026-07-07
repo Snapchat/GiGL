@@ -124,25 +124,24 @@ class FeatureQuantizationMetadata:
     clip_max: Optional[float] = None
     neg_mean: Optional[float] = None
     pos_mean: Optional[float] = None
-    _raw_feature_indices: tuple[int, ...] = field(init=False, repr=False)
+    _raw_feature_indices: tuple[int, ...] = field(init=False, repr=False, compare=False)
     _scatter_index_tensors: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = (
-        field(default_factory=dict, init=False, repr=False)
+        field(default_factory=dict, init=False, repr=False, compare=False)
     )
 
     def __post_init__(self) -> None:
         valid_bits = (1, 2, 4, 8)
         if self.bits not in valid_bits:
             raise ValueError(f"bits must be one of {valid_bits}, got {self.bits}")
-        if self.feature_dim < 0:
-            raise ValueError(f"feature_dim must be non-negative, got {self.feature_dim}")
-        indices = self.quantized_feature_indices
-        if any(i < 0 or i >= self.feature_dim for i in indices):
+        if any(i < 0 or i >= self.feature_dim for i in self.quantized_feature_indices):
             raise ValueError(
-                f"quantized_feature_indices must be in [0, {self.feature_dim}), got {indices}"
+                f"quantized_feature_indices must be in [0, {self.feature_dim}), got {self.quantized_feature_indices}"
             )
-        if len(set(indices)) != len(indices):
-            raise ValueError(f"quantized_feature_indices contains duplicates: {indices}")
-        quantized_indices = set(indices)
+        if len(set(self.quantized_feature_indices)) != len(self.quantized_indices):
+            raise ValueError(
+                f"quantized_feature_indices contains duplicates: {self.quantized_feature_indices}"
+            )
+        quantized_indices = set(self.quantized_feature_indices)
         self._raw_feature_indices = tuple(
             i for i in range(self.feature_dim) if i not in quantized_indices
         )
@@ -165,7 +164,9 @@ class FeatureQuantizationMetadata:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if device not in self._scatter_index_tensors:
             self._scatter_index_tensors[device] = (
-                torch.tensor(self.quantized_feature_indices, dtype=torch.long, device=device),
+                torch.tensor(
+                    self.quantized_feature_indices, dtype=torch.long, device=device
+                ),
                 torch.tensor(self.raw_feature_indices, dtype=torch.long, device=device),
             )
         return self._scatter_index_tensors[device]

@@ -351,19 +351,18 @@ def materialize_quantized_node_features(
     ) -> None:
         dequantized = dequantize_torch_tensor(packed_features, metadata=q)
         x = getattr(store, "x", None)
-        if x is not None and x.size(1) != q.raw_feature_dim:
-            raise ValueError(
-                f"Expected {q.raw_feature_dim} raw node feature columns before "
-                f"dequantization, got {x.size(1)}."
-            )
-        if x is None and q.raw_feature_dim:
-            raise ValueError(
-                f"Missing raw node features for {q.raw_feature_dim} unquantized columns."
-            )
         out = dequantized.new_empty((dequantized.size(0), q.feature_dim))
         quantized_idx, raw_idx = q.scatter_index_tensors(out.device)
         out[:, quantized_idx] = dequantized
+
+        if x is None and q.raw_feature_dim:
+            raise ValueError(f"Missing {q.raw_feature_dim} unquantized features")
         if x is not None:
+            if x.size(1) != q.raw_feature_dim:
+                raise ValueError(
+                    f"Expected {q.raw_feature_dim} raw node feature columns before "
+                    f"dequantization, got {x.size(1)}."
+                )
             out[:, raw_idx] = x
         store.x = out
 

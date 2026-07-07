@@ -171,11 +171,10 @@ def _apply_feature_quantization_schema(
     drop_keys = set(spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
     quantized_schema = schema_pb2.Schema()
     quantized_schema.CopyFrom(schema)
-    kept_features = [
-        feature for feature in quantized_schema.feature if feature.name not in drop_keys
-    ]
     del quantized_schema.feature[:]
-    quantized_schema.feature.extend(kept_features)
+    quantized_schema.feature.extend(
+        feature for feature in schema.feature if feature.name not in drop_keys
+    )
     packed_feature = quantized_schema.feature.add()
     packed_feature.name = _NODE_PACKED_FEATURE_KEY
     packed_feature.type = schema_pb2.BYTES
