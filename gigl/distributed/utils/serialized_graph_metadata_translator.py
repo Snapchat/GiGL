@@ -21,7 +21,6 @@ def _build_serialized_tfrecord_entity_info(
     feature_spec_dict: FeatureSpecDict,
     entity_key: Union[str, Tuple[str, str]],
     tfrecord_uri_pattern: str,
-    quantization_metadata: FeatureQuantizationMetadata | None = None,
 ) -> SerializedTFRecordInfo:
     """
     Populates a SerializedTFRecordInfo field from provided arguments for either a node or edge entity of a single node/edge type.
@@ -39,11 +38,14 @@ def _build_serialized_tfrecord_entity_info(
     packed_feature_dim = 0
     physical_feature_keys = list(preprocessed_metadata.feature_keys)
     feature_dim = preprocessed_metadata.feature_dim
-    if quantization_metadata is not None:
-        assert isinstance(
-            preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput
-        )
+    if isinstance(
+        preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput
+    ) and preprocessed_metadata.HasField("quantized_feature_metadata"):
         quantized_metadata = preprocessed_metadata.quantized_feature_metadata
+        quantization_metadata = _build_feature_quantization_metadata(
+            quantized_metadata=quantized_metadata,
+            feature_dim=preprocessed_metadata.feature_dim,
+        )
         packed_feature_key = quantized_metadata.packed_feature_key
         packed_feature_dim = quantization_metadata.packed_feature_dim
         quantized_indices = set(quantization_metadata.quantized_feature_indices)
@@ -157,21 +159,19 @@ def convert_pb_to_serialized_graph_metadata(
         )
 
         node_key = node_metadata.node_id_key
-        quantization_metadata = None
-        if node_metadata.HasField("quantized_feature_metadata"):
-            quantization_metadata = _build_feature_quantization_metadata(
-                quantized_metadata=node_metadata.quantized_feature_metadata,
-                feature_dim=node_metadata.feature_dim,
-            )
-            node_quantization_metadata[node_type] = quantization_metadata
-
         node_entity_info[node_type] = _build_serialized_tfrecord_entity_info(
             preprocessed_metadata=node_metadata,
             feature_spec_dict=node_feature_spec_dict,
             entity_key=node_key,
             tfrecord_uri_pattern=tfrecord_uri_pattern,
-            quantization_metadata=quantization_metadata,
         )
+        if node_metadata.HasField("quantized_feature_metadata"):
+            node_quantization_metadata[node_type] = (
+                _build_feature_quantization_metadata(
+                    quantized_metadata=node_metadata.quantized_feature_metadata,
+                    feature_dim=node_metadata.feature_dim,
+                )
+            )
 
     for edge_type in graph_metadata_pb_wrapper.edge_types:
         condensed_edge_type = (
