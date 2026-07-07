@@ -92,25 +92,30 @@ def _build_feature_quantization_metadata(
     quantized_metadata: PreprocessedMetadata.FeatureQuantizationMetadata,
     feature_dim: int,
 ) -> FeatureQuantizationMetadata:
-    metadata = FeatureQuantizationMetadata(
+    state = quantized_metadata.WhichOneof("state")
+    expected_state = "centroid" if quantized_metadata.bits == 1 else "linear"
+    if state != expected_state:
+        raise ValueError(
+            f"Expected {expected_state} quantization state for {quantized_metadata.bits}-bit features."
+        )
+
+    if quantized_metadata.bits == 1:
+        return FeatureQuantizationMetadata(
+            bits=quantized_metadata.bits,
+            feature_dim=feature_dim,
+            quantized_feature_indices=tuple(
+                quantized_metadata.quantized_feature_indices
+            ),
+            neg_mean=quantized_metadata.centroid.neg_mean,
+            pos_mean=quantized_metadata.centroid.pos_mean,
+        )
+    return FeatureQuantizationMetadata(
         bits=quantized_metadata.bits,
         feature_dim=feature_dim,
         quantized_feature_indices=tuple(quantized_metadata.quantized_feature_indices),
+        clip_min=quantized_metadata.linear.clip_min,
+        clip_max=quantized_metadata.linear.clip_max,
     )
-    state = quantized_metadata.WhichOneof("state")
-    expected_state = "centroid" if metadata.bits == 1 else "linear"
-    if state != expected_state:
-        raise ValueError(
-            f"Expected {expected_state} quantization state for {metadata.bits}-bit features."
-        )
-
-    if metadata.bits == 1:
-        metadata.neg_mean = quantized_metadata.centroid.neg_mean
-        metadata.pos_mean = quantized_metadata.centroid.pos_mean
-    else:
-        metadata.clip_min = quantized_metadata.linear.clip_min
-        metadata.clip_max = quantized_metadata.linear.clip_max
-    return metadata
 
 
 def convert_pb_to_serialized_graph_metadata(
