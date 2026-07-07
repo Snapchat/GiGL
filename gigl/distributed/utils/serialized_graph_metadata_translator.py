@@ -159,6 +159,7 @@ def convert_pb_to_serialized_graph_metadata(
         )
 
         node_key = node_metadata.node_id_key
+
         node_entity_info[node_type] = _build_serialized_tfrecord_entity_info(
             preprocessed_metadata=node_metadata,
             feature_spec_dict=node_feature_spec_dict,
