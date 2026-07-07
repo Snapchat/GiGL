@@ -457,25 +457,24 @@ def _run_example_inference(
     if arg_local_world_size is not None:
         local_world_size = int(arg_local_world_size)
         logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
-        if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
-            logger.warning(
-                f"local_world_size {local_world_size} does not match the number of GPUs {torch.cuda.device_count()}. "
-                "This may lead to unexpected failures with NCCL communication incase GPUs are being used for "
-                + "training/inference. Consider setting local_world_size to the number of GPUs."
-            )
+    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        # If GPUs are available, we set the local_world_size to the number of GPUs
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
+        )
     else:
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            # If GPUs are available, we set the local_world_size to the number of GPUs
-            local_world_size = torch.cuda.device_count()
-            logger.info(
-                f"Detected {local_world_size} GPUs. Thus, setting local_world_size to {local_world_size}"
-            )
-        else:
-            # If no GPUs are available, we set the local_world_size to the number of inference processes per machine
-            logger.info(
-                f"No GPUs detected. Thus, setting local_world_size to `{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
-            )
-            local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+        logger.info(
+            f"No GPUs detected. Setting local_world_size to "
+            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+        )
+        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     if cluster_info.compute_node_rank == 0:
         gcs_utils = GcsUtils()

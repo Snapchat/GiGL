@@ -48,6 +48,10 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
+# Default number of inference processes per machine when one isn't provided via
+# `local_world_size` in inferencer args and there are no GPUs available.
+DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
+
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
@@ -359,23 +363,27 @@ def _run_example_inference(
     hid_dim = int(inferencer_args.get("hid_dim", "16"))
     out_dim = int(inferencer_args.get("out_dim", "16"))
 
-    if torch.cuda.is_available():
-        default_num_inference_processes_per_machine = torch.cuda.device_count()
-    else:
-        default_num_inference_processes_per_machine = 2
-    num_inference_processes_per_machine = int(
-        inferencer_args.get(
-            "num_inference_processes_per_machine",
-            default_num_inference_processes_per_machine,
+    arg_local_world_size = inferencer_args.get("local_world_size")
+    if arg_local_world_size is not None:
+        local_world_size = int(arg_local_world_size)
+        logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
+    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        # If GPUs are available, we set the local_world_size to the number of GPUs
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
         )
-    )  # Current large-scale setting sets this value to 4
+    else:
+        logger.info(
+            f"No GPUs detected. Setting local_world_size to "
+            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+        )
+        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
-    if (
-        torch.cuda.is_available()
-        and num_inference_processes_per_machine > torch.cuda.device_count()
-    ):
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
         raise ValueError(
-            f"Number of inference processes per machine ({num_inference_processes_per_machine}) must not be more than the number of GPUs: ({torch.cuda.device_count()})"
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
         )
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
@@ -441,7 +449,7 @@ def _run_example_inference(
 
         # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
         inference_args = InferenceProcessArgs(
-            local_world_size=num_inference_processes_per_machine,
+            local_world_size=local_world_size,
             machine_rank=machine_rank,
             machine_world_size=machine_world_size,
             master_ip_address=master_ip_address,
@@ -464,7 +472,7 @@ def _run_example_inference(
         mp.spawn(
             fn=_inference_process,
             args=(inference_args,),
-            nprocs=num_inference_processes_per_machine,
+            nprocs=local_world_size,
             join=True,
         )
 
