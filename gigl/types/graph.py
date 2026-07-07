@@ -142,9 +142,13 @@ class FeatureQuantizationMetadata:
             )
 
     @property
+    def quantized_feature_dim(self) -> int:
+        return len(self.quantized_feature_indices)
+
+    @property
     def packed_feature_dim(self) -> int:
         per_byte = 8 // self.bits
-        return (len(self.quantized_feature_indices) + per_byte - 1) // per_byte
+        return (self.quantized_feature_dim + per_byte - 1) // per_byte
 
     @cached_property
     def raw_feature_indices(self) -> tuple[int, ...]:
