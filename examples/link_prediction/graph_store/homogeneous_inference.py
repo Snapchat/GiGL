@@ -104,6 +104,7 @@ from gigl.distributed.graph_store import (
     RemoteDistDataset,
     get_graph_store_info,
     init_compute_process,
+    shutdown_compute_process,
 )
 from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -151,7 +152,6 @@ class InferenceProcessArgs:
             the channel during sampling (e.g., "4GB").
         log_every_n_batch (int): Frequency to log batch information during inference.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
-        gbml_config_pb_wrapper (GbmlConfigPbWrapper): Wrapper containing GBML configuration.
     """
 
     # Distributed context
@@ -175,7 +175,6 @@ class InferenceProcessArgs:
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
     inference_node_type: NodeType
-    gbml_config_pb_wrapper: GbmlConfigPbWrapper
 
 
 @torch.no_grad()
@@ -363,30 +362,12 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
+    shutdown_compute_process()
     gc.collect()
 
     logger.info(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
-    output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
-        args.gbml_config_pb_wrapper, args.inference_node_type
-    )
-    bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
-        bq_table_path=output_bq_table_path
-    )
-    # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-    if rank == 0:
-        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
-
-        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
-        # representing the load operation, which allows user to monitor and retrieve
-        # details about the job status and result.
-        _ = load_embeddings_to_bigquery(
-            gcs_folder=args.embedding_gcs_path,
-            project_id=bq_project_id,
-            dataset_id=bq_dataset_id,
-            table_id=bq_table_name,
-        )
 
     # We don't see logs for graph store mode for whatever reason.
     # TOOD(#442): Revert this once the GCP issues are resolved.
@@ -533,7 +514,6 @@ def _run_example_inference(
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         log_every_n_batch=log_every_n_batch,
         inference_node_type=graph_metadata.homogeneous_node_type,
-        gbml_config_pb_wrapper=gbml_config_pb_wrapper,
     )
     mp.spawn(
         fn=_inference_process,
@@ -541,6 +521,22 @@ def _run_example_inference(
         nprocs=local_world_size,
         join=True,
     )
+
+    # After inference is finished, the compute-cluster lead node loads embeddings from GCS to BigQuery.
+    if cluster_info.compute_node_rank == 0:
+        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
+        bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
+            bq_table_path=output_bq_table_path
+        )
+        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
+        # representing the load operation, which allows user to monitor and retrieve
+        # details about the job status and result.
+        _ = load_embeddings_to_bigquery(
+            gcs_folder=embedding_output_gcs_folder,
+            project_id=bq_project_id,
+            dataset_id=bq_dataset_id,
+            table_id=bq_table_name,
+        )
 
     logger.info(
         f"--- Inference finished, which took {time.time() - inference_start_time:.2f} seconds"

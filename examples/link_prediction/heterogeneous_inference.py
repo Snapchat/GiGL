@@ -289,6 +289,7 @@ def _inference_process(
 
     data_loader.shutdown()
     gc.collect()
+    torch.distributed.destroy_process_group()
 
     logger.info(
         f"--- All machines local rank {local_rank} finished inference for node type {args.inference_node_type}. Deleted data loader"
