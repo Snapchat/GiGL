@@ -242,6 +242,8 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=args.num_neighbors,
+        local_process_rank=local_rank,
+        local_process_world_size=args.local_world_size,
         # We must pass in a tuple of (node_type, node_ids_on_current_process) for heterogeneous input
         input_nodes=(args.inference_node_type, input_nodes),
         num_workers=args.sampling_workers_per_process,
