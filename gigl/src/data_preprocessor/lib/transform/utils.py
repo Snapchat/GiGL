@@ -372,7 +372,7 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn:
                 analyzed_metadata = None
             else:
-                analyzed_metadata = analyzed_transform_fn[1].deferred_metadata
+                analyzed_metadata = analyzed_transform_fn[1].deferred_metadata  # type: ignore
 
             transformed_features, resolved_transformed_metadata = (
                 apply_feature_quantization_transform(

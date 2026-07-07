@@ -347,14 +347,14 @@ def materialize_quantized_node_features(
         return data, metadata
 
     def materialize(
-        node_store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
+        store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
     ) -> None:
         dequantized = dequantize_torch_tensor(packed_features, metadata=q)
-        x = getattr(node_store, "x", None)
+        x = getattr(store, "x", None)
         if x is None:
-            node_store.x = dequantized
+            store.x = dequantized
         else:
-            node_store.x = torch.cat([x, dequantized], dim=1)
+            store.x = torch.cat([x, dequantized], dim=1)
 
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):
