@@ -262,6 +262,8 @@ def _run_example_inference(
         task_config_uri (str): Path to frozen GbmlConfig URI.
     """
     program_start_time = time.time()
+    mp.set_start_method("spawn")
+    logger.info(f"Starting sub process method: {mp.get_start_method()}")
 
     # One main process per machine needs to coordinate partitioning + synchronization; assuming
     # spawn-via-Vertex sets up env:// init for us.

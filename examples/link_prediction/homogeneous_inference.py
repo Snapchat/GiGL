@@ -292,6 +292,8 @@ def _run_example_inference(
         task_config_uri (str): Path to frozen GBMLConfigPbWrapper
     """
     program_start_time = time.time()
+    mp.set_start_method("spawn")
+    logger.info(f"Starting sub process method: {mp.get_start_method()}")
 
     # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
     # Thus, the user is responsible here for 1. spinning up a single process per machine,
