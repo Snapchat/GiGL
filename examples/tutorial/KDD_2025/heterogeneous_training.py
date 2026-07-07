@@ -24,7 +24,7 @@ if using a different dataset, also update the following fields:
 Args:
     --task_config_uri: Path to the task config URI.
     --torch_process_group_init_method: Method to initialize the torch process group.
-    --process_count: Number of processes to spawn.
+    --local_world_size: Number of processes to spawn.
     --batch_size: Batch size for training and validation.
     --val_every: Run validation every N batches.
     --use_local_saved_model: Use a local saved model instead of a remote URI.
@@ -145,8 +145,8 @@ def get_data_loader(
 
 
 def train(
-    process_number: int,
-    process_count: int,
+    local_rank: int,
+    local_world_size: int,
     port: int,
     dataset: DistDataset,
     max_training_batches: int,
@@ -157,8 +157,8 @@ def train(
     torch.distributed.init_process_group(
         backend="gloo",  # Use the Gloo backend for CPU training.
         init_method=f"tcp://localhost:{port}",  # Use the provided port for communication.
-        rank=process_number,  # Each process has a unique rank.
-        world_size=process_count,  # Total number of processes.
+        rank=local_rank,  # Each process has a unique rank.
+        world_size=local_world_size,  # Total number of processes.
     )
     train_loader = get_data_loader(
         split="train", dataset=dataset, batch_size=batch_size
@@ -170,7 +170,7 @@ def train(
         hgt,
         find_unused_parameters=True,
     )
-    logger.info(f"Process {process_number} initialized model: {model}")
+    logger.info(f"Process {local_rank} initialized model: {model}")
     optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=0.001)
     for batch_idx, main_data in enumerate(train_loader):
         if batch_idx >= max_training_batches:
@@ -181,23 +181,23 @@ def train(
         optimizer.step()
         if batch_idx % val_every == 0:
             logger.info(
-                f"Process {process_number} running validation for batch {batch_idx} ..."
+                f"Process {local_rank} running validation for batch {batch_idx} ..."
             )
             val_loss = run_validation(model, val_loader, num_val_batches=2)
             model.train()
-            logger.info(f"Process {process_number} validation loss: {val_loss:.3f}")
+            logger.info(f"Process {local_rank} validation loss: {val_loss:.3f}")
 
-    logger.info(f"Process {process_number} final training loss: {loss.item():.3f}")
+    logger.info(f"Process {local_rank} final training loss: {loss.item():.3f}")
 
-    logger.info(f"Process {process_number} running test loops...")
+    logger.info(f"Process {local_rank} running test loops...")
     test_loader = get_data_loader(split="test", dataset=dataset, batch_size=batch_size)
     test_loss = run_validation(
         model,
         test_loader,
         num_val_batches=50,  # Run validation on the test set
     )
-    logger.info(f"Process {process_number} test loss: {test_loss:.3f}")
-    if process_number == 0:
+    logger.info(f"Process {local_rank} test loss: {test_loss:.3f}")
+    if local_rank == 0:
         logger.info(f"Saving model to {model_uri}")
         save_state_dict(model.module, UriFactory.create_uri(model_uri))
 
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--process_count", type=str, default="1", help="Number of processes to spawn."
+        "--local_world_size", type=str, default="1", help="Number of processes to spawn."
     )
     parser.add_argument(
         "--batch_size",
@@ -251,11 +251,11 @@ if __name__ == "__main__":
         _tfrecord_uri_pattern=".*tfrecord",
     )
     assert isinstance(dataset.train_node_ids, Mapping)
-    process_count = int(args.process_count)
+    local_world_size = int(args.local_world_size)
     for node_type, node_ids in dataset.train_node_ids.items():
         logger.info(f"Training node type {node_type} has {node_ids.size(0)} nodes.")  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         max_training_batches = node_ids.size(0) // (  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-            int(args.batch_size) * torch.distributed.get_world_size() * process_count
+            int(args.batch_size) * torch.distributed.get_world_size() * local_world_size
         )
     assert isinstance(dataset.val_node_ids, Mapping)
     for node_type, node_ids in dataset.val_node_ids.items():
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     torch.multiprocessing.spawn(
         train,
         args=(
-            process_count,  # process_count
+            local_world_size,  # local_world_size
             training_process_port,  # port
             dataset,  # dataset
             max_training_batches,  # max_training_batches
@@ -282,5 +282,5 @@ if __name__ == "__main__":
             int(args.val_every),  # val_every
             model_uri,  # model_uri
         ),
-        nprocs=process_count,
+        nprocs=local_world_size,
     )
