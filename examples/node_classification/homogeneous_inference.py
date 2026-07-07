@@ -81,7 +81,7 @@ class InferenceProcessArgs:
         prediction_gcs_path (GcsUri): GCS path to write predicted class labels to.
         inference_batch_size (int): Batch size to use for inference.
         num_neighbors (list[int]): Fanout for subgraph sampling.
-        sampling_workers_per_inference_process (int): Sampling workers per inference process.
+        sampling_workers_per_process (int): Sampling workers per inference process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (e.g. ``"4GB"``).
         log_every_n_batch (int): Frequency to log batch information during inference.
     """
@@ -103,7 +103,7 @@ class InferenceProcessArgs:
     prediction_gcs_path: GcsUri
     inference_batch_size: int
     num_neighbors: list[int] | dict[EdgeType, list[int]]
-    sampling_workers_per_inference_process: int
+    sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
 
@@ -148,10 +148,10 @@ def _inference_process(
         local_process_rank=local_rank,
         local_process_world_size=args.local_world_size,
         input_nodes=None,  # Homogeneous case: `None` defaults to using all nodes for inference.
-        num_workers=args.sampling_workers_per_inference_process,
+        num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,
         pin_memory_device=device,
-        worker_concurrency=args.sampling_workers_per_inference_process,
+        worker_concurrency=args.sampling_workers_per_process,
         channel_size=args.sampling_worker_shared_channel_size,
         process_start_gap_seconds=0,
     )
@@ -346,8 +346,8 @@ def _run_example_inference(
 
     num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
 
-    sampling_workers_per_inference_process = int(
-        inferencer_args.get("sampling_workers_per_inference_process", "4")
+    sampling_workers_per_process = int(
+        inferencer_args.get("sampling_workers_per_process", "4")
     )
 
     sampling_worker_shared_channel_size = inferencer_args.get(
@@ -371,7 +371,7 @@ def _run_example_inference(
         prediction_gcs_path=prediction_output_gcs_folder,
         inference_batch_size=inference_batch_size,
         num_neighbors=num_neighbors,
-        sampling_workers_per_inference_process=sampling_workers_per_inference_process,
+        sampling_workers_per_process=sampling_workers_per_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         log_every_n_batch=log_every_n_batch,
     )

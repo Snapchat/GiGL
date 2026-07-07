@@ -80,7 +80,7 @@ class InferenceProcessArgs:
         inference_batch_size (int): Batch size to use for inference.
         num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
             where the ith item corresponds to the number of items to sample for the ith hop.
-        sampling_workers_per_inference_process (int): Number of sampling workers per inference
+        sampling_workers_per_process (int): Number of sampling workers per inference
             process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
             the channel during sampling (e.g., "4GB").
@@ -109,7 +109,7 @@ class InferenceProcessArgs:
     embedding_gcs_path: GcsUri
     inference_batch_size: int
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
-    sampling_workers_per_inference_process: int
+    sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
 
@@ -159,10 +159,10 @@ def _inference_process(
         local_process_rank=local_rank,
         local_process_world_size=args.local_world_size,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
-        num_workers=args.sampling_workers_per_inference_process,
+        num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,
         pin_memory_device=device,
-        worker_concurrency=args.sampling_workers_per_inference_process,
+        worker_concurrency=args.sampling_workers_per_process,
         channel_size=args.sampling_worker_shared_channel_size,
         # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
         # don't compete for memory during initialization, causing OOM
@@ -383,14 +383,14 @@ def _run_example_inference(
     # as a string of a list of integers, such as "[10, 10]".
     num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
 
-    # While the ideal value for `sampling_workers_per_inference_process` has been identified to be
+    # While the ideal value for `sampling_workers_per_process` has been identified to be
     # between `2` and `4`, this may need some tuning depending on the pipeline. We default this
     # value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may
     # not have enough parallelization for sampling, which would slow down inference, while a value
     # which is too large may slow down each sampling process due to competing resources, which
     # would also then slow down inference.
-    sampling_workers_per_inference_process = int(
-        inferencer_args.get("sampling_workers_per_inference_process", "4")
+    sampling_workers_per_process = int(
+        inferencer_args.get("sampling_workers_per_process", "4")
     )
 
     # This value represents the shared-memory buffer size (bytes) allocated for the channel during
@@ -421,7 +421,7 @@ def _run_example_inference(
         embedding_gcs_path=embedding_output_gcs_folder,
         inference_batch_size=inference_batch_size,
         num_neighbors=num_neighbors,
-        sampling_workers_per_inference_process=sampling_workers_per_inference_process,
+        sampling_workers_per_process=sampling_workers_per_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         log_every_n_batch=log_every_n_batch,
     )
