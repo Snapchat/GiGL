@@ -634,7 +634,8 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-        # We save the model on the process with rank 0.
+        # Only rank 0 writes the checkpoint; every rank holds the same DDP-synced
+        # weights, so writing from all of them would be redundant and race on the URI.
         if torch.distributed.get_rank() == 0:
             print(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"

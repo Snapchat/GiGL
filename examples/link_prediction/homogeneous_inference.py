@@ -346,7 +346,6 @@ def _run_example_inference(
         local_world_size = int(arg_local_world_size)
         logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
     elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        # If GPUs are available, we set the local_world_size to the number of GPUs
         local_world_size = torch.cuda.device_count()
         logger.info(
             f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"

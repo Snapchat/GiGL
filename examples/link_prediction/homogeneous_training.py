@@ -513,7 +513,8 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-        # We save the model on the process with rank 0.
+        # Only rank 0 writes the checkpoint; every rank holds the same DDP-synced
+        # weights, so writing from all of them would be redundant and race on the URI.
         if rank == 0:
             logger.info(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
@@ -720,7 +721,6 @@ def _run_example_training(
         local_world_size = int(arg_local_world_size)
         logger.info(f"Using local_world_size from trainer_args: {local_world_size}")
     elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        # If GPUs are available, we set the local_world_size to the number of GPUs
         local_world_size = torch.cuda.device_count()
         logger.info(
             f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
