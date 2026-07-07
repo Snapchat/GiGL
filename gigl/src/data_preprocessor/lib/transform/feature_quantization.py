@@ -7,10 +7,12 @@ import pyarrow as pa
 from apache_beam.transforms.stats import ApproximateQuantiles
 from google.protobuf import text_format
 from tensorflow_metadata.proto.v0 import schema_pb2
+from tensorflow_transform.tf_metadata import schema_utils
 from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
+from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
@@ -23,15 +25,26 @@ def apply_feature_quantization_transform(
     transformed_metadata: DatasetMetadata,
     analyzed_metadata: beam.PCollection[DatasetMetadata] | None,
     spec: FeatureQuantizationSpec,
+    feature_keys: list[str],
     metadata_path: str,
     schema_path: str,
 ):
     logger.info(f"Applying Beam feature quantization with spec: {spec}")
     stats = _build_feature_quantization_stats(transformed_features, spec)
+    logical_metadata = (
+        transformed_metadata
+        if analyzed_metadata is None
+        else beam.pvalue.AsSingleton(analyzed_metadata)
+    )
     _ = (
         stats
         | "Build feature quantization metadata JSON"
-        >> beam.Map(_feature_quantization_metadata_json, spec=spec)
+        >> beam.Map(
+            _feature_quantization_metadata_json,
+            spec=spec,
+            feature_keys=feature_keys,
+            dataset_metadata=logical_metadata,
+        )
         | "Write feature quantization metadata"
         >> beam.io.WriteToText(
             metadata_path,
@@ -47,8 +60,10 @@ def apply_feature_quantization_transform(
             stats=beam.pvalue.AsSingleton(stats),
         )
     )
+    # Encode TFRecords with the compact physical schema, but write the original
+    # logical schema to disk because dequantization scatters features back.
     if analyzed_metadata is None:
-        transformed_metadata = DatasetMetadata(
+        physical_metadata = DatasetMetadata(
             _apply_feature_quantization_schema(transformed_metadata.schema, spec)
         )
         schema_text = transformed_features.pipeline | (
@@ -56,9 +71,7 @@ def apply_feature_quantization_transform(
             >> beam.Create([text_format.MessageToString(transformed_metadata.schema)])
         )
     else:
-        if analyzed_metadata is None:
-            raise ValueError("Expected analyzed metadata for fresh TFTransform fn.")
-        quantized_metadata = analyzed_metadata | (
+        physical_metadata = analyzed_metadata | (
             "Apply feature quantization schema"
             >> beam.Map(
                 lambda metadata, spec: DatasetMetadata(
@@ -67,17 +80,17 @@ def apply_feature_quantization_transform(
                 spec=spec,
             )
         )
-        schema_text = quantized_metadata | (
-            "Serialize feature quantization schema"
+        schema_text = analyzed_metadata | (
+            "Serialize logical feature quantization schema"
             >> beam.Map(lambda metadata: text_format.MessageToString(metadata.schema))
         )
-        transformed_metadata = beam.pvalue.AsSingleton(quantized_metadata)
+        physical_metadata = beam.pvalue.AsSingleton(physical_metadata)
     _ = schema_text | "Write feature quantization schema" >> beam.io.WriteToText(
         schema_path,
         num_shards=1,
         shard_name_template="",
     )
-    return transformed_features, transformed_metadata
+    return transformed_features, physical_metadata
 
 
 def _build_feature_quantization_stats(
@@ -130,11 +143,35 @@ def _quantize_record_batch(
 def _feature_quantization_metadata_json(
     stats: dict[str, float],
     spec: FeatureQuantizationSpec,
+    feature_keys: list[str],
+    dataset_metadata: DatasetMetadata,
 ) -> str:
+    raw_feature_spec = schema_utils.schema_as_feature_spec(
+        dataset_metadata.schema
+    ).feature_spec
+    feature_key_set = set(feature_keys)
+    missing = [
+        key
+        for key in spec.feature_keys
+        if key not in raw_feature_spec or key not in feature_key_set
+    ]
+    if missing:
+        raise ValueError(
+            f"Quantized feature keys missing from feature outputs: {missing}"
+        )
+    feature_spec = {key: raw_feature_spec[key] for key in feature_keys}
+    feature_index = feature_spec_to_feature_index_map(feature_spec)
+    quantized_feature_indices = []
+    for key in spec.feature_keys:
+        start, end = feature_index[key]
+        if end - start != 1:
+            raise ValueError(
+                f"Feature quantization expects scalar features, got {key}."
+            )
+        quantized_feature_indices.append(start)
     metadata = {
         "packed_feature_key": _NODE_PACKED_FEATURE_KEY,
-        "dequantized_feature_keys": list(spec.feature_keys),
-        "dequantized_feature_dim": len(spec.feature_keys),
+        "quantized_feature_indices": quantized_feature_indices,
         "bits": spec.bits,
         **stats,
     }

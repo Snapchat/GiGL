@@ -13,12 +13,12 @@ def dequantize_torch_tensor(
     if packed_features.size(-1) != q.packed_feature_dim:
         raise ValueError(
             f"Expected packed feature dim {q.packed_feature_dim} for "
-            f"{q.dequantized_feature_dim} {q.bits}-bit features, got "
+            f"{len(q.quantized_feature_indices)} {q.bits}-bit features, got "
             f"{packed_features.size(-1)}."
         )
 
     codes = _unpack_torch_tensor(
-        packed_features, dim=q.dequantized_feature_dim, bits=q.bits
+        packed_features, dim=len(q.quantized_feature_indices), bits=q.bits
     ).float()
     if q.bits == 1:
         if q.neg_mean is None or q.pos_mean is None:

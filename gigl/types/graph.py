@@ -99,7 +99,7 @@ class PartitionOutput:
     ]
 
     # Quantized node features on current rank. These are packed uint8 features
-    # aligned by node id and dequantized/appended in the sampler collate path.
+    # aligned by node id and dequantized/scattered in the sampler collate path.
     partitioned_node_quantized_features: Optional[
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ] = None
@@ -115,11 +115,11 @@ class FeatureInfo:
 
 @dataclass
 class FeatureQuantizationMetadata:
-    """Metadata needed to unpack/dequantize append-only packed features."""
+    """Metadata needed to unpack/dequantize/scatter packed features."""
 
     bits: int
-    dequantized_feature_dim: int
-    dequantized_feature_keys: tuple[str, ...] = ()
+    feature_dim: int
+    quantized_feature_indices: tuple[int, ...] = ()
     clip_min: Optional[float] = None
     clip_max: Optional[float] = None
     neg_mean: Optional[float] = None
@@ -129,16 +129,29 @@ class FeatureQuantizationMetadata:
         valid_bits = (1, 2, 4, 8)
         if self.bits not in valid_bits:
             raise ValueError(f"bits must be one of {valid_bits}, got {self.bits}")
-        if self.dequantized_feature_dim < 0:
+        if self.feature_dim < 0:
+            raise ValueError(f"feature_dim must be non-negative, got {self.feature_dim}")
+        indices = self.quantized_feature_indices
+        if any(i < 0 or i >= self.feature_dim for i in indices):
             raise ValueError(
-                "dequantized_feature_dim must be non-negative, got "
-                f"{self.dequantized_feature_dim}"
+                f"quantized_feature_indices must be in [0, {self.feature_dim}), got {indices}"
             )
+        if len(set(indices)) != len(indices):
+            raise ValueError(f"quantized_feature_indices contains duplicates: {indices}")
 
     @property
     def packed_feature_dim(self) -> int:
         per_byte = 8 // self.bits
-        return (self.dequantized_feature_dim + per_byte - 1) // per_byte
+        return (len(self.quantized_feature_indices) + per_byte - 1) // per_byte
+
+    @property
+    def raw_feature_indices(self) -> tuple[int, ...]:
+        quantized_indices = set(self.quantized_feature_indices)
+        return tuple(i for i in range(self.feature_dim) if i not in quantized_indices)
+
+    @property
+    def raw_feature_dim(self) -> int:
+        return self.feature_dim - len(self.quantized_feature_indices)
 
 
 def _get_label_edges(

@@ -380,6 +380,7 @@ def get_load_data_and_transform_pipeline_component(
                     transformed_metadata=transformed_metadata,
                     analyzed_metadata=analyzed_metadata,
                     spec=q_spec,
+                    feature_keys=list(preprocessing_spec.features_outputs or []),
                     metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
                     schema_path=transformed_features_info.transformed_features_schema_path.uri,
                 )

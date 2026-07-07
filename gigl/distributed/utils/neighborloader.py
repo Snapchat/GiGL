@@ -51,7 +51,7 @@ class DatasetSchema:
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
     # Edge feature info.
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
-    # Quantization metadata for append-only packed node features.
+    # Quantization metadata for packed node features.
     node_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ]
@@ -351,10 +351,26 @@ def materialize_quantized_node_features(
     ) -> None:
         dequantized = dequantize_torch_tensor(packed_features, metadata=q)
         x = getattr(store, "x", None)
-        if x is None:
-            store.x = dequantized
-        else:
-            store.x = torch.cat([x, dequantized], dim=1)
+        if x is not None and x.size(1) != q.raw_feature_dim:
+            raise ValueError(
+                f"Expected {q.raw_feature_dim} raw node feature columns before "
+                f"dequantization, got {x.size(1)}."
+            )
+        if x is None and q.raw_feature_dim:
+            raise ValueError(
+                f"Missing raw node features for {q.raw_feature_dim} unquantized columns."
+            )
+        out = dequantized.new_empty((dequantized.size(0), q.feature_dim))
+        quantized_indices = torch.tensor(
+            q.quantized_feature_indices, dtype=torch.long, device=dequantized.device
+        )
+        out[:, quantized_indices] = dequantized
+        if x is not None:
+            raw_indices = torch.tensor(
+                q.raw_feature_indices, dtype=torch.long, device=x.device
+            )
+            out[:, raw_indices] = x
+        store.x = out
 
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):

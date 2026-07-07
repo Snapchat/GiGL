@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Callable, cast
 
-import tensorflow as tf
 from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
 import gigl.common.utils.local_fs as LocalFsUtils
@@ -66,24 +65,9 @@ class PreprocessedMetadataPbWrapper:
         for condensed_node_type, node_metadata in dict(
             self.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata
         ).items():
-            dequantized_feature_keys: list[str] = []
-            if node_metadata.HasField("quantized_feature_metadata"):
-                quantized_metadata = node_metadata.quantized_feature_metadata
-                dequantized_feature_keys = list(
-                    quantized_metadata.dequantized_feature_keys
-                )
-                if quantized_metadata.dequantized_feature_dim != len(
-                    dequantized_feature_keys
-                ):
-                    raise ValueError(
-                        f"Expected quantized feature metadata for condensed node type {condensed_node_type} "
-                        f"to have one dequantized_feature_key per output feature dimension, got "
-                        f"{len(dequantized_feature_keys)} keys and dimension "
-                        f"{quantized_metadata.dequantized_feature_dim}."
-                    )
             condensed_node_type_to_feature_dim_map[
                 CondensedNodeType(condensed_node_type)
-            ] = node_metadata.feature_dim + len(dequantized_feature_keys)
+            ] = node_metadata.feature_dim
 
             # Note that sorting the node feature/label keys breaks training with DDP. The root cause for why this is happening
             # is still under investigation. TODO (mkolodner-sc): Once the reason for why sorting the feature/label keys
@@ -96,8 +80,7 @@ class PreprocessedMetadataPbWrapper:
                 transform_fn_assets_uri=UriFactory.create_uri(
                     node_metadata.transform_fn_assets_uri
                 ),
-                feature_keys=node_feature_keys + dequantized_feature_keys + label_keys,
-                synthetic_feature_keys=set(dequantized_feature_keys),
+                feature_keys=node_feature_keys + label_keys,
             )
             condensed_node_type_to_feature_schema_map[
                 CondensedNodeType(condensed_node_type)
@@ -248,7 +231,6 @@ class PreprocessedMetadataPbWrapper:
         schema_uri: Uri,
         transform_fn_assets_uri: Uri,
         feature_keys: list[str],
-        synthetic_feature_keys: set[str] | None = None,
     ) -> FeatureSchema:
         """
         Return FeatureSchema NamedTuple for the given feature keys
@@ -258,32 +240,11 @@ class PreprocessedMetadataPbWrapper:
         feature_spec will be based on the order of feature keys in preprocessed metadata
         which is also how SGS processes the features currently into float vectors
         """
-        synthetic_feature_keys = synthetic_feature_keys or set()
         raw_feature_schema, raw_feature_spec = (
             load_tf_schema_uri_str_to_feature_spec(uri=schema_uri)
             if schema_uri.uri
             else (None, {})
         )
-
-        # Dequantized features are materialized later from packed uint8 tensors,
-        # so they need logical fp32 schema entries even though TFT did not write them.
-        if synthetic_feature_keys:
-            if raw_feature_schema is None:
-                raise ValueError("Synthetic feature keys require a transformed schema.")
-            overlapping_keys = synthetic_feature_keys.intersection(raw_feature_spec)
-            if overlapping_keys:
-                raise ValueError(
-                    "Generated dequantized feature keys must be disjoint from "
-                    f"normal features: {sorted(overlapping_keys)}."
-                )
-            logger.info(
-                f"Injecting synthetic feature schema keys: {synthetic_feature_keys}"
-            )
-            for key in synthetic_feature_keys:
-                raw_feature_spec[key] = tf.io.FixedLenFeature(
-                    shape=[], dtype=tf.float32
-                )
-                raw_feature_schema.feature.add().name = key
 
         feature_spec = (
             self.__get_feature_spec_for_feature_keys(

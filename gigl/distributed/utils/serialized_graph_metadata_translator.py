@@ -3,6 +3,7 @@ from typing import Tuple, Union
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
+from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
@@ -35,20 +36,43 @@ def _build_serialized_tfrecord_entity_info(
     """
     packed_feature_key = None
     packed_feature_dim = 0
+    physical_feature_keys = list(preprocessed_metadata.feature_keys)
+    feature_dim = preprocessed_metadata.feature_dim
     if isinstance(preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput):
         if preprocessed_metadata.HasField("quantized_feature_metadata"):
             quantized_metadata = preprocessed_metadata.quantized_feature_metadata
-            metadata = _build_feature_quantization_metadata(quantized_metadata)
+            metadata = _build_feature_quantization_metadata(
+                quantized_metadata=quantized_metadata,
+                feature_dim=preprocessed_metadata.feature_dim,
+            )
             packed_feature_key = quantized_metadata.packed_feature_key
             packed_feature_dim = metadata.packed_feature_dim
+            quantized_indices = set(metadata.quantized_feature_indices)
+            feature_index = feature_spec_to_feature_index_map(
+                {
+                    key: feature_spec_dict[key]
+                    for key in preprocessed_metadata.feature_keys
+                }
+            )
+            physical_feature_keys = []
+            for key in preprocessed_metadata.feature_keys:
+                key_indices = set(range(*feature_index[key]))
+                quantized_key_indices = key_indices.intersection(quantized_indices)
+                if not quantized_key_indices:
+                    physical_feature_keys.append(key)
+                elif quantized_key_indices != key_indices:
+                    raise ValueError(
+                        f"Partial feature quantization is not supported for {key}."
+                    )
+            feature_dim = metadata.raw_feature_dim
 
-    physical_keys = set(preprocessed_metadata.feature_keys)
+    physical_keys = set(physical_feature_keys)
     physical_keys.update(preprocessed_metadata.label_keys)
     if packed_feature_key is not None:
         physical_keys.add(packed_feature_key)
-    # PreprocessedMetadataPbWrapper may add synthetic dequantized feature keys
-    # to the logical feature schema. Only keep fields physically stored in
-    # TFRecords here; dequantized features are reconstructed later from uint8.
+    # Only keep fields physically stored in TFRecords. Quantized features stay
+    # in preprocessed_metadata.feature_keys as logical model features, but are
+    # reconstructed later from the packed uint8 sidecar.
     feature_spec_dict = {
         key: spec for key, spec in feature_spec_dict.items() if key in physical_keys
     }
@@ -57,9 +81,9 @@ def _build_serialized_tfrecord_entity_info(
         tfrecord_uri_prefix=UriFactory.create_uri(
             preprocessed_metadata.tfrecord_uri_prefix
         ),
-        feature_keys=list(preprocessed_metadata.feature_keys),
+        feature_keys=physical_feature_keys,
         feature_spec=feature_spec_dict,
-        feature_dim=preprocessed_metadata.feature_dim,
+        feature_dim=feature_dim,
         entity_key=entity_key,
         packed_feature_key=packed_feature_key,
         packed_feature_dim=packed_feature_dim,
@@ -70,11 +94,12 @@ def _build_serialized_tfrecord_entity_info(
 
 def _build_feature_quantization_metadata(
     quantized_metadata: PreprocessedMetadata.FeatureQuantizationMetadata,
+    feature_dim: int,
 ) -> FeatureQuantizationMetadata:
     metadata = FeatureQuantizationMetadata(
         bits=quantized_metadata.bits,
-        dequantized_feature_dim=quantized_metadata.dequantized_feature_dim,
-        dequantized_feature_keys=tuple(quantized_metadata.dequantized_feature_keys),
+        feature_dim=feature_dim,
+        quantized_feature_indices=tuple(quantized_metadata.quantized_feature_indices),
     )
     state = quantized_metadata.WhichOneof("state")
     expected_state = "centroid" if metadata.bits == 1 else "linear"
@@ -142,7 +167,8 @@ def convert_pb_to_serialized_graph_metadata(
         if node_metadata.HasField("quantized_feature_metadata"):
             node_quantization_metadata[node_type] = (
                 _build_feature_quantization_metadata(
-                    node_metadata.quantized_feature_metadata
+                    quantized_metadata=node_metadata.quantized_feature_metadata,
+                    feature_dim=node_metadata.feature_dim,
                 )
             )
 

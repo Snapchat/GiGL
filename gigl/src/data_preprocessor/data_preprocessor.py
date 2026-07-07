@@ -226,8 +226,8 @@ class DataPreprocessor:
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
             q_spec = preprocessing_spec.feature_quantization_spec
         if q_spec is not None:
-            # Quantization changes the final TFRecord schema after TFT runs, so
-            # write the trainer-facing schema as its own Beam output.
+            # Quantization writes compact physical TFRecords, but the persisted
+            # schema should remain the full logical schema used by the trainer.
             transformed_features_info.transformed_features_schema_path = GcsUri.join(
                 transformed_features_info.transform_directory_path,
                 "final_metadata",
@@ -286,9 +286,6 @@ class DataPreprocessor:
             return feature_dimension
 
         feature_outputs = preprocessing_spec.features_outputs
-        if q_spec is not None and feature_outputs is not None:
-            q_keys = set(q_spec.feature_keys)
-            feature_outputs = [f for f in feature_outputs if f not in q_keys]
 
         # Find and save the feature dimension if there is any
         if feature_outputs is not None:
@@ -508,8 +505,7 @@ class DataPreprocessor:
                 bits = metadata["bits"]
                 quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
                     packed_feature_key=metadata["packed_feature_key"],
-                    dequantized_feature_keys=metadata["dequantized_feature_keys"],
-                    dequantized_feature_dim=metadata["dequantized_feature_dim"],
+                    quantized_feature_indices=metadata["quantized_feature_indices"],
                     bits=bits,
                 )
                 if bits == 1:
