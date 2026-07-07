@@ -192,9 +192,7 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = (
-        f"machine_{args.machine_rank}_local_process_number_{local_rank}"
-    )
+    embedding_filename = f"machine_{args.machine_rank}_local_process_{local_rank}"
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
