@@ -155,8 +155,6 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=args.dataset,
         num_neighbors=args.num_neighbors,
-        local_process_rank=local_rank,
-        local_process_world_size=args.local_world_size,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
         num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,

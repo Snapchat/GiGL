@@ -117,12 +117,6 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
-# Default number of inference processes per machine incase one isnt provided in inference args
-# i.e. `local_world_size` is not provided, and we can't infer automatically.
-# If there are GPUs attached to the machine, we automatically infer to setting
-# LOCAL_WORLD_SIZE == # of gpus on the machine.
-DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
-
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
@@ -232,8 +226,6 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=args.num_neighbors,
-        local_process_rank=local_rank,
-        local_process_world_size=args.local_world_size,
         input_nodes=input_nodes,  # Since homogeneous,
         num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,
@@ -436,22 +428,10 @@ def _run_example_inference(
     hid_dim = int(inferencer_args.get("hid_dim", "16"))
     out_dim = int(inferencer_args.get("out_dim", "16"))
 
-    arg_local_world_size = inferencer_args.get("local_world_size")
-    if arg_local_world_size is not None:
-        local_world_size = int(arg_local_world_size)
-        logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
-    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        # If GPUs are available, we set the local_world_size to the number of GPUs
-        local_world_size = torch.cuda.device_count()
-        logger.info(
-            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
-        )
-    else:
-        logger.info(
-            f"No GPUs detected. Setting local_world_size to "
-            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
-        )
-        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+    # In Graph Store mode the launcher fixes the number of processes per compute machine
+    # (COMPUTE_CLUSTER_LOCAL_WORLD_SIZE env var, exposed as cluster_info.num_processes_per_compute);
+    # spawning any other number of processes would desync ranks from the compute process group.
+    local_world_size = cluster_info.num_processes_per_compute
 
     if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
         raise ValueError(

@@ -119,10 +119,6 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
-# Default number of training processes per machine when one isn't provided via
-# `local_world_size` in trainer args and there are no GPUs available.
-DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 1
-
 
 # We don't see logs for graph store mode for whatever reason.
 # Using `print` instead of `logger.info` helps ameliorate the issue.
@@ -867,25 +863,12 @@ def _run_example_training(
     # Training Hyperparameters
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    arg_local_world_size = trainer_args.get("local_world_size")
-    if arg_local_world_size is not None:
-        local_world_size = int(arg_local_world_size)
-        print(f"Using local_world_size from trainer_args: {local_world_size}")
-        flush()
-    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        # If GPUs are available, we set the local_world_size to the number of GPUs
-        local_world_size = torch.cuda.device_count()
-        print(
-            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
-        )
-        flush()
-    else:
-        print(
-            f"No GPUs detected. Setting local_world_size to "
-            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
-        )
-        flush()
-        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+    # In Graph Store mode the launcher fixes the number of processes per compute machine
+    # (COMPUTE_CLUSTER_LOCAL_WORLD_SIZE env var, exposed as cluster_info.num_processes_per_compute);
+    # spawning any other number of processes would desync ranks from the compute process group.
+    local_world_size = cluster_info.num_processes_per_compute
+    print(f"Using local_world_size from cluster topology: {local_world_size}")
+    flush()
 
     if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
         raise ValueError(

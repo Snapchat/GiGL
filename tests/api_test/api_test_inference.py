@@ -144,8 +144,6 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=num_neighbors,
-        local_process_rank=local_rank,
-        local_process_world_size=local_world_size,
         input_nodes=None,  # Since homogeneous, `None` defaults to using all nodes for inference loop
         num_workers=sampling_workers_per_process,
         batch_size=inference_batch_size,
@@ -334,11 +332,10 @@ def _run_example_inference(
     if arg_local_world_size is not None:
         local_world_size = int(arg_local_world_size)
         logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
-        if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
-            logger.warning(
-                f"local_world_size {local_world_size} does not match the number of GPUs {torch.cuda.device_count()}. "
-                "This may lead to unexpected failures with NCCL communication incase GPUs are being used for "
-                + "training/inference. Consider setting local_world_size to the number of GPUs."
+        if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+            raise ValueError(
+                f"Specified a local world size of {local_world_size} which exceeds the "
+                f"number of devices {torch.cuda.device_count()}"
             )
     else:
         if torch.cuda.is_available() and torch.cuda.device_count() > 0:
