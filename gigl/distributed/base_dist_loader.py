@@ -242,6 +242,7 @@ class BaseDistLoader(DistLoader):
         )
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
+        self._node_quantization_metadata = dataset_schema.node_quantization_metadata
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers

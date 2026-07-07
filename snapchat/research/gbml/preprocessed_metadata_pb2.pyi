@@ -20,6 +20,72 @@ DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 class PreprocessedMetadata(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
+    class LinearQuantizationState(google.protobuf.message.Message):
+        DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+        CLIP_MIN_FIELD_NUMBER: builtins.int
+        CLIP_MAX_FIELD_NUMBER: builtins.int
+        clip_min: builtins.float
+        """Lower clipping bound; dequantized value for linear code 0."""
+        clip_max: builtins.float
+        """Upper clipping bound; dequantized value for max linear code."""
+        def __init__(
+            self,
+            *,
+            clip_min: builtins.float = ...,
+            clip_max: builtins.float = ...,
+        ) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["clip_max", b"clip_max", "clip_min", b"clip_min"]) -> None: ...
+
+    class CentroidQuantizationState(google.protobuf.message.Message):
+        DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+        NEG_MEAN_FIELD_NUMBER: builtins.int
+        POS_MEAN_FIELD_NUMBER: builtins.int
+        neg_mean: builtins.float
+        """Mean value for negative features, produced by packed bit/code 0."""
+        pos_mean: builtins.float
+        """Mean value for positive features, produced by packed bit/code 1."""
+        def __init__(
+            self,
+            *,
+            neg_mean: builtins.float = ...,
+            pos_mean: builtins.float = ...,
+        ) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["neg_mean", b"neg_mean", "pos_mean", b"pos_mean"]) -> None: ...
+
+    class FeatureQuantizationMetadata(google.protobuf.message.Message):
+        DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+        PACKED_FEATURE_KEY_FIELD_NUMBER: builtins.int
+        QUANTIZED_FEATURE_INDICES_FIELD_NUMBER: builtins.int
+        BITS_FIELD_NUMBER: builtins.int
+        LINEAR_FIELD_NUMBER: builtins.int
+        CENTROID_FIELD_NUMBER: builtins.int
+        packed_feature_key: builtins.str
+        """Field in output TFRecords that stores packed uint8 features."""
+        @property
+        def quantized_feature_indices(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.int]:
+            """Original feature-vector indices stored in packed_feature_key."""
+        bits: builtins.int
+        """1 means centroid; 2, 4, and 8 mean linear buckets."""
+        @property
+        def linear(self) -> global___PreprocessedMetadata.LinearQuantizationState: ...
+        @property
+        def centroid(self) -> global___PreprocessedMetadata.CentroidQuantizationState: ...
+        def __init__(
+            self,
+            *,
+            packed_feature_key: builtins.str = ...,
+            quantized_feature_indices: collections.abc.Iterable[builtins.int] | None = ...,
+            bits: builtins.int = ...,
+            linear: global___PreprocessedMetadata.LinearQuantizationState | None = ...,
+            centroid: global___PreprocessedMetadata.CentroidQuantizationState | None = ...,
+        ) -> None: ...
+        def HasField(self, field_name: typing_extensions.Literal["centroid", b"centroid", "linear", b"linear", "state", b"state"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "centroid", b"centroid", "linear", b"linear", "packed_feature_key", b"packed_feature_key", "quantized_feature_indices", b"quantized_feature_indices", "state", b"state"]) -> None: ...
+        def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["linear", "centroid"] | None: ...
+
     class NodeMetadataOutput(google.protobuf.message.Message):
         """Houses metadata about node TFTransform output from DataPreprocessor."""
 
@@ -34,6 +100,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         ENUMERATED_NODE_DATA_BQ_TABLE_FIELD_NUMBER: builtins.int
         FEATURE_DIM_FIELD_NUMBER: builtins.int
         TRANSFORM_FN_ASSETS_URI_FIELD_NUMBER: builtins.int
+        QUANTIZED_FEATURE_METADATA_FIELD_NUMBER: builtins.int
         node_id_key: builtins.str
         """The field in output TFRecords which references the node identifier."""
         @property
@@ -54,6 +121,9 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         """Feature dimension after preprocessing"""
         transform_fn_assets_uri: builtins.str
         """Contains categorical feature vocabularies"""
+        @property
+        def quantized_feature_metadata(self) -> global___PreprocessedMetadata.FeatureQuantizationMetadata:
+            """Optional quantized node feature sidecar metadata."""
         def __init__(
             self,
             *,
@@ -66,9 +136,10 @@ class PreprocessedMetadata(google.protobuf.message.Message):
             enumerated_node_data_bq_table: builtins.str = ...,
             feature_dim: builtins.int | None = ...,
             transform_fn_assets_uri: builtins.str = ...,
+            quantized_feature_metadata: global___PreprocessedMetadata.FeatureQuantizationMetadata | None = ...,
         ) -> None: ...
-        def HasField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "feature_dim", b"feature_dim"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_node_data_bq_table", b"enumerated_node_data_bq_table", "enumerated_node_ids_bq_table", b"enumerated_node_ids_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "node_id_key", b"node_id_key", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...
+        def HasField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "feature_dim", b"feature_dim", "quantized_feature_metadata", b"quantized_feature_metadata"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_node_data_bq_table", b"enumerated_node_data_bq_table", "enumerated_node_ids_bq_table", b"enumerated_node_ids_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "node_id_key", b"node_id_key", "quantized_feature_metadata", b"quantized_feature_metadata", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...
         def WhichOneof(self, oneof_group: typing_extensions.Literal["_feature_dim", b"_feature_dim"]) -> typing_extensions.Literal["feature_dim"] | None: ...
 
     class EdgeMetadataInfo(google.protobuf.message.Message):

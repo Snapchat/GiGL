@@ -5,7 +5,7 @@ from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Optional, TypeVar, Union
+from typing import Literal, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -13,7 +13,14 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
-from gigl.types.graph import FeatureInfo, is_label_edge_type
+from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
+from gigl.distributed.sampler import NODE_PACKED_FEATURES_METADATA_KEY
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureInfo,
+    FeatureQuantizationMetadata,
+    is_label_edge_type,
+)
 
 logger = Logger()
 
@@ -44,6 +51,10 @@ class DatasetSchema:
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
     # Edge feature info.
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
+    # Quantization metadata for packed node features.
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ]
     # Edge direction.
     edge_dir: Union[str, Literal["in", "out"]]
 
@@ -322,6 +333,75 @@ def set_missing_features(
         )
 
     return data
+
+
+def materialize_quantized_node_features(
+    data: _GraphType,
+    metadata: dict[str, torch.Tensor],
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ],
+) -> tuple[_GraphType, dict[str, torch.Tensor]]:
+    """Materialize packed quantized node features into PyG node feature tensors."""
+    if node_quantization_metadata is None:
+        return data, metadata
+
+    def materialize(
+        store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
+    ) -> None:
+        dequantized = dequantize_torch_tensor(packed_features, metadata=q)
+        x = getattr(store, "x", None)
+        out = dequantized.new_empty((dequantized.size(0), q.feature_dim))
+        quantized_idx, raw_idx = q.scatter_index_tensors(out.device)
+        out[:, quantized_idx] = dequantized
+
+        if x is None and q.raw_feature_dim:
+            raise ValueError(f"Missing {q.raw_feature_dim} unquantized features")
+        if x is not None:
+            if x.size(1) != q.raw_feature_dim:
+                raise ValueError(
+                    f"Expected {q.raw_feature_dim} raw node feature columns before "
+                    f"dequantization, got {x.size(1)}."
+                )
+            out[:, raw_idx] = x
+        store.x = out
+
+    if isinstance(data, Data):
+        if isinstance(node_quantization_metadata, dict):
+            homogeneous_quantization_metadata = cast(
+                dict[NodeType, FeatureQuantizationMetadata],
+                node_quantization_metadata,
+            )
+            quantization_metadata = homogeneous_quantization_metadata[
+                DEFAULT_HOMOGENEOUS_NODE_TYPE
+            ]
+            metadata_key = (
+                f"{NODE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
+            )
+        else:
+            quantization_metadata = node_quantization_metadata
+            metadata_key = NODE_PACKED_FEATURES_METADATA_KEY
+        packed_features = metadata.pop(metadata_key, None)
+        if packed_features is None:
+            raise ValueError(
+                f"Missing packed quantized node features in metadata key {metadata_key}."
+            )
+        materialize(data, packed_features, quantization_metadata)
+        return data, metadata
+
+    assert isinstance(node_quantization_metadata, dict), (
+        "Expected per-node-type quantization metadata for heterogeneous data."
+    )
+    node_quantization_metadata = cast(
+        dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
+    )
+    for node_type, quantization_metadata in node_quantization_metadata.items():
+        metadata_key = f"{NODE_PACKED_FEATURES_METADATA_KEY}.{node_type}"
+        packed_features = metadata.pop(metadata_key, None)
+        if packed_features is None:
+            continue
+        materialize(data[node_type], packed_features, quantization_metadata)
+    return data, metadata
 
 
 def extract_metadata(

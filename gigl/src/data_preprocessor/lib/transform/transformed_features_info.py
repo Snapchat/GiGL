@@ -22,6 +22,7 @@ class TransformedFeaturesInfo:
     raw_data_schema_file_path: GcsUri
     tft_temp_directory_path: GcsUri
     transformed_features_file_prefix: GcsUri
+    feature_quantization_metadata_path: GcsUri
     transformed_features_schema_path: GcsUri
     transform_directory_path: GcsUri
     dataflow_console_uri: Optional[HttpUri] = None
@@ -91,6 +92,9 @@ class TransformedFeaturesInfo:
                 entity_type=entity_type,
                 custom_identifier=custom_identifier,
             )
+        )
+        self.feature_quantization_metadata_path = GcsUri.join(
+            self.transform_directory_path, "feature_quantization_metadata.json"
         )
 
         self.transformed_features_schema_path = (

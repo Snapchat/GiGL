@@ -1,5 +1,6 @@
 import argparse
 import concurrent.futures
+import json
 import sys
 import threading
 from collections import defaultdict
@@ -273,18 +274,20 @@ class DataPreprocessor:
                         feature_dimension += feature_shape[0]
             return feature_dimension
 
+        feature_outputs = preprocessing_spec.features_outputs
+
         # Find and save the feature dimension if there is any
-        if preprocessing_spec.features_outputs is not None:
+        if feature_outputs is not None:
             transformed_features_info.feature_dim_output = __get_feature_dimension_for_single_data_reference(
                 schema_path=transformed_features_info.transformed_features_schema_path,
-                feature_outputs=preprocessing_spec.features_outputs,
+                feature_outputs=feature_outputs,
             )
 
         # Carry forward the identifier, features and label outputs from the preprocessing spec.
         transformed_features_info.identifier_output = (
             preprocessing_spec.identifier_output
         )
-        transformed_features_info.features_outputs = preprocessing_spec.features_outputs
+        transformed_features_info.features_outputs = feature_outputs
         transformed_features_info.label_outputs = preprocessing_spec.labels_outputs
 
         if isinstance(feature_transform_pipeline_result, DataflowPipelineResult):
@@ -481,6 +484,30 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
+            metadata_path = (
+                node_transformed_features_info.feature_quantization_metadata_path.uri
+            )
+            if tf.io.gfile.exists(metadata_path):
+                logger.info(f"Adding feature quantization metadata: {metadata_path}")
+                with tf.io.gfile.GFile(metadata_path) as f:
+                    metadata = json.loads(f.read())
+                bits = metadata["bits"]
+                quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
+                    packed_feature_key=metadata["packed_feature_key"],
+                    quantized_feature_indices=metadata["quantized_feature_indices"],
+                    bits=bits,
+                )
+                if bits == 1:
+                    centroid = quantized_feature_metadata_pb.centroid
+                    centroid.neg_mean = metadata["neg_mean"]
+                    centroid.pos_mean = metadata["pos_mean"]
+                else:
+                    linear = quantized_feature_metadata_pb.linear
+                    linear.clip_min = metadata["clip_min"]
+                    linear.clip_max = metadata["clip_max"]
+                node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
+                    quantized_feature_metadata_pb
+                )
             preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
                 int(condensed_node_type)
             ].CopyFrom(node_metadata_output_pb)
@@ -698,6 +725,7 @@ class DataPreprocessor:
                 pretrained_tft_model_uri=input_node_preprocessing_spec.pretrained_tft_model_uri,
                 features_outputs=input_node_preprocessing_spec.features_outputs,
                 labels_outputs=input_node_preprocessing_spec.labels_outputs,
+                feature_quantization_spec=input_node_preprocessing_spec.feature_quantization_spec,
             )
             enumerated_node_refs_to_preprocessing_specs[
                 enumerated_node_metadata.enumerated_node_data_reference

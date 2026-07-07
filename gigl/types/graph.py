@@ -1,6 +1,7 @@
 import gc
 from collections import abc
 from dataclasses import dataclass
+from functools import cached_property, lru_cache
 from typing import Literal, Optional, TypeVar, Union, overload
 
 import torch
@@ -98,6 +99,12 @@ class PartitionOutput:
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ]
 
+    # Quantized node features on current rank. These are packed uint8 features
+    # aligned by node id and dequantized/scattered in the sampler collate path.
+    partitioned_node_quantized_features: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
+
 
 @dataclass(frozen=True)
 class FeatureInfo:
@@ -105,6 +112,61 @@ class FeatureInfo:
 
     dim: int
     dtype: torch.dtype
+
+
+@dataclass(frozen=True)
+class FeatureQuantizationMetadata:
+    """Metadata needed to unpack/dequantize/scatter packed features."""
+
+    bits: int
+    feature_dim: int
+    quantized_feature_indices: tuple[int, ...] = ()
+    clip_min: Optional[float] = None
+    clip_max: Optional[float] = None
+    neg_mean: Optional[float] = None
+    pos_mean: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        valid_bits = (1, 2, 4, 8)
+        if self.bits not in valid_bits:
+            raise ValueError(f"bits must be one of {valid_bits}, got {self.bits}")
+        if any(i < 0 or i >= self.feature_dim for i in self.quantized_feature_indices):
+            raise ValueError(
+                f"quantized_feature_indices must be in [0, {self.feature_dim}), got {self.quantized_feature_indices}"
+            )
+        if len(set(self.quantized_feature_indices)) != len(
+            self.quantized_feature_indices
+        ):
+            raise ValueError(
+                f"quantized_feature_indices contains duplicates: {self.quantized_feature_indices}"
+            )
+
+    @property
+    def quantized_feature_dim(self) -> int:
+        return len(self.quantized_feature_indices)
+
+    @property
+    def packed_feature_dim(self) -> int:
+        per_byte = 8 // self.bits
+        return (self.quantized_feature_dim + per_byte - 1) // per_byte
+
+    @cached_property
+    def raw_feature_indices(self) -> tuple[int, ...]:
+        quantized_indices = set(self.quantized_feature_indices)
+        return tuple(i for i in range(self.feature_dim) if i not in quantized_indices)
+
+    @property
+    def raw_feature_dim(self) -> int:
+        return len(self.raw_feature_indices)
+
+    @lru_cache(maxsize=2)
+    def scatter_index_tensors(
+        self, device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return (
+            torch.tensor(self.quantized_feature_indices, dtype=torch.long, device=device),
+            torch.tensor(self.raw_feature_indices, dtype=torch.long, device=device),
+        )
 
 
 def _get_label_edges(
@@ -151,6 +213,10 @@ class LoadedGraphTensors:
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
+    # Unpartitioned packed uint8 node features.
+    node_quantized_features: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
