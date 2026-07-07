@@ -49,10 +49,6 @@ class DatasetSchema:
     edge_types: Optional[list[EdgeType]]
     # Node feature info.
     node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]
-    # Packed uint8 node feature info.
-    node_quantized_feature_info: Optional[
-        Union[FeatureInfo, dict[NodeType, FeatureInfo]]
-    ]
     # Quantization metadata for append-only packed node features.
     node_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
