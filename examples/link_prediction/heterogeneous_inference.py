@@ -394,6 +394,8 @@ def _run_example_inference(
     master_default_process_group_port = (
         gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
     )
+    # Destroying the process group as one will be re-initialized in the inference process using ^ information
+    torch.distributed.destroy_process_group()
 
     ## Inference Start
 
