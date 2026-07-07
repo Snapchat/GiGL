@@ -142,8 +142,6 @@ class InferenceProcessArgs:
 
     Attributes:
         local_world_size (int): Number of inference processes spawned by each machine.
-        machine_rank (int): Rank of the current machine in the cluster.
-        machine_world_size (int): Total number of machines in the cluster.
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
             information about storage and compute node ranks and addresses.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
@@ -167,8 +165,6 @@ class InferenceProcessArgs:
 
     # Distributed context
     local_world_size: int
-    machine_rank: int
-    machine_world_size: int
     cluster_info: GraphStoreInfo
 
     # Data
@@ -216,12 +212,10 @@ def _inference_process(
             device
         )  # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
 
-    rank = args.machine_rank * args.local_world_size + local_rank
-    world_size = args.machine_world_size * args.local_world_size
     # Note: This is a *critical* step in Graph Store mode. It initializes the connection to the storage cluster.
     # If this is not done, the dataloader will not be able to sample from the graph store and will crash.
     logger.info(
-        f"Initializing compute process for rank {local_rank} in machine {args.machine_rank} with cluster info {args.cluster_info} for inference node type {args.inference_node_type}"
+        f"Initializing compute process for local_rank {local_rank} in machine {args.cluster_info.compute_node_rank} with cluster info {args.cluster_info} for inference node type {args.inference_node_type}"
     )
     flush()
     init_compute_process(local_rank, args.cluster_info)
@@ -229,15 +223,17 @@ def _inference_process(
         args.cluster_info,
         local_rank,
     )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
     logger.info(
-        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
+        f"Local rank {local_rank} in machine {args.cluster_info.compute_node_rank} has rank {rank}/{world_size} and is using device {device} for inference"
     )
 
     # Get the node ids on the current machine for the current node type
     input_nodes = dataset.fetch_node_ids(
         node_type=args.inference_node_type,
-        rank=torch.distributed.get_rank(),
-        world_size=torch.distributed.get_world_size(),
+        rank=rank,
+        world_size=world_size,
     )
     logger.info(
         f"Rank {rank} got input nodes of shapes: {[f'{rank}: {node.shape}' for rank, node in input_nodes.items()]}"
@@ -277,7 +273,9 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = f"machine_{args.machine_rank}_local_process_{local_rank}"
+    embedding_filename = (
+        f"machine_{args.cluster_info.compute_node_rank}_local_process_{local_rank}"
+    )
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -537,8 +535,6 @@ def _run_example_inference(
         # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
         inference_args = InferenceProcessArgs(
             local_world_size=local_world_size,
-            machine_rank=cluster_info.compute_node_rank,
-            machine_world_size=cluster_info.num_compute_nodes,
             cluster_info=cluster_info,
             inference_node_type=inference_node_type,
             model_uri=model_uri,
