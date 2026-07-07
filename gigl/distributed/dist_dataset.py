@@ -159,7 +159,6 @@ class DistDataset(glt.distributed.DistDataset):
         self._node_ids: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = (
             node_ids
         )
-        self._node_quantized_features = node_quantized_feature_partition
 
         self._num_train = num_train
         self._num_val = num_val
@@ -167,9 +166,11 @@ class DistDataset(glt.distributed.DistDataset):
 
         # These fields are added so we can extract the node and edge feature dimensions and data type in the dataloader without having to lazily initialize the features.
         self._node_feature_info = node_feature_info
-        self._node_quantized_feature_info = node_quantized_feature_info
-        self._node_quantization_metadata = node_quantization_metadata
         self._edge_feature_info = edge_feature_info
+
+        self._node_quantized_feature_info = node_quantized_feature_info
+        self._node_quantized_features = node_quantized_feature_partition
+        self._node_quantization_metadata = node_quantization_metadata
 
         self._degree_tensor: Optional[
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]
@@ -235,11 +236,12 @@ class DistDataset(glt.distributed.DistDataset):
     ) -> Optional[Union[Feature, dict[NodeType, Feature]]]:
         return self._node_quantized_features
 
-    @property
-    def node_quantized_feature_pb(
+    @node_quantized_features.setter
+    def node_quantized_features(
         self,
-    ) -> Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]:
-        return self.node_pb if self._node_quantized_features is not None else None
+        new_node_quantized_features: Optional[Union[Feature, dict[NodeType, Feature]]],
+    ):
+        self._node_quantized_features = new_node_quantized_features
 
     @property
     def edge_features(self) -> Optional[Union[Feature, dict[EdgeType, Feature]]]:
@@ -339,9 +341,6 @@ class DistDataset(glt.distributed.DistDataset):
     def node_quantized_feature_info(
         self,
     ) -> Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]:
-        """
-        Contains dimension and dtype for packed uint8 node features.
-        """
         return self._node_quantized_feature_info
 
     @property
@@ -797,13 +796,22 @@ class DistDataset(glt.distributed.DistDataset):
             logger.info("Found no node quantized features to initialize")
             return
 
-        self._node_quantized_features = _build_feature_store(
-            feature_data=node_quantized_features,
-            id2idx=node_quantized_feature_id_to_index,
-            dtype=torch.uint8,
-        )
+        # GLT only exposes init_node_features for the standard node feature
+        # store. Calling it here would overwrite self._node_features, so build
+        # this sidecar Feature store directly, mirroring GLT's construction:
+        # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/data/dataset.py#L236
 
         if isinstance(node_quantized_features, Mapping):
+            assert isinstance(node_quantized_feature_id_to_index, Mapping)
+            self._node_quantized_features = {
+                node_type: Feature(
+                    feature_tensor=features_per_node_type,
+                    id2index=node_quantized_feature_id_to_index[node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    with_gpu=False,
+                    dtype=torch.uint8,
+                )
+                for node_type, features_per_node_type in node_quantized_features.items()
+            }
             self._node_quantized_feature_info = {}
             for node_type, features_per_node_type in node_quantized_features.items():
                 assert not isinstance(node_type, EdgeType)
@@ -815,6 +823,13 @@ class DistDataset(glt.distributed.DistDataset):
                 f"Initialized node quantized features for heterogeneous graph to dataset with node types: {node_quantized_features.keys()}"
             )
         else:
+            assert not isinstance(node_quantized_feature_id_to_index, Mapping)
+            self._node_quantized_features = Feature(
+                feature_tensor=node_quantized_features,
+                id2index=node_quantized_feature_id_to_index,
+                with_gpu=False,
+                dtype=torch.uint8,
+            )
             self._node_quantized_feature_info = FeatureInfo(
                 dim=node_quantized_features.size(1),
                 dtype=node_quantized_features.dtype,
@@ -1332,32 +1347,6 @@ def _prepare_feature_data(
         return features_per_entity_type, id_to_index_per_entity_type
     else:
         return None, None
-
-
-def _build_feature_store(
-    feature_data: Union[torch.Tensor, dict[_EntityType, torch.Tensor]],
-    id2idx: Union[TensorDataType, dict[_EntityType, TensorDataType]],
-    dtype: torch.dtype,
-) -> Union[Feature, dict[_EntityType, Feature]]:
-    """Build a GLT Feature store without registering it as standard node features."""
-    if isinstance(feature_data, Mapping):
-        assert isinstance(id2idx, Mapping)
-        return {
-            entity_key: Feature(
-                feature_tensor=features,
-                id2index=id2idx[entity_key],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                with_gpu=False,
-                dtype=dtype,
-            )
-            for entity_key, features in feature_data.items()
-        }
-    assert not isinstance(id2idx, Mapping)
-    return Feature(
-        feature_tensor=feature_data,
-        id2index=id2idx,
-        with_gpu=False,
-        dtype=dtype,
-    )
 
 
 ## Pickling Registration

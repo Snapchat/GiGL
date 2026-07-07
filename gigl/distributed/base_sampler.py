@@ -107,7 +107,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 data.num_partitions,
                 data.partition_idx,
                 data.node_quantized_features,
-                data.node_quantized_feature_pb,
+                data.node_pb,
                 local_only=False,
                 rpc_router=self.rpc_router,
                 device=self.device,

@@ -276,6 +276,9 @@ class PreprocessedMetadataPbWrapper:
                     "Generated dequantized feature keys must be disjoint from "
                     f"normal features: {sorted(overlapping_keys)}."
                 )
+            logger.info(
+                f"Injecting synthetic feature schema keys: {synthetic_feature_keys}"
+            )
             for key in synthetic_feature_keys:
                 raw_feature_spec[key] = tf.io.FixedLenFeature(
                     shape=[], dtype=tf.float32
