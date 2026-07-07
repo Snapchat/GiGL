@@ -346,20 +346,15 @@ def materialize_quantized_node_features(
     if node_quantization_metadata is None:
         return data, metadata
 
-    def materialize_node_store(
+    def materialize(
         node_store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
     ) -> None:
         dequantized = dequantize_torch_tensor(packed_features, metadata=q)
         x = getattr(node_store, "x", None)
         if x is None:
             node_store.x = dequantized
-            return
-        if x.size(0) != dequantized.size(0):
-            raise ValueError(
-                "Cannot materialize quantized features with "
-                f"{dequantized.size(0)} rows into existing x with {x.size(0)} rows."
-            )
-        node_store.x = torch.cat([x, dequantized], dim=1)
+        else:
+            node_store.x = torch.cat([x, dequantized], dim=1)
 
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):
@@ -381,7 +376,7 @@ def materialize_quantized_node_features(
             raise ValueError(
                 f"Missing packed quantized node features in metadata key {metadata_key}."
             )
-        materialize_node_store(data, packed_features, quantization_metadata)
+        materialize(data, packed_features, quantization_metadata)
         return data, metadata
 
     assert isinstance(node_quantization_metadata, dict), (
@@ -395,7 +390,7 @@ def materialize_quantized_node_features(
         packed_features = metadata.pop(metadata_key, None)
         if packed_features is None:
             continue
-        materialize_node_store(data[node_type], packed_features, quantization_metadata)
+        materialize(data[node_type], packed_features, quantization_metadata)
     return data, metadata
 
 
