@@ -158,9 +158,7 @@ def _inference_process(
     )
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
-    model_state_dict = load_state_dict_from_uri(
-        load_from_uri=model_uri, device=device
-    )
+    model_state_dict = load_state_dict_from_uri(load_from_uri=model_uri, device=device)
     model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,

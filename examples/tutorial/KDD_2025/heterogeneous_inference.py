@@ -75,9 +75,7 @@ def inference(
     model = init_model()
     # Load the model state
     model.load_state_dict(load_state_dict_from_uri(model_uri))
-    logger.info(
-        f"Used saved model at {model_uri} to initialize the model {model}."
-    )
+    logger.info(f"Used saved model at {model_uri} to initialize the model {model}.")
     model.eval()
 
     for node_type in dataset.get_node_types():

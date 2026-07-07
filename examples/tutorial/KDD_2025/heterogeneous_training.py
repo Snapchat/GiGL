@@ -217,7 +217,10 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--local_world_size", type=str, default="1", help="Number of processes to spawn."
+        "--local_world_size",
+        type=str,
+        default="1",
+        help="Number of processes to spawn.",
     )
     parser.add_argument(
         "--batch_size",
