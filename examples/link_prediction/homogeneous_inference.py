@@ -132,25 +132,24 @@ def _inference_process(
         args (InferenceProcessArgs): Dataclass containing all inference process arguments
     """
 
+    # The device is automatically inferred based off the local process rank and the available devices.
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
-    )  # The device is automatically inferred based off the local process rank and the available devices
-    if torch.cuda.is_available():
-        # If using GPU, we set the device to the local process rank's GPU
-        logger.info(
-            f"Using GPU {device} with index {device.index} on local rank: {local_rank} for inference"
-        )
-        torch.cuda.set_device(device)
-    rank = args.machine_rank * args.local_world_size + local_rank
-    world_size = args.machine_world_size * args.local_world_size
-    logger.info(
-        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
     )
+    if torch.cuda.is_available():
+        # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
+        torch.cuda.set_device(device)
+
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
+        rank=args.machine_rank * args.local_world_size + local_rank,
+        world_size=args.machine_world_size * args.local_world_size,
+    )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    logger.info(
+        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and is using device {device}"
     )
 
     data_loader = gigl.distributed.DistNeighborLoader(

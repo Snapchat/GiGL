@@ -248,25 +248,23 @@ def _training_process(
         local_rank (int): Process number on the current machine.
         args (TrainingProcessArgs): Dataclass containing all training arguments.
     """
-    world_size = args.machine_world_size * args.local_world_size
-    rank = args.machine_rank * args.local_world_size + local_rank
-    logger.info(
-        f"---Current training process rank: {rank}, training process world size: {world_size}"
-    )
-
-    torch.distributed.init_process_group(
-        backend="nccl" if torch.cuda.is_available() else "gloo",
-        init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
-    )
-
-    logger.info(f"---Rank {rank} training process started")
-
+    # The device is automatically inferred based off the local process rank and the available devices.
     device = get_available_device(local_process_rank=local_rank)
     if torch.cuda.is_available():
+        # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
         torch.cuda.set_device(device)
-    logger.info(f"---Rank {rank} training process set device {device}")
+
+    torch.distributed.init_process_group(
+        backend="gloo" if device.type == "cpu" else "nccl",
+        init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
+        rank=args.machine_rank * args.local_world_size + local_rank,
+        world_size=args.machine_world_size * args.local_world_size,
+    )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    logger.info(
+        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and is using device {device}"
+    )
 
     loss_fn = torch.nn.CrossEntropyLoss(reduction="mean")
 
@@ -395,7 +393,8 @@ def _training_process(
         train_loader.shutdown()
         val_loader.shutdown()
 
-        if args.machine_rank == 0 and local_rank == 0:
+        # We save the model on the process with rank 0.
+        if rank == 0:
             logger.info(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, "
                 f"saving model to {args.model_uri}"
@@ -457,7 +456,7 @@ def _training_process(
 
     # Write eval metrics on the lead process only. These get logged as a metrics artifact by the
     # "Log Trainer Eval Metrics" component in the KFP pipeline UI.
-    if args.machine_rank == 0 and local_rank == 0 and args.eval_metrics_uri is not None:
+    if rank == 0 and args.eval_metrics_uri is not None:
         eval_metrics = EvalMetricsCollection(
             metrics=[
                 EvalMetric.from_eval_metric_type(
