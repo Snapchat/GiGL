@@ -28,6 +28,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
     is_label_edge_type,
@@ -1026,6 +1027,103 @@ class DistABLPLoaderTest(TestCase):
         create_test_process_group()
         with self.assertRaises(expected_error, msg=expected_error_message):
             DistABLPLoader(**kwargs)
+
+
+_USER_TO_STORY_POSITIVE = message_passing_to_positive_label(_USER_TO_STORY)
+_USER_TO_USER = EdgeType(_USER, Relation("to"), _USER)
+
+
+def _run_partial_edge_features_ablp(
+    _,
+    dataset: DistDataset,
+    holder,
+):
+    """Iterate a heterogeneous ABLP loader with edge features on only one type.
+
+    ``(user, to, user)`` is reachable from the ``user`` anchors but featureless, so
+    without the per-type feature-fetch guard it triggers a swallowed ``KeyError`` in
+    the sampling coroutine and the loader hangs. The caller joins with a timeout and
+    asserts termination.
+    """
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        # Anchor on the users that carry positive labels (0, 1, 2). Each has a
+        # (user, to, user) out-edge, so the featureless user->user type is sampled.
+        input_nodes=(_USER, torch.tensor([0, 1, 2])),
+        supervision_edge_type=_USER_TO_STORY,
+        batch_size=3,
+        pin_memory_device=torch.device("cpu"),
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+    holder["count"] = count
+    shutdown_rpc()
+
+
+class TestPartialFeatureCoverageABLP(TestCase):
+    """ABLP counterpart of the partial-edge-feature-coverage regression test."""
+
+    def test_partial_edge_features_ablp_yields_batches(self) -> None:
+        message_passing_edge_index = {
+            _USER_TO_USER: torch.tensor([[0, 1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 0]]),
+            _USER_TO_STORY: torch.tensor([[0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]]),
+            _USER_TO_STORY_POSITIVE: torch.tensor([[0, 1, 2], [2, 3, 4]]),
+        }
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(6),
+                _STORY: torch.zeros(6),
+            },
+            edge_partition_book={
+                edge_type: torch.zeros(edge_index.size(1))
+                for edge_type, edge_index in message_passing_edge_index.items()
+            },
+            partitioned_edge_index={
+                edge_type: GraphPartitionData(
+                    edge_index=edge_index,
+                    edge_ids=torch.arange(edge_index.size(1)),
+                )
+                for edge_type, edge_index in message_passing_edge_index.items()
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(6, 2), ids=torch.arange(6)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(6, 2), ids=torch.arange(6)
+                ),
+            },
+            # Edge features on the user->story type only; user->user is reachable
+            # from the anchors but featureless.
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.zeros(6, 3), ids=torch.arange(6)
+                ),
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        holder = mp.Manager().dict()
+        proc = mp.get_context("spawn").Process(
+            target=_run_partial_edge_features_ablp,
+            args=(0, dataset, holder),
+        )
+        proc.start()
+        proc.join(timeout=120)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join()
+            self.fail("ABLP loader hung — partial feature coverage not handled")
+        self.assertEqual(proc.exitcode, 0, "ABLP loader worker exited with an error")
+        self.assertGreater(holder.get("count", 0), 0)
 
 
 if __name__ == "__main__":
