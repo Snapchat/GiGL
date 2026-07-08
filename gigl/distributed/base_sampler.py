@@ -231,13 +231,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         (GLT 0.2.4).  The method name preserves GLT's original typo so that this
         override is matched correctly at runtime.
 
-        The only behavioural change from the GLT original is in the ``DistFeature``
-        label-fetch paths (both homogeneous and heterogeneous): GLT writes
-        ``nlabels.T[0]``, which silently discards all label columns beyond the first
-        and breaks multi-label node classification.  This override writes the full
-        ``nlabels`` tensor instead, avoiding the extra RPC call that a super()-then-
-        re-fetch approach would require.  The non-``DistFeature`` path (plain
-        ``torch.Tensor`` labels) is unchanged — it never applied ``.T[0]``.
+        Behavioural changes from the GLT original:
+        1. For ``DistFeature`` label fetches, preserve multi-label tensors by
+           collapsing only K=1 labels from [N, K] to [N].
+        2. In non-all2all mode, issue all independent ``async_get`` requests
+           before awaiting them, so label, node-feature, and edge-feature
+           fetches can overlap.
 
         # TODO (mkolodner-sc): Now that GiGL owns this method, investigate whether
         # post-processing steps in DistNeighborLoader._collate_fn can be folded in
@@ -261,6 +260,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             for k, v in output.metadata.items():
                 result_map[f"#META.{k}"] = v
 
+        futs: dict[str, asyncio.Future[torch.Tensor]] = {}
+        label_keys: set[str] = set()
+
         if is_hetero:
             for ntype, nodes in output.node.items():
                 result_map[f"{as_str(ntype)}.ids"] = nodes
@@ -282,8 +284,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             input_type = output.input_type
             assert input_type is not None
-            futs = {}
-            label_keys = set()
             if not isinstance(input_type, tuple):
                 if self.dist_node_labels is not None:
                     if isinstance(self.dist_node_labels, DistFeature):
@@ -332,18 +332,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         futs[result_key] = wrap_torch_future(
                             self.dist_edge_feature.async_get(eids, etype)
                         )
-            values = await asyncio.gather(*futs.values())
-            for result_key, value in zip(futs, values):
-                if result_key in label_keys:
-                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
-                    # [N] to match GLT's convention and what downstream code
-                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
-                    # (K>1) keeps the full 2-D matrix.
-                    # TODO (mkolodner-sc): Consider investigating always returning
-                    # 2-D — this may be a breaking change for single-label
-                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                    value = value if value.shape[1] > 1 else value.T[0]
-                result_map[result_key] = value
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
                     result_map[f"{as_str(ntype)}.batch"] = batch
@@ -360,8 +348,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 )
             if self.with_edge:
                 result_map["eids"] = output.edge
-            futs = {}
-            label_keys = set()
             if self.dist_node_labels is not None:
                 if isinstance(self.dist_node_labels, DistFeature):
                     futs["nlabels"] = wrap_torch_future(
@@ -381,20 +367,21 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 futs["efeats"] = wrap_torch_future(
                     self.dist_edge_feature.async_get(eids)
                 )
-            values = await asyncio.gather(*futs.values())
-            for result_key, value in zip(futs, values):
-                if result_key in label_keys:
-                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
-                    # [N] to match GLT's convention and what downstream code
-                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
-                    # (K>1) keeps the full 2-D matrix.
-                    # TODO (mkolodner-sc): Consider investigating always returning
-                    # 2-D — this may be a breaking change for single-label
-                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                    value = value if value.shape[1] > 1 else value.T[0]
-                result_map[result_key] = value
             if output.batch is not None:
                 result_map["batch"] = output.batch
+
+        values = await asyncio.gather(*futs.values())
+        for result_key, value in zip(futs, values):
+            if result_key in label_keys:
+                # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+                # [N] to match GLT's convention and what downstream code
+                # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
+                # (K>1) keeps the full 2-D matrix.
+                # TODO (mkolodner-sc): Consider investigating always returning
+                # 2-D — this may be a breaking change for single-label
+                # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
+                value = value if value.shape[1] > 1 else value.T[0]
+            result_map[result_key] = value
 
         return result_map
 
