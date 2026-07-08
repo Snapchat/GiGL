@@ -1,4 +1,5 @@
 import unittest
+import unittest.mock as mock
 from collections.abc import Mapping
 
 import torch
@@ -52,6 +53,12 @@ _USER = NodeType("user")
 _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
+# An isolated (item, to, tag) edge type used to test partial feature coverage: it is
+# never reachable from `user` seeds within a 2-hop fanout, so a loader over it still
+# completes.
+_ITEM = NodeType("item")
+_TAG = NodeType("tag")
+_ITEM_TO_TAG = EdgeType(_ITEM, Relation("to"), _TAG)
 
 # GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
 # or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
@@ -859,6 +866,209 @@ class DistributedNeighborLoaderTest(TestCase):
         create_test_process_group()
         with self.assertRaises(expected_error):
             DistNeighborLoader(**kwargs)
+
+
+# NOTE on the Fix B test strategy: GiGL loaders always sample via the multiprocess
+# producer, which spawns worker subprocesses with a *fresh* interpreter
+# (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
+# loader process therefore never reaches the sampler running in that subprocess, so we
+# cannot inject a synthetic failure by mocking the sampler. Instead we reproduce the real
+# production failure end-to-end: a heterogeneous dataset with edge features on only a
+# subset of its message-passing edge types. When the featureless type is reached during
+# sampling, its feature lookup raises `KeyError` inside the sampling coroutine — the exact
+# bug Fix B surfaces. Pre-fix this hangs forever, so the test uses a bounded join.
+
+
+def _run_partial_edge_feature_coverage_raises(
+    _,
+    dataset: DistDataset,
+    error_holder,
+):
+    create_test_process_group()
+    assert isinstance(dataset.node_ids, Mapping)
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type]
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    try:
+        for _datum in loader:
+            pass
+    except RuntimeError as e:
+        error_holder["msg"] = str(e)
+    finally:
+        shutdown_rpc()
+
+
+def _run_unreachable_partial_coverage_warns(
+    _,
+    dataset: DistDataset,
+    warn_holder,
+):
+    create_test_process_group()
+    import gigl.distributed.base_dist_loader as base_dist_loader_module
+
+    captured_warnings: list[str] = []
+
+    def _capture(msg, *args, **kwargs):
+        try:
+            captured_warnings.append(msg % args if args else str(msg))
+        except Exception:
+            captured_warnings.append(str(msg))
+
+    assert isinstance(dataset.node_ids, Mapping)
+    with mock.patch.object(
+        base_dist_loader_module.logger, "warning", side_effect=_capture
+    ):
+        loader = DistNeighborLoader(
+            dataset=dataset,
+            input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type]
+            num_neighbors=[2, 2],
+            pin_memory_device=torch.device("cpu"),
+        )
+        count = sum(1 for _datum in loader)
+    warn_holder["count"] = count
+    warn_holder["warned"] = any("feature" in line.lower() for line in captured_warnings)
+    shutdown_rpc()
+
+
+class TestSamplingErrorPropagation(TestCase):
+    def _build_partial_edge_feature_dataset(self) -> DistDataset:
+        """Build a hetero dataset with edge features on only one message-passing type.
+
+        ``user-to-story`` has edge features; ``story-to-user`` does not. Both are
+        reachable from ``user`` seeds within a 2-hop fanout, so the featureless type is
+        actually sampled and its edge-feature lookup raises inside the coroutine.
+        """
+        n = 5
+        edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
+        partition_output = PartitionOutput(
+            node_partition_book={_USER: torch.zeros(n), _STORY: torch.zeros(n)},
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(n),
+                _STORY_TO_USER: torch.zeros(n),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=edge_index, edge_ids=None
+                ),
+                _STORY_TO_USER: GraphPartitionData(
+                    edge_index=edge_index, edge_ids=None
+                ),
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+            },
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.ones(n, 3), ids=torch.arange(n)
+                ),
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+        return dataset
+
+    def test_reachable_sampler_failure_raises_not_hangs(self) -> None:
+        dataset = self._build_partial_edge_feature_dataset()
+        manager = mp.Manager()
+        error_holder = manager.dict()
+        proc = mp.get_context("spawn").Process(
+            target=_run_partial_edge_feature_coverage_raises,
+            args=(0, dataset, error_holder),
+        )
+        proc.start()
+        proc.join(timeout=180)  # bounded: the pre-fix behavior hangs indefinitely
+        alive = proc.is_alive()
+        if alive:
+            proc.terminate()
+            proc.join(timeout=10)
+        self.assertFalse(alive, "loader hung instead of failing fast on a sampler error")
+        message = error_holder.get("msg", "")
+        # The training process raised with the worker's real traceback embedded.
+        self.assertIn("sampling worker failed", message.lower())
+        self.assertIn("story-to-user", message)
+
+    def test_unreachable_partial_coverage_warns_but_completes(self) -> None:
+        # Featureless (item, to, tag) edge type is isolated from `user`, so it is never
+        # sampled: iteration completes with batches, proving construction does NOT raise
+        # on partial coverage, while still emitting the warning.
+        n = 5
+        edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(n),
+                _STORY: torch.zeros(n),
+                _ITEM: torch.zeros(n),
+                _TAG: torch.zeros(n),
+            },
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(n),
+                _STORY_TO_USER: torch.zeros(n),
+                _ITEM_TO_TAG: torch.zeros(n),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=edge_index, edge_ids=None
+                ),
+                _STORY_TO_USER: GraphPartitionData(
+                    edge_index=edge_index, edge_ids=None
+                ),
+                _ITEM_TO_TAG: GraphPartitionData(edge_index=edge_index, edge_ids=None),
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+                _ITEM: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
+                _TAG: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
+            },
+            # Edge features on the user/story types only; (item, to, tag) is featureless.
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.ones(n, 3), ids=torch.arange(n)
+                ),
+                _STORY_TO_USER: FeaturePartitionData(
+                    feats=torch.ones(n, 3), ids=torch.arange(n)
+                ),
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        warn_holder = manager.dict()
+        proc = mp.get_context("spawn").Process(
+            target=_run_unreachable_partial_coverage_warns,
+            args=(0, dataset, warn_holder),
+        )
+        proc.start()
+        proc.join(timeout=180)  # bounded: a false-positive failure would hang
+        alive = proc.is_alive()
+        if alive:
+            proc.terminate()
+            proc.join(timeout=10)
+        self.assertFalse(alive, "loader hung on an unreachable featureless edge type")
+        self.assertGreater(
+            warn_holder.get("count", 0),
+            0,
+            "expected batches; construction must not reject partial coverage",
+        )
+        self.assertTrue(
+            warn_holder.get("warned", False),
+            "expected a partial-feature-coverage warning at construction",
+        )
 
 
 if __name__ == "__main__":

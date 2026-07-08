@@ -60,7 +60,7 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
@@ -242,6 +242,7 @@ class BaseDistLoader(DistLoader):
         )
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
+        self._warn_on_partial_feature_coverage(dataset_schema)
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers
@@ -926,6 +927,79 @@ class BaseDistLoader(DistLoader):
                 f"total_elapsed={total_elapsed:.2f}s"
             )
         self._shutdowned = True
+
+    def _warn_on_partial_feature_coverage(self, dataset_schema: DatasetSchema) -> None:
+        """Warn (never raise) when a heterogeneous dataset has partial feature coverage.
+
+        A featureless message-passing edge type (or node type) is a legitimate,
+        supported shape. It only causes a sampling failure if it is actually
+        *reached* at runtime, and reachability is a frontier-dependent property we
+        cannot prove at construction: the sampler samples a type only when the
+        current frontier has source nodes for it. A type present in the schema and
+        fanout may still be unreachable from a given loader's seeds within its hops,
+        in which case the loader works fine.
+
+        We therefore emit an actionable warning here and rely on the sampling-error
+        poison pill to fast-fail (with a full traceback) if such a type is reached.
+
+        Only the heterogeneous case (dict-typed feature info) is checked; homogeneous
+        datasets carry a single feature tensor with no per-type coverage gaps.
+
+        Args:
+            dataset_schema: Schema carrying per-type feature info and edge types.
+        """
+        edge_feature_info = dataset_schema.edge_feature_info
+        if isinstance(edge_feature_info, dict) and edge_feature_info:
+            message_passing_edge_types = [
+                edge_type
+                for edge_type in (dataset_schema.edge_types or [])
+                if not is_label_edge_type(edge_type)
+            ]
+            featured_edge_types = [
+                edge_type
+                for edge_type in message_passing_edge_types
+                if edge_type in edge_feature_info
+            ]
+            featureless_edge_types = [
+                edge_type
+                for edge_type in message_passing_edge_types
+                if edge_type not in edge_feature_info
+            ]
+            if featureless_edge_types:
+                logger.warning(
+                    "Dataset has partial edge feature coverage: edge features will be "
+                    "fetched only for types %s; types %s have none. If a featureless "
+                    "type is sampled at runtime, sampling for that batch will fail fast "
+                    "with a traceback (a featureless message-passing type is otherwise "
+                    "harmless if never reached).",
+                    featured_edge_types,
+                    featureless_edge_types,
+                )
+
+        node_feature_info = dataset_schema.node_feature_info
+        if isinstance(node_feature_info, dict) and node_feature_info:
+            node_types: set[str] = set()
+            for edge_type in dataset_schema.edge_types or []:
+                node_types.add(edge_type[0])
+                node_types.add(edge_type[2])
+            featured_node_types = [
+                node_type for node_type in node_types if node_type in node_feature_info
+            ]
+            featureless_node_types = [
+                node_type
+                for node_type in node_types
+                if node_type not in node_feature_info
+            ]
+            if featureless_node_types:
+                logger.warning(
+                    "Dataset has partial node feature coverage: node features will be "
+                    "fetched only for types %s; types %s have none. If a featureless "
+                    "type is sampled at runtime, sampling for that batch will fail fast "
+                    "with a traceback (a featureless node type is otherwise harmless if "
+                    "never reached).",
+                    featured_node_types,
+                    featureless_node_types,
+                )
 
     def _apply_ppr_outputs(
         self,
