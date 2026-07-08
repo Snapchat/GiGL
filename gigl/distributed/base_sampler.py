@@ -1,10 +1,14 @@
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
+from threading import Thread
 from typing import Optional, Union
 
 import torch
+import uvloop
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
+from graphlearn_torch.distributed.dist_neighbor_sampler import ensure_device
 from graphlearn_torch.distributed.dist_feature import DistFeature
 from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
@@ -90,6 +94,18 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     Subclasses must override ``_sample_from_nodes`` with their specific
     sampling strategy (e.g., k-hop neighbor sampling, PPR-based sampling).
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._loop.close()
+        self._loop = uvloop.new_event_loop()
+        self._runner_t = Thread(target=self._run_loop)
+        self._runner_t.daemon = True
+        self._loop.call_soon_threadsafe(ensure_device, self.device)
+
+    def _run_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
 
     def _prepare_sample_loop_inputs(
         self,
