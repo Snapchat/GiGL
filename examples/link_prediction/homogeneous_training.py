@@ -64,8 +64,12 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
-# Default number of training processes per machine when one isn't provided via
-# `local_world_size` in trainer args and there are no GPUs available.
+# Fallback training processes per machine when `local_world_size` isn't in trainer args
+# and there are no GPUs (i.e. local dev / e2e runs).
+# Kept at 1, unlike inference's 4: CPU DDP training shares the same cores, so extra
+# processes add all-reduce and per-process model/sampler memory without real speedup, and
+# process count changes training semantics (num_max_train_batches // world_size), which
+# would shift e2e loss curves. Inference has no such coupling and parallelizes cleanly.
 DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 1
 
 
