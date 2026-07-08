@@ -231,12 +231,17 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         (GLT 0.2.4).  The method name preserves GLT's original typo so that this
         override is matched correctly at runtime.
 
-        Behavioural changes from the GLT original:
-        1. For ``DistFeature`` label fetches, preserve multi-label tensors by
-           collapsing only K=1 labels from [N, K] to [N].
-        2. In non-all2all mode, issue all independent ``async_get`` requests
-           before awaiting them, so label, node-feature, and edge-feature
-           fetches can overlap.
+        The only behavioural change from the GLT original is in the ``DistFeature``
+        label-fetch paths (both homogeneous and heterogeneous): GLT writes
+        ``nlabels.T[0]``, which silently discards all label columns beyond the first
+        and breaks multi-label node classification.  This override writes the full
+        ``nlabels`` tensor instead, avoiding the extra RPC call that a super()-then-
+        re-fetch approach would require.  The non-``DistFeature`` path (plain
+        ``torch.Tensor`` labels) is unchanged — it never applied ``.T[0]``.
+
+        In non-all2all mode, this method also issues all independent
+        ``async_get`` requests before awaiting them, so label, node-feature, and
+        edge-feature fetches can overlap.
 
         # TODO (mkolodner-sc): Now that GiGL owns this method, investigate whether
         # post-processing steps in DistNeighborLoader._collate_fn can be folded in
