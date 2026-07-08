@@ -868,15 +868,16 @@ class DistributedNeighborLoaderTest(TestCase):
             DistNeighborLoader(**kwargs)
 
 
-# NOTE on the Fix B test strategy: GiGL loaders always sample via the multiprocess
+# NOTE on the test strategy: GiGL loaders always sample via the multiprocess
 # producer, which spawns worker subprocesses with a *fresh* interpreter
 # (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
 # loader process therefore never reaches the sampler running in that subprocess, so we
-# cannot inject a synthetic failure by mocking the sampler. Instead we reproduce the real
-# production failure end-to-end: a heterogeneous dataset with edge features on only a
+# cannot inject a synthetic failure by mocking the sampler. Instead we reproduce a real
+# sampler failure end-to-end: a heterogeneous dataset with edge features on only a
 # subset of its message-passing edge types. When the featureless type is reached during
 # sampling, its feature lookup raises `KeyError` inside the sampling coroutine — the exact
-# bug Fix B surfaces. Pre-fix this hangs forever, so the test uses a bounded join.
+# swallowed-exception case this change surfaces. Without the change this hangs forever, so
+# the test uses a bounded join.
 
 
 def _run_partial_edge_feature_coverage_raises(
