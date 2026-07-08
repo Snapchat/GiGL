@@ -1,6 +1,7 @@
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
+import time
 from typing import Optional, Union
 
 import torch
@@ -16,12 +17,17 @@ from graphlearn_torch.sampler import (
 from graphlearn_torch.typing import NodeType, as_str
 from graphlearn_torch.utils import reverse_edge_type
 
+from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
 from gigl.utils.data_splitters import PADDING_NODE
+
+logger = Logger()
+_PERF_TIMING_LOG_PREFIX = "PERF_TIMING"
+_COLLATE_TIMING_LOG_INTERVAL = 500
 
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
@@ -258,6 +264,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             A ``SampleMessage`` (``dict[str, torch.Tensor]``) ready to be sent
             over the sampling channel or returned directly to the loader.
         """
+        collate_start = time.perf_counter()
         result_map: SampleMessage = {}
         is_hetero = self.dist_graph.data_cls == "hetero"
         result_map["#IS_HETERO"] = torch.LongTensor([int(is_hetero)])
@@ -388,7 +395,40 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 value = value if value.shape[1] > 1 else value.T[0]
             result_map[result_key] = value
 
+        self._record_collate_timing(time.perf_counter() - collate_start)
+
         return result_map
+
+    def _record_collate_timing(self, collate_s: float) -> None:
+        count = getattr(self, "_collate_timing_count", 0) + 1
+        total_count = getattr(self, "_collate_timing_total_count", 0) + 1
+        collate_sum = getattr(self, "_collate_timing_collate_sum", 0.0) + collate_s
+        collate_min = min(
+            getattr(self, "_collate_timing_collate_min", float("inf")), collate_s
+        )
+        collate_max = max(getattr(self, "_collate_timing_collate_max", 0.0), collate_s)
+
+        if count < _COLLATE_TIMING_LOG_INTERVAL:
+            self._collate_timing_count = count
+            self._collate_timing_total_count = total_count
+            self._collate_timing_collate_sum = collate_sum
+            self._collate_timing_collate_min = collate_min
+            self._collate_timing_collate_max = collate_max
+            return
+
+        logger.info(
+            f"{_PERF_TIMING_LOG_PREFIX} sampler_collate_timing "
+            f"sampler={type(self).__name__} "
+            f"total_count={total_count} window_count={count} "
+            f"mean_collate_ms={1000 * collate_sum / count:.3f} "
+            f"min_collate_ms={1000 * collate_min:.3f} "
+            f"max_collate_ms={1000 * collate_max:.3f}"
+        )
+        self._collate_timing_count = 0
+        self._collate_timing_total_count = total_count
+        self._collate_timing_collate_sum = 0.0
+        self._collate_timing_collate_min = float("inf")
+        self._collate_timing_collate_max = 0.0
 
     async def _sample_from_nodes(
         self,
