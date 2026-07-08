@@ -62,12 +62,6 @@ def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
     return unique_nodes[stable_order]
 
 
-def _collapse_single_label_dim(labels: torch.Tensor) -> torch.Tensor:
-    # DistFeature always returns [N, K]. Collapse K=1 to 1-D [N] to match
-    # GLT's convention and downstream losses such as CrossEntropyLoss.
-    return labels if labels.shape[1] > 1 else labels.T[0]
-
-
 @dataclass
 class SampleLoopInputs:
     """Inputs prepared for the neighbor sampling loop in _sample_from_nodes.
@@ -340,9 +334,16 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             values = await asyncio.gather(*futs.values())
             for key, value in zip(futs, values):
-                result_map[key] = (
-                    _collapse_single_label_dim(value) if key in label_keys else value
-                )
+                if key in label_keys:
+                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+                    # [N] to match GLT's convention and what downstream code
+                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
+                    # (K>1) keeps the full 2-D matrix.
+                    # TODO (mkolodner-sc): Consider investigating always returning
+                    # 2-D — this may be a breaking change for single-label
+                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
+                    value = value if value.shape[1] > 1 else value.T[0]
+                result_map[key] = value
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
                     result_map[f"{as_str(ntype)}.batch"] = batch
@@ -382,9 +383,16 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 )
             values = await asyncio.gather(*futs.values())
             for key, value in zip(futs, values):
-                result_map[key] = (
-                    _collapse_single_label_dim(value) if key in label_keys else value
-                )
+                if key in label_keys:
+                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+                    # [N] to match GLT's convention and what downstream code
+                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
+                    # (K>1) keeps the full 2-D matrix.
+                    # TODO (mkolodner-sc): Consider investigating always returning
+                    # 2-D — this may be a breaking change for single-label
+                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
+                    value = value if value.shape[1] > 1 else value.T[0]
+                result_map[key] = value
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
