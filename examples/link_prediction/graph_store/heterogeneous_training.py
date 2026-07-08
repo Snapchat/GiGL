@@ -179,21 +179,6 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    # We anchor on the *destination* of the supervision edge here, which is the reverse of
-    # standard/colocated mode (see `examples/link_prediction/heterogeneous_training.py`, which uses
-    # `query = supervision_edge_type.src_node_type`). This is deliberate and driven by the storage-side
-    # splitter config, not a bug:
-    #   - Colocated mode auto-builds `DistNodeAnchorLinkSplitter` from the taskMetadata edge directly
-    #     (paper -> author), so with `sampling_direction="in"` the splitter reverses the label edge and
-    #     anchors on paper (the taskMetadata src).
-    #   - Graph store mode instead builds the splitter from `splitter_kwargs` in the task config, which
-    #     sets `supervision_edge_types=[("author", "to", "paper")]` -- the *reverse* of the taskMetadata
-    #     paper -> author edge (see `configs/e2e_het_dblp_sup_gs_task_config.yaml`). With
-    #     `sampling_direction="in"` the splitter reverses that to the labeled edge
-    #     ("paper", "to_gigl_positive", "author") and keys the stored train/val/test splits by its
-    #     destination node type, "author".
-    # So the storage cluster's anchor splits are authors; we must request author anchors here to line up
-    # with them, which means `query = dst` (author) and `labeled = src` (paper) of the taskMetadata edge.
     query_node_type = supervision_edge_type.dst_node_type
     labeled_node_type = supervision_edge_type.src_node_type
     anchor_node_type = query_node_type
@@ -289,10 +274,6 @@ def _compute_loss(
         torch.Tensor: Final loss for the current batch on the current process
     """
     # Extract relevant node types from the supervision edge.
-    # query = dst (author), labeled = src (paper) mirrors `_setup_dataloaders`: because the storage-side
-    # splitter is configured with the reversed supervision edge (`splitter_kwargs.supervision_edge_types`
-    # in the task config), anchors/queries are authors and labels are papers. See the extended note in
-    # `_setup_dataloaders` for the full explanation of why this is reversed from standard mode.
     query_node_type = supervision_edge_type.dst_node_type
     labeled_node_type = supervision_edge_type.src_node_type
 
