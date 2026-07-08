@@ -316,6 +316,13 @@ def _run_ppr_loader_correctness_check(
 
     dataset = create_homogeneous_dataset(edge_index=_TEST_EDGE_INDEX, edge_dir=edge_dir)
 
+    # This dataset has no edge features, so with_edge is derived as False. PPR
+    # outputs come from metadata (ppr_edge_index/ppr_edge_attr), not sampled edge
+    # ids, so with_edge must not affect the PPR results verified below.
+    assert dataset.edge_features is None, (
+        "PPR regression fixture must be edge-feature-free so with_edge is False."
+    )
+
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[],  # Unused by PPR sampler; required by interface
