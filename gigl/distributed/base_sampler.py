@@ -287,13 +287,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if not isinstance(input_type, tuple):
                 if self.dist_node_labels is not None:
                     if isinstance(self.dist_node_labels, DistFeature):
-                        key = f"{as_str(input_type)}.nlabels"
-                        futs[key] = wrap_torch_future(
+                        result_key = f"{as_str(input_type)}.nlabels"
+                        futs[result_key] = wrap_torch_future(
                             self.dist_node_labels.async_get(
                                 output.node[input_type], input_type
                             )
                         )
-                        label_keys.add(key)
+                        label_keys.add(result_key)
                     else:
                         node_labels = self.dist_node_labels.get(input_type, None)
                         if node_labels is not None:
@@ -333,8 +333,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             self.dist_edge_feature.async_get(eids, etype)
                         )
             values = await asyncio.gather(*futs.values())
-            for key, value in zip(futs, values):
-                if key in label_keys:
+            for result_key, value in zip(futs, values):
+                if result_key in label_keys:
                     # DistFeature always returns [N, K]. We collapse K=1 to 1-D
                     # [N] to match GLT's convention and what downstream code
                     # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
@@ -343,7 +343,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     # 2-D — this may be a breaking change for single-label
                     # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
                     value = value if value.shape[1] > 1 else value.T[0]
-                result_map[key] = value
+                result_map[result_key] = value
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
                     result_map[f"{as_str(ntype)}.batch"] = batch
@@ -382,8 +382,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     self.dist_edge_feature.async_get(eids)
                 )
             values = await asyncio.gather(*futs.values())
-            for key, value in zip(futs, values):
-                if key in label_keys:
+            for result_key, value in zip(futs, values):
+                if result_key in label_keys:
                     # DistFeature always returns [N, K]. We collapse K=1 to 1-D
                     # [N] to match GLT's convention and what downstream code
                     # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
@@ -392,7 +392,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     # 2-D — this may be a breaking change for single-label
                     # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
                     value = value if value.shape[1] > 1 else value.T[0]
-                result_map[key] = value
+                result_map[result_key] = value
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
