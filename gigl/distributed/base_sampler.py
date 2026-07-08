@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -59,6 +60,12 @@ def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
     )
     stable_order = torch.argsort(first_positions)
     return unique_nodes[stable_order]
+
+
+def _collapse_single_label_dim(labels: torch.Tensor) -> torch.Tensor:
+    # DistFeature always returns [N, K]. Collapse K=1 to 1-D [N] to match
+    # GLT's convention and downstream losses such as CrossEntropyLoss.
+    return labels if labels.shape[1] > 1 else labels.T[0]
 
 
 @dataclass
@@ -281,23 +288,18 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             input_type = output.input_type
             assert input_type is not None
+            futs = {}
+            label_keys = set()
             if not isinstance(input_type, tuple):
                 if self.dist_node_labels is not None:
                     if isinstance(self.dist_node_labels, DistFeature):
-                        fut = self.dist_node_labels.async_get(
-                            output.node[input_type], input_type
+                        key = f"{as_str(input_type)}.nlabels"
+                        futs[key] = wrap_torch_future(
+                            self.dist_node_labels.async_get(
+                                output.node[input_type], input_type
+                            )
                         )
-                        nlabels = await wrap_torch_future(fut)
-                        # DistFeature always returns [N, K]. We collapse K=1 to 1-D
-                        # [N] to match GLT's convention and what downstream code
-                        # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
-                        # (K>1) keeps the full 2-D matrix.
-                        # TODO (mkolodner-sc): Consider investigating always returning
-                        # 2-D — this may be a breaking change for single-label
-                        # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                        result_map[f"{as_str(input_type)}.nlabels"] = (
-                            nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
-                        )
+                        label_keys.add(key)
                     else:
                         node_labels = self.dist_node_labels.get(input_type, None)
                         if node_labels is not None:
@@ -313,17 +315,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     for ntype, nfeats in nfeat_dict.items():
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
                 else:
-                    nfeat_fut_dict = {}
                     for ntype, nodes in output.node.items():
                         nodes = nodes.to(torch.long)
-                        nfeat_fut_dict[ntype] = self.dist_node_feature.async_get(
-                            nodes, ntype
+                        futs[f"{as_str(ntype)}.nfeats"] = wrap_torch_future(
+                            self.dist_node_feature.async_get(nodes, ntype)
                         )
-                    for ntype, fut in nfeat_fut_dict.items():
-                        nfeats = await wrap_torch_future(fut)
-                        result_map[f"{as_str(ntype)}.nfeats"] = nfeats
             if self.dist_edge_feature is not None and self.with_edge:
-                efeat_fut_dict = {}
                 for etype in self.edge_types:
                     if self.edge_dir == "in":
                         eids = result_map.get(
@@ -333,17 +330,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         eids = result_map.get(f"{as_str(etype)}.eids", None)
                     if eids is not None:
                         eids = eids.to(torch.long)
-                        efeat_fut_dict[etype] = self.dist_edge_feature.async_get(
-                            eids, etype
+                        result_key = (
+                            f"{as_str(etype)}.efeats"
+                            if self.edge_dir == "out"
+                            else f"{as_str(reverse_edge_type(etype))}.efeats"
                         )
-                for etype, fut in efeat_fut_dict.items():
-                    efeats = await wrap_torch_future(fut)
-                    if self.edge_dir == "out":
-                        result_map[f"{as_str(etype)}.efeats"] = efeats
-                    elif self.edge_dir == "in":
-                        result_map[f"{as_str(reverse_edge_type(etype))}.efeats"] = (
-                            efeats
+                        futs[result_key] = wrap_torch_future(
+                            self.dist_edge_feature.async_get(eids, etype)
                         )
+            values = await asyncio.gather(*futs.values())
+            for key, value in zip(futs, values):
+                result_map[key] = (
+                    _collapse_single_label_dim(value) if key in label_keys else value
+                )
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
                     result_map[f"{as_str(ntype)}.batch"] = batch
@@ -360,33 +359,32 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 )
             if self.with_edge:
                 result_map["eids"] = output.edge
+            futs = {}
+            label_keys = set()
             if self.dist_node_labels is not None:
                 if isinstance(self.dist_node_labels, DistFeature):
-                    fut = self.dist_node_labels.async_get(output.node)
-                    nlabels = await wrap_torch_future(fut)
-                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
-                    # [N] to match GLT's convention and what downstream code
-                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
-                    # (K>1) keeps the full 2-D matrix.
-                    # TODO (mkolodner-sc): Consider investigating always returning
-                    # 2-D — this may be a breaking change for single-label
-                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                    result_map["nlabels"] = (
-                        nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
+                    futs["nlabels"] = wrap_torch_future(
+                        self.dist_node_labels.async_get(output.node)
                     )
+                    label_keys.add("nlabels")
                 else:
                     result_map["nlabels"] = self.dist_node_labels[
                         output.node.to(self.dist_node_labels.device)
                     ]
             if self.dist_node_feature is not None:
-                fut = self.dist_node_feature.async_get(output.node)
-                nfeats = await wrap_torch_future(fut)
-                result_map["nfeats"] = nfeats
+                futs["nfeats"] = wrap_torch_future(
+                    self.dist_node_feature.async_get(output.node)
+                )
             if self.dist_edge_feature is not None:
                 eids = result_map["eids"]
-                fut = self.dist_edge_feature.async_get(eids)
-                efeats = await wrap_torch_future(fut)
-                result_map["efeats"] = efeats
+                futs["efeats"] = wrap_torch_future(
+                    self.dist_edge_feature.async_get(eids)
+                )
+            values = await asyncio.gather(*futs.values())
+            for key, value in zip(futs, values):
+                result_map[key] = (
+                    _collapse_single_label_dim(value) if key in label_keys else value
+                )
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
