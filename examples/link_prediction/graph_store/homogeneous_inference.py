@@ -104,6 +104,7 @@ from gigl.distributed.graph_store import (
     RemoteDistDataset,
     get_graph_store_info,
     init_compute_process,
+    shutdown_compute_process,
 )
 from gigl.nn import LinkPredictionGNN
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -115,12 +116,6 @@ from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
-
-# Default number of inference processes per machine incase one isnt provided in inference args
-# i.e. `local_world_size` is not provided, and we can't infer automatically.
-# If there are GPUs attached to the machine, we automatically infer to setting
-# LOCAL_WORLD_SIZE == # of gpus on the machine.
-DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
 
 
 @dataclass(frozen=True)
@@ -137,7 +132,7 @@ class InferenceProcessArgs:
         cluster_info (GraphStoreInfo): Cluster topology info for graph store mode, containing
             information about storage and compute node ranks and addresses.
         embedding_gcs_path (GcsUri): GCS path to write embeddings to.
-        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        model_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_feature_dim (int): Input node feature dimension for the model.
@@ -145,13 +140,12 @@ class InferenceProcessArgs:
         inference_batch_size (int): Batch size to use for inference.
         num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
             where the ith item corresponds to the number of items to sample for the ith hop.
-        sampling_workers_per_inference_process (int): Number of sampling workers per inference
+        sampling_workers_per_process (int): Number of sampling workers per inference
             process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
             the channel during sampling (e.g., "4GB").
         log_every_n_batch (int): Frequency to log batch information during inference.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
-        gbml_config_pb_wrapper (GbmlConfigPbWrapper): Wrapper containing GBML configuration.
     """
 
     # Distributed context
@@ -160,7 +154,7 @@ class InferenceProcessArgs:
 
     # Data paths
     embedding_gcs_path: GcsUri
-    model_state_dict_uri: Uri
+    model_uri: Uri
 
     # Model configuration
     hid_dim: int
@@ -171,11 +165,10 @@ class InferenceProcessArgs:
     # Inference configuration
     inference_batch_size: int
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
-    sampling_workers_per_inference_process: int
+    sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
     inference_node_type: NodeType
-    gbml_config_pb_wrapper: GbmlConfigPbWrapper
 
 
 @torch.no_grad()
@@ -233,13 +226,11 @@ def _inference_process(
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=dataset,
         num_neighbors=args.num_neighbors,
-        local_process_rank=local_rank,
-        local_process_world_size=args.local_world_size,
         input_nodes=input_nodes,  # Since homogeneous,
-        num_workers=args.sampling_workers_per_inference_process,
+        num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,
         pin_memory_device=device,
-        worker_concurrency=args.sampling_workers_per_inference_process,
+        worker_concurrency=args.sampling_workers_per_process,
         channel_size=args.sampling_worker_shared_channel_size,
         # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
         # don't compete for memory during initialization, causing OOM
@@ -248,7 +239,7 @@ def _inference_process(
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=args.model_state_dict_uri, device=device
+        load_from_uri=args.model_uri, device=device
     )
     model: LinkPredictionGNN = init_example_gigl_homogeneous_model(
         node_feature_dim=args.node_feature_dim,
@@ -363,30 +354,12 @@ def _inference_process(
     torch.distributed.barrier()
 
     data_loader.shutdown()
+    shutdown_compute_process()
     gc.collect()
 
     logger.info(
         f"--- All machines local rank {local_rank} finished inference. Deleted data loader"
     )
-    output_bq_table_path = InferenceAssets.get_enumerated_embedding_table_path(
-        args.gbml_config_pb_wrapper, args.inference_node_type
-    )
-    bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
-        bq_table_path=output_bq_table_path
-    )
-    # After inference is finished, we use the process on the Machine 0 to load embeddings from GCS to BQ.
-    if rank == 0:
-        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
-
-        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
-        # representing the load operation, which allows user to monitor and retrieve
-        # details about the job status and result.
-        _ = load_embeddings_to_bigquery(
-            gcs_folder=args.embedding_gcs_path,
-            project_id=bq_project_id,
-            dataset_id=bq_dataset_id,
-            table_id=bq_table_name,
-        )
 
     # We don't see logs for graph store mode for whatever reason.
     # TOOD(#442): Revert this once the GCP issues are resolved.
@@ -404,6 +377,8 @@ def _run_example_inference(
         task_config_uri (str): Path to frozen GBMLConfigPbWrapper
     """
     program_start_time = time.time()
+    mp.set_start_method("spawn")
+    logger.info(f"Starting sub process method: {mp.get_start_method()}")
 
     # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
     # Thus, the user is responsible here for 1. spinning up a single process per machine,
@@ -440,11 +415,11 @@ def _run_example_inference(
         applied_task_identifier=AppliedTaskIdentifier(job_name),
         bq_table_path=output_bq_table_path,
     )
-    node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_node_type
+    node_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map[
+        graph_metadata.homogeneous_node_type
     ]
-    edge_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_edge_type
+    edge_feature_dim = gbml_config_pb_wrapper.edge_type_to_feature_dim_map[
+        graph_metadata.homogeneous_edge_type
     ]
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
@@ -453,29 +428,16 @@ def _run_example_inference(
     hid_dim = int(inferencer_args.get("hid_dim", "16"))
     out_dim = int(inferencer_args.get("out_dim", "16"))
 
-    arg_local_world_size = inferencer_args.get("local_world_size")
-    if arg_local_world_size is not None:
-        local_world_size = int(arg_local_world_size)
-        logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
-        if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
-            logger.warning(
-                f"local_world_size {local_world_size} does not match the number of GPUs {torch.cuda.device_count()}. "
-                "This may lead to unexpected failures with NCCL communication incase GPUs are being used for "
-                + "training/inference. Consider setting local_world_size to the number of GPUs."
-            )
-    else:
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            # If GPUs are available, we set the local_world_size to the number of GPUs
-            local_world_size = torch.cuda.device_count()
-            logger.info(
-                f"Detected {local_world_size} GPUs. Thus, setting local_world_size to {local_world_size}"
-            )
-        else:
-            # If no GPUs are available, we set the local_world_size to the number of inference processes per machine
-            logger.info(
-                f"No GPUs detected. Thus, setting local_world_size to `{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
-            )
-            local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+    # In Graph Store mode the launcher fixes the number of processes per compute machine
+    # (COMPUTE_CLUSTER_LOCAL_WORLD_SIZE env var, exposed as cluster_info.num_processes_per_compute);
+    # spawning any other number of processes would desync ranks from the compute process group.
+    local_world_size = cluster_info.num_processes_per_compute
+
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     if cluster_info.compute_node_rank == 0:
         gcs_utils = GcsUtils()
@@ -497,14 +459,14 @@ def _run_example_inference(
     # as a string of a list of integers, such as "[10, 10]".
     num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
 
-    # While the ideal value for `sampling_workers_per_inference_process` has been identified to be
+    # While the ideal value for `sampling_workers_per_process` has been identified to be
     # between `2` and `4`, this may need some tuning depending on the pipeline. We default this
     # value to `4` here for simplicity. A `sampling_workers_per_process` which is too small may
     # not have enough parallelization for sampling, which would slow down inference, while a value
     # which is too large may slow down each sampling process due to competing resources, which
     # would also then slow down inference.
-    sampling_workers_per_inference_process = int(
-        inferencer_args.get("sampling_workers_per_inference_process", "4")
+    sampling_workers_per_process = int(
+        inferencer_args.get("sampling_workers_per_process", "4")
     )
 
     # This value represents the shared-memory buffer size (bytes) allocated for the channel during
@@ -523,18 +485,17 @@ def _run_example_inference(
         local_world_size=local_world_size,
         cluster_info=cluster_info,
         embedding_gcs_path=embedding_output_gcs_folder,
-        model_state_dict_uri=model_uri,
+        model_uri=model_uri,
         hid_dim=hid_dim,
         out_dim=out_dim,
         node_feature_dim=node_feature_dim,
         edge_feature_dim=edge_feature_dim,
         inference_batch_size=inference_batch_size,
         num_neighbors=num_neighbors,
-        sampling_workers_per_inference_process=sampling_workers_per_inference_process,
+        sampling_workers_per_process=sampling_workers_per_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         log_every_n_batch=log_every_n_batch,
         inference_node_type=graph_metadata.homogeneous_node_type,
-        gbml_config_pb_wrapper=gbml_config_pb_wrapper,
     )
     mp.spawn(
         fn=_inference_process,
@@ -542,6 +503,22 @@ def _run_example_inference(
         nprocs=local_world_size,
         join=True,
     )
+
+    # After inference is finished, the compute-cluster lead node loads embeddings from GCS to BigQuery.
+    if cluster_info.compute_node_rank == 0:
+        logger.info("--- Machine 0 triggers loading embeddings from GCS to BigQuery")
+        bq_project_id, bq_dataset_id, bq_table_name = BqUtils.parse_bq_table_path(
+            bq_table_path=output_bq_table_path
+        )
+        # The `load_embeddings_to_bigquery` API returns a BigQuery LoadJob object
+        # representing the load operation, which allows user to monitor and retrieve
+        # details about the job status and result.
+        _ = load_embeddings_to_bigquery(
+            gcs_folder=embedding_output_gcs_folder,
+            project_id=bq_project_id,
+            dataset_id=bq_dataset_id,
+            table_id=bq_table_name,
+        )
 
     logger.info(
         f"--- Inference finished, which took {time.time() - inference_start_time:.2f} seconds"
