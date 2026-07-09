@@ -27,6 +27,9 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
+from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    apply_feature_quantization_transform,
+)
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
@@ -362,6 +365,25 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
+        q_spec = None
+        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
+            q_spec = preprocessing_spec.feature_quantization_spec
+        if q_spec is not None:
+            if should_use_existing_transform_fn:
+                analyzed_metadata = None
+            else:
+                analyzed_metadata = analyzed_transform_fn[1].deferred_metadata  # type: ignore
+
+            transformed_features, resolved_transformed_metadata = (
+                apply_feature_quantization_transform(
+                    transformed_features=transformed_features,
+                    transformed_metadata=transformed_metadata,
+                    analyzed_metadata=analyzed_metadata,
+                    spec=q_spec,
+                    metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    schema_path=transformed_features_info.transformed_features_schema_path.uri,
+                )
+            )
 
         transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
             file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,

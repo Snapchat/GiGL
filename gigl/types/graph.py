@@ -98,6 +98,12 @@ class PartitionOutput:
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ]
 
+    # Quantized node features on current rank. These are packed uint8 features
+    # aligned by node id and dequantized/appended in the sampler collate path.
+    partitioned_node_quantized_features: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
+
 
 @dataclass(frozen=True)
 class FeatureInfo:
@@ -105,6 +111,34 @@ class FeatureInfo:
 
     dim: int
     dtype: torch.dtype
+
+
+@dataclass(frozen=True)
+class FeatureQuantizationMetadata:
+    """Metadata needed to unpack/dequantize append-only packed features."""
+
+    bits: int
+    dequantized_feature_dim: int
+    dequantized_feature_keys: tuple[str, ...] = ()
+    clip_min: Optional[float] = None
+    clip_max: Optional[float] = None
+    neg_mean: Optional[float] = None
+    pos_mean: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        valid_bits = (1, 2, 4, 8)
+        if self.bits not in valid_bits:
+            raise ValueError(f"bits must be one of {valid_bits}, got {self.bits}")
+        if self.dequantized_feature_dim < 0:
+            raise ValueError(
+                "dequantized_feature_dim must be non-negative, got "
+                f"{self.dequantized_feature_dim}"
+            )
+
+    @property
+    def packed_feature_dim(self) -> int:
+        per_byte = 8 // self.bits
+        return (self.dequantized_feature_dim + per_byte - 1) // per_byte
 
 
 def _get_label_edges(
@@ -151,6 +185,10 @@ class LoadedGraphTensors:
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
+    # Unpartitioned packed uint8 node features.
+    node_quantized_features: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """

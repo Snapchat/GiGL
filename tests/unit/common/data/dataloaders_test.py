@@ -291,17 +291,19 @@ class TFRecordDataLoaderTest(TestCase):
     ):
         """Test TFRecordDataLoader's ability to load features and optionally labels."""
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
-            serialized_tf_record_info=SerializedTFRecordInfo(
-                tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
-                feature_spec=feature_spec,
-                feature_keys=feature_keys,
-                feature_dim=feature_dim,
-                entity_key="node_id",
-                label_keys=label_keys,
-                tfrecord_uri_pattern="100.tfrecord",
-            ),
-            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        node_ids, feature_tensor, quantized_feature_tensor, label_tensor = (
+            loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+                    feature_spec=feature_spec,
+                    feature_keys=feature_keys,
+                    feature_dim=feature_dim,
+                    entity_key="node_id",
+                    label_keys=label_keys,
+                    tfrecord_uri_pattern="100.tfrecord",
+                ),
+                tf_dataset_options=TFDatasetOptions(deterministic=True),
+            )
         )
 
         # Verify entity IDs are loaded correctly
@@ -396,16 +398,18 @@ class TFRecordDataLoaderTest(TestCase):
         self.addCleanup(temp_dir.cleanup)
 
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
-            serialized_tf_record_info=SerializedTFRecordInfo(
-                tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
-                feature_spec={},  # Doesn't matter what this is.
-                feature_keys=feature_keys,
-                feature_dim=feature_dim,
-                entity_key=entity_key,
-                label_keys=label_keys,
-            ),
-            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        node_ids, feature_tensor, quantized_feature_tensor, label_tensor = (
+            loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
+                    feature_spec={},  # Doesn't matter what this is.
+                    feature_keys=feature_keys,
+                    feature_dim=feature_dim,
+                    entity_key=entity_key,
+                    label_keys=label_keys,
+                ),
+                tf_dataset_options=TFDatasetOptions(deterministic=True),
+            )
         )
 
         assert_close(node_ids, expected_node_ids)
@@ -470,21 +474,23 @@ class TFRecordDataLoaderTest(TestCase):
             condensed_node_type
         ]
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        _, feature_tensor, label_tensor = loader.load_as_torch_tensors(
-            serialized_tf_record_info=SerializedTFRecordInfo(
-                tfrecord_uri_prefix=UriFactory.create_uri(
-                    node_metadata.tfrecord_uri_prefix
+        _, feature_tensor, quantized_feature_tensor, label_tensor = (
+            loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(
+                        node_metadata.tfrecord_uri_prefix
+                    ),
+                    feature_spec=preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_schema_map[
+                        condensed_node_type
+                    ].feature_spec,
+                    feature_keys=node_metadata.feature_keys,
+                    feature_dim=node_metadata.feature_dim,
+                    entity_key=node_metadata.node_id_key,
+                    label_keys=node_metadata.label_keys,
+                    tfrecord_uri_pattern=".*\.tfrecord$",
                 ),
-                feature_spec=preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_schema_map[
-                    condensed_node_type
-                ].feature_spec,
-                feature_keys=node_metadata.feature_keys,
-                feature_dim=node_metadata.feature_dim,
-                entity_key=node_metadata.node_id_key,
-                label_keys=node_metadata.label_keys,
-                tfrecord_uri_pattern=".*\.tfrecord$",
-            ),
-            tf_dataset_options=TFDatasetOptions(deterministic=True),
+                tf_dataset_options=TFDatasetOptions(deterministic=True),
+            )
         )
         # Ensure we have loaded data
         assert feature_tensor is not None and label_tensor is not None

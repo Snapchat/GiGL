@@ -128,7 +128,11 @@ class DistRangePartitioner(DistPartitioner):
         self,
         node_partition_book: dict[NodeType, PartitionBook],
         node_type: NodeType,
-    ) -> tuple[Optional[FeaturePartitionData], Optional[FeaturePartitionData]]:
+    ) -> tuple[
+        Optional[FeaturePartitionData],
+        Optional[FeaturePartitionData],
+        Optional[FeaturePartitionData],
+    ]:
         """
         Partitions node features according to the node partition book. We rely on the functionality from the parent tensor-based partitioner here,
         and add logic to sort the node features by node indices which is specific to range-based partitioning. This is done so that the range-based
@@ -143,6 +147,7 @@ class DistRangePartitioner(DistPartitioner):
         """
         (
             feature_partition_data,
+            quantized_feature_partition_data,
             labels_partition_data,
         ) = super()._partition_node_features_and_labels(
             node_partition_book=node_partition_book, node_type=node_type
@@ -167,6 +172,22 @@ class DistRangePartitioner(DistPartitioner):
         else:
             partitioned_node_feature_data = None
 
+        if quantized_feature_partition_data is not None:
+            ids = quantized_feature_partition_data.ids
+            assert ids is not None
+            sorted_node_ids_indices = torch.argsort(ids)
+            partitioned_node_quantized_features = (
+                quantized_feature_partition_data.feats[sorted_node_ids_indices]
+            )
+            partitioned_node_quantized_feature_data = FeaturePartitionData(
+                feats=partitioned_node_quantized_features, ids=None
+            )
+
+            del sorted_node_ids_indices
+            gc.collect()
+        else:
+            partitioned_node_quantized_feature_data = None
+
         if labels_partition_data is not None:
             ids = labels_partition_data.ids
             assert ids is not None
@@ -183,7 +204,11 @@ class DistRangePartitioner(DistPartitioner):
         else:
             partitioned_node_label_data = None
 
-        return partitioned_node_feature_data, partitioned_node_label_data
+        return (
+            partitioned_node_feature_data,
+            partitioned_node_quantized_feature_data,
+            partitioned_node_label_data,
+        )
 
     def _partition_edge_index_and_edge_features(
         self,
