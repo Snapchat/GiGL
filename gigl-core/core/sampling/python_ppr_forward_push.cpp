@@ -21,7 +21,7 @@ namespace gigl {
 // pybind11/stl.h handles all type conversions automatically; the other methods use
 // direct member function pointers for the same reason.
 static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> neighborTensorsByEtypeId;
+    NeighborFetchMap neighborTensorsByEtypeId;
     // Dict iteration touches Python objects — GIL must be held here.
     for (auto item : fetchedByEtypeId) {
         auto edgeTypeId = item.first.cast<int32_t>();
@@ -57,5 +57,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       std::vector<torch::Tensor>>())
         .def("drain_queue", &gigl::PPRForwardPush::drainQueue)
         .def("push_residuals", gigl::pushResidualsWrapper)
-        .def("extract_top_k", &gigl::PPRForwardPush::extractTopK);
+        .def("extract_top_k", &gigl::PPRForwardPush::extractTopK)
+        .def("extract_top_k_with_residual_top_up", &gigl::PPRForwardPush::extractTopKWithResidualTopUp);
 }
