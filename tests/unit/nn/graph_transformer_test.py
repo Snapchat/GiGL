@@ -14,6 +14,7 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoderLayer,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.transforms.graph_transformer import PPR_RELATION_FEATURES_NAME
 from tests.test_assets.test_case import TestCase
 
 
@@ -1284,6 +1285,34 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertTrue(
             torch.allclose(base_embeddings, augmented_embeddings, atol=1e-6)
         )
+
+    def test_forward_supports_ppr_relation_token_input_features(self) -> None:
+        data = _create_user_graph_with_ppr_edges()
+        data["user", "ppr", "user"].edge_attr = torch.tensor(
+            [
+                [0.9, 1.0, 0.0],
+                [0.4, 0.0, 1.0],
+                [0.7, 1.0, 1.0],
+            ]
+        )
+        ppr_edge_type = EdgeType(self._node_type, Relation("ppr"), self._node_type)
+
+        encoder = self._create_encoder(
+            edge_type_to_feat_dim_map={ppr_edge_type: 0},
+            sequence_construction_method="ppr",
+            anchor_based_input_attr_names=[PPR_RELATION_FEATURES_NAME],
+        )
+        encoder.eval()
+
+        with torch.no_grad():
+            embeddings = encoder(
+                data=data,
+                anchor_node_type=self._node_type,
+                device=self._device,
+            )
+
+        self.assertEqual(embeddings.shape, (3, 6))
+        self.assertFalse(torch.isnan(embeddings).any())
 
 
 class TestFeedForwardNetwork(TestCase):

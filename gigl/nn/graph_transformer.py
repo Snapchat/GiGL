@@ -22,11 +22,14 @@ from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
     heterodata_to_graph_transformer_input,
 )
+
+_L2_NORMALIZE_EPS = 1e-6
 
 
 def _get_node_type_positional_encodings(
@@ -77,6 +80,26 @@ def _build_sinusoidal_sequence_position_table(
             positions * div_term[: position_table[:, 1::2].shape[1]]
         )
     return position_table
+
+
+def _zero_initialize_lazy_linear_if_needed(module: nn.Module, input: Tensor) -> None:
+    """Materialize an uninitialized LazyLinear and make it initially no-op."""
+    has_uninitialized_params = getattr(module, "has_uninitialized_params", None)
+    if not callable(has_uninitialized_params) or not has_uninitialized_params():
+        return
+
+    initialize_parameters = getattr(module, "initialize_parameters", None)
+    if not callable(initialize_parameters):
+        return
+
+    initialize_parameters(input)
+    with torch.no_grad():
+        weight = getattr(module, "weight", None)
+        if isinstance(weight, nn.Parameter):
+            weight.zero_()
+        bias = getattr(module, "bias", None)
+        if isinstance(bias, nn.Parameter):
+            bias.zero_()
 
 
 # Supported activation functions for FeedForwardNetwork
@@ -682,8 +705,11 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: List of anchor-relative attribute names
             used as token-aligned input features. Sparse graph-level attributes
             are looked up from ``data`` and ``"ppr_weight"`` resolves to PPR
-            edge weights in PPR mode. These are projected to ``hid_dim`` and
-            added to the sequence tokens after sequence construction.
+            edge weights in PPR mode. The reserved name
+            ``"ppr_relation_features"`` resolves to additional PPR edge-attr
+            columns after the first weight column. These are projected to
+            ``hid_dim`` and added to the sequence tokens after sequence
+            construction.
             Example: ``['hop_distance', 'ppr_weight']`` for continuous features,
             or ``['hop_distance']`` when ``hop_distance`` will be embedded via
             ``anchor_based_input_embedding_dict``.
@@ -858,18 +884,28 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
-        if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
+        ppr_reserved_feature_names = {
+            PPR_WEIGHT_FEATURE_NAME,
+            PPR_RELATION_FEATURES_NAME,
+        }
+        if ppr_reserved_feature_names & set(pairwise_bias_attr_names):
             raise ValueError(
-                f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and "
+                f"{sorted(ppr_reserved_feature_names)} are anchor-relative features and "
                 "cannot be used as pairwise attention bias."
             )
         if (
-            PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
+            ppr_reserved_feature_names
+            & set(anchor_bias_attr_names + anchor_input_attr_names)
             and sequence_construction_method != "ppr"
         ):
             raise ValueError(
-                "The reserved anchor-relative feature 'ppr_weight' requires "
+                "Reserved PPR anchor-relative features require "
                 "sequence_construction_method='ppr'."
+            )
+        if PPR_RELATION_FEATURES_NAME in anchor_bias_attr_names:
+            raise ValueError(
+                f"'{PPR_RELATION_FEATURES_NAME}' is a multi-column token-input "
+                "feature and cannot be used as attention bias."
             )
         self._sequence_construction_method = sequence_construction_method
         self._sampling_direction = sampling_direction
@@ -931,7 +967,6 @@ class GraphTransformerEncoder(nn.Module):
                 None,
                 persistent=False,
             )
-
         # Per-node-type input projection to hid_dim (like HGT's lin_dict)
         self._node_projection_dict = nn.ModuleDict(
             {
@@ -1096,14 +1131,14 @@ class GraphTransformerEncoder(nn.Module):
             if hasattr(data[edge_type], "edge_attr"):
                 projected_data[edge_type].edge_attr = data[edge_type].edge_attr
         # Copy relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
-        relative_pe_attr_names = {
-            attr_name
-            for attr_name in (self._anchor_based_attention_bias_attr_names or [])
-            if attr_name != PPR_WEIGHT_FEATURE_NAME
-        }
-        relative_pe_attr_names.update(self._anchor_based_input_attr_names or [])
-        relative_pe_attr_names.update(self._pairwise_attention_bias_attr_names or [])
-        relative_pe_attr_names.discard(PPR_WEIGHT_FEATURE_NAME)
+        relative_pe_attr_names = (
+            set(self._anchor_based_attention_bias_attr_names or [])
+            | set(self._anchor_based_input_attr_names or [])
+            | set(self._pairwise_attention_bias_attr_names or [])
+        )
+        relative_pe_attr_names.difference_update(
+            {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
+        )
         if relative_pe_attr_names:
             for attr_name in sorted(relative_pe_attr_names):
                 if hasattr(data, attr_name):
@@ -1185,7 +1220,8 @@ class GraphTransformerEncoder(nn.Module):
         embeddings = self._output_projection(embeddings)
 
         if self._should_l2_normalize_embedding_layer_output:
-            embeddings = F.normalize(embeddings, p=2, dim=-1)
+            # Default eps=1e-12 underflows to zero in fp16 autocast.
+            embeddings = F.normalize(embeddings, p=2, dim=-1, eps=_L2_NORMALIZE_EPS)
 
         return embeddings
 
@@ -1268,11 +1304,21 @@ class GraphTransformerEncoder(nn.Module):
                         "sequence auxiliary data."
                     )
                 continuous_feature_parts.append(token_input_features[attr_name])
+            continuous_features = torch.cat(continuous_feature_parts, dim=-1).to(
+                sequences.dtype
+            )
+            continuous_features = torch.nan_to_num(
+                continuous_features,
+                nan=0.0,
+                posinf=1.0,
+                neginf=0.0,
+            )
+            _zero_initialize_lazy_linear_if_needed(
+                module=self._token_input_projection,
+                input=continuous_features,
+            )
             token_contribution = token_contribution + (
-                self._token_input_projection(
-                    torch.cat(continuous_feature_parts, dim=-1).to(sequences.dtype)
-                )
-                * valid_token_mask
+                self._token_input_projection(continuous_features) * valid_token_mask
             )
 
         return token_contribution
@@ -1410,6 +1456,41 @@ class GraphTransformerEncoder(nn.Module):
 
         return attn_bias
 
+    def _readout_from_encoded_sequences(
+        self,
+        x: Tensor,
+        valid_mask: Tensor,
+    ) -> Tensor:
+        anchor = x[:, 0, :].unsqueeze(1)
+        if self._readout_mode == "anchor_only":
+            return anchor.squeeze(1)
+
+        # Historical readout: anchor token plus attention-weighted neighbors.
+        neighbors = x[:, 1:, :]
+        neighbor_valid_mask = valid_mask[:, 1:]
+        seq_minus_one = neighbors.size(1)
+
+        if seq_minus_one == 0:
+            return anchor.squeeze(1)
+
+        anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
+        if self._readout_attention is None:
+            raise ValueError("Readout attention layer is not initialized.")
+        readout_scores = self._readout_attention(
+            torch.cat([anchor_expanded, neighbors], dim=-1)
+        )
+        readout_scores = readout_scores.masked_fill(
+            ~neighbor_valid_mask.unsqueeze(-1),
+            torch.finfo(readout_scores.dtype).min,
+        )
+        readout_weights = F.softmax(readout_scores, dim=1)
+        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
+        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
+            readout_weights.dtype
+        )
+        neighbor_aggregation = (neighbors * readout_weights).sum(dim=1, keepdim=True)
+        return (anchor + neighbor_aggregation).squeeze(1)
+
     def _encode_and_readout(
         self,
         sequences: Tensor,
@@ -1443,41 +1524,4 @@ class GraphTransformerEncoder(nn.Module):
         x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
-        # Readout: anchor (position 0) + attention-weighted neighbor aggregation
-        anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
-        if self._readout_mode == "anchor_only":
-            return anchor.squeeze(1)
-
-        neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
-        neighbor_valid_mask = valid_mask[:, 1:]
-        seq_minus_one = neighbors.size(1)
-
-        if seq_minus_one == 0:
-            return anchor.squeeze(1)
-
-        # Expand anchor to match neighbor dimension for concatenation
-        anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
-
-        # Compute attention scores over neighbors
-        if self._readout_attention is None:
-            raise ValueError("Readout attention layer is not initialized.")
-        readout_scores = self._readout_attention(
-            torch.cat([anchor_expanded, neighbors], dim=-1)
-        )  # (batch, seq-1, 1)
-        readout_scores = readout_scores.masked_fill(
-            ~neighbor_valid_mask.unsqueeze(-1),
-            torch.finfo(readout_scores.dtype).min,
-        )
-        readout_weights = F.softmax(readout_scores, dim=1)  # (batch, seq-1, 1)
-        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
-        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
-            readout_weights.dtype
-        )
-
-        neighbor_aggregation = (neighbors * readout_weights).sum(
-            dim=1, keepdim=True
-        )  # (batch, 1, hid_dim)
-
-        output = (anchor + neighbor_aggregation).squeeze(1)  # (batch, hid_dim)
-
-        return output
+        return self._readout_from_encoded_sequences(x=x, valid_mask=valid_mask)
