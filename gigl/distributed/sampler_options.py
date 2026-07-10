@@ -16,6 +16,14 @@ from gigl.common.logger import Logger
 
 logger = Logger()
 
+TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
+"""A typed-PPR traversal channel key.
+
+A single canonical edge type creates one channel restricted to that edge type.
+A tuple of canonical edge types creates one channel whose forward-push state may
+traverse any edge type in the group.
+"""
+
 
 @dataclass(frozen=True)
 class KHopNeighborSamplerOptions:
@@ -41,6 +49,8 @@ class PPRSamplerOptions:
     - ``edge_index``: ``[2, N]`` int64 — row 0 is local seed indices, row 1 is local
       neighbor indices.
     - ``edge_attr``: ``[N]`` float — PPR score for each (seed, neighbor) pair.
+      Typed PPR emits multi-column edge attrs:
+      ``[best_score, channel_scores..., channel_presence_bits...]``.
 
     For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
 
@@ -75,6 +85,18 @@ class PPRSamplerOptions:
             The algorithm still runs to convergence — re-enqueued nodes propagate
             through cached neighbors at negligible cost. ``None`` (default) means
             no fetch limit.
+        typed_channel_quotas: Optional top-k quotas for typed PPR
+            traversal channels defined by canonical edge-type allowlists. Keys
+            may be either a single canonical edge type
+            ``(src_type, relation, dst_type)`` or a tuple of canonical edge
+            types. Each key defines one traversal channel whose PPR state may
+            traverse only those exact edge types.
+            If residual top-up is enabled and the base merge emits fewer than
+            ``max_ppr_nodes``, the sampler appends discovered-but-unpushed
+            residual candidates from the same completed PPR states. Those
+            top-up candidates are deduplicated, globally ranked, and emitted on
+            the same mass scale as finalized PPR scores:
+            ``ppr_score + residual``.
     """
 
     alpha: float = 0.5
@@ -83,6 +105,7 @@ class PPRSamplerOptions:
     enable_residual_topup: bool = True
     num_neighbors_per_hop: int = 1_000
     max_fetch_iterations: Optional[int] = None
+    typed_channel_quotas: Optional[dict[TypedPPRChannelKey, int]] = None
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

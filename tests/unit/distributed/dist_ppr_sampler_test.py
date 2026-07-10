@@ -815,6 +815,330 @@ class DistPPRSamplerTest(TestCase):
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
+    def test_typed_ppr_merge_calibrates_scores_and_globally_ranks_channels(
+        self,
+    ) -> None:
+        """Verify typed-PPR merge emits calibrated channel metadata."""
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._max_ppr_nodes = 10
+        channel_0_result = (
+            {USER: torch.tensor([10, 11, 12])},
+            {USER: torch.tensor([0.4, 0.2, 0.1], dtype=torch.double)},
+            {USER: torch.tensor([2, 1])},
+        )
+        channel_1_result = (
+            {USER: torch.tensor([20, 11, 13])},
+            {USER: torch.tensor([0.9, 0.3, 0.3], dtype=torch.double)},
+            {USER: torch.tensor([2, 1])},
+        )
+
+        ntype_to_ids, ntype_to_features, ntype_to_counts = (
+            sampler._merge_typed_ppr_results_with_topup(
+                channel_results=[channel_0_result, channel_1_result],
+                base_channel_quotas=[2, 1],
+                topup_candidate_limits=[2, 1],
+                num_seeds=2,
+                device=torch.device("cpu"),
+            )
+        )
+
+        self.assertTrue(
+            torch.equal(ntype_to_ids[USER], torch.tensor([10, 20, 11, 12, 13]))
+        )
+        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([3, 2])))
+        self.assertTrue(
+            torch.allclose(
+                ntype_to_features[USER],
+                torch.tensor(
+                    [
+                        [1.0, 1.0, 0.0, 1.0, 0.0],
+                        [1.0, 0.0, 1.0, 0.0, 1.0],
+                        [0.5, 0.5, 0.0, 1.0, 0.0],
+                        [1.0, 1.0, 0.0, 1.0, 0.0],
+                        [1.0, 0.0, 1.0, 0.0, 1.0],
+                    ],
+                    dtype=torch.double,
+                ),
+            )
+        )
+
+    def test_typed_ppr_edge_type_channels_normalize_and_build_traversal_maps(
+        self,
+    ) -> None:
+        """Verify typed-PPR can use canonical edge-type channels."""
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._node_type_to_edge_types = {
+            USER: [USER_TO_STORY],
+            STORY: [STORY_TO_USER],
+        }
+        sampler._ntype_id_to_ntype = [USER, STORY]
+        sampler._etype_to_etype_id = {
+            USER_TO_STORY: 0,
+            STORY_TO_USER: 1,
+        }
+
+        normalized_channel_quotas = (
+            DistPPRNeighborSampler._normalize_typed_channel_quotas(
+                {
+                    USER_TO_STORY: 2,
+                    (USER_TO_STORY, STORY_TO_USER): 3,
+                }
+            )
+        )
+
+        self.assertEqual(
+            normalized_channel_quotas,
+            [
+                ((USER_TO_STORY,), 2),
+                ((USER_TO_STORY, STORY_TO_USER), 3),
+            ],
+        )
+        self.assertEqual(
+            sampler._build_edge_type_channel_group_edge_type_ids(
+                normalized_channel_quotas,
+                option_name="typed_channel_quotas",
+            ),
+            [
+                [[0], []],
+                [[0], [1]],
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "canonical edge type"):
+            DistPPRNeighborSampler._normalize_typed_channel_quotas({("bad",): 1})
+        with self.assertRaisesRegex(ValueError, "positive quotas"):
+            DistPPRNeighborSampler._normalize_typed_channel_quotas({USER_TO_STORY: 0})
+        with self.assertRaisesRegex(ValueError, "non-traversable edge types"):
+            sampler._build_edge_type_channel_group_edge_type_ids(
+                [((("unknown", "edge", "type"),), 1)],
+                option_name="typed_channel_quotas",
+            )
+
+    def test_typed_ppr_union_fetches_overlapping_channel_frontiers(self) -> None:
+        """Verify typed-PPR channels share one-hop fetches for the same edge type."""
+
+        class FakePPRState:
+            def __init__(self, first_frontier: dict[int, torch.Tensor]):
+                self._frontiers = [first_frontier, None]
+                self.fetched_by_push: list[
+                    dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+                ] = []
+
+            def drain_queue(self):
+                return self._frontiers.pop(0)
+
+            def push_residuals(
+                self,
+                fetched_by_etype_id: dict[
+                    int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+                ],
+            ) -> None:
+                self.fetched_by_push.append(fetched_by_etype_id)
+
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._typed_ppr_channel_quotas = [1, 1]
+        sampler._typed_ppr_channel_to_node_type_id_to_edge_type_ids = [[], []]
+        sampler._max_ppr_nodes = 1
+        sampler._enable_residual_topup = True
+        sampler._max_fetch_iterations = None
+
+        fake_states = [
+            FakePPRState({0: torch.tensor([1, 2])}),
+            FakePPRState({0: torch.tensor([2, 3])}),
+        ]
+        state_iter = iter(fake_states)
+        fetched_frontiers: list[dict[int, torch.Tensor]] = []
+
+        def fake_new_ppr_forward_push_state(**_):
+            return next(state_iter)
+
+        async def fake_batch_fetch_neighbors(
+            nodes_by_etype_id: dict[int, torch.Tensor],
+        ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+            fetched_frontiers.append(nodes_by_etype_id)
+            return {
+                etype_id: (
+                    nodes,
+                    torch.empty(0, dtype=torch.long),
+                    torch.zeros(nodes.numel(), dtype=torch.long),
+                )
+                for etype_id, nodes in nodes_by_etype_id.items()
+            }
+
+        def fake_extract_ppr_state_top_k(*_, **__):
+            return (
+                {USER: torch.empty(0, dtype=torch.long)},
+                {USER: torch.empty(0, dtype=torch.double)},
+                {USER: torch.zeros(1, dtype=torch.long)},
+            )
+
+        def fake_merge_typed_ppr_results_with_topup(**_):
+            return (
+                {USER: torch.empty(0, dtype=torch.long)},
+                {USER: torch.empty((0, 5), dtype=torch.double)},
+                {USER: torch.zeros(1, dtype=torch.long)},
+            )
+
+        sampler._new_ppr_forward_push_state = fake_new_ppr_forward_push_state
+        sampler._batch_fetch_neighbors = fake_batch_fetch_neighbors
+        sampler._extract_ppr_state_top_k = fake_extract_ppr_state_top_k
+        sampler._merge_typed_ppr_results_with_topup = (
+            fake_merge_typed_ppr_results_with_topup
+        )
+
+        asyncio.run(
+            sampler._compute_typed_ppr_scores(
+                seed_nodes=torch.tensor([0]),
+                seed_node_type=USER,
+            )
+        )
+
+        self.assertEqual(len(fetched_frontiers), 1)
+        self.assertEqual(set(fetched_frontiers[0][0].tolist()), {1, 2, 3})
+        for fake_state in fake_states:
+            self.assertEqual(len(fake_state.fetched_by_push), 1)
+            self.assertEqual(
+                set(fake_state.fetched_by_push[0][0][0].tolist()), {1, 2, 3}
+            )
+
+    def test_typed_ppr_can_disable_residual_topup(self) -> None:
+        """Verify typed-PPR channel quotas do not request residual extras when disabled."""
+
+        class FakePPRState:
+            def drain_queue(self):
+                return None
+
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._typed_ppr_channel_quotas = [2, 1]
+        sampler._typed_ppr_channel_to_node_type_id_to_edge_type_ids = [[], []]
+        sampler._max_ppr_nodes = 5
+        sampler._enable_residual_topup = False
+        sampler._max_fetch_iterations = None
+
+        fake_states = [FakePPRState(), FakePPRState()]
+        state_iter = iter(fake_states)
+        extract_args: list[tuple[int, int, int]] = []
+        merge_topup_candidate_limits: list[int] = []
+
+        def fake_new_ppr_forward_push_state(**_):
+            return next(state_iter)
+
+        def fake_extract_ppr_state_top_k(
+            _,
+            *,
+            device: torch.device,
+            max_ppr_nodes: int,
+            residual_topup_nodes: int,
+            max_total_nodes: int,
+        ):
+            extract_args.append((max_ppr_nodes, residual_topup_nodes, max_total_nodes))
+            return (
+                {USER: torch.empty(0, dtype=torch.long, device=device)},
+                {USER: torch.empty(0, dtype=torch.double, device=device)},
+                {USER: torch.zeros(1, dtype=torch.long, device=device)},
+            )
+
+        def fake_merge_typed_ppr_results_with_topup(**kwargs):
+            merge_topup_candidate_limits.extend(kwargs["topup_candidate_limits"])
+            return (
+                {USER: torch.empty(0, dtype=torch.long)},
+                {USER: torch.empty((0, 5), dtype=torch.double)},
+                {USER: torch.zeros(1, dtype=torch.long)},
+            )
+
+        sampler._new_ppr_forward_push_state = fake_new_ppr_forward_push_state
+        sampler._extract_ppr_state_top_k = fake_extract_ppr_state_top_k
+        sampler._merge_typed_ppr_results_with_topup = (
+            fake_merge_typed_ppr_results_with_topup
+        )
+
+        asyncio.run(
+            sampler._compute_typed_ppr_scores(
+                seed_nodes=torch.tensor([0]),
+                seed_node_type=USER,
+            )
+        )
+
+        self.assertEqual(extract_args, [(2, 0, 2), (1, 0, 1)])
+        self.assertEqual(merge_topup_candidate_limits, [2, 1])
+
+    def test_typed_ppr_residual_topup_uses_combined_score_scale(self) -> None:
+        """Verify residual top-up attrs share a calibration scale with base PPR."""
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._max_ppr_nodes = 3
+
+        channel_result = (
+            {USER: torch.tensor([10, 11])},
+            {USER: torch.tensor([0.4, 0.8], dtype=torch.double)},
+            {USER: torch.tensor([2])},
+        )
+        ntype_to_ids, ntype_to_features, ntype_to_counts = (
+            sampler._merge_typed_ppr_results_with_topup(
+                channel_results=[channel_result],
+                base_channel_quotas=[1],
+                topup_candidate_limits=[2],
+                num_seeds=1,
+                device=torch.device("cpu"),
+            )
+        )
+
+        self.assertTrue(torch.equal(ntype_to_ids[USER], torch.tensor([10, 11])))
+        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([2])))
+        self.assertTrue(
+            torch.allclose(
+                ntype_to_features[USER],
+                torch.tensor(
+                    [
+                        [0.5, 0.5, 1.0],
+                        [1.0, 1.0, 1.0],
+                    ],
+                    dtype=torch.double,
+                ),
+            )
+        )
+
+    def test_typed_ppr_residual_topup_uses_global_ranking(self) -> None:
+        """Verify residual top-up candidates are not capped by channel quotas."""
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._max_ppr_nodes = 3
+
+        channel_0_result = (
+            {USER: torch.tensor([10, 11, 12])},
+            {USER: torch.tensor([1.0, 0.95, 0.1], dtype=torch.double)},
+            {USER: torch.tensor([3])},
+        )
+        channel_1_result = (
+            {USER: torch.tensor([20, 21])},
+            {USER: torch.tensor([1.0, 0.2], dtype=torch.double)},
+            {USER: torch.tensor([2])},
+        )
+
+        ntype_to_ids, ntype_to_features, ntype_to_counts = (
+            sampler._merge_typed_ppr_results_with_topup(
+                channel_results=[channel_0_result, channel_1_result],
+                base_channel_quotas=[1, 1],
+                topup_candidate_limits=[4, 4],
+                num_seeds=1,
+                device=torch.device("cpu"),
+            )
+        )
+
+        self.assertTrue(torch.equal(ntype_to_ids[USER], torch.tensor([10, 20, 11])))
+        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([3])))
+        self.assertTrue(
+            torch.allclose(
+                ntype_to_features[USER],
+                torch.tensor(
+                    [
+                        [1.0, 1.0, 0.0, 1.0, 0.0],
+                        [1.0, 0.0, 1.0, 0.0, 1.0],
+                        [0.95, 0.95, 0.0, 1.0, 0.0],
+                    ],
+                    dtype=torch.double,
+                ),
+            )
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

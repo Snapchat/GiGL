@@ -1,6 +1,7 @@
 import asyncio
+import math
 from collections import defaultdict
-from typing import Optional, Union
+from typing import Iterator, Optional, Sequence, Union, cast
 
 import torch
 
@@ -9,7 +10,6 @@ import torch
 from gigl_core import PPRForwardPush
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
-    NeighborOutput,
     NodeSamplerInput,
     SamplerOutput,
 )
@@ -35,6 +35,22 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     "to",
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
+_PPRResult = tuple[
+    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+]
+_HeteroPPRResult = tuple[
+    dict[NodeType, torch.Tensor],
+    dict[NodeType, torch.Tensor],
+    dict[NodeType, torch.Tensor],
+]
+_TypedPPRScoreMap = dict[NodeType, list[dict[int, list[float]]]]
+_TypedPPRCandidates = dict[NodeType, list[list[list[tuple[int, float]]]]]
+_TypedPPRMergeState = tuple[_TypedPPRScoreMap, _TypedPPRCandidates]
+_ChannelResultItem = tuple[int, NodeType, list[int], list[float], list[int]]
+_SeedCandidateEntry = tuple[int, int, float]
+_TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
@@ -72,7 +88,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", ntype)].edge_index``: same format as above.
-        - ``data[(seed_type, "ppr", ntype)].edge_attr``: same format as above.
+        - ``data[(seed_type, "ppr", ntype)].edge_attr``: scalar PPR score for
+          regular PPR. For typed PPR, edge attrs are multi-column:
+          ``[best_calibrated_score, calibrated_channel_scores..., channel_presence_bits...]``.
+          Typed-PPR scores are calibrated within each channel/seed pool and
+          globally ranked by the best calibrated score.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -106,6 +126,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_neighbors_per_hop: int = 100_000,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
+        typed_channel_quotas: Optional[dict[_TypedPPRChannelKey, int]] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -146,6 +167,20 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 _PPR_HOMOGENEOUS_EDGE_TYPE
             ]
             self._is_homogeneous = True
+
+        self._typed_channel_groups = self._normalize_typed_channel_quotas(
+            typed_channel_quotas
+        )
+        self._typed_ppr_channel_quotas = (
+            [quota for _, quota in self._typed_channel_groups]
+            if self._typed_channel_groups is not None
+            else None
+        )
+        if self._typed_ppr_channel_quotas is not None:
+            if self._is_homogeneous:
+                raise ValueError(
+                    "Typed PPR channel quotas are only supported for heterogeneous PPR sampling."
+                )
 
         # Convert the public homogeneous/heterogeneous degree-tensor shape to
         # the node-type keyed form used internally by PPR.
@@ -201,6 +236,111 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for nt in all_node_types
         ]
 
+        if self._typed_channel_groups is not None:
+            self._typed_ppr_channel_to_node_type_id_to_edge_type_ids = (
+                self._build_edge_type_channel_group_edge_type_ids(
+                    self._typed_channel_groups,
+                    option_name="typed_channel_quotas",
+                )
+            )
+        else:
+            self._typed_ppr_channel_to_node_type_id_to_edge_type_ids = []
+
+    def _build_edge_type_channel_group_edge_type_ids(
+        self,
+        edge_type_groups: Optional[list[tuple[tuple[EdgeType, ...], int]]],
+        option_name: str,
+    ) -> list[list[list[int]]]:
+        """Build per-node-type edge-type allowlists for canonical edge-type channels."""
+        if edge_type_groups is None:
+            return []
+
+        known_edge_types = set(self._etype_to_etype_id.keys())
+        edge_type_group_to_node_type_id_to_edge_type_ids: list[list[list[int]]] = []
+        for edge_types, _ in edge_type_groups:
+            unknown_edge_types = set(edge_types) - known_edge_types
+            if unknown_edge_types:
+                raise ValueError(
+                    f"{option_name} includes non-traversable edge types "
+                    f"{sorted(unknown_edge_types)!r}. Edge types must exist in the "
+                    "graph and must not be label edge types."
+                )
+
+            edge_type_set = set(edge_types)
+            node_type_id_to_edge_type_ids = [
+                [
+                    self._etype_to_etype_id[et]
+                    for et in self._node_type_to_edge_types.get(nt, [])
+                    if et in edge_type_set
+                ]
+                for nt in self._ntype_id_to_ntype
+            ]
+            if not any(node_type_id_to_edge_type_ids):
+                raise ValueError(
+                    f"{option_name} includes edge-type channel={edge_types!r}, "
+                    "but no traversable edge types exist for that channel."
+                )
+            edge_type_group_to_node_type_id_to_edge_type_ids.append(
+                node_type_id_to_edge_type_ids
+            )
+        return edge_type_group_to_node_type_id_to_edge_type_ids
+
+    @staticmethod
+    def _is_canonical_edge_type(value: object) -> bool:
+        """Return whether ``value`` has the runtime shape of a canonical edge type."""
+        return (
+            isinstance(value, tuple)
+            and len(value) == 3
+            and all(isinstance(part, str) for part in value)
+        )
+
+    @classmethod
+    def _normalize_edge_type_channel_key(
+        cls,
+        edge_type_key: _TypedPPRChannelKey,
+    ) -> tuple[EdgeType, ...]:
+        if cls._is_canonical_edge_type(edge_type_key):
+            return (cast(EdgeType, edge_type_key),)
+        if (
+            isinstance(edge_type_key, tuple)
+            and edge_type_key
+            and all(
+                cls._is_canonical_edge_type(edge_type) for edge_type in edge_type_key
+            )
+        ):
+            return cast(tuple[EdgeType, ...], edge_type_key)
+        raise ValueError(
+            "typed_channel_quotas keys must be a canonical edge type "
+            "(src_type, relation, dst_type) or a non-empty tuple of canonical "
+            f"edge types, got {edge_type_key!r}."
+        )
+
+    @classmethod
+    def _normalize_typed_channel_quotas(
+        cls,
+        typed_channel_quotas: Optional[dict[_TypedPPRChannelKey, int]],
+    ) -> Optional[list[tuple[tuple[EdgeType, ...], int]]]:
+        """Normalize typed-PPR canonical edge-type channel quota keys."""
+        if not typed_channel_quotas:
+            return None
+
+        normalized_groups: list[tuple[tuple[EdgeType, ...], int]] = []
+        invalid_quotas: dict[_TypedPPRChannelKey, int] = {}
+        for edge_type_key, quota in typed_channel_quotas.items():
+            if quota <= 0:
+                invalid_quotas[edge_type_key] = quota
+                continue
+            normalized_groups.append(
+                (cls._normalize_edge_type_channel_key(edge_type_key), quota)
+            )
+
+        if invalid_quotas:
+            raise ValueError(
+                "typed_channel_quotas must contain only positive quotas, "
+                f"got {invalid_quotas}."
+            )
+        return normalized_groups
+
     def _convert_degree_tensors_to_dict(
         self,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -229,19 +369,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     async def _batch_fetch_neighbors(
         self,
         nodes_by_etype_id: dict[int, torch.Tensor],
-        device: torch.device,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
-        Issues one ``_sample_one_hop`` call per edge type (not per node), so all
-        nodes of the same edge type are fetched in a single RPC round-trip. Each
-        node's neighbor list is capped at ``self._num_neighbors_per_hop``.
+        Issues one one-hop request per edge type in the frontier. Each node's
+        neighbor list is capped at ``self._num_neighbors_per_hop``.
 
         Args:
             nodes_by_etype_id: Dict mapping integer edge type ID to a 1-D int64
                 tensor of node IDs to fetch neighbors for.  Comes directly from
                 ``drain_queue()``; node IDs are already deduplicated.
-            device: Torch device for intermediate tensor creation.
 
         Returns:
             Dict mapping etype_id to ``(node_ids, flat_neighbors, counts)`` as
@@ -262,44 +399,82 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 5: (tensor([7]),    tensor([0, 3]),        tensor([2])),
             }
         """
-        # Fire all per-edge-type RPC calls concurrently.  Each _sample_one_hop
-        # issues a single RPC round-trip; doing them in parallel rather than
-        # sequentially cuts fetch latency from O(num_edge_types) to O(1).
-        eids = list(nodes_by_etype_id.keys())
+        eids: list[int] = []
         sample_tasks = []
-        for eid in eids:
+        for eid in nodes_by_etype_id:
             etype = self._etype_id_to_etype[eid]
+            # The lower sampler expects None only for true homogeneous graphs.
+            # Labeled homogeneous ABLP graphs are hetero-backed because label
+            # edges are represented as separate edge types, so they still need
+            # the explicit default edge type here.
+            rpc_etype = (
+                None
+                if self._is_homogeneous and etype == _PPR_HOMOGENEOUS_EDGE_TYPE
+                else etype
+            )
+            eids.append(eid)
             sample_tasks.append(
                 self._sample_one_hop(
-                    srcs=nodes_by_etype_id[eid].to(device),
-                    num_nbr=self._num_neighbors_per_hop,
-                    # _sample_one_hop expects None only for true homogeneous graphs.
-                    # Labeled homogeneous ABLP graphs are hetero-backed because label
-                    # edges are represented as separate edge types, so they still need
-                    # the explicit default edge type here.
-                    etype=(
-                        None
-                        if self._is_homogeneous and etype == _PPR_HOMOGENEOUS_EDGE_TYPE
-                        else etype
-                    ),
+                    nodes_by_etype_id[eid],
+                    self._num_neighbors_per_hop,
+                    rpc_etype,
                 )
             )
-        outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
+
+        outputs = await asyncio.gather(*sample_tasks)
         return {
             eid: (nodes_by_etype_id[eid], output.nbr, output.nbr_num)
             for eid, output in zip(eids, outputs)
         }
+
+    @staticmethod
+    def _union_nodes_by_etype_id(
+        nodes_by_etype_by_channel: Sequence[dict[int, torch.Tensor]],
+    ) -> dict[int, torch.Tensor]:
+        """Union channel frontier nodes by edge type for a shared one-hop fetch."""
+        node_parts_by_etype_id: dict[int, list[torch.Tensor]] = defaultdict(list)
+        for nodes_by_etype_id in nodes_by_etype_by_channel:
+            for etype_id, nodes in nodes_by_etype_id.items():
+                if nodes.numel() > 0:
+                    node_parts_by_etype_id[etype_id].append(nodes)
+
+        union_nodes_by_etype_id: dict[int, torch.Tensor] = {}
+        for etype_id, node_parts in node_parts_by_etype_id.items():
+            if len(node_parts) == 1:
+                union_nodes_by_etype_id[etype_id] = node_parts[0]
+            else:
+                union_nodes_by_etype_id[etype_id] = torch.unique(
+                    torch.cat(node_parts),
+                    sorted=False,
+                )
+        return union_nodes_by_etype_id
+
+    def _new_ppr_forward_push_state(
+        self,
+        seed_nodes: torch.Tensor,
+        seed_node_type: NodeType,
+        node_type_id_to_edge_type_ids: Optional[list[list[int]]] = None,
+    ) -> PPRForwardPush:
+        return PPRForwardPush(
+            seed_nodes,
+            self._node_type_to_id[seed_node_type],
+            self._alpha,
+            self._requeue_threshold_factor,
+            (
+                node_type_id_to_edge_type_ids
+                if node_type_id_to_edge_type_ids is not None
+                else self._node_type_id_to_edge_type_ids
+            ),
+            self._edge_type_id_to_dst_ntype_id,
+            self._degree_tensors_for_cpp,
+        )
 
     def _extract_ppr_state_top_k(
         self,
         ppr_state,
         device: torch.device,
         max_ppr_nodes: int,
-    ) -> tuple[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    ]:
+    ) -> _PPRResult:
         """Extract PPR neighbors from a completed C++ Forward Push state.
 
         The C++ kernel indexes node types by compact integer IDs for speed.
@@ -360,11 +535,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         seed_nodes: torch.Tensor,
         seed_node_type: Optional[NodeType] = None,
-    ) -> tuple[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    ]:
+        node_type_id_to_edge_type_ids: Optional[list[list[int]]] = None,
+        max_ppr_nodes: Optional[int] = None,
+    ) -> _PPRResult:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
 
@@ -388,6 +561,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_nodes: Tensor of seed node IDs, shape ``[batch_size]``.
             seed_node_type: Node type of seed nodes.  Pass ``None`` for
                 homogeneous graphs (internally mapped to a sentinel type).
+            node_type_id_to_edge_type_ids: Optional traversal map. When omitted,
+                PPR can traverse all configured edge types for each node type.
+                Typed PPR passes a channel-restricted traversal map here.
+            max_ppr_nodes: Optional top-k cap for this PPR run. Typed PPR uses
+                this as the per-channel quota before the merge step.
 
         Returns:
             A 3-tuple ``(flat_neighbor_ids, flat_weights, valid_counts)``.
@@ -417,54 +595,514 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
 
-        ppr_state = PPRForwardPush(
-            seed_nodes,
-            self._node_type_to_id[seed_node_type],
-            self._alpha,
-            self._requeue_threshold_factor,
-            self._node_type_id_to_edge_type_ids,
-            self._edge_type_id_to_dst_ntype_id,
-            self._degree_tensors_for_cpp,
+        ppr_state = self._new_ppr_forward_push_state(
+            seed_nodes=seed_nodes,
+            seed_node_type=seed_node_type,
+            node_type_id_to_edge_type_ids=node_type_id_to_edge_type_ids,
         )
 
         fetch_iteration_count = 0
+        loop = asyncio.get_running_loop()
+        nodes_by_etype_id = ppr_state.drain_queue()
 
-        while True:
-            # drain_queue returns None when the queue is truly empty (convergence),
-            # or a dict (possibly empty) when nodes were drained.  An empty dict
-            # means all drained nodes either had cached neighbors or no outgoing
-            # edges — we still call push_residuals to flush their residuals into
-            # ppr_scores_.
-            nodes_by_etype_id = ppr_state.drain_queue()
-            if nodes_by_etype_id is None:
-                break
-
+        # drain_queue returns None when the queue is truly empty (convergence),
+        # or a dict (possibly empty) when nodes were drained.  An empty dict
+        # means all drained nodes either had cached neighbors or no outgoing
+        # edges — we still push residuals to flush them into ppr_scores_.
+        while nodes_by_etype_id is not None:
             fetch_budget_remaining = (
                 self._max_fetch_iterations is None
                 or fetch_iteration_count < self._max_fetch_iterations
             )
             if nodes_by_etype_id and fetch_budget_remaining:
                 fetched_by_etype_id = await self._batch_fetch_neighbors(
-                    nodes_by_etype_id, device
+                    nodes_by_etype_id
                 )
                 fetch_iteration_count += 1
             else:
                 # Fetch budget exhausted; push_residuals will use the existing neighbor cache.
                 fetched_by_etype_id = {}
 
-            # Run in executor so the C++ push doesn't block the asyncio event loop.
-            await asyncio.get_running_loop().run_in_executor(
-                None, ppr_state.push_residuals, fetched_by_etype_id
+            await loop.run_in_executor(
+                None,
+                ppr_state.push_residuals,
+                fetched_by_etype_id,
             )
+            nodes_by_etype_id = ppr_state.drain_queue()
 
-        # Regular sampling uses residual top-up as fill-only under the
-        # max_ppr_nodes cap.  If finalized PPR scores already fill that cap,
-        # there is no remaining budget for residual candidates.
+        ppr_node_quota = (
+            max_ppr_nodes if max_ppr_nodes is not None else self._max_ppr_nodes
+        )
         return self._extract_ppr_state_top_k(
             ppr_state,
             device,
-            max_ppr_nodes=self._max_ppr_nodes,
+            max_ppr_nodes=ppr_node_quota,
         )
+
+    async def _compute_ppr_scores_for_sampler_mode(
+        self,
+        seed_nodes: torch.Tensor,
+        seed_node_type: Optional[NodeType] = None,
+    ) -> _PPRResult:
+        """Compute regular or typed PPR scores depending on sampler options."""
+        if self._typed_ppr_channel_quotas is None:
+            return await self._compute_ppr_scores(seed_nodes, seed_node_type)
+
+        if seed_node_type is None:
+            raise ValueError("Typed PPR requires an explicit heterogeneous seed type.")
+        return await self._compute_typed_ppr_scores(seed_nodes, seed_node_type)
+
+    async def _compute_typed_ppr_scores(
+        self,
+        seed_nodes: torch.Tensor,
+        seed_node_type: NodeType,
+    ) -> _HeteroPPRResult:
+        """Run typed-channel-restricted PPR states and merge their results."""
+        assert self._typed_ppr_channel_quotas is not None
+        channel_quotas = self._typed_ppr_channel_quotas
+        device = seed_nodes.device
+        ppr_states = [
+            self._new_ppr_forward_push_state(
+                seed_nodes=seed_nodes,
+                seed_node_type=seed_node_type,
+                node_type_id_to_edge_type_ids=node_type_id_to_edge_type_ids,
+            )
+            for node_type_id_to_edge_type_ids in (
+                self._typed_ppr_channel_to_node_type_id_to_edge_type_ids
+            )
+        ]
+        fetch_iteration_counts = [0 for _ in ppr_states]
+        loop = asyncio.get_running_loop()
+        nodes_by_channel: list[Optional[dict[int, torch.Tensor]]] = [
+            ppr_state.drain_queue() for ppr_state in ppr_states
+        ]
+
+        while any(
+            nodes_by_etype_id is not None for nodes_by_etype_id in nodes_by_channel
+        ):
+            fetched_by_channel: list[
+                dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
+            ] = [dict() for _ in ppr_states]
+            fetch_channel_indices: list[int] = []
+            nodes_by_etype_by_fetch_channel: list[dict[int, torch.Tensor]] = []
+
+            for channel_idx, nodes_by_etype_id in enumerate(nodes_by_channel):
+                if nodes_by_etype_id is None:
+                    continue
+
+                fetch_budget_remaining = (
+                    self._max_fetch_iterations is None
+                    or fetch_iteration_counts[channel_idx] < self._max_fetch_iterations
+                )
+                has_nodes_to_fetch = any(
+                    nodes.numel() > 0 for nodes in nodes_by_etype_id.values()
+                )
+                if has_nodes_to_fetch and fetch_budget_remaining:
+                    fetch_channel_indices.append(channel_idx)
+                    nodes_by_etype_by_fetch_channel.append(nodes_by_etype_id)
+                    fetch_iteration_counts[channel_idx] += 1
+
+            if nodes_by_etype_by_fetch_channel:
+                union_nodes_by_etype_id = self._union_nodes_by_etype_id(
+                    nodes_by_etype_by_fetch_channel
+                )
+                if union_nodes_by_etype_id:
+                    union_fetched_by_etype_id = await self._batch_fetch_neighbors(
+                        union_nodes_by_etype_id
+                    )
+                    for channel_idx, nodes_by_etype_id in zip(
+                        fetch_channel_indices,
+                        nodes_by_etype_by_fetch_channel,
+                    ):
+                        fetched_by_channel[channel_idx] = {
+                            etype_id: union_fetched_by_etype_id[etype_id]
+                            for etype_id in nodes_by_etype_id
+                            if etype_id in union_fetched_by_etype_id
+                        }
+
+            active_channel_indices = [
+                channel_idx
+                for channel_idx, nodes_by_etype_id in enumerate(nodes_by_channel)
+                if nodes_by_etype_id is not None
+            ]
+            push_tasks = [
+                loop.run_in_executor(
+                    None,
+                    ppr_states[channel_idx].push_residuals,
+                    fetched_by_channel[channel_idx],
+                )
+                for channel_idx in active_channel_indices
+            ]
+            if push_tasks:
+                await asyncio.gather(*push_tasks)
+                for channel_idx in active_channel_indices:
+                    nodes_by_channel[channel_idx] = ppr_states[
+                        channel_idx
+                    ].drain_queue()
+
+        residual_topup_nodes = self._max_ppr_nodes if self._enable_residual_topup else 0
+        topup_candidate_limits = [
+            channel_quota + residual_topup_nodes for channel_quota in channel_quotas
+        ]
+        channel_results = [
+            self._extract_ppr_state_top_k(
+                ppr_state,
+                device=device,
+                max_ppr_nodes=channel_quota,
+                residual_topup_nodes=residual_topup_nodes,
+                max_total_nodes=topup_candidate_limit,
+            )
+            for ppr_state, channel_quota, topup_candidate_limit in zip(
+                ppr_states,
+                channel_quotas,
+                topup_candidate_limits,
+            )
+        ]
+        return self._merge_typed_ppr_results_with_topup(
+            channel_results=channel_results,
+            base_channel_quotas=channel_quotas,
+            topup_candidate_limits=topup_candidate_limits,
+            num_seeds=seed_nodes.numel(),
+            device=seed_nodes.device,
+        )
+
+    def _merge_typed_ppr_results_with_topup(
+        self,
+        channel_results: Sequence[_PPRResult],
+        base_channel_quotas: Sequence[int],
+        topup_candidate_limits: Sequence[int],
+        num_seeds: int,
+        device: torch.device,
+    ) -> _HeteroPPRResult:
+        """Merge typed PPR once, preserving base ordering and appending residual top-up.
+
+        ``channel_results`` are extracted as finalized-PPR candidates followed
+        by residual-backed top-up candidates for each channel source. The base
+        merge preserves the configured channel quotas. If that result is short,
+        residual-backed candidates from all channel sources compete globally for
+        the remaining ``max_ppr_nodes`` slots.
+        """
+        num_channels = len(topup_candidate_limits)
+        num_edge_attr_features = 1 + (2 * num_channels)
+        base_scores, base_candidates = self._build_typed_ppr_merge_state(
+            num_seeds=num_seeds,
+            num_channels=num_channels,
+        )
+        extended_scores, extended_candidates = self._build_typed_ppr_merge_state(
+            num_seeds=num_seeds,
+            num_channels=num_channels,
+        )
+        self._populate_typed_ppr_topup_merge_states(
+            channel_results=channel_results,
+            base_channel_quotas=base_channel_quotas,
+            topup_candidate_limits=topup_candidate_limits,
+            base_scores=base_scores,
+            base_candidates=base_candidates,
+            extended_scores=extended_scores,
+            extended_candidates=extended_candidates,
+            num_edge_attr_features=num_edge_attr_features,
+            num_channels=num_channels,
+        )
+
+        ntype_to_flat_ids_out: dict[NodeType, torch.Tensor] = {}
+        ntype_to_flat_weights_out: dict[NodeType, torch.Tensor] = {}
+        ntype_to_valid_counts_out: dict[NodeType, torch.Tensor] = {}
+        ntypes = set(base_scores.keys()) | set(extended_scores.keys())
+
+        for ntype in ntypes:
+            flat_ids: list[int] = []
+            flat_weights: list[list[float]] = []
+            valid_counts: list[int] = []
+            base_seed_scores_by_ntype = base_scores.get(ntype)
+            base_candidates_by_ntype = base_candidates.get(ntype)
+            extended_seed_scores_by_ntype = extended_scores.get(ntype)
+            extended_candidates_by_ntype = extended_candidates.get(ntype)
+
+            for seed_index in range(num_seeds):
+                selected_nodes: list[int] = []
+                selected_node_ids: set[int] = set()
+
+                if (
+                    base_seed_scores_by_ntype is not None
+                    and base_candidates_by_ntype is not None
+                ):
+                    base_selected_nodes = self._select_typed_ppr_node_ids(
+                        seed_scores=base_seed_scores_by_ntype[seed_index],
+                        candidates_by_channel=base_candidates_by_ntype[seed_index],
+                        channel_quotas=base_channel_quotas,
+                    )
+                    selected_nodes.extend(base_selected_nodes)
+                    selected_node_ids.update(base_selected_nodes)
+                    flat_weights.extend(
+                        base_seed_scores_by_ntype[seed_index][node_id]
+                        for node_id in base_selected_nodes
+                    )
+
+                if (
+                    len(selected_nodes) < self._max_ppr_nodes
+                    and extended_seed_scores_by_ntype is not None
+                    and extended_candidates_by_ntype is not None
+                ):
+                    extended_selected_nodes = self._select_typed_ppr_node_ids(
+                        seed_scores=extended_seed_scores_by_ntype[seed_index],
+                        candidates_by_channel=extended_candidates_by_ntype[seed_index],
+                        channel_quotas=topup_candidate_limits,
+                    )
+                    for node_id in extended_selected_nodes:
+                        if len(selected_nodes) >= self._max_ppr_nodes:
+                            break
+                        if node_id in selected_node_ids:
+                            continue
+                        selected_nodes.append(node_id)
+                        selected_node_ids.add(node_id)
+                        flat_weights.append(
+                            extended_seed_scores_by_ntype[seed_index][node_id]
+                        )
+
+                valid_counts.append(len(selected_nodes))
+                flat_ids.extend(selected_nodes)
+
+            (
+                ntype_to_flat_ids_out[ntype],
+                ntype_to_flat_weights_out[ntype],
+                ntype_to_valid_counts_out[ntype],
+            ) = self._typed_ppr_output_tensors(
+                flat_ids=flat_ids,
+                flat_weights=flat_weights,
+                valid_counts=valid_counts,
+                num_edge_attr_features=num_edge_attr_features,
+                device=device,
+            )
+
+        return (
+            ntype_to_flat_ids_out,
+            ntype_to_flat_weights_out,
+            ntype_to_valid_counts_out,
+        )
+
+    def _build_typed_ppr_merge_state(
+        self,
+        num_seeds: int,
+        num_channels: int,
+    ) -> _TypedPPRMergeState:
+        merged_scores: _TypedPPRScoreMap = defaultdict(
+            lambda: [dict() for _ in range(num_seeds)]
+        )
+        channel_candidates: _TypedPPRCandidates = defaultdict(
+            lambda: [[[] for _ in range(num_channels)] for _ in range(num_seeds)]
+        )
+        return merged_scores, channel_candidates
+
+    @staticmethod
+    def _clamp_ppr_score(raw_score: float) -> Optional[float]:
+        if not math.isfinite(raw_score):
+            return None
+        return min(max(raw_score, 0.0), 1.0)
+
+    @staticmethod
+    def _typed_ppr_output_tensors(
+        flat_ids: Sequence[int],
+        flat_weights: Sequence[Sequence[float]],
+        valid_counts: Sequence[int],
+        num_edge_attr_features: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return (
+            torch.tensor(flat_ids, dtype=torch.long, device=device),
+            torch.tensor(
+                flat_weights,
+                dtype=torch.double,
+                device=device,
+            ).reshape(len(flat_weights), num_edge_attr_features),
+            torch.tensor(valid_counts, dtype=torch.long, device=device),
+        )
+
+    @staticmethod
+    def _iter_channel_result_items(
+        channel_results: Sequence[_PPRResult],
+    ) -> Iterator[_ChannelResultItem]:
+        for channel_idx, (
+            ntype_to_flat_ids,
+            ntype_to_flat_weights,
+            ntype_to_valid_counts,
+        ) in enumerate(channel_results):
+            assert isinstance(ntype_to_flat_ids, dict)
+            assert isinstance(ntype_to_flat_weights, dict)
+            assert isinstance(ntype_to_valid_counts, dict)
+
+            for ntype, flat_ids in ntype_to_flat_ids.items():
+                yield (
+                    channel_idx,
+                    ntype,
+                    flat_ids.detach().cpu().tolist(),
+                    ntype_to_flat_weights[ntype].detach().cpu().tolist(),
+                    ntype_to_valid_counts[ntype].detach().cpu().tolist(),
+                )
+
+    @classmethod
+    def _iter_seed_candidate_entries(
+        cls,
+        ids_cpu: Sequence[int],
+        weights_cpu: Sequence[float],
+        counts_cpu: Sequence[int],
+        candidate_limit: int,
+    ) -> Iterator[tuple[int, list[_SeedCandidateEntry], float]]:
+        offset = 0
+        for seed_index, count in enumerate(counts_cpu):
+            entries: list[_SeedCandidateEntry] = []
+            max_score = 0.0
+            quota_count = min(count, candidate_limit)
+
+            for candidate_idx, (node_id, raw_score) in enumerate(
+                zip(
+                    ids_cpu[offset : offset + quota_count],
+                    weights_cpu[offset : offset + quota_count],
+                )
+            ):
+                score = cls._clamp_ppr_score(raw_score)
+                if score is None:
+                    continue
+                entries.append((candidate_idx, node_id, score))
+                max_score = max(max_score, score)
+
+            yield seed_index, entries, max_score
+            offset += count
+
+    def _populate_typed_ppr_topup_merge_states(
+        self,
+        channel_results: Sequence[_PPRResult],
+        base_channel_quotas: Sequence[int],
+        topup_candidate_limits: Sequence[int],
+        base_scores: _TypedPPRScoreMap,
+        base_candidates: _TypedPPRCandidates,
+        extended_scores: _TypedPPRScoreMap,
+        extended_candidates: _TypedPPRCandidates,
+        num_edge_attr_features: int,
+        num_channels: int,
+    ) -> None:
+        for (
+            channel_idx,
+            ntype,
+            ids_cpu,
+            weights_cpu,
+            counts_cpu,
+        ) in self._iter_channel_result_items(channel_results):
+            base_channel_quota = base_channel_quotas[channel_idx]
+            topup_candidate_limit = topup_candidate_limits[channel_idx]
+
+            for (
+                seed_index,
+                entries,
+                extended_max_score,
+            ) in self._iter_seed_candidate_entries(
+                ids_cpu=ids_cpu,
+                weights_cpu=weights_cpu,
+                counts_cpu=counts_cpu,
+                candidate_limit=topup_candidate_limit,
+            ):
+                base_nodes_and_scores = [
+                    (node_id, score)
+                    for candidate_idx, node_id, score in entries
+                    if candidate_idx < base_channel_quota
+                ]
+                extended_nodes_and_scores = [
+                    (node_id, score) for _, node_id, score in entries
+                ]
+
+                self._add_typed_ppr_seed_candidates(
+                    seed_scores=base_scores[ntype][seed_index],
+                    seed_channel_candidates=base_candidates[ntype][seed_index][
+                        channel_idx
+                    ],
+                    seed_nodes_and_scores=base_nodes_and_scores,
+                    max_score=extended_max_score,
+                    channel_idx=channel_idx,
+                    num_edge_attr_features=num_edge_attr_features,
+                    num_channels=num_channels,
+                )
+                self._add_typed_ppr_seed_candidates(
+                    seed_scores=extended_scores[ntype][seed_index],
+                    seed_channel_candidates=extended_candidates[ntype][seed_index][
+                        channel_idx
+                    ],
+                    seed_nodes_and_scores=extended_nodes_and_scores,
+                    max_score=extended_max_score,
+                    channel_idx=channel_idx,
+                    num_edge_attr_features=num_edge_attr_features,
+                    num_channels=num_channels,
+                )
+
+    def _add_typed_ppr_seed_candidates(
+        self,
+        seed_scores: dict[int, list[float]],
+        seed_channel_candidates: list[tuple[int, float]],
+        seed_nodes_and_scores: Sequence[tuple[int, float]],
+        max_score: float,
+        channel_idx: int,
+        num_edge_attr_features: int,
+        num_channels: int,
+    ) -> None:
+        for node_id, score in seed_nodes_and_scores:
+            calibrated_score = score / max_score if max_score > 0 else 0.0
+            score_features = seed_scores.get(node_id)
+            if score_features is None:
+                score_features = [0.0] * num_edge_attr_features
+                seed_scores[node_id] = score_features
+            score_features[0] = max(score_features[0], calibrated_score)
+            channel_score_idx = 1 + channel_idx
+            channel_presence_idx = 1 + num_channels + channel_idx
+            score_features[channel_score_idx] = max(
+                score_features[channel_score_idx], calibrated_score
+            )
+            score_features[channel_presence_idx] = 1.0
+            seed_channel_candidates.append((node_id, calibrated_score))
+
+    def _select_typed_ppr_node_ids(
+        self,
+        seed_scores: dict[int, list[float]],
+        candidates_by_channel: Sequence[Sequence[tuple[int, float]]],
+        channel_quotas: Sequence[int],
+    ) -> list[int]:
+        selected_node_ids: set[int] = set()
+        selected_nodes: list[int] = []
+
+        sorted_candidates_by_channel = [
+            sorted(
+                candidates,
+                key=lambda item: (-seed_scores[item[0]][0], -item[1], item[0]),
+            )
+            for candidates in candidates_by_channel
+        ]
+        global_candidates: list[tuple[float, float, int, int]] = []
+        for channel_idx, candidates in enumerate(sorted_candidates_by_channel):
+            channel_quota = channel_quotas[channel_idx]
+            for node_id, calibrated_score in candidates[:channel_quota]:
+                global_candidates.append(
+                    (
+                        seed_scores[node_id][0],
+                        calibrated_score,
+                        channel_idx,
+                        node_id,
+                    )
+                )
+
+        for _, _, _, node_id in sorted(
+            global_candidates,
+            key=lambda item: (-item[0], -item[1], item[2], item[3]),
+        ):
+            if len(selected_nodes) >= self._max_ppr_nodes:
+                break
+            if node_id in selected_node_ids:
+                continue
+            selected_node_ids.add(node_id)
+            selected_nodes.append(node_id)
+
+        return selected_nodes
+
+    def _ppr_edge_attr_dim(self) -> int:
+        if self._typed_ppr_channel_quotas is None:
+            return 1
+        return 1 + (2 * len(self._typed_ppr_channel_quotas))
 
     async def _sample_from_nodes(
         self,
@@ -567,7 +1205,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_types = list(nodes_to_sample.keys())
             ppr_results = await asyncio.gather(
                 *[
-                    self._compute_ppr_scores(nodes_to_sample[seed_type], seed_type)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    self._compute_ppr_scores_for_sampler_mode(
+                        nodes_to_sample[seed_type], seed_type
+                    )
                     for seed_type in seed_types
                 ]
             )
@@ -586,20 +1226,20 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
                 for ntype, flat_ids in ntype_to_flat_ids.items():
                     ppr_edge_type: EdgeType = (seed_type, "ppr", ntype)
-                    valid_counts = ntype_to_valid_counts[ntype]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    valid_counts = ntype_to_valid_counts[ntype]
                     ppr_edge_type_to_flat_weights[ppr_edge_type] = (
-                        ntype_to_flat_weights[ntype]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                        ntype_to_flat_weights[ntype]
                     )
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
                     # gets one consistent local index in node_dict[ntype].
-                    if flat_ids.numel() > 0:  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    if flat_ids.numel() > 0:
                         nbr_dict[ppr_edge_type] = [
                             src_dict[seed_type],
                             flat_ids,
                             valid_counts,
-                        ]  # ty: ignore[invalid-assignment] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
+                        ]
 
             # induce_next processes all PPR edge types in nbr_dict in one
             # pass, assigning local indices to neighbors not yet registered and
@@ -639,9 +1279,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     edge_index = torch.stack([rows, cols])
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
-                    flat_weights = torch.zeros(
-                        0, dtype=torch.double, device=self.device
-                    )
+                    flat_weights = flat_weights.new_zeros((0, *flat_weights.shape[1:]))
                 etype_str = repr(ppr_edge_type)
                 metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{etype_str}"] = edge_index
                 metadata[f"{PPR_WEIGHT_METADATA_KEY}{etype_str}"] = flat_weights
@@ -691,7 +1329,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 homo_flat_ids,
                 homo_flat_weights,
                 homo_valid_counts,
-            ) = await self._compute_ppr_scores(homogeneous_nodes_to_sample, None)
+            ) = await self._compute_ppr_scores_for_sampler_mode(
+                homogeneous_nodes_to_sample, None
+            )
             assert isinstance(homo_flat_ids, torch.Tensor)
             assert isinstance(homo_flat_weights, torch.Tensor)
             assert isinstance(homo_valid_counts, torch.Tensor)
