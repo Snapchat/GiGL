@@ -72,7 +72,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                keep samples closer to seeds. Typical values: 0.15-0.25.
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
-        max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
+        max_ppr_nodes: Maximum number of nodes to return per seed. If finalized
+            PPR scores produce fewer than this cap, discovered residual
+            candidates are appended with score ``ppr_score + residual``.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
@@ -273,6 +275,112 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for eid, output in zip(eids, outputs)
         }
 
+    def _extract_ppr_state_top_k(
+        self,
+        ppr_state,
+        device: torch.device,
+        max_ppr_nodes: Optional[int] = None,
+        residual_topup_nodes: int = 0,
+        max_total_nodes: Optional[int] = None,
+    ) -> tuple[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    ]:
+        # Translate ntype_id integer keys back to NodeType strings for the rest
+        # of the pipeline, and move tensors to the correct device.
+        ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+
+        ppr_node_quota = (
+            max_ppr_nodes if max_ppr_nodes is not None else self._max_ppr_nodes
+        )
+        if residual_topup_nodes > 0:
+            extracted_results = ppr_state.extract_top_k_with_residual_top_up(
+                ppr_node_quota,
+                residual_topup_nodes,
+            )
+        else:
+            extracted_results = ppr_state.extract_top_k(ppr_node_quota)
+
+        for ntype_id, (
+            flat_ids,
+            flat_weights,
+            valid_counts,
+        ) in extracted_results.items():
+            ntype = self._ntype_id_to_ntype[ntype_id]
+            ntype_to_flat_ids[ntype] = flat_ids.to(device)
+            ntype_to_flat_weights[ntype] = flat_weights.to(device)
+            ntype_to_valid_counts[ntype] = valid_counts.to(device)
+
+        if max_total_nodes is not None:
+            for ntype in ntype_to_flat_ids:
+                (
+                    ntype_to_flat_ids[ntype],
+                    ntype_to_flat_weights[ntype],
+                    ntype_to_valid_counts[ntype],
+                ) = self._truncate_flat_ppr_result_to_max_nodes(
+                    flat_ids=ntype_to_flat_ids[ntype],
+                    flat_weights=ntype_to_flat_weights[ntype],
+                    valid_counts=ntype_to_valid_counts[ntype],
+                    max_nodes=max_total_nodes,
+                )
+
+        if self._is_homogeneous:
+            assert (
+                len(ntype_to_flat_ids) == 1
+                and DEFAULT_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
+            )
+            return (
+                ntype_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            )
+        else:
+            return (
+                ntype_to_flat_ids,
+                ntype_to_flat_weights,
+                ntype_to_valid_counts,
+            )
+
+    @staticmethod
+    def _truncate_flat_ppr_result_to_max_nodes(
+        flat_ids: torch.Tensor,
+        flat_weights: torch.Tensor,
+        valid_counts: torch.Tensor,
+        max_nodes: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Cap each seed's flat PPR result after residual top-up."""
+        if max_nodes < 0:
+            raise ValueError(f"max_nodes must be non-negative, got {max_nodes}.")
+
+        id_parts: list[torch.Tensor] = []
+        weight_parts: list[torch.Tensor] = []
+        capped_counts: list[int] = []
+        offset = 0
+        for count in valid_counts.detach().cpu().tolist():
+            count = int(count)
+            keep_count = min(count, max_nodes)
+            if keep_count > 0:
+                id_parts.append(flat_ids[offset : offset + keep_count])
+                weight_parts.append(flat_weights[offset : offset + keep_count])
+            capped_counts.append(keep_count)
+            offset += count
+
+        capped_flat_ids = torch.cat(id_parts) if id_parts else flat_ids.new_empty((0,))
+        capped_flat_weights = (
+            torch.cat(weight_parts)
+            if weight_parts
+            else flat_weights.new_empty((0, *flat_weights.shape[1:]))
+        )
+        capped_valid_counts = torch.tensor(
+            capped_counts,
+            dtype=valid_counts.dtype,
+            device=valid_counts.device,
+        )
+        return capped_flat_ids, capped_flat_weights, capped_valid_counts
+
     async def _compute_ppr_scores(
         self,
         seed_nodes: torch.Tensor,
@@ -374,36 +482,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 None, ppr_state.push_residuals, fetched_by_etype_id
             )
 
-        # Translate ntype_id integer keys back to NodeType strings for the rest
-        # of the pipeline, and move tensors to the correct device.
-        ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
-        ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
-        ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-
-        for ntype_id, (flat_ids, flat_weights, valid_counts) in ppr_state.extract_top_k(
-            self._max_ppr_nodes
-        ).items():
-            ntype = self._ntype_id_to_ntype[ntype_id]
-            ntype_to_flat_ids[ntype] = flat_ids.to(device)
-            ntype_to_flat_weights[ntype] = flat_weights.to(device)
-            ntype_to_valid_counts[ntype] = valid_counts.to(device)
-
-        if self._is_homogeneous:
-            assert (
-                len(ntype_to_flat_ids) == 1
-                and DEFAULT_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
-            )
-            return (
-                ntype_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-            )
-        else:
-            return (
-                ntype_to_flat_ids,
-                ntype_to_flat_weights,
-                ntype_to_valid_counts,
-            )
+        return self._extract_ppr_state_top_k(
+            ppr_state,
+            device,
+            max_ppr_nodes=self._max_ppr_nodes,
+            residual_topup_nodes=self._max_ppr_nodes,
+            max_total_nodes=self._max_ppr_nodes,
+        )
 
     async def _sample_from_nodes(
         self,

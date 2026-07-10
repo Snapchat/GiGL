@@ -26,6 +26,7 @@ graph (add dst→src instead of src→dst).  When ``edge_dir="out"``, no
 reversal is needed since both follow the original edge direction.
 """
 
+import asyncio
 import heapq
 from collections import defaultdict
 from typing import Literal
@@ -38,7 +39,9 @@ from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+import gigl.distributed.dist_ppr_sampler as dist_ppr_sampler_module
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.types.graph import (
@@ -814,6 +817,65 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_homogeneous_ablp(self) -> None:
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
+
+    def test_regular_ppr_uses_residual_topup_and_caps_results(self) -> None:
+        """Verify non-typed PPR uses residual top-up without exceeding max_ppr_nodes."""
+
+        class FakePPRForwardPush:
+            def __init__(self, *_, **__):
+                self.extract_topup_args = None
+
+            def drain_queue(self):
+                return None
+
+            def extract_top_k(self, *_):
+                raise AssertionError("regular PPR should use residual top-up extraction")
+
+            def extract_top_k_with_residual_top_up(
+                self,
+                max_ppr_nodes: int,
+                max_residual_nodes: int,
+            ):
+                self.extract_topup_args = (max_ppr_nodes, max_residual_nodes)
+                return {
+                    0: (
+                        torch.tensor([10, 11, 12], dtype=torch.long),
+                        torch.tensor([0.7, 0.2, 0.1], dtype=torch.double),
+                        torch.tensor([3], dtype=torch.long),
+                    )
+                }
+
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._alpha = _TEST_ALPHA
+        sampler._requeue_threshold_factor = _TEST_ALPHA * _TEST_EPS
+        sampler._max_ppr_nodes = 2
+        sampler._max_fetch_iterations = None
+        sampler._is_homogeneous = True
+        sampler._node_type_to_id = {DEFAULT_HOMOGENEOUS_NODE_TYPE: 0}
+        sampler._ntype_id_to_ntype = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
+        sampler._node_type_id_to_edge_type_ids = [[]]
+        sampler._edge_type_id_to_dst_ntype_id = []
+        sampler._degree_tensors_for_cpp = [torch.zeros(0, dtype=torch.int32)]
+
+        fake_state = FakePPRForwardPush()
+        original_ppr_forward_push = dist_ppr_sampler_module.PPRForwardPush
+        dist_ppr_sampler_module.PPRForwardPush = lambda *args, **kwargs: fake_state
+        try:
+            flat_ids, flat_weights, valid_counts = asyncio.run(
+                sampler._compute_ppr_scores(
+                    seed_nodes=torch.tensor([0], dtype=torch.long),
+                    seed_node_type=None,
+                )
+            )
+        finally:
+            dist_ppr_sampler_module.PPRForwardPush = original_ppr_forward_push
+
+        self.assertEqual(fake_state.extract_topup_args, (2, 2))
+        self.assertTrue(torch.equal(flat_ids, torch.tensor([10, 11])))
+        self.assertTrue(
+            torch.equal(flat_weights, torch.tensor([0.7, 0.2], dtype=torch.double))
+        )
+        self.assertTrue(torch.equal(valid_counts, torch.tensor([2])))
 
 
 if __name__ == "__main__":
