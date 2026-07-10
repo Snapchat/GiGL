@@ -402,7 +402,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         }
         total_bytes = sum(collected_tensors_to_bytes.values())
         collate_time = time.perf_counter() - collate_start
-        logger.debug(
+        # TODO: Bact to debug level
+        logger.info(
             f"Collected remote tensors: {{k: f'{v / 1e6:.2f}MB' for k, v in collected_tensors_to_bytes.items()}} | "
             f"Total: {total_bytes / 1e6:.2f}MB | "
             f"Time: {collate_time:.3f}s"
