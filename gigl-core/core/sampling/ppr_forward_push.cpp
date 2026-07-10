@@ -146,8 +146,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     return result;
 }
 
-void PPRForwardPush::pushResiduals(
-    const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
+void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
     // Step 1: Persist fetched neighbor lists in the per-state cache. drainQueue()
     // consults this cache before requesting future lookups, so storing every
     // fetched row here avoids re-fetching a (node, edge type) pair if it re-enters
@@ -265,9 +264,15 @@ void PPRForwardPush::pushResiduals(
     }
 }
 
-std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::extractTopK(
-    int32_t maxPprNodes) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+PPRExtractResult PPRForwardPush::extractTopK(int32_t maxPprNodes) {
+    return extractTopKWithResidualTopUp(maxPprNodes, /*maxResidualNodes=*/0);
+}
+
+PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNodes, int32_t maxResidualNodes) {
+    TORCH_CHECK(maxPprNodes >= 0, "maxPprNodes must be non-negative, got ", maxPprNodes, ".");
+    TORCH_CHECK(maxResidualNodes >= 0, "maxResidualNodes must be non-negative, got ", maxResidualNodes, ".");
+
+    PPRExtractResult result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
     // all-zero valid_counts).  This keeps the output shape consistent across batches so
     // downstream model architectures see a fixed set of PPR edge types every iteration.
@@ -277,9 +282,13 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
         std::vector<int64_t> validCounts;
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
-            const auto& scores = _state[seedIdx][nodeTypeId].pprScores;
+            const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
+            const auto& scores = nodeTypeState.pprScores;
             int32_t topK = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
+            int32_t residualTopK = 0;
+            std::unordered_set<int32_t> selectedNodeIds;
             if (topK > 0) {
+                selectedNodeIds.reserve(static_cast<size_t>(topK));
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
                 std::partial_sort(scorePairs.begin(),
                                   scorePairs.begin() + topK,
@@ -287,11 +296,44 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                                   [](const auto& a, const auto& b) { return a.second > b.second; });
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
-                    flatIds.push_back(static_cast<int64_t>(scorePairs[rankIdx].first));
+                    int32_t nodeId = scorePairs[rankIdx].first;
+                    flatIds.push_back(static_cast<int64_t>(nodeId));
                     flatWeights.push_back(scorePairs[rankIdx].second);
+                    selectedNodeIds.insert(nodeId);
                 }
             }
-            validCounts.push_back(static_cast<int64_t>(topK));
+
+            if (maxResidualNodes > 0) {
+                std::vector<std::pair<int32_t, double>> residualPairs;
+                residualPairs.reserve(nodeTypeState.residuals.size());
+                for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+                    if (residual <= 0.0 || selectedNodeIds.find(nodeId) != selectedNodeIds.end()) {
+                        continue;
+                    }
+
+                    auto scoreIter = scores.find(nodeId);
+                    double pprScore = (scoreIter != scores.end()) ? scoreIter->second : 0.0;
+                    double calibratedScore = pprScore + residual;
+                    if (calibratedScore <= 0.0) {
+                        continue;
+                    }
+                    residualPairs.emplace_back(nodeId, calibratedScore);
+                }
+
+                residualTopK = std::min(maxResidualNodes, static_cast<int32_t>(residualPairs.size()));
+                if (residualTopK > 0) {
+                    std::partial_sort(residualPairs.begin(),
+                                      residualPairs.begin() + residualTopK,
+                                      residualPairs.end(),
+                                      [](const auto& a, const auto& b) { return a.second > b.second; });
+
+                    for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
+                        flatIds.push_back(static_cast<int64_t>(residualPairs[rankIdx].first));
+                        flatWeights.push_back(residualPairs[rankIdx].second);
+                    }
+                }
+            }
+            validCounts.push_back(static_cast<int64_t>(topK + residualTopK));
         }
 
         result[nodeTypeId] = {torch::tensor(flatIds, torch::kLong),

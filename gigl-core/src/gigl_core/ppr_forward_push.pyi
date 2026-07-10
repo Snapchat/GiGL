@@ -1,5 +1,9 @@
 import torch
 
+TensorTriplet = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+ExtractResult = dict[int, TensorTriplet]
+
+
 class PPRForwardPush:
     def __init__(
         self,
@@ -12,10 +16,10 @@ class PPRForwardPush:
         degree_tensors: list[torch.Tensor],
     ) -> None: ...
     def drain_queue(self) -> dict[int, torch.Tensor] | None: ...
-    def push_residuals(
+    def push_residuals(self, fetched_by_etype_id: dict[int, TensorTriplet]) -> None: ...
+    def extract_top_k(self, max_ppr_nodes: int) -> ExtractResult: ...
+    def extract_top_k_with_residual_top_up(
         self,
-        fetched_by_etype_id: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    ) -> None: ...
-    def extract_top_k(
-        self, max_ppr_nodes: int
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+        max_ppr_nodes: int,
+        max_residual_nodes: int,
+    ) -> ExtractResult: ...
