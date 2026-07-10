@@ -1,7 +1,7 @@
 import asyncio
+import time
 from collections import defaultdict
 from dataclasses import dataclass
-import time
 from typing import Optional, Union
 
 import torch
@@ -397,6 +397,17 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         self._record_collate_timing(time.perf_counter() - collate_start)
 
+        collected_tensors_to_bytes: dict[str, int] = {
+            result_key: result_map[result_key].nbytes for result_key in futs
+        }
+        total_bytes = sum(collected_tensors_to_bytes.values())
+        collate_time = time.perf_counter() - collate_start
+        logger.debug(
+            f"Collected remote tensors: {{k: f'{v / 1e6:.2f}MB' for k, v in collected_tensors_to_bytes.items()}} | "
+            f"Total: {total_bytes / 1e6:.2f}MB | "
+            f"Time: {collate_time:.3f}s"
+        )
+
         return result_map
 
     def _record_collate_timing(self, collate_s: float) -> None:
@@ -408,7 +419,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             self._collate_timing_collate_sum = collate_sum
             return
 
-        logger.info(f"{_PERF_TIMING_LOG_PREFIX} sampler_collate_timing mean_collate_ms={1000 * collate_sum / count:.3f}")
+        logger.info(
+            f"{_PERF_TIMING_LOG_PREFIX} sampler_collate_timing mean_collate_ms={1000 * collate_sum / count:.3f}"
+        )
         self._collate_timing_count = 0
         self._collate_timing_collate_sum = 0.0
 
