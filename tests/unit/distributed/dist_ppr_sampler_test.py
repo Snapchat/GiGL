@@ -818,6 +818,26 @@ class DistPPRSamplerTest(TestCase):
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
+    @staticmethod
+    def _build_minimal_homogeneous_sampler(
+        *,
+        max_ppr_nodes: int,
+        enable_residual_topup: bool,
+    ) -> DistPPRNeighborSampler:
+        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler._alpha = _TEST_ALPHA
+        sampler._requeue_threshold_factor = _TEST_ALPHA * _TEST_EPS
+        sampler._max_ppr_nodes = max_ppr_nodes
+        sampler._enable_residual_topup = enable_residual_topup
+        sampler._max_fetch_iterations = None
+        sampler._is_homogeneous = True
+        sampler._node_type_to_id = {DEFAULT_HOMOGENEOUS_NODE_TYPE: 0}
+        sampler._ntype_id_to_ntype = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
+        sampler._node_type_id_to_edge_type_ids = [[]]
+        sampler._edge_type_id_to_dst_ntype_id = []
+        sampler._degree_tensors_for_cpp = [torch.zeros(0, dtype=torch.int32)]
+        return sampler
+
     def test_regular_ppr_uses_residual_topup_and_caps_results(self) -> None:
         """Verify non-typed PPR uses residual top-up without exceeding max_ppr_nodes."""
 
@@ -845,17 +865,10 @@ class DistPPRSamplerTest(TestCase):
                     )
                 }
 
-        sampler = object.__new__(DistPPRNeighborSampler)
-        sampler._alpha = _TEST_ALPHA
-        sampler._requeue_threshold_factor = _TEST_ALPHA * _TEST_EPS
-        sampler._max_ppr_nodes = 2
-        sampler._max_fetch_iterations = None
-        sampler._is_homogeneous = True
-        sampler._node_type_to_id = {DEFAULT_HOMOGENEOUS_NODE_TYPE: 0}
-        sampler._ntype_id_to_ntype = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
-        sampler._node_type_id_to_edge_type_ids = [[]]
-        sampler._edge_type_id_to_dst_ntype_id = []
-        sampler._degree_tensors_for_cpp = [torch.zeros(0, dtype=torch.int32)]
+        sampler = self._build_minimal_homogeneous_sampler(
+            max_ppr_nodes=2,
+            enable_residual_topup=True,
+        )
 
         fake_state = FakePPRForwardPush()
         original_ppr_forward_push = dist_ppr_sampler_module.PPRForwardPush
@@ -876,6 +889,54 @@ class DistPPRSamplerTest(TestCase):
             torch.equal(flat_weights, torch.tensor([0.7, 0.2], dtype=torch.double))
         )
         self.assertTrue(torch.equal(valid_counts, torch.tensor([2])))
+
+    def test_regular_ppr_can_disable_residual_topup(self) -> None:
+        """Verify non-typed PPR can keep the pre-top-up extraction behavior."""
+
+        class FakePPRForwardPush:
+            def __init__(self, *_, **__):
+                self.extract_top_k_args = None
+
+            def drain_queue(self):
+                return None
+
+            def extract_top_k(self, max_ppr_nodes: int):
+                self.extract_top_k_args = max_ppr_nodes
+                return {
+                    0: (
+                        torch.tensor([20], dtype=torch.long),
+                        torch.tensor([0.8], dtype=torch.double),
+                        torch.tensor([1], dtype=torch.long),
+                    )
+                }
+
+            def extract_top_k_with_residual_top_up(self, *_):
+                raise AssertionError("residual top-up should be disabled")
+
+        sampler = self._build_minimal_homogeneous_sampler(
+            max_ppr_nodes=2,
+            enable_residual_topup=False,
+        )
+
+        fake_state = FakePPRForwardPush()
+        original_ppr_forward_push = dist_ppr_sampler_module.PPRForwardPush
+        dist_ppr_sampler_module.PPRForwardPush = lambda *args, **kwargs: fake_state
+        try:
+            flat_ids, flat_weights, valid_counts = asyncio.run(
+                sampler._compute_ppr_scores(
+                    seed_nodes=torch.tensor([0], dtype=torch.long),
+                    seed_node_type=None,
+                )
+            )
+        finally:
+            dist_ppr_sampler_module.PPRForwardPush = original_ppr_forward_push
+
+        self.assertEqual(fake_state.extract_top_k_args, 2)
+        self.assertTrue(torch.equal(flat_ids, torch.tensor([20])))
+        self.assertTrue(
+            torch.equal(flat_weights, torch.tensor([0.8], dtype=torch.double))
+        )
+        self.assertTrue(torch.equal(valid_counts, torch.tensor([1])))
 
 
 if __name__ == "__main__":

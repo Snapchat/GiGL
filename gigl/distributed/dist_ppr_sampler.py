@@ -73,8 +73,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed. If finalized
-            PPR scores produce fewer than this cap, discovered residual
-            candidates are appended with score ``ppr_score + residual``.
+            PPR scores produce fewer than this cap and residual top-up is
+            enabled, discovered residual candidates are appended with score
+            ``ppr_score + residual``.
+        enable_residual_topup: Whether to append residual candidates discovered
+            during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
+            scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
@@ -89,6 +93,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         alpha: float = 0.5,
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
+        enable_residual_topup: bool = True,
         num_neighbors_per_hop: int = 100_000,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
@@ -97,6 +102,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         super().__init__(*args, **kwargs)
         self._alpha = alpha
         self._max_ppr_nodes = max_ppr_nodes
+        self._enable_residual_topup = enable_residual_topup
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
@@ -482,11 +488,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 None, ppr_state.push_residuals, fetched_by_etype_id
             )
 
+        residual_topup_nodes = (
+            self._max_ppr_nodes if self._enable_residual_topup else 0
+        )
         return self._extract_ppr_state_top_k(
             ppr_state,
             device,
             max_ppr_nodes=self._max_ppr_nodes,
-            residual_topup_nodes=self._max_ppr_nodes,
+            residual_topup_nodes=residual_topup_nodes,
             max_total_nodes=self._max_ppr_nodes,
         )
 
