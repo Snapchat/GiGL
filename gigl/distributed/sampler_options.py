@@ -44,6 +44,12 @@ class PPRSamplerOptions:
 
     For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
 
+    Residual top-up is a sequence-length knob that avoids lowering ``eps`` just
+    to get more returned nodes.  Lowering ``eps`` re-enqueues more low-residual
+    nodes but increases push iterations and neighbor-fetch work; top-up instead
+    fills unused output slots with already-discovered positive-residual nodes
+    that were closest to crossing the requeue threshold.
+
     Attributes:
         alpha: Restart probability (teleport probability back to seed). Higher
             values keep samples closer to seeds. Typical values: 0.15-0.25.
@@ -55,7 +61,9 @@ class PPRSamplerOptions:
         enable_residual_topup: Whether to append discovered-but-unpushed
             residual candidates when finalized PPR scores produce fewer than
             ``max_ppr_nodes`` results. Residual top-up candidates are scored on
-            the same mass scale as PPR scores: ``ppr_score + residual``.
+            the same mass scale as PPR scores: ``ppr_score + residual``. They
+            fill only unused output slots and do not displace finalized PPR nodes
+            when those already fill ``max_ppr_nodes``.
         num_neighbors_per_hop: Maximum number of neighbors fetched per node per edge
             type during PPR traversal. 1000 is sufficient in practice — high-degree
             hub nodes receive diminishing residual per neighbor, so capping the fetch

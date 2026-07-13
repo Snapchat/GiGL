@@ -147,7 +147,8 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     return result;
 }
 
-void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
+void PPRForwardPush::pushResiduals(
+    const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
     // Step 1: Persist fetched neighbor lists in the per-state cache. drainQueue()
     // consults this cache before requesting future lookups, so storing every
     // fetched row here avoids re-fetching a (node, edge type) pair if it re-enters
@@ -265,18 +266,13 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
     }
 }
 
-PPRExtractResult PPRForwardPush::extractTopK(int32_t maxPprNodes) {
-    return extractTopKWithResidualTopUp(maxPprNodes, /*maxResidualNodes=*/0);
-}
-
-PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNodes,
-                                                              int32_t maxResidualNodes,
-                                                              int32_t maxTotalNodes) {
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::
+    extractTopKWithResidualTopUp(int32_t maxPprNodes, int32_t maxResidualNodes, int32_t maxTotalNodes) {
     TORCH_CHECK(maxPprNodes >= 0, "maxPprNodes must be non-negative, got ", maxPprNodes, ".");
     TORCH_CHECK(maxResidualNodes >= 0, "maxResidualNodes must be non-negative, got ", maxResidualNodes, ".");
-    TORCH_CHECK(maxTotalNodes >= -1, "maxTotalNodes must be -1 or non-negative, got ", maxTotalNodes, ".");
+    TORCH_CHECK(maxTotalNodes >= -1, "maxTotalNodes must be >= -1 (-1 means unbounded), got ", maxTotalNodes, ".");
 
-    PPRExtractResult result;
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
     // all-zero valid_counts).  This keeps the output shape consistent across batches so
     // downstream model architectures see a fixed set of PPR edge types every iteration.
@@ -294,7 +290,12 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                 pprNodeLimit = std::min(maxPprNodes, maxTotalNodes);
                 totalNodeLimit = maxTotalNodes;
             }
-            bool emitCalibratedScores = maxResidualNodes > 0;
+            // With no residual top-up budget, emit finalized PPR scores as-is.
+            // When residual top-up is enabled, residual candidates are scored as
+            // ppr_score + residual; selected finalized PPR nodes must use that
+            // same output score scale so the merged list is comparable and
+            // sorted consistently.
+            bool includeResidualMassInOutputScores = maxResidualNodes > 0;
 
             int32_t topK = std::min(pprNodeLimit, static_cast<int32_t>(scores.size()));
             int32_t residualBudget = std::min(maxResidualNodes, std::max<int32_t>(0, totalNodeLimit - topK));
@@ -307,6 +308,10 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                     selectedNodeIds.reserve(static_cast<size_t>(topK));
                 }
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
+                // Selection is intentionally two-phase: finalized nodes are selected
+                // first by raw PPR score, and residual candidates only compete for
+                // the remaining budget. After selection, rows are emitted and sorted
+                // by outputScore.
                 std::partial_sort(scorePairs.begin(),
                                   scorePairs.begin() + topK,
                                   scorePairs.end(),
@@ -314,14 +319,14 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
                     int32_t nodeId = scorePairs[rankIdx].first;
-                    double calibratedScore = scorePairs[rankIdx].second;
-                    if (emitCalibratedScores) {
+                    double outputScore = scorePairs[rankIdx].second;
+                    if (includeResidualMassInOutputScores) {
                         auto residualIter = nodeTypeState.residuals.find(nodeId);
                         if (residualIter != nodeTypeState.residuals.end()) {
-                            calibratedScore += residualIter->second;
+                            outputScore += residualIter->second;
                         }
                     }
-                    selectedPairs.emplace_back(nodeId, calibratedScore);
+                    selectedPairs.emplace_back(nodeId, outputScore);
                     if (residualBudget > 0) {
                         selectedNodeIds.insert(nodeId);
                     }
@@ -338,11 +343,8 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
 
                     auto scoreIter = scores.find(nodeId);
                     double pprScore = (scoreIter != scores.end()) ? scoreIter->second : 0.0;
-                    double calibratedScore = pprScore + residual;
-                    if (calibratedScore <= 0.0) {
-                        continue;
-                    }
-                    residualPairs.emplace_back(nodeId, calibratedScore);
+                    double outputScore = pprScore + residual;
+                    residualPairs.emplace_back(nodeId, outputScore);
                 }
 
                 residualTopK = std::min(residualBudget, static_cast<int32_t>(residualPairs.size()));
@@ -358,7 +360,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                 }
             }
 
-            if (emitCalibratedScores && selectedPairs.size() > 1) {
+            if (includeResidualMassInOutputScores && selectedPairs.size() > 1) {
                 std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
                     return a.second > b.second;
                 });

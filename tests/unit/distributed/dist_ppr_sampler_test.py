@@ -26,11 +26,9 @@ graph (add dst→src instead of src→dst).  When ``edge_dir="out"``, no
 reversal is needed since both follow the original edge direction.
 """
 
-import asyncio
 import heapq
 from collections import defaultdict
 from typing import Literal
-from unittest.mock import patch
 
 import networkx as nx
 import torch
@@ -42,7 +40,6 @@ from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.dist_ppr_sampler as dist_ppr_sampler_module
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
-from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.types.graph import (
@@ -819,41 +816,12 @@ class DistPPRSamplerTest(TestCase):
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
-    @staticmethod
-    def _build_minimal_homogeneous_sampler(
-        *,
-        max_ppr_nodes: int,
-        enable_residual_topup: bool,
-    ) -> DistPPRNeighborSampler:
-        """Build only the sampler fields needed by extraction-focused tests."""
-        sampler = object.__new__(DistPPRNeighborSampler)
-        sampler._alpha = _TEST_ALPHA
-        sampler._requeue_threshold_factor = _TEST_ALPHA * _TEST_EPS
-        sampler._max_ppr_nodes = max_ppr_nodes
-        sampler._enable_residual_topup = enable_residual_topup
-        sampler._max_fetch_iterations = None
-        sampler._is_homogeneous = True
-        sampler._node_type_to_id = {DEFAULT_HOMOGENEOUS_NODE_TYPE: 0}
-        sampler._ntype_id_to_ntype = [DEFAULT_HOMOGENEOUS_NODE_TYPE]
-        sampler._node_type_id_to_edge_type_ids = [[]]
-        sampler._edge_type_id_to_dst_ntype_id = []
-        sampler._degree_tensors_for_cpp = [torch.zeros(0, dtype=torch.int32)]
-        return sampler
-
-    def test_regular_ppr_uses_residual_topup_and_caps_results(self) -> None:
-        """Verify non-typed PPR uses residual top-up without exceeding max_ppr_nodes."""
+    def test_ppr_extraction_uses_residual_topup_and_caps_results(self) -> None:
+        """Verify extraction uses residual top-up without exceeding max_ppr_nodes."""
 
         class FakePPRForwardPush:
             def __init__(self, *_, **__):
                 self.extract_topup_args = None
-
-            def drain_queue(self):
-                return None
-
-            def extract_top_k(self, *_):
-                raise AssertionError(
-                    "regular PPR should use residual top-up extraction"
-                )
 
             def extract_top_k_with_residual_top_up(
                 self,
@@ -874,44 +842,40 @@ class DistPPRSamplerTest(TestCase):
                     )
                 }
 
-        sampler = self._build_minimal_homogeneous_sampler(
+        fake_state = FakePPRForwardPush()
+        extracted_results = dist_ppr_sampler_module._extract_top_k_from_ppr_state(
+            fake_state,
             max_ppr_nodes=2,
-            enable_residual_topup=True,
+            residual_topup_nodes=2,
+            max_total_nodes=2,
         )
 
-        fake_state = FakePPRForwardPush()
-        with patch.object(
-            dist_ppr_sampler_module, "PPRForwardPush", return_value=fake_state
-        ):
-            flat_ids, flat_weights, valid_counts = asyncio.run(
-                sampler._compute_ppr_scores(
-                    seed_nodes=torch.tensor([0], dtype=torch.long),
-                    seed_node_type=None,
-                )
-            )
-
         self.assertEqual(fake_state.extract_topup_args, (2, 2, 2))
-        assert isinstance(flat_ids, torch.Tensor)
-        assert isinstance(flat_weights, torch.Tensor)
-        assert isinstance(valid_counts, torch.Tensor)
+        flat_ids, flat_weights, valid_counts = extracted_results[0]
         self.assertTrue(torch.equal(flat_ids, torch.tensor([10, 11])))
         self.assertTrue(
             torch.equal(flat_weights, torch.tensor([0.7, 0.2], dtype=torch.double))
         )
         self.assertTrue(torch.equal(valid_counts, torch.tensor([2])))
 
-    def test_regular_ppr_can_disable_residual_topup(self) -> None:
-        """Verify non-typed PPR can keep the pre-top-up extraction behavior."""
+    def test_ppr_extraction_can_disable_residual_topup(self) -> None:
+        """Verify extraction can keep the pre-top-up behavior."""
 
         class FakePPRForwardPush:
             def __init__(self, *_, **__):
-                self.extract_top_k_args = None
+                self.extract_topup_args = None
 
-            def drain_queue(self):
-                return None
-
-            def extract_top_k(self, max_ppr_nodes: int):
-                self.extract_top_k_args = max_ppr_nodes
+            def extract_top_k_with_residual_top_up(
+                self,
+                max_ppr_nodes: int,
+                max_residual_nodes: int,
+                max_total_nodes: int,
+            ):
+                self.extract_topup_args = (
+                    max_ppr_nodes,
+                    max_residual_nodes,
+                    max_total_nodes,
+                )
                 return {
                     0: (
                         torch.tensor([20], dtype=torch.long),
@@ -920,29 +884,16 @@ class DistPPRSamplerTest(TestCase):
                     )
                 }
 
-            def extract_top_k_with_residual_top_up(self, *_):
-                raise AssertionError("residual top-up should be disabled")
-
-        sampler = self._build_minimal_homogeneous_sampler(
+        fake_state = FakePPRForwardPush()
+        extracted_results = dist_ppr_sampler_module._extract_top_k_from_ppr_state(
+            fake_state,
             max_ppr_nodes=2,
-            enable_residual_topup=False,
+            residual_topup_nodes=0,
+            max_total_nodes=2,
         )
 
-        fake_state = FakePPRForwardPush()
-        with patch.object(
-            dist_ppr_sampler_module, "PPRForwardPush", return_value=fake_state
-        ):
-            flat_ids, flat_weights, valid_counts = asyncio.run(
-                sampler._compute_ppr_scores(
-                    seed_nodes=torch.tensor([0], dtype=torch.long),
-                    seed_node_type=None,
-                )
-            )
-
-        self.assertEqual(fake_state.extract_top_k_args, 2)
-        assert isinstance(flat_ids, torch.Tensor)
-        assert isinstance(flat_weights, torch.Tensor)
-        assert isinstance(valid_counts, torch.Tensor)
+        self.assertEqual(fake_state.extract_topup_args, (2, 0, 2))
+        flat_ids, flat_weights, valid_counts = extracted_results[0]
         self.assertTrue(torch.equal(flat_ids, torch.tensor([20])))
         self.assertTrue(
             torch.equal(flat_weights, torch.tensor([0.8], dtype=torch.double))

@@ -37,6 +37,20 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
 )
 
 
+def _extract_top_k_from_ppr_state(
+    ppr_state,
+    max_ppr_nodes: int,
+    residual_topup_nodes: int,
+    max_total_nodes: int,
+) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Call the shared C++ extraction path for the configured quotas."""
+    return ppr_state.extract_top_k_with_residual_top_up(
+        max_ppr_nodes,
+        residual_topup_nodes,
+        max_total_nodes,
+    )
+
+
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
     """Personalized PageRank (PPR) based distributed neighbor sampler.
 
@@ -47,6 +61,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     (PPR) scores to select the most relevant neighbors for each seed node. PPR
     scores are approximated here using the Forward Push algorithm (Andersen et
     al., 2006).
+
+    Residual top-up provides a cheaper way to increase returned sequence volume
+    without lowering ``eps``.  Lower ``eps`` thresholds re-enqueue more
+    low-residual nodes, but also increase push iterations and neighbor-fetch
+    work.  Top-up instead fills unused output slots with positive-residual nodes
+    already discovered during Forward Push; these are the nodes that are closest
+    to being re-enqueued if the threshold were lower.
 
     This sampler supports both homogeneous and heterogeneous graphs. For heterogeneous graphs,
     the PPR algorithm traverses across all edge types, switching edge types based on the
@@ -76,7 +97,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             PPR scores produce fewer than this cap and residual top-up is
             enabled, discovered residual candidates fill the remaining slots
             with score ``ppr_score + residual``.  Returned nodes are sorted by
-            emitted score.
+            emitted score, but residual candidates do not displace finalized
+            PPR nodes when finalized scores already fill the cap.
         enable_residual_topup: Whether to include residual candidates discovered
             during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
             scores are available.
@@ -286,9 +308,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         ppr_state,
         device: torch.device,
-        max_ppr_nodes: Optional[int] = None,
-        residual_topup_nodes: int = 0,
-        max_total_nodes: Optional[int] = None,
+        max_ppr_nodes: int,
+        residual_topup_nodes: int,
+        max_total_nodes: int,
     ) -> tuple[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -301,11 +323,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         preserves the homogeneous return shape expected by the rest of the
         sampler.
 
-        ``residual_topup_nodes`` controls how many discovered residual
-        candidates may be considered after finalized PPR scores.  ``max_total_nodes``
-        is a combined per-seed cap across finalized and residual candidates.
-        When set, the cap is passed into C++ so residual candidates are not
-        materialized only to be discarded later in Python.
+        The quota arguments are passed in explicitly by the caller so this
+        helper only translates the C++ output shape.  ``residual_topup_nodes``
+        controls how many discovered residual candidates may be considered
+        after finalized PPR scores.  ``max_total_nodes`` is a combined per-seed
+        cap across finalized and residual candidates.
         """
         # Translate ntype_id integer keys back to NodeType strings for the rest
         # of the pipeline, and move tensors to the correct device.
@@ -313,20 +335,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
         ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
 
-        ppr_node_quota = (
-            max_ppr_nodes if max_ppr_nodes is not None else self._max_ppr_nodes
+        extracted_results = _extract_top_k_from_ppr_state(
+            ppr_state,
+            max_ppr_nodes,
+            residual_topup_nodes,
+            max_total_nodes,
         )
-        if residual_topup_nodes > 0:
-            max_total_nodes_for_extraction = (
-                max_total_nodes if max_total_nodes is not None else -1
-            )
-            extracted_results = ppr_state.extract_top_k_with_residual_top_up(
-                ppr_node_quota,
-                residual_topup_nodes,
-                max_total_nodes_for_extraction,
-            )
-        else:
-            extracted_results = ppr_state.extract_top_k(ppr_node_quota)
 
         for ntype_id, (
             flat_ids,
@@ -456,9 +470,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 None, ppr_state.push_residuals, fetched_by_etype_id
             )
 
-        residual_topup_nodes = (
-            self._max_ppr_nodes if self._enable_residual_topup else 0
-        )
+        # Regular sampling uses residual top-up as fill-only under the
+        # max_ppr_nodes cap.  If finalized PPR scores already fill that cap,
+        # max_total_nodes leaves no budget for residual candidates.
+        residual_topup_nodes = self._max_ppr_nodes if self._enable_residual_topup else 0
         return self._extract_ppr_state_top_k(
             ppr_state,
             device,

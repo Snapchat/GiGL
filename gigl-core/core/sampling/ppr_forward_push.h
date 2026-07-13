@@ -26,10 +26,6 @@ struct SeedNodeTypeState {
     std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
 };
 
-using TensorTriplet = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
-using NeighborFetchMap = std::unordered_map<int32_t, TensorTriplet>;
-using PPRExtractResult = std::unordered_map<int32_t, TensorTriplet>;
-
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
 // Hot-loop state lives here; distributed neighbor fetches are driven from Python.
 //
@@ -39,7 +35,7 @@ using PPRExtractResult = std::unordered_map<int32_t, TensorTriplet>;
 //   2. drainQueue()                         → nodes needing neighbor lookup
 //   3. <Python: _batch_fetch_neighbors()>
 //   4. pushResiduals(fetchedByEtypeId)
-//   5. extractTopK(maxPprNodes)
+//   5. extractTopKWithResidualTopUp(maxPprNodes, maxResidualNodes, maxTotalNodes)
 class PPRForwardPush {
 public:
     PPRForwardPush(const torch::Tensor& seedNodes,
@@ -57,27 +53,29 @@ public:
 
     // Push residuals given fetched neighbor data.
     // fetchedByEtypeId: {etype_id: (node_ids[N], flat_nbrs[sum(counts)], counts[N])}
-    void pushResiduals(const NeighborFetchMap& fetchedByEtypeId);
-
-    // Return top-k PPR nodes per seed per node type.
-    // Result: {ntype_id: (flat_ids, flat_weights, valid_counts)} — one entry per node type,
-    // including types unreachable in this batch (empty tensors, all-zero valid_counts).
-    PPRExtractResult extractTopK(int32_t maxPprNodes);
+    // TODO: Move these repeated tensor tuple/map types into aliases in a follow-up
+    // refactor-only PR.
+    void pushResiduals(
+        const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId);
 
     // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
     //
     // Residual top-up does not issue new neighbor fetches.  It only reads the
-    // residual table already built by Forward Push.  Scores are emitted on the
+    // residual table already built by Forward Push.  This gives callers a way
+    // to fill short sequences with nodes that were discovered but did not cross
+    // the requeue threshold, without lowering eps and running more push steps.
+    // Scores are emitted on the
     // same mass scale as PPR scores: ppr_score(node) + residual(node), i.e. the
     // score the node would have if the remaining residual at that node were
     // absorbed locally.  Residual candidates only fill the requested top-up
-    // budget; they do not displace selected finalized-PPR nodes.
+    // budget; they do not displace selected finalized-PPR nodes.  The returned
+    // set is selected by this two-phase policy, then sorted by emitted score;
+    // it is not a global top-k over ppr_score + residual when maxTotalNodes is tight.
     //
     // maxTotalNodes caps finalized-PPR plus residual nodes per seed.  Pass -1
     // to keep the uncapped "maxPprNodes + maxResidualNodes" candidate behavior.
-    PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPprNodes,
-                                                  int32_t maxResidualNodes,
-                                                  int32_t maxTotalNodes = -1);
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
+        int32_t maxPprNodes, int32_t maxResidualNodes, int32_t maxTotalNodes = -1);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
