@@ -2,7 +2,6 @@
 
 #include <torch/torch.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <tuple>
@@ -35,7 +34,7 @@ struct SeedNodeTypeState {
 //   2. drainQueue()                         → nodes needing neighbor lookup
 //   3. <Python: _batch_fetch_neighbors()>
 //   4. pushResiduals(fetchedByEtypeId)
-//   5. extractTopKWithResidualTopUp(maxPprNodes, maxResidualNodes, maxTotalNodes)
+//   5. extractTopKWithResidualTopUp(maxPPRNodes, maxResidualNodes, maxTotalNodes)
 class PPRForwardPush {
 public:
     PPRForwardPush(const torch::Tensor& seedNodes,
@@ -73,9 +72,9 @@ public:
     // it is not a global top-k over ppr_score + residual when maxTotalNodes is tight.
     //
     // maxTotalNodes caps finalized-PPR plus residual nodes per seed.  Pass -1
-    // to keep the uncapped "maxPprNodes + maxResidualNodes" candidate behavior.
+    // to keep the uncapped "maxPPRNodes + maxResidualNodes" candidate behavior.
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
-        int32_t maxPprNodes, int32_t maxResidualNodes, int32_t maxTotalNodes = -1);
+        int32_t maxPPRNodes, int32_t maxResidualNodes, int32_t maxTotalNodes = -1);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.

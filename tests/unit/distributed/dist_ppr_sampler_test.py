@@ -38,7 +38,6 @@ from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
-import gigl.distributed.dist_ppr_sampler as dist_ppr_sampler_module
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
@@ -815,90 +814,6 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_homogeneous_ablp(self) -> None:
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
-
-    def test_ppr_extraction_uses_residual_topup_and_caps_results(self) -> None:
-        """Verify extraction uses residual top-up without exceeding max_ppr_nodes."""
-
-        class FakePPRForwardPush:
-            def __init__(self, *_, **__):
-                self.extract_topup_args = None
-
-            def extract_top_k_with_residual_top_up(
-                self,
-                max_ppr_nodes: int,
-                max_residual_nodes: int,
-                max_total_nodes: int,
-            ):
-                self.extract_topup_args = (
-                    max_ppr_nodes,
-                    max_residual_nodes,
-                    max_total_nodes,
-                )
-                return {
-                    0: (
-                        torch.tensor([10, 11], dtype=torch.long),
-                        torch.tensor([0.7, 0.2], dtype=torch.double),
-                        torch.tensor([2], dtype=torch.long),
-                    )
-                }
-
-        fake_state = FakePPRForwardPush()
-        extracted_results = dist_ppr_sampler_module._extract_top_k_from_ppr_state(
-            fake_state,
-            max_ppr_nodes=2,
-            residual_topup_nodes=2,
-            max_total_nodes=2,
-        )
-
-        self.assertEqual(fake_state.extract_topup_args, (2, 2, 2))
-        flat_ids, flat_weights, valid_counts = extracted_results[0]
-        self.assertTrue(torch.equal(flat_ids, torch.tensor([10, 11])))
-        self.assertTrue(
-            torch.equal(flat_weights, torch.tensor([0.7, 0.2], dtype=torch.double))
-        )
-        self.assertTrue(torch.equal(valid_counts, torch.tensor([2])))
-
-    def test_ppr_extraction_can_disable_residual_topup(self) -> None:
-        """Verify extraction can keep the pre-top-up behavior."""
-
-        class FakePPRForwardPush:
-            def __init__(self, *_, **__):
-                self.extract_topup_args = None
-
-            def extract_top_k_with_residual_top_up(
-                self,
-                max_ppr_nodes: int,
-                max_residual_nodes: int,
-                max_total_nodes: int,
-            ):
-                self.extract_topup_args = (
-                    max_ppr_nodes,
-                    max_residual_nodes,
-                    max_total_nodes,
-                )
-                return {
-                    0: (
-                        torch.tensor([20], dtype=torch.long),
-                        torch.tensor([0.8], dtype=torch.double),
-                        torch.tensor([1], dtype=torch.long),
-                    )
-                }
-
-        fake_state = FakePPRForwardPush()
-        extracted_results = dist_ppr_sampler_module._extract_top_k_from_ppr_state(
-            fake_state,
-            max_ppr_nodes=2,
-            residual_topup_nodes=0,
-            max_total_nodes=2,
-        )
-
-        self.assertEqual(fake_state.extract_topup_args, (2, 0, 2))
-        flat_ids, flat_weights, valid_counts = extracted_results[0]
-        self.assertTrue(torch.equal(flat_ids, torch.tensor([20])))
-        self.assertTrue(
-            torch.equal(flat_weights, torch.tensor([0.8], dtype=torch.double))
-        )
-        self.assertTrue(torch.equal(valid_counts, torch.tensor([1])))
 
 
 if __name__ == "__main__":

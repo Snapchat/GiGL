@@ -37,20 +37,6 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
 )
 
 
-def _extract_top_k_from_ppr_state(
-    ppr_state,
-    max_ppr_nodes: int,
-    residual_topup_nodes: int,
-    max_total_nodes: int,
-) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-    """Call the shared C++ extraction path for the configured quotas."""
-    return ppr_state.extract_top_k_with_residual_top_up(
-        max_ppr_nodes,
-        residual_topup_nodes,
-        max_total_nodes,
-    )
-
-
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
     """Personalized PageRank (PPR) based distributed neighbor sampler.
 
@@ -310,7 +296,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         device: torch.device,
         max_ppr_nodes: int,
         residual_topup_nodes: int,
-        max_total_nodes: int,
     ) -> tuple[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -326,8 +311,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         The quota arguments are passed in explicitly by the caller so this
         helper only translates the C++ output shape.  ``residual_topup_nodes``
         controls how many discovered residual candidates may be considered
-        after finalized PPR scores.  ``max_total_nodes`` is a combined per-seed
-        cap across finalized and residual candidates.
+        after finalized PPR scores.  Regular PPR uses ``max_ppr_nodes`` as the
+        combined per-seed cap across finalized and residual candidates.
+
+        Returns:
+            ``(flat_ids, flat_weights, valid_counts)`` for homogeneous graphs,
+            or three dictionaries keyed by node type for heterogeneous graphs.
+            ``flat_ids`` and ``flat_weights`` are concatenated across seeds;
+            ``valid_counts`` stores how many selected nodes belong to each seed.
         """
         # Translate ntype_id integer keys back to NodeType strings for the rest
         # of the pipeline, and move tensors to the correct device.
@@ -335,11 +326,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
         ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
 
-        extracted_results = _extract_top_k_from_ppr_state(
-            ppr_state,
+        extracted_results = ppr_state.extract_top_k_with_residual_top_up(
             max_ppr_nodes,
             residual_topup_nodes,
-            max_total_nodes,
+            max_ppr_nodes,
         )
 
         for ntype_id, (
@@ -479,7 +469,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             device,
             max_ppr_nodes=self._max_ppr_nodes,
             residual_topup_nodes=residual_topup_nodes,
-            max_total_nodes=self._max_ppr_nodes,
         )
 
     async def _sample_from_nodes(

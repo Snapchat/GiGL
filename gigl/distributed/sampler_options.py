@@ -44,11 +44,11 @@ class PPRSamplerOptions:
 
     For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
 
-    Residual top-up is a sequence-length knob that avoids lowering ``eps`` just
-    to get more returned nodes.  Lowering ``eps`` re-enqueues more low-residual
-    nodes but increases push iterations and neighbor-fetch work; top-up instead
-    fills unused output slots with already-discovered positive-residual nodes
-    that were closest to crossing the requeue threshold.
+    Enable residual top-up when you want longer returned sequences without
+    paying the throughput cost of lowering ``eps``.  Lowering ``eps``
+    re-enqueues more low-residual nodes but increases push iterations and
+    neighbor-fetch work; top-up instead uses positive-residual nodes already
+    discovered during Forward Push.
 
     Attributes:
         alpha: Restart probability (teleport probability back to seed). Higher
