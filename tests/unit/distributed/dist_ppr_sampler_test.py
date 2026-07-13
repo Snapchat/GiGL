@@ -30,6 +30,7 @@ import asyncio
 import heapq
 from collections import defaultdict
 from typing import Literal
+from unittest.mock import patch
 
 import networkx as nx
 import torch
@@ -850,7 +851,9 @@ class DistPPRSamplerTest(TestCase):
                 return None
 
             def extract_top_k(self, *_):
-                raise AssertionError("regular PPR should use residual top-up extraction")
+                raise AssertionError(
+                    "regular PPR should use residual top-up extraction"
+                )
 
             def extract_top_k_with_residual_top_up(
                 self,
@@ -877,19 +880,20 @@ class DistPPRSamplerTest(TestCase):
         )
 
         fake_state = FakePPRForwardPush()
-        original_ppr_forward_push = dist_ppr_sampler_module.PPRForwardPush
-        dist_ppr_sampler_module.PPRForwardPush = lambda *args, **kwargs: fake_state
-        try:
+        with patch.object(
+            dist_ppr_sampler_module, "PPRForwardPush", return_value=fake_state
+        ):
             flat_ids, flat_weights, valid_counts = asyncio.run(
                 sampler._compute_ppr_scores(
                     seed_nodes=torch.tensor([0], dtype=torch.long),
                     seed_node_type=None,
                 )
             )
-        finally:
-            dist_ppr_sampler_module.PPRForwardPush = original_ppr_forward_push
 
         self.assertEqual(fake_state.extract_topup_args, (2, 2, 2))
+        assert isinstance(flat_ids, torch.Tensor)
+        assert isinstance(flat_weights, torch.Tensor)
+        assert isinstance(valid_counts, torch.Tensor)
         self.assertTrue(torch.equal(flat_ids, torch.tensor([10, 11])))
         self.assertTrue(
             torch.equal(flat_weights, torch.tensor([0.7, 0.2], dtype=torch.double))
@@ -925,19 +929,20 @@ class DistPPRSamplerTest(TestCase):
         )
 
         fake_state = FakePPRForwardPush()
-        original_ppr_forward_push = dist_ppr_sampler_module.PPRForwardPush
-        dist_ppr_sampler_module.PPRForwardPush = lambda *args, **kwargs: fake_state
-        try:
+        with patch.object(
+            dist_ppr_sampler_module, "PPRForwardPush", return_value=fake_state
+        ):
             flat_ids, flat_weights, valid_counts = asyncio.run(
                 sampler._compute_ppr_scores(
                     seed_nodes=torch.tensor([0], dtype=torch.long),
                     seed_node_type=None,
                 )
             )
-        finally:
-            dist_ppr_sampler_module.PPRForwardPush = original_ppr_forward_push
 
         self.assertEqual(fake_state.extract_top_k_args, 2)
+        assert isinstance(flat_ids, torch.Tensor)
+        assert isinstance(flat_weights, torch.Tensor)
+        assert isinstance(valid_counts, torch.Tensor)
         self.assertTrue(torch.equal(flat_ids, torch.tensor([20])))
         self.assertTrue(
             torch.equal(flat_weights, torch.tensor([0.8], dtype=torch.double))
