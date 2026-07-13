@@ -148,9 +148,10 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
 
 void PPRForwardPush::pushResiduals(
     const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
-    // Step 1: Unpack the input map into a C++ map keyed by packKey(nodeId, edgeTypeId)
-    // for fast lookup during the residual-push loop below.
-    std::unordered_map<uint64_t, std::vector<int32_t>> fetched;
+    // Step 1: Persist fetched neighbor lists in the per-state cache. drainQueue()
+    // consults this cache before requesting future lookups, so storing every
+    // fetched row here avoids re-fetching a (node, edge type) pair if it re-enters
+    // the frontier later in the same PPR channel.
     for (const auto& [edgeTypeId, neighborTensors] : fetchedByEtypeId) {
         const auto& nodeIdsTensor = std::get<0>(neighborTensors);
         const auto& flatNeighborIdsTensor = std::get<1>(neighborTensors);
@@ -172,7 +173,10 @@ void PPRForwardPush::pushResiduals(
             for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
                 neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
             }
-            fetched[packKey(nodeId, edgeTypeId)] = std::move(neighborIds);
+            uint64_t cacheKey = packKey(nodeId, edgeTypeId);
+            if (_neighborCache.find(cacheKey) == _neighborCache.end()) {
+                _neighborCache.emplace(cacheKey, std::move(neighborIds));
+            }
             offset += count;
         }
     }
@@ -197,21 +201,16 @@ void PPRForwardPush::pushResiduals(
                 srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
                 srcNodeTypeState.residuals[sourceNodeId] = 0.0;
 
-                // b. Count total fetched/cached neighbors across all edge types for
+                // b. Count total cached neighbors across all edge types for
                 // this source node.  We normalise by the number of neighbors we
                 // actually retrieved, not the true degree, so residual is fully
                 // distributed among known neighbors rather than leaking to unfetched
                 // ones (which matters when num_neighbors_per_hop < true_degree).
-                int32_t totalFetched = 0;
+                int32_t totalCachedNeighbors = 0;
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
-                    if (fetchedEntry != fetched.end()) {
-                        totalFetched += static_cast<int32_t>(fetchedEntry->second.size());
-                    } else {
-                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
-                        if (cachedEntry != _neighborCache.end()) {
-                            totalFetched += static_cast<int32_t>(cachedEntry->second.size());
-                        }
+                    auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
+                    if (cachedEntry != _neighborCache.end()) {
+                        totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.size());
                     }
                 }
                 // Two cases reach here:
@@ -221,32 +220,23 @@ void PPRForwardPush::pushResiduals(
                 //      This overstates src and understates its neighbors.  This is expected
                 //      behavior when max_fetch_iterations is set, which intentionally trades
                 //      theoretical PPR correctness for better throughput.
-                if (totalFetched == 0) {
+                if (totalCachedNeighbors == 0) {
                     continue;
                 }
 
-                double residualPerNeighbor = (1.0 - _alpha) * sourceResidual / static_cast<double>(totalFetched);
+                double residualPerNeighbor =
+                    (1.0 - _alpha) * sourceResidual / static_cast<double>(totalCachedNeighbors);
 
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    // Invariant: fetched and _neighborCache are mutually exclusive for
-                    // any given (node, etype) key within one iteration.  drainQueue()
-                    // only requests a fetch for nodes absent from _neighborCache, so a
-                    // key is in at most one of the two.
-                    //
                     // Neighbor list for this (src, edgeTypeId) pair, borrowed from whichever
                     // map holds it.  reference_wrapper is used because std::optional cannot
                     // hold a reference directly, and we want to avoid copying the vector —
-                    // the data already exists in fetched or _neighborCache and both outlive
-                    // this loop body.  Access via neighborList->get().
+                    // the data already exists in _neighborCache and outlives this loop body.
+                    // Access via neighborList->get().
                     std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
-                    auto fetchedEntry = fetched.find(packKey(sourceNodeId, edgeTypeId));
-                    if (fetchedEntry != fetched.end()) {
-                        neighborList = std::cref(fetchedEntry->second);
-                    } else {
-                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
-                        if (cachedEntry != _neighborCache.end()) {
-                            neighborList = std::cref(cachedEntry->second);
-                        }
+                    auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
+                    if (cachedEntry != _neighborCache.end()) {
+                        neighborList = std::cref(cachedEntry->second);
                     }
                     if (!neighborList || neighborList->get().empty()) {
                         continue;
@@ -267,18 +257,6 @@ void PPRForwardPush::pushResiduals(
                             dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
                             dstNodeTypeState.queue.insert(neighborNodeId);
                             ++_numNodesInQueue;
-
-                            // Promote neighbor lists to the persistent cache: this node will
-                            // be processed next iteration, so caching avoids a re-fetch.
-                            for (int32_t neighborEdgeTypeId : _nodeTypeToEdgeTypeIds[dstNodeTypeId]) {
-                                uint64_t packedKey = packKey(neighborNodeId, neighborEdgeTypeId);
-                                if (_neighborCache.find(packedKey) == _neighborCache.end()) {
-                                    auto fetchedNeighborEntry = fetched.find(packedKey);
-                                    if (fetchedNeighborEntry != fetched.end()) {
-                                        _neighborCache[packedKey] = fetchedNeighborEntry->second;
-                                    }
-                                }
-                            }
                         }
                     }
                 }
