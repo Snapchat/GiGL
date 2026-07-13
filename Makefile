@@ -216,9 +216,6 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	# You will need to update the base image tag below whenever the requirements are updated by:
 	#   1) running `make push_new_docker_base_image`
 	#   2) Replace the git hash `DOCKER_LATEST_BASE_IMAGE_TAG` that tags the base image with the new generated tag
-	# Note: don't forget to `make generate_cpu_hashed_requirements` and `make generate_cuda_hashed_requirements`
-	# before running this if you've updated requirements.in
-	# You may be able to utilize git comment `/make_cuda_hashed_req` to help you build the cuda hashed req as well
 	# See ci.yaml or type in `/help` in your PR for more info.
 	@echo "All Docker images compiled and pushed"
 
