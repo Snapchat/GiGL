@@ -74,9 +74,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
              but require more computation. Typical values: 1e-4 to 1e-6.
         max_ppr_nodes: Maximum number of nodes to return per seed. If finalized
             PPR scores produce fewer than this cap and residual top-up is
-            enabled, discovered residual candidates are appended with score
-            ``ppr_score + residual``.
-        enable_residual_topup: Whether to append residual candidates discovered
+            enabled, discovered residual candidates fill the remaining slots
+            with score ``ppr_score + residual``.  Returned nodes are sorted by
+            emitted score.
+        enable_residual_topup: Whether to include residual candidates discovered
             during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
             scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.

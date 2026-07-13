@@ -159,9 +159,9 @@ TEST(PPRForwardPush, ExtractTopKLimitsResults) {
     EXPECT_EQ(std::get<2>(topk10.at(0))[0].item<int64_t>(), 2);
 }
 
-// Residual top-up appends discovered nodes whose residual never crossed the
+// Residual top-up includes discovered nodes whose residual never crossed the
 // requeue threshold, without changing the default extractTopK behavior.
-TEST(PPRForwardPush, ExtractTopKWithResidualTopUpAppendsUnpushedResiduals) {
+TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
     const double alpha = 0.5;
     auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1.0, /*degrees=*/{2, 1, 1});
 
@@ -188,6 +188,43 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpAppendsUnpushedResiduals) {
     ASSERT_NE(residualWeights.find(2), residualWeights.end());
     EXPECT_NEAR(residualWeights[1], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
     EXPECT_NEAR(residualWeights[2], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
+}
+
+// Residual top-up cannot displace finalized PPR nodes from the selected set,
+// but the final emitted sequence should still be sorted by emitted score.
+TEST(PPRForwardPush, ExtractTopKWithResidualTopUpSortsSelectedResultsByScore) {
+    const double alpha = 0.5;
+    auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/0.1, /*degrees=*/{2, 2, 1, 0});
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1, 2}, /*counts=*/{2}));
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{2}, /*flatNeighborIds=*/{3}, /*counts=*/{1}));
+
+    state.drainQueue();
+    state.pushResiduals({});
+    EXPECT_FALSE(state.drainQueue().has_value());
+
+    auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPprNodes=*/3, /*maxResidualNodes=*/1);
+    ASSERT_NE(topkWithResiduals.find(0), topkWithResiduals.end());
+    const auto& [ids, weights, counts] = topkWithResiduals.at(0);
+    ASSERT_EQ(counts[0].item<int64_t>(), 4);
+
+    EXPECT_EQ(ids[0].item<int64_t>(), 0);
+    EXPECT_EQ(ids[3].item<int64_t>(), 3);
+    for (int64_t index = 1; index < counts[0].item<int64_t>(); ++index) {
+        EXPECT_GE(weights[index - 1].item<float>(), weights[index].item<float>());
+    }
+
+    std::unordered_map<int64_t, float> weightsByNodeId;
+    for (int64_t index = 0; index < counts[0].item<int64_t>(); ++index) {
+        weightsByNodeId[ids[index].item<int64_t>()] = weights[index].item<float>();
+    }
+    EXPECT_NEAR(weightsByNodeId[0], static_cast<float>(alpha), 1e-5F);
+    EXPECT_NEAR(weightsByNodeId[1], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
+    EXPECT_NEAR(weightsByNodeId[2], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
+    EXPECT_NEAR(weightsByNodeId[3], static_cast<float>((1.0 - alpha) * (1.0 - alpha) * alpha / 2.0), 1e-5F);
 }
 
 // A total cap lets callers request residual top-up without materializing more

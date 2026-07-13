@@ -2,6 +2,7 @@
 
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <optional>
@@ -297,6 +298,8 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
             int32_t topK = std::min(pprNodeLimit, static_cast<int32_t>(scores.size()));
             int32_t residualBudget = std::min(maxResidualNodes, std::max<int32_t>(0, totalNodeLimit - topK));
             int32_t residualTopK = 0;
+            std::vector<std::pair<int32_t, double>> selectedPairs;
+            selectedPairs.reserve(static_cast<size_t>(topK + residualBudget));
             std::unordered_set<int32_t> selectedNodeIds;
             if (topK > 0) {
                 if (residualBudget > 0) {
@@ -310,8 +313,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
                     int32_t nodeId = scorePairs[rankIdx].first;
-                    flatIds.push_back(static_cast<int64_t>(nodeId));
-                    flatWeights.push_back(scorePairs[rankIdx].second);
+                    selectedPairs.emplace_back(nodeId, scorePairs[rankIdx].second);
                     if (residualBudget > 0) {
                         selectedNodeIds.insert(nodeId);
                     }
@@ -343,12 +345,22 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                                       [](const auto& a, const auto& b) { return a.second > b.second; });
 
                     for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
-                        flatIds.push_back(static_cast<int64_t>(residualPairs[rankIdx].first));
-                        flatWeights.push_back(residualPairs[rankIdx].second);
+                        selectedPairs.emplace_back(residualPairs[rankIdx].first, residualPairs[rankIdx].second);
                     }
                 }
             }
-            validCounts.push_back(static_cast<int64_t>(topK + residualTopK));
+
+            if (topK > 0 && residualTopK > 0) {
+                std::sort(
+                    selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
+                        return a.second > b.second;
+                    });
+            }
+            for (const auto& [nodeId, score] : selectedPairs) {
+                flatIds.push_back(static_cast<int64_t>(nodeId));
+                flatWeights.push_back(score);
+            }
+            validCounts.push_back(static_cast<int64_t>(selectedPairs.size()));
         }
 
         result[nodeTypeId] = {torch::tensor(flatIds, torch::kLong),

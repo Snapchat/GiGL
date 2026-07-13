@@ -64,13 +64,14 @@ public:
     // including types unreachable in this batch (empty tensors, all-zero valid_counts).
     PPRExtractResult extractTopK(int32_t maxPprNodes);
 
-    // Return top-k PPR nodes, then append residual-mass top-up nodes.
+    // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
     //
     // Residual top-up does not issue new neighbor fetches.  It only reads the
     // residual table already built by Forward Push.  Scores are emitted on the
     // same mass scale as PPR scores: ppr_score(node) + residual(node), i.e. the
     // score the node would have if the remaining residual at that node were
-    // absorbed locally.
+    // absorbed locally.  Residual candidates only fill the requested top-up
+    // budget; they do not displace selected finalized-PPR nodes.
     //
     // maxTotalNodes caps finalized-PPR plus residual nodes per seed.  Pass -1
     // to keep the uncapped "maxPprNodes + maxResidualNodes" candidate behavior.
