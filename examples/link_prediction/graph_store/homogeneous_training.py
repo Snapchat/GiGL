@@ -600,7 +600,8 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-        # We save the model on the process with rank 0.
+        # Only rank 0 writes the checkpoint; every rank holds the same DDP-synced
+        # weights, so writing from all of them would be redundant and race on the URI.
         if torch.distributed.get_rank() == 0:
             logger.info(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
@@ -838,19 +839,16 @@ def _run_example_training(
     # Training Hyperparameters
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    if torch.cuda.is_available():
-        default_local_world_size = torch.cuda.device_count()
-    else:
-        default_local_world_size = 2
-    local_world_size = int(
-        trainer_args.get("local_world_size", str(default_local_world_size))
-    )
+    # In Graph Store mode the launcher fixes the number of processes per compute machine
+    # (COMPUTE_CLUSTER_LOCAL_WORLD_SIZE env var, exposed as cluster_info.num_processes_per_compute);
+    # spawning any other number of processes would desync ranks from the compute process group.
+    local_world_size = cluster_info.num_processes_per_compute
 
-    if torch.cuda.is_available():
-        if local_world_size > torch.cuda.device_count():
-            raise ValueError(
-                f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
-            )
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
@@ -899,11 +897,11 @@ def _run_example_training(
     # Step 3: Extract model/data config
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_node_type
+    node_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map[
+        graph_metadata.homogeneous_node_type
     ]
-    edge_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_edge_type
+    edge_feature_dim = gbml_config_pb_wrapper.edge_type_to_feature_dim_map[
+        graph_metadata.homogeneous_edge_type
     ]
 
     model_uri = UriFactory.create_uri(
