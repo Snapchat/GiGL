@@ -294,6 +294,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                 pprNodeLimit = std::min(maxPprNodes, maxTotalNodes);
                 totalNodeLimit = maxTotalNodes;
             }
+            bool emitCalibratedScores = maxResidualNodes > 0;
 
             int32_t topK = std::min(pprNodeLimit, static_cast<int32_t>(scores.size()));
             int32_t residualBudget = std::min(maxResidualNodes, std::max<int32_t>(0, totalNodeLimit - topK));
@@ -313,7 +314,14 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
                     int32_t nodeId = scorePairs[rankIdx].first;
-                    selectedPairs.emplace_back(nodeId, scorePairs[rankIdx].second);
+                    double calibratedScore = scorePairs[rankIdx].second;
+                    if (emitCalibratedScores) {
+                        auto residualIter = nodeTypeState.residuals.find(nodeId);
+                        if (residualIter != nodeTypeState.residuals.end()) {
+                            calibratedScore += residualIter->second;
+                        }
+                    }
+                    selectedPairs.emplace_back(nodeId, calibratedScore);
                     if (residualBudget > 0) {
                         selectedNodeIds.insert(nodeId);
                     }
@@ -350,11 +358,10 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                 }
             }
 
-            if (topK > 0 && residualTopK > 0) {
-                std::sort(
-                    selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
-                        return a.second > b.second;
-                    });
+            if (emitCalibratedScores && selectedPairs.size() > 1) {
+                std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
             }
             for (const auto& [nodeId, score] : selectedPairs) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
