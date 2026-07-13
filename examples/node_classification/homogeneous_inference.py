@@ -74,14 +74,14 @@ class InferenceProcessArgs:
         master_default_process_group_port (int): Port for the default process group.
         dataset (DistDataset): Loaded Distributed Dataset for inference.
         inference_node_type (NodeType): Node type that predicted class labels are generated for.
-        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        model_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Encoder hidden dimension.
         num_classes (int): Number of output classes.
         node_feature_dim (int): Input node feature dimension.
         prediction_gcs_path (GcsUri): GCS path to write predicted class labels to.
         inference_batch_size (int): Batch size to use for inference.
         num_neighbors (list[int]): Fanout for subgraph sampling.
-        sampling_workers_per_inference_process (int): Sampling workers per inference process.
+        sampling_workers_per_process (int): Sampling workers per inference process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (e.g. ``"4GB"``).
         log_every_n_batch (int): Frequency to log batch information during inference.
     """
@@ -95,7 +95,7 @@ class InferenceProcessArgs:
     dataset: DistDataset
     inference_node_type: NodeType
 
-    model_state_dict_uri: Uri
+    model_uri: Uri
     hid_dim: int
     num_classes: int
     node_feature_dim: int
@@ -103,7 +103,7 @@ class InferenceProcessArgs:
     prediction_gcs_path: GcsUri
     inference_batch_size: int
     num_neighbors: list[int] | dict[EdgeType, list[int]]
-    sampling_workers_per_inference_process: int
+    sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
 
@@ -121,43 +121,40 @@ def _inference_process(
         local_rank (int): Process number on the current machine.
         args (InferenceProcessArgs): Dataclass containing all inference arguments.
     """
+    # The device is automatically inferred based off the local process rank and the available devices.
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
     )
     if torch.cuda.is_available():
-        logger.info(
-            f"Using GPU {device} with index {device.index} on local rank: {local_rank} for inference"
-        )
+        # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
         torch.cuda.set_device(device)
-    rank = args.machine_rank * args.local_world_size + local_rank
-    world_size = args.machine_world_size * args.local_world_size
-    logger.info(
-        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} "
-        f"and using device {device} for inference"
-    )
+
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
+        rank=args.machine_rank * args.local_world_size + local_rank,
+        world_size=args.machine_world_size * args.local_world_size,
+    )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    logger.info(
+        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and is using device {device}"
     )
 
     data_loader = gigl.distributed.DistNeighborLoader(
         dataset=args.dataset,
         num_neighbors=args.num_neighbors,
-        local_process_rank=local_rank,
-        local_process_world_size=args.local_world_size,
         input_nodes=None,  # Homogeneous case: `None` defaults to using all nodes for inference.
-        num_workers=args.sampling_workers_per_inference_process,
+        num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,
         pin_memory_device=device,
-        worker_concurrency=args.sampling_workers_per_inference_process,
+        worker_concurrency=args.sampling_workers_per_process,
         channel_size=args.sampling_worker_shared_channel_size,
         process_start_gap_seconds=0,
     )
 
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=args.model_state_dict_uri, device=device
+        load_from_uri=args.model_uri, device=device
     )
     model = init_example_gigl_homogeneous_node_classification_model(
         node_feature_dim=args.node_feature_dim,
@@ -263,6 +260,8 @@ def _run_example_inference(
         task_config_uri (str): Path to frozen GbmlConfig URI.
     """
     program_start_time = time.time()
+    mp.set_start_method("spawn")
+    logger.info(f"Starting sub process method: {mp.get_start_method()}")
 
     # One main process per machine needs to coordinate partitioning + synchronization; assuming
     # spawn-via-Vertex sets up env:// init for us.
@@ -277,7 +276,7 @@ def _run_example_inference(
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=UriFactory.create_uri(task_config_uri)
     )
-    # `model_state_dict_uri` is read from the same `trained_model_metadata.trained_model_uri` slot
+    # `model_uri` is read from the same `trained_model_metadata.trained_model_uri` slot
     # the trainer wrote to (see homogeneous_training.py `model_uri` derivation).
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
@@ -294,14 +293,9 @@ def _run_example_inference(
         applied_task_identifier=AppliedTaskIdentifier(job_name),
         bq_table_path=output_bq_table_path,
     )
-    preprocessed_metadata_pb_wrapper = (
-        gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper
-    )
-    node_feature_dim = (
-        preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-            graph_metadata.homogeneous_condensed_node_type
-        ]
-    )
+    node_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map[
+        graph_metadata.homogeneous_node_type
+    ]
 
     inferencer_args = dict(gbml_config_pb_wrapper.inferencer_config.inferencer_args)
     # `inference_batch_size` lives on the dedicated proto field, NOT inside the `inferencer_args`
@@ -315,24 +309,23 @@ def _run_example_inference(
     if arg_local_world_size is not None:
         local_world_size = int(arg_local_world_size)
         logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
-        if torch.cuda.is_available() and local_world_size != torch.cuda.device_count():
-            logger.warning(
-                f"local_world_size {local_world_size} does not match the number of GPUs "
-                f"{torch.cuda.device_count()}. This may lead to unexpected failures with NCCL "
-                f"communication. Consider setting local_world_size to the number of GPUs."
-            )
+    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
+        )
     else:
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            local_world_size = torch.cuda.device_count()
-            logger.info(
-                f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
-            )
-        else:
-            logger.info(
-                f"No GPUs detected. Setting local_world_size to "
-                f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
-            )
-            local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+        logger.info(
+            f"No GPUs detected. Setting local_world_size to "
+            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+        )
+        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
     machine_rank = torch.distributed.get_rank()
@@ -346,8 +339,8 @@ def _run_example_inference(
 
     num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
 
-    sampling_workers_per_inference_process = int(
-        inferencer_args.get("sampling_workers_per_inference_process", "4")
+    sampling_workers_per_process = int(
+        inferencer_args.get("sampling_workers_per_process", "4")
     )
 
     sampling_worker_shared_channel_size = inferencer_args.get(
@@ -364,14 +357,14 @@ def _run_example_inference(
         master_default_process_group_port=master_default_process_group_port,
         dataset=dataset,
         inference_node_type=graph_metadata.homogeneous_node_type,
-        model_state_dict_uri=model_uri,
+        model_uri=model_uri,
         hid_dim=hid_dim,
         num_classes=num_classes,
         node_feature_dim=node_feature_dim,
         prediction_gcs_path=prediction_output_gcs_folder,
         inference_batch_size=inference_batch_size,
         num_neighbors=num_neighbors,
-        sampling_workers_per_inference_process=sampling_workers_per_inference_process,
+        sampling_workers_per_process=sampling_workers_per_process,
         sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
         log_every_n_batch=log_every_n_batch,
     )

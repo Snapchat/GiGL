@@ -48,6 +48,10 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
+# Default number of inference processes per machine when one isn't provided via
+# `local_world_size` in inferencer args and there are no GPUs available.
+DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 4
+
 
 @dataclass(frozen=True)
 class InferenceProcessArgs:
@@ -66,7 +70,7 @@ class InferenceProcessArgs:
         master_default_process_group_port (int): Port for the default process group.
         dataset (DistDataset): Loaded Distributed Dataset for inference.
         inference_node_type (NodeType): Node type that embeddings should be generated for.
-        model_state_dict_uri (Uri): URI to load the trained model state dict from.
+        model_uri (Uri): URI to load the trained model state dict from.
         hid_dim (int): Hidden dimension of the model.
         out_dim (int): Output dimension of the model.
         node_type_to_feature_dim (dict[NodeType, int]): Mapping of node types to their feature
@@ -77,7 +81,7 @@ class InferenceProcessArgs:
         inference_batch_size (int): Batch size to use for inference.
         num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Fanout for subgraph sampling,
             where the ith item corresponds to the number of items to sample for the ith hop.
-        sampling_workers_per_inference_process (int): Number of sampling workers per inference
+        sampling_workers_per_process (int): Number of sampling workers per inference
             process.
         sampling_worker_shared_channel_size (str): Shared-memory buffer size (bytes) allocated for
             the channel during sampling (e.g., "4GB").
@@ -96,7 +100,7 @@ class InferenceProcessArgs:
     inference_node_type: NodeType
 
     # Model
-    model_state_dict_uri: Uri
+    model_uri: Uri
     hid_dim: int
     out_dim: int
     node_type_to_feature_dim: dict[NodeType, int]
@@ -106,7 +110,7 @@ class InferenceProcessArgs:
     embedding_gcs_path: GcsUri
     inference_batch_size: int
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]]
-    sampling_workers_per_inference_process: int
+    sampling_workers_per_process: int
     sampling_worker_shared_channel_size: str
     log_every_n_batch: int
 
@@ -129,23 +133,24 @@ def _inference_process(
         args (InferenceProcessArgs): Dataclass containing all inference process arguments
     """
 
+    # The device is automatically inferred based off the local process rank and the available devices.
     device = gigl.distributed.utils.get_available_device(
         local_process_rank=local_rank,
-    )  # The device is automatically inferred based off the local process rank and the available devices
-    rank = args.machine_rank * args.local_world_size + local_rank
-    world_size = args.machine_world_size * args.local_world_size
+    )
     if torch.cuda.is_available():
-        torch.cuda.set_device(
-            device
-        )  # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
+        # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
+        torch.cuda.set_device(device)
+
     torch.distributed.init_process_group(
         backend="gloo" if device.type == "cpu" else "nccl",
         init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
+        rank=args.machine_rank * args.local_world_size + local_rank,
+        world_size=args.machine_world_size * args.local_world_size,
     )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
     logger.info(
-        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and using device {device} for inference"
+        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and is using device {device}"
     )
 
     # Get the node ids on the current machine for the current node type
@@ -164,10 +169,10 @@ def _inference_process(
         num_neighbors=args.num_neighbors,
         # We must pass in a tuple of (node_type, node_ids_on_current_process) for heterogeneous input
         input_nodes=(args.inference_node_type, input_node_ids),
-        num_workers=args.sampling_workers_per_inference_process,
+        num_workers=args.sampling_workers_per_process,
         batch_size=args.inference_batch_size,
         pin_memory_device=device,
-        worker_concurrency=args.sampling_workers_per_inference_process,
+        worker_concurrency=args.sampling_workers_per_process,
         channel_size=args.sampling_worker_shared_channel_size,
         # For large-scale settings, consider setting this field to 30-60 seconds to ensure dataloaders
         # don't compete for memory during initialization, causing OOM
@@ -176,7 +181,7 @@ def _inference_process(
     # Initialize a LinkPredictionGNN model and load parameters from
     # the saved model.
     model_state_dict = load_state_dict_from_uri(
-        load_from_uri=args.model_state_dict_uri, device=device
+        load_from_uri=args.model_uri, device=device
     )
     model: LinkPredictionGNN = init_example_gigl_heterogeneous_model(
         node_type_to_feature_dim=args.node_type_to_feature_dim,
@@ -192,9 +197,7 @@ def _inference_process(
 
     logger.info(f"Model initialized on device {device}")
 
-    embedding_filename = (
-        f"machine_{args.machine_rank}_local_process_number_{local_rank}"
-    )
+    embedding_filename = f"machine_{args.machine_rank}_local_process_{local_rank}"
 
     # Get temporary GCS folder to write outputs of inference to. GiGL orchestration automatic cleans this, but
     # if running manually, you will need to clean this directory so that retries don't end up with stale files.
@@ -286,6 +289,7 @@ def _inference_process(
 
     data_loader.shutdown()
     gc.collect()
+    torch.distributed.destroy_process_group()
 
     logger.info(
         f"--- All machines local rank {local_rank} finished inference for node type {args.inference_node_type}. Deleted data loader"
@@ -308,6 +312,8 @@ def _run_example_inference(
     # - the total number of machines (world size)
 
     program_start_time = time.time()
+    mp.set_start_method("spawn")
+    logger.info(f"Starting sub process method: {mp.get_start_method()}")
     # The main process per machine needs to be able to talk with each other to partition and synchronize the graph data.
     # Thus, the user is responsible here for 1. spinning up a single process per machine,
     # and 2. init_process_group amongst these processes.
@@ -334,21 +340,8 @@ def _run_example_inference(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri
     )
 
-    graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
-
-    node_type_to_feature_dim: dict[NodeType, int] = {
-        graph_metadata.condensed_node_type_to_node_type_map[
-            condensed_node_type
-        ]: node_feature_dim
-        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
-    }
-
-    edge_type_to_feature_dim: dict[EdgeType, int] = {
-        graph_metadata.condensed_edge_type_to_edge_type_map[
-            condensed_edge_type
-        ]: edge_feature_dim
-        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
-    }
+    node_type_to_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map
+    edge_type_to_feature_dim = gbml_config_pb_wrapper.edge_type_to_feature_dim_map
 
     inference_node_types = sorted(
         gbml_config_pb_wrapper.task_metadata_pb_wrapper.get_task_root_node_types()
@@ -361,23 +354,26 @@ def _run_example_inference(
     hid_dim = int(inferencer_args.get("hid_dim", "16"))
     out_dim = int(inferencer_args.get("out_dim", "16"))
 
-    if torch.cuda.is_available():
-        default_num_inference_processes_per_machine = torch.cuda.device_count()
-    else:
-        default_num_inference_processes_per_machine = 2
-    num_inference_processes_per_machine = int(
-        inferencer_args.get(
-            "num_inference_processes_per_machine",
-            default_num_inference_processes_per_machine,
+    arg_local_world_size = inferencer_args.get("local_world_size")
+    if arg_local_world_size is not None:
+        local_world_size = int(arg_local_world_size)
+        logger.info(f"Using local_world_size from inferencer_args: {local_world_size}")
+    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
         )
-    )  # Current large-scale setting sets this value to 4
+    else:
+        logger.info(
+            f"No GPUs detected. Setting local_world_size to "
+            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+        )
+        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
 
-    if (
-        torch.cuda.is_available()
-        and num_inference_processes_per_machine > torch.cuda.device_count()
-    ):
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
         raise ValueError(
-            f"Number of inference processes per machine ({num_inference_processes_per_machine}) must not be more than the number of GPUs: ({torch.cuda.device_count()})"
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
         )
 
     master_ip_address = gigl.distributed.utils.get_internal_ip_from_master_node()
@@ -386,6 +382,8 @@ def _run_example_inference(
     master_default_process_group_port = (
         gigl.distributed.utils.get_free_ports_from_master_node(num_ports=1)[0]
     )
+    # Destroying the process group as one will be re-initialized in the inference process using ^ information
+    torch.distributed.destroy_process_group()
 
     ## Inference Start
 
@@ -420,14 +418,14 @@ def _run_example_inference(
         # per edge type, refer to `examples/link_prediction/configs/e2e_het_dblp_sup_task_config.yaml`.
         num_neighbors = parse_fanout(inferencer_args.get("num_neighbors", "[10, 10]"))
 
-        # While the ideal value for `sampling_workers_per_inference_process` has been identified to
+        # While the ideal value for `sampling_workers_per_process` has been identified to
         # be between `2` and `4`, this may need some tuning depending on the pipeline. We default
         # this value to `4` here for simplicity. A `sampling_workers_per_process` which is too
         # small may not have enough parallelization for sampling, which would slow down inference,
         # while a value which is too large may slow down each sampling process due to competing
         # resources, which would also then slow down inference.
-        sampling_workers_per_inference_process = int(
-            inferencer_args.get("sampling_workers_per_inference_process", "4")
+        sampling_workers_per_process = int(
+            inferencer_args.get("sampling_workers_per_process", "4")
         )
 
         # This value represents the shared-memory buffer size (bytes) allocated for the channel
@@ -443,14 +441,14 @@ def _run_example_inference(
 
         # When using mp.spawn with `nprocs`, the first argument is implicitly set to be the process number on the current machine.
         inference_args = InferenceProcessArgs(
-            local_world_size=num_inference_processes_per_machine,
+            local_world_size=local_world_size,
             machine_rank=machine_rank,
             machine_world_size=machine_world_size,
             master_ip_address=master_ip_address,
             master_default_process_group_port=master_default_process_group_port,
             dataset=dataset,
             inference_node_type=inference_node_type,
-            model_state_dict_uri=model_uri,
+            model_uri=model_uri,
             hid_dim=hid_dim,
             out_dim=out_dim,
             node_type_to_feature_dim=node_type_to_feature_dim,
@@ -458,7 +456,7 @@ def _run_example_inference(
             embedding_gcs_path=embedding_output_gcs_folder,
             inference_batch_size=inference_batch_size,
             num_neighbors=num_neighbors,
-            sampling_workers_per_inference_process=sampling_workers_per_inference_process,
+            sampling_workers_per_process=sampling_workers_per_process,
             sampling_worker_shared_channel_size=sampling_worker_shared_channel_size,
             log_every_n_batch=log_every_n_batch,
         )
@@ -466,7 +464,7 @@ def _run_example_inference(
         mp.spawn(
             fn=_inference_process,
             args=(inference_args,),
-            nprocs=num_inference_processes_per_machine,
+            nprocs=local_world_size,
             join=True,
         )
 
