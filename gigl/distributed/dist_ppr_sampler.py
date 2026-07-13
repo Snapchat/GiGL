@@ -303,8 +303,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ``residual_topup_nodes`` controls how many discovered residual
         candidates may be considered after finalized PPR scores.  ``max_total_nodes``
         is a combined per-seed cap across finalized and residual candidates.
-        When both are set, the cap is passed into C++ so residual candidates are
-        not materialized only to be discarded later in Python.
+        When set, the cap is passed into C++ so residual candidates are not
+        materialized only to be discarded later in Python.
         """
         # Translate ntype_id integer keys back to NodeType strings for the rest
         # of the pipeline, and move tensors to the correct device.
@@ -315,7 +315,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ppr_node_quota = (
             max_ppr_nodes if max_ppr_nodes is not None else self._max_ppr_nodes
         )
-        extraction_is_total_capped = False
         if residual_topup_nodes > 0:
             max_total_nodes_for_extraction = (
                 max_total_nodes if max_total_nodes is not None else -1
@@ -325,12 +324,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 residual_topup_nodes,
                 max_total_nodes_for_extraction,
             )
-            extraction_is_total_capped = max_total_nodes is not None
         else:
             extracted_results = ppr_state.extract_top_k(ppr_node_quota)
-            extraction_is_total_capped = (
-                max_total_nodes is None or ppr_node_quota <= max_total_nodes
-            )
 
         for ntype_id, (
             flat_ids,
@@ -341,19 +336,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ntype_to_flat_ids[ntype] = flat_ids.to(device)
             ntype_to_flat_weights[ntype] = flat_weights.to(device)
             ntype_to_valid_counts[ntype] = valid_counts.to(device)
-
-        if max_total_nodes is not None and not extraction_is_total_capped:
-            for ntype in ntype_to_flat_ids:
-                (
-                    ntype_to_flat_ids[ntype],
-                    ntype_to_flat_weights[ntype],
-                    ntype_to_valid_counts[ntype],
-                ) = self._truncate_flat_ppr_result_to_max_nodes(
-                    flat_ids=ntype_to_flat_ids[ntype],
-                    flat_weights=ntype_to_flat_weights[ntype],
-                    valid_counts=ntype_to_valid_counts[ntype],
-                    max_nodes=max_total_nodes,
-                )
 
         if self._is_homogeneous:
             assert (
@@ -371,49 +353,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ntype_to_flat_weights,
                 ntype_to_valid_counts,
             )
-
-    @staticmethod
-    def _truncate_flat_ppr_result_to_max_nodes(
-        flat_ids: torch.Tensor,
-        flat_weights: torch.Tensor,
-        valid_counts: torch.Tensor,
-        max_nodes: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Cap each seed's flat PPR result while preserving flat tensor layout.
-
-        ``flat_ids`` and ``flat_weights`` concatenate variable-length per-seed
-        candidate lists.  ``valid_counts`` stores the segment length for each
-        seed.  This fallback trims each segment independently and rebuilds the
-        same flat representation.
-        """
-        if max_nodes < 0:
-            raise ValueError(f"max_nodes must be non-negative, got {max_nodes}.")
-
-        id_parts: list[torch.Tensor] = []
-        weight_parts: list[torch.Tensor] = []
-        capped_counts: list[int] = []
-        offset = 0
-        for count in valid_counts.detach().cpu().tolist():
-            count = int(count)
-            keep_count = min(count, max_nodes)
-            if keep_count > 0:
-                id_parts.append(flat_ids[offset : offset + keep_count])
-                weight_parts.append(flat_weights[offset : offset + keep_count])
-            capped_counts.append(keep_count)
-            offset += count
-
-        capped_flat_ids = torch.cat(id_parts) if id_parts else flat_ids.new_empty((0,))
-        capped_flat_weights = (
-            torch.cat(weight_parts)
-            if weight_parts
-            else flat_weights.new_empty((0, *flat_weights.shape[1:]))
-        )
-        capped_valid_counts = torch.tensor(
-            capped_counts,
-            dtype=valid_counts.dtype,
-            device=valid_counts.device,
-        )
-        return capped_flat_ids, capped_flat_weights, capped_valid_counts
 
     async def _compute_ppr_scores(
         self,
