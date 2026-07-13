@@ -22,4 +22,5 @@ class PPRForwardPush:
         self,
         max_ppr_nodes: int,
         max_residual_nodes: int,
+        max_total_nodes: int = -1,
     ) -> ExtractResult: ...

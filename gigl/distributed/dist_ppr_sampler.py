@@ -293,6 +293,19 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
     ]:
+        """Extract PPR neighbors from a completed C++ Forward Push state.
+
+        The C++ kernel indexes node types by compact integer IDs for speed.
+        This helper translates those IDs back to GiGL node-type keys and
+        preserves the homogeneous return shape expected by the rest of the
+        sampler.
+
+        ``residual_topup_nodes`` controls how many discovered residual
+        candidates may be considered after finalized PPR scores.  ``max_total_nodes``
+        is a combined per-seed cap across finalized and residual candidates.
+        When both are set, the cap is passed into C++ so residual candidates are
+        not materialized only to be discarded later in Python.
+        """
         # Translate ntype_id integer keys back to NodeType strings for the rest
         # of the pipeline, and move tensors to the correct device.
         ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
@@ -302,13 +315,22 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ppr_node_quota = (
             max_ppr_nodes if max_ppr_nodes is not None else self._max_ppr_nodes
         )
+        extraction_is_total_capped = False
         if residual_topup_nodes > 0:
+            max_total_nodes_for_extraction = (
+                max_total_nodes if max_total_nodes is not None else -1
+            )
             extracted_results = ppr_state.extract_top_k_with_residual_top_up(
                 ppr_node_quota,
                 residual_topup_nodes,
+                max_total_nodes_for_extraction,
             )
+            extraction_is_total_capped = max_total_nodes is not None
         else:
             extracted_results = ppr_state.extract_top_k(ppr_node_quota)
+            extraction_is_total_capped = (
+                max_total_nodes is None or ppr_node_quota <= max_total_nodes
+            )
 
         for ntype_id, (
             flat_ids,
@@ -320,7 +342,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ntype_to_flat_weights[ntype] = flat_weights.to(device)
             ntype_to_valid_counts[ntype] = valid_counts.to(device)
 
-        if max_total_nodes is not None:
+        if max_total_nodes is not None and not extraction_is_total_capped:
             for ntype in ntype_to_flat_ids:
                 (
                     ntype_to_flat_ids[ntype],
@@ -357,7 +379,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         valid_counts: torch.Tensor,
         max_nodes: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Cap each seed's flat PPR result after residual top-up."""
+        """Cap each seed's flat PPR result while preserving flat tensor layout.
+
+        ``flat_ids`` and ``flat_weights`` concatenate variable-length per-seed
+        candidate lists.  ``valid_counts`` stores the segment length for each
+        seed.  This fallback trims each segment independently and rebuilds the
+        same flat representation.
+        """
         if max_nodes < 0:
             raise ValueError(f"max_nodes must be non-negative, got {max_nodes}.")
 

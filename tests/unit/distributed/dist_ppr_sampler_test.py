@@ -824,6 +824,7 @@ class DistPPRSamplerTest(TestCase):
         max_ppr_nodes: int,
         enable_residual_topup: bool,
     ) -> DistPPRNeighborSampler:
+        """Build only the sampler fields needed by extraction-focused tests."""
         sampler = object.__new__(DistPPRNeighborSampler)
         sampler._alpha = _TEST_ALPHA
         sampler._requeue_threshold_factor = _TEST_ALPHA * _TEST_EPS
@@ -855,13 +856,18 @@ class DistPPRSamplerTest(TestCase):
                 self,
                 max_ppr_nodes: int,
                 max_residual_nodes: int,
+                max_total_nodes: int,
             ):
-                self.extract_topup_args = (max_ppr_nodes, max_residual_nodes)
+                self.extract_topup_args = (
+                    max_ppr_nodes,
+                    max_residual_nodes,
+                    max_total_nodes,
+                )
                 return {
                     0: (
-                        torch.tensor([10, 11, 12], dtype=torch.long),
-                        torch.tensor([0.7, 0.2, 0.1], dtype=torch.double),
-                        torch.tensor([3], dtype=torch.long),
+                        torch.tensor([10, 11], dtype=torch.long),
+                        torch.tensor([0.7, 0.2], dtype=torch.double),
+                        torch.tensor([2], dtype=torch.long),
                     )
                 }
 
@@ -883,7 +889,7 @@ class DistPPRSamplerTest(TestCase):
         finally:
             dist_ppr_sampler_module.PPRForwardPush = original_ppr_forward_push
 
-        self.assertEqual(fake_state.extract_topup_args, (2, 2))
+        self.assertEqual(fake_state.extract_topup_args, (2, 2, 2))
         self.assertTrue(torch.equal(flat_ids, torch.tensor([10, 11])))
         self.assertTrue(
             torch.equal(flat_weights, torch.tensor([0.7, 0.2], dtype=torch.double))

@@ -58,5 +58,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("drain_queue", &gigl::PPRForwardPush::drainQueue)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k", &gigl::PPRForwardPush::extractTopK)
-        .def("extract_top_k_with_residual_top_up", &gigl::PPRForwardPush::extractTopKWithResidualTopUp);
+        .def("extract_top_k_with_residual_top_up",
+             &gigl::PPRForwardPush::extractTopKWithResidualTopUp,
+             py::arg("max_ppr_nodes"),
+             py::arg("max_residual_nodes"),
+             py::arg("max_total_nodes") = -1);
 }

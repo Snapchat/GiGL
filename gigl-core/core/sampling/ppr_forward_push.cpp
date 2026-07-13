@@ -268,9 +268,12 @@ PPRExtractResult PPRForwardPush::extractTopK(int32_t maxPprNodes) {
     return extractTopKWithResidualTopUp(maxPprNodes, /*maxResidualNodes=*/0);
 }
 
-PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNodes, int32_t maxResidualNodes) {
+PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNodes,
+                                                              int32_t maxResidualNodes,
+                                                              int32_t maxTotalNodes) {
     TORCH_CHECK(maxPprNodes >= 0, "maxPprNodes must be non-negative, got ", maxPprNodes, ".");
     TORCH_CHECK(maxResidualNodes >= 0, "maxResidualNodes must be non-negative, got ", maxResidualNodes, ".");
+    TORCH_CHECK(maxTotalNodes >= -1, "maxTotalNodes must be -1 or non-negative, got ", maxTotalNodes, ".");
 
     PPRExtractResult result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
@@ -284,11 +287,21 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
             const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
             const auto& scores = nodeTypeState.pprScores;
-            int32_t topK = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
+            int32_t pprNodeLimit = maxPprNodes;
+            int32_t totalNodeLimit = maxPprNodes + maxResidualNodes;
+            if (maxTotalNodes >= 0) {
+                pprNodeLimit = std::min(maxPprNodes, maxTotalNodes);
+                totalNodeLimit = maxTotalNodes;
+            }
+
+            int32_t topK = std::min(pprNodeLimit, static_cast<int32_t>(scores.size()));
+            int32_t residualBudget = std::min(maxResidualNodes, std::max<int32_t>(0, totalNodeLimit - topK));
             int32_t residualTopK = 0;
             std::unordered_set<int32_t> selectedNodeIds;
             if (topK > 0) {
-                selectedNodeIds.reserve(static_cast<size_t>(topK));
+                if (residualBudget > 0) {
+                    selectedNodeIds.reserve(static_cast<size_t>(topK));
+                }
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
                 std::partial_sort(scorePairs.begin(),
                                   scorePairs.begin() + topK,
@@ -299,11 +312,13 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                     int32_t nodeId = scorePairs[rankIdx].first;
                     flatIds.push_back(static_cast<int64_t>(nodeId));
                     flatWeights.push_back(scorePairs[rankIdx].second);
-                    selectedNodeIds.insert(nodeId);
+                    if (residualBudget > 0) {
+                        selectedNodeIds.insert(nodeId);
+                    }
                 }
             }
 
-            if (maxResidualNodes > 0) {
+            if (residualBudget > 0) {
                 std::vector<std::pair<int32_t, double>> residualPairs;
                 residualPairs.reserve(nodeTypeState.residuals.size());
                 for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
@@ -320,7 +335,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPprNode
                     residualPairs.emplace_back(nodeId, calibratedScore);
                 }
 
-                residualTopK = std::min(maxResidualNodes, static_cast<int32_t>(residualPairs.size()));
+                residualTopK = std::min(residualBudget, static_cast<int32_t>(residualPairs.size()));
                 if (residualTopK > 0) {
                     std::partial_sort(residualPairs.begin(),
                                       residualPairs.begin() + residualTopK,

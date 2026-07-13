@@ -71,7 +71,12 @@ public:
     // same mass scale as PPR scores: ppr_score(node) + residual(node), i.e. the
     // score the node would have if the remaining residual at that node were
     // absorbed locally.
-    PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPprNodes, int32_t maxResidualNodes);
+    //
+    // maxTotalNodes caps finalized-PPR plus residual nodes per seed.  Pass -1
+    // to keep the uncapped "maxPprNodes + maxResidualNodes" candidate behavior.
+    PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPprNodes,
+                                                  int32_t maxResidualNodes,
+                                                  int32_t maxTotalNodes = -1);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.

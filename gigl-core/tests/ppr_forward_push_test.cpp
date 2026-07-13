@@ -189,3 +189,25 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpAppendsUnpushedResiduals) {
     EXPECT_NEAR(residualWeights[1], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
     EXPECT_NEAR(residualWeights[2], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
 }
+
+// A total cap lets callers request residual top-up without materializing more
+// candidates than the downstream sampler can emit.
+TEST(PPRForwardPush, ExtractTopKWithResidualTopUpHonorsTotalCap) {
+    const double alpha = 0.5;
+    auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1.0, /*degrees=*/{2, 1, 1});
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1, 2}, /*counts=*/{2}));
+    EXPECT_FALSE(state.drainQueue().has_value());
+
+    auto cappedTopk = state.extractTopKWithResidualTopUp(
+        /*maxPprNodes=*/2,
+        /*maxResidualNodes=*/2,
+        /*maxTotalNodes=*/2);
+    ASSERT_NE(cappedTopk.find(0), cappedTopk.end());
+    const auto& [ids, weights, counts] = cappedTopk.at(0);
+
+    ASSERT_EQ(counts[0].item<int64_t>(), 2);
+    EXPECT_EQ(ids[0].item<int64_t>(), 0);
+    EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5F);
+}
