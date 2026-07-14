@@ -1616,9 +1616,7 @@ def _run_zero_local_rows_featured_type(
         edge_features = {
             _NORM_EDGE_A: torch.rand(edge_index[_NORM_EDGE_A].size(1), 3),
             # Rank 1 registers an empty B feature tensor rather than omitting it.
-            _NORM_EDGE_B: (
-                torch.rand(2, 4) if rank == 0 else torch.empty((0, 4))
-            ),
+            _NORM_EDGE_B: (torch.rand(2, 4) if rank == 0 else torch.empty((0, 4))),
         }
         partitioner = DistPartitioner(
             should_assign_edges_by_src_node=True,

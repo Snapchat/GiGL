@@ -1521,7 +1521,9 @@ class DistPartitioner:
                 if local_feats is None:
                     local_feats = {}
                     setattr(self, feat_attr, local_feats)
-                local_feats[entity_type] = torch.empty((0, *trailing_shape), dtype=dtype)
+                local_feats[entity_type] = torch.empty(
+                    (0, *trailing_shape), dtype=dtype
+                )
                 if dim_attr is not None:
                     dim_map: Optional[dict[Union[NodeType, EdgeType], int]] = getattr(
                         self, dim_attr
