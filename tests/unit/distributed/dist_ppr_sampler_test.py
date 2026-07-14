@@ -41,6 +41,11 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.distributed.typed_ppr import (
+    build_edge_type_channel_group_edge_type_ids,
+    merge_typed_ppr_results,
+    parse_typed_channel_quota_groups,
+)
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -93,13 +98,6 @@ _NUM_TEST_STORIES = 3
 _TEST_ALPHA = 0.5
 _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
-
-
-def _new_typed_ppr_merge_sampler(max_ppr_nodes: int) -> DistPPRNeighborSampler:
-    """Create a minimal sampler shell for typed-PPR merge tests."""
-    sampler = object.__new__(DistPPRNeighborSampler)
-    sampler._max_ppr_nodes = max_ppr_nodes
-    return sampler
 
 
 # ---------------------------------------------------------------------------
@@ -826,7 +824,6 @@ class DistPPRSamplerTest(TestCase):
         self,
     ) -> None:
         """Verify typed-PPR merge emits calibrated channel metadata."""
-        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=10)
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
             {USER: torch.tensor([0.4, 0.2, 0.1], dtype=torch.double)},
@@ -838,23 +835,22 @@ class DistPPRSamplerTest(TestCase):
             {USER: torch.tensor([2, 1])},
         )
 
-        ntype_to_ids, ntype_to_features, ntype_to_counts = (
-            sampler._merge_typed_ppr_results_with_topup(
+        node_type_to_ids, node_type_to_features, node_type_to_counts = (
+            merge_typed_ppr_results(
                 channel_results=[channel_0_result, channel_1_result],
-                base_channel_quotas=[2, 1],
-                topup_candidate_limits=[2, 1],
-                num_seeds=2,
+                channel_quotas=[2, 1],
+                max_ppr_nodes=10,
                 device=torch.device("cpu"),
             )
         )
 
         self.assertTrue(
-            torch.equal(ntype_to_ids[USER], torch.tensor([10, 20, 11, 12, 13]))
+            torch.equal(node_type_to_ids[USER], torch.tensor([10, 20, 11, 12, 13]))
         )
-        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([3, 2])))
+        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([3, 2])))
         self.assertTrue(
             torch.allclose(
-                ntype_to_features[USER],
+                node_type_to_features[USER],
                 torch.tensor(
                     [
                         [1.0, 1.0, 0.0, 1.0, 0.0],
@@ -872,8 +868,6 @@ class DistPPRSamplerTest(TestCase):
         self,
     ) -> None:
         """Verify each channel contributes candidates by its own score."""
-        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
-
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
             {USER: torch.tensor([1.0, 0.9, 0.8], dtype=torch.double)},
@@ -885,21 +879,20 @@ class DistPPRSamplerTest(TestCase):
             {USER: torch.tensor([1])},
         )
 
-        ntype_to_ids, ntype_to_features, ntype_to_counts = (
-            sampler._merge_typed_ppr_results_with_topup(
+        node_type_to_ids, node_type_to_features, node_type_to_counts = (
+            merge_typed_ppr_results(
                 channel_results=[channel_0_result, channel_1_result],
-                base_channel_quotas=[2, 1],
-                topup_candidate_limits=[2, 1],
-                num_seeds=1,
+                channel_quotas=[2, 1],
+                max_ppr_nodes=3,
                 device=torch.device("cpu"),
             )
         )
 
-        self.assertTrue(torch.equal(ntype_to_ids[USER], torch.tensor([10, 12, 11])))
-        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([3])))
+        self.assertTrue(torch.equal(node_type_to_ids[USER], torch.tensor([10, 12, 11])))
+        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([3])))
         self.assertTrue(
             torch.allclose(
-                ntype_to_features[USER],
+                node_type_to_features[USER],
                 torch.tensor(
                     [
                         [1.0, 1.0, 0.0, 1.0, 0.0],
@@ -915,19 +908,18 @@ class DistPPRSamplerTest(TestCase):
         self,
     ) -> None:
         """Verify typed-PPR can use canonical edge-type channels."""
-        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
-        sampler._node_type_to_edge_types = {
+        node_type_to_edge_types = {
             USER: [USER_TO_STORY],
             STORY: [STORY_TO_USER],
         }
-        sampler._ntype_id_to_ntype = [USER, STORY]
-        sampler._etype_to_etype_id = {
+        node_types = [USER, STORY]
+        edge_type_to_edge_type_id = {
             USER_TO_STORY: 0,
             STORY_TO_USER: 1,
         }
 
         typed_channel_groups, typed_channel_quota_list = (
-            DistPPRNeighborSampler._parse_typed_channel_quota_groups(
+            parse_typed_channel_quota_groups(
                 {
                     USER_TO_STORY: 2,
                     (USER_TO_STORY, STORY_TO_USER): 3,
@@ -940,14 +932,17 @@ class DistPPRSamplerTest(TestCase):
         self.assertEqual(
             typed_channel_groups,
             [
-                ((USER_TO_STORY,), 2),
-                ((USER_TO_STORY, STORY_TO_USER), 3),
+                (USER_TO_STORY,),
+                (USER_TO_STORY, STORY_TO_USER),
             ],
         )
         self.assertEqual(typed_channel_quota_list, [2, 3])
         self.assertEqual(
-            sampler._build_edge_type_channel_group_edge_type_ids(
-                typed_channel_groups,
+            build_edge_type_channel_group_edge_type_ids(
+                edge_type_groups=typed_channel_groups,
+                edge_type_to_edge_type_id=edge_type_to_edge_type_id,
+                node_type_to_edge_types=node_type_to_edge_types,
+                node_types=node_types,
             ),
             [
                 [[0], []],
@@ -956,38 +951,38 @@ class DistPPRSamplerTest(TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "canonical edge type"):
-            DistPPRNeighborSampler._parse_typed_channel_quota_groups({("bad",): 1})
+            parse_typed_channel_quota_groups({("bad",): 1})
         with self.assertRaisesRegex(ValueError, "positive quotas"):
-            DistPPRNeighborSampler._parse_typed_channel_quota_groups({USER_TO_STORY: 0})
+            parse_typed_channel_quota_groups({USER_TO_STORY: 0})
         with self.assertRaisesRegex(ValueError, "non-traversable edge types"):
-            sampler._build_edge_type_channel_group_edge_type_ids(
-                [((("unknown", "edge", "type"),), 1)],
+            build_edge_type_channel_group_edge_type_ids(
+                edge_type_groups=[(("unknown", "edge", "type"),)],
+                edge_type_to_edge_type_id=edge_type_to_edge_type_id,
+                node_type_to_edge_types=node_type_to_edge_types,
+                node_types=node_types,
             )
 
     def test_typed_ppr_residual_topup_uses_combined_score_scale(self) -> None:
         """Verify residual top-up attrs share a calibration scale with base PPR."""
-        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
-
         channel_result = (
             {USER: torch.tensor([10, 11])},
             {USER: torch.tensor([0.4, 0.8], dtype=torch.double)},
             {USER: torch.tensor([2])},
         )
-        ntype_to_ids, ntype_to_features, ntype_to_counts = (
-            sampler._merge_typed_ppr_results_with_topup(
+        node_type_to_ids, node_type_to_features, node_type_to_counts = (
+            merge_typed_ppr_results(
                 channel_results=[channel_result],
-                base_channel_quotas=[1],
-                topup_candidate_limits=[2],
-                num_seeds=1,
+                channel_quotas=[1],
+                max_ppr_nodes=3,
                 device=torch.device("cpu"),
             )
         )
 
-        self.assertTrue(torch.equal(ntype_to_ids[USER], torch.tensor([10, 11])))
-        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([2])))
+        self.assertTrue(torch.equal(node_type_to_ids[USER], torch.tensor([10, 11])))
+        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([2])))
         self.assertTrue(
             torch.allclose(
-                ntype_to_features[USER],
+                node_type_to_features[USER],
                 torch.tensor(
                     [
                         [0.5, 0.5, 1.0],
@@ -1000,8 +995,6 @@ class DistPPRSamplerTest(TestCase):
 
     def test_typed_ppr_residual_topup_uses_global_ranking(self) -> None:
         """Verify residual top-up candidates are not capped by channel quotas."""
-        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
-
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
             {USER: torch.tensor([1.0, 0.95, 0.1], dtype=torch.double)},
@@ -1013,21 +1006,20 @@ class DistPPRSamplerTest(TestCase):
             {USER: torch.tensor([2])},
         )
 
-        ntype_to_ids, ntype_to_features, ntype_to_counts = (
-            sampler._merge_typed_ppr_results_with_topup(
+        node_type_to_ids, node_type_to_features, node_type_to_counts = (
+            merge_typed_ppr_results(
                 channel_results=[channel_0_result, channel_1_result],
-                base_channel_quotas=[1, 1],
-                topup_candidate_limits=[4, 4],
-                num_seeds=1,
+                channel_quotas=[1, 1],
+                max_ppr_nodes=3,
                 device=torch.device("cpu"),
             )
         )
 
-        self.assertTrue(torch.equal(ntype_to_ids[USER], torch.tensor([10, 20, 11])))
-        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([3])))
+        self.assertTrue(torch.equal(node_type_to_ids[USER], torch.tensor([10, 20, 11])))
+        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([3])))
         self.assertTrue(
             torch.allclose(
-                ntype_to_features[USER],
+                node_type_to_features[USER],
                 torch.tensor(
                     [
                         [1.0, 1.0, 0.0, 1.0, 0.0],
