@@ -89,6 +89,27 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     EXPECT_NEAR(weights[1].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5F);
 }
 
+// Once a (node, edge type) neighbor list is fetched, it should be cached for the
+// rest of the PPR state. In a cycle, revisiting node 0 should therefore require
+// no second lookup for node 0.
+TEST(PPRForwardPush, NeighborCacheAvoidsRefetchingPreviouslyFetchedNode) {
+    auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 1});
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1}, /*counts=*/{1}));
+
+    auto iter2 = state.drainQueue();
+    ASSERT_TRUE(iter2.has_value());
+    ASSERT_NE(iter2->find(0), iter2->end());
+    ASSERT_EQ(iter2->at(0).size(0), 1);
+    EXPECT_EQ(iter2->at(0)[0].item<int64_t>(), 1);
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{1}, /*flatNeighborIds=*/{0}, /*counts=*/{1}));
+
+    auto iter3 = state.drainQueue();
+    ASSERT_TRUE(iter3.has_value());
+    EXPECT_TRUE(iter3->empty());
+}
+
 // Two seeds (0 and 1) both push residual to sink node 2.  The neighbor-lookup
 // request must deduplicate to one entry for node 2, yet both seeds must still
 // accumulate a PPR score for it.

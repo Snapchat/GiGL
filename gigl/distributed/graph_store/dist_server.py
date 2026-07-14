@@ -94,7 +94,7 @@ from gigl.distributed.graph_store.shared_dist_sampling_producer import (
 )
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.types.graph import FeatureInfo, select_label_edge_types
+from gigl.types.graph import FeatureInfo, reverse_edge_type, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 from gigl.utils.share_memory import share_memory
 
@@ -545,6 +545,16 @@ class DistServer:
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """Get the ABLP (Anchor Based Link Prediction) input for distributed processing.
 
+        The caller always provides ``supervision_edge_type`` in outward form
+        ``(anchor_node_type, relation, supervision_node_type)``, matching the
+        taskMetadata convention.
+
+        When the dataset is in-sampled (``edge_dir == "in"``) the stored positive/negative
+        label edges are reversed relative to that outward form, so we reverse the supervision
+        edge type before resolving the stored label edge types.
+        This mirrors the colocated loader's handling in
+        :meth:`~gigl.distributed.dist_ablp_neighborloader.DistABLPLoader._setup_for_colocated`.
+
         Args:
             request: The ABLP fetch request, including split, node type,
                 supervision edge type, and an optional contiguous server slice.
@@ -563,8 +573,13 @@ class DistServer:
             node_type=request.node_type,
             server_slice=request.server_slice,
         )
+        label_lookup_edge_type = (
+            reverse_edge_type(request.supervision_edge_type)
+            if self.dataset.edge_dir == "in"
+            else request.supervision_edge_type
+        )
         positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
-            request.supervision_edge_type, self.dataset.get_edge_types()
+            label_lookup_edge_type, self.dataset.get_edge_types()
         )
         positive_labels, negative_labels = get_labels_for_anchor_nodes(
             self.dataset,
