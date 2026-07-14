@@ -95,6 +95,18 @@ _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
 
 
+def _new_uninitialized_ppr_sampler(max_ppr_nodes: int) -> DistPPRNeighborSampler:
+    """Create a sampler shell for pure helper tests.
+
+    Full sampler construction requires a GLT distributed graph/runtime. These
+    tests exercise merge/extraction helpers that only need a few initialized
+    attributes, so using an uninitialized shell keeps the cases small.
+    """
+    sampler = object.__new__(DistPPRNeighborSampler)
+    sampler._max_ppr_nodes = max_ppr_nodes
+    return sampler
+
+
 # ---------------------------------------------------------------------------
 # Reference PPR implementations (NetworkX-based)
 # ---------------------------------------------------------------------------
@@ -815,12 +827,52 @@ class DistPPRSamplerTest(TestCase):
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
+    def test_ppr_extraction_passes_total_cap_to_cpp(self) -> None:
+        """Verify Python extraction preserves the combined candidate cap."""
+
+        class FakePPRForwardPush:
+            def __init__(self) -> None:
+                self.extract_args: tuple[int, int, int] | None = None
+
+            def extract_top_k_with_residual_top_up(
+                self,
+                max_ppr_nodes: int,
+                max_residual_nodes: int,
+                max_total_nodes: int,
+            ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+                self.extract_args = (
+                    max_ppr_nodes,
+                    max_residual_nodes,
+                    max_total_nodes,
+                )
+                return {
+                    0: (
+                        torch.empty(0, dtype=torch.long),
+                        torch.empty(0, dtype=torch.double),
+                        torch.zeros(1, dtype=torch.long),
+                    )
+                }
+
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=5)
+        sampler._is_homogeneous = False
+        sampler._ntype_id_to_ntype = [USER]
+        fake_state = FakePPRForwardPush()
+
+        sampler._extract_ppr_state_top_k(
+            fake_state,
+            device=torch.device("cpu"),
+            max_ppr_nodes=2,
+            residual_topup_nodes=3,
+            max_total_nodes=5,
+        )
+
+        self.assertEqual(fake_state.extract_args, (2, 3, 5))
+
     def test_typed_ppr_merge_calibrates_scores_and_globally_ranks_channels(
         self,
     ) -> None:
         """Verify typed-PPR merge emits calibrated channel metadata."""
-        sampler = object.__new__(DistPPRNeighborSampler)
-        sampler._max_ppr_nodes = 10
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=10)
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
             {USER: torch.tensor([0.4, 0.2, 0.1], dtype=torch.double)},
@@ -862,11 +914,54 @@ class DistPPRSamplerTest(TestCase):
             )
         )
 
+    def test_typed_ppr_channel_quota_uses_channel_score_before_global_rank(
+        self,
+    ) -> None:
+        """Verify each channel contributes candidates by its own score."""
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
+
+        channel_0_result = (
+            {USER: torch.tensor([10, 11, 12])},
+            {USER: torch.tensor([1.0, 0.9, 0.8], dtype=torch.double)},
+            {USER: torch.tensor([3])},
+        )
+        channel_1_result = (
+            {USER: torch.tensor([12])},
+            {USER: torch.tensor([1.0], dtype=torch.double)},
+            {USER: torch.tensor([1])},
+        )
+
+        ntype_to_ids, ntype_to_features, ntype_to_counts = (
+            sampler._merge_typed_ppr_results_with_topup(
+                channel_results=[channel_0_result, channel_1_result],
+                base_channel_quotas=[2, 1],
+                topup_candidate_limits=[2, 1],
+                num_seeds=1,
+                device=torch.device("cpu"),
+            )
+        )
+
+        self.assertTrue(torch.equal(ntype_to_ids[USER], torch.tensor([10, 12, 11])))
+        self.assertTrue(torch.equal(ntype_to_counts[USER], torch.tensor([3])))
+        self.assertTrue(
+            torch.allclose(
+                ntype_to_features[USER],
+                torch.tensor(
+                    [
+                        [1.0, 1.0, 0.0, 1.0, 0.0],
+                        [1.0, 0.8, 1.0, 1.0, 1.0],
+                        [0.9, 0.9, 0.0, 1.0, 0.0],
+                    ],
+                    dtype=torch.double,
+                ),
+            )
+        )
+
     def test_typed_ppr_edge_type_channels_normalize_and_build_traversal_maps(
         self,
     ) -> None:
         """Verify typed-PPR can use canonical edge-type channels."""
-        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
         sampler._node_type_to_edge_types = {
             USER: [USER_TO_STORY],
             STORY: [STORY_TO_USER],
@@ -935,10 +1030,9 @@ class DistPPRSamplerTest(TestCase):
             ) -> None:
                 self.fetched_by_push.append(fetched_by_etype_id)
 
-        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=1)
         sampler._typed_ppr_channel_quotas = [1, 1]
         sampler._typed_ppr_channel_to_node_type_id_to_edge_type_ids = [[], []]
-        sampler._max_ppr_nodes = 1
         sampler._enable_residual_topup = True
         sampler._max_fetch_iterations = None
 
@@ -1008,10 +1102,9 @@ class DistPPRSamplerTest(TestCase):
             def drain_queue(self):
                 return None
 
-        sampler = object.__new__(DistPPRNeighborSampler)
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=5)
         sampler._typed_ppr_channel_quotas = [2, 1]
         sampler._typed_ppr_channel_to_node_type_id_to_edge_type_ids = [[], []]
-        sampler._max_ppr_nodes = 5
         sampler._enable_residual_topup = False
         sampler._max_fetch_iterations = None
 
@@ -1064,8 +1157,7 @@ class DistPPRSamplerTest(TestCase):
 
     def test_typed_ppr_residual_topup_uses_combined_score_scale(self) -> None:
         """Verify residual top-up attrs share a calibration scale with base PPR."""
-        sampler = object.__new__(DistPPRNeighborSampler)
-        sampler._max_ppr_nodes = 3
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
 
         channel_result = (
             {USER: torch.tensor([10, 11])},
@@ -1099,8 +1191,7 @@ class DistPPRSamplerTest(TestCase):
 
     def test_typed_ppr_residual_topup_uses_global_ranking(self) -> None:
         """Verify residual top-up candidates are not capped by channel quotas."""
-        sampler = object.__new__(DistPPRNeighborSampler)
-        sampler._max_ppr_nodes = 3
+        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
 
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},

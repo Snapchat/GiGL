@@ -92,7 +92,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           regular PPR. For typed PPR, edge attrs are multi-column:
           ``[best_calibrated_score, calibrated_channel_scores..., channel_presence_bits...]``.
           Typed-PPR scores are calibrated within each channel/seed pool and
-          globally ranked by the best calibrated score.
+          globally ranked by the best calibrated score. Channel columns follow
+          the insertion order of ``typed_channel_quotas``.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -109,6 +110,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
             scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
+        typed_channel_quotas: Optional top-k quotas for typed PPR traversal
+            channels. Channels follow the insertion order of this mapping, and
+            the sum of quotas must be no greater than ``max_ppr_nodes``.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
             by NodeType. The colocated and graph-store loader paths retrieve
@@ -180,6 +184,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             if self._is_homogeneous:
                 raise ValueError(
                     "Typed PPR channel quotas are only supported for heterogeneous PPR sampling."
+                )
+            if sum(self._typed_ppr_channel_quotas) > self._max_ppr_nodes:
+                raise ValueError(
+                    "Sum of typed_channel_quotas must be less than or equal to "
+                    f"max_ppr_nodes={self._max_ppr_nodes}, got "
+                    f"{sum(self._typed_ppr_channel_quotas)}."
                 )
 
         # Convert the public homogeneous/heterogeneous degree-tensor shape to
@@ -325,9 +335,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             return None
 
         normalized_groups: list[tuple[tuple[EdgeType, ...], int]] = []
-        invalid_quotas: dict[_TypedPPRChannelKey, int] = {}
+        invalid_quotas: dict[_TypedPPRChannelKey, object] = {}
         for edge_type_key, quota in typed_channel_quotas.items():
-            if quota <= 0:
+            if not isinstance(quota, int) or isinstance(quota, bool) or quota <= 0:
                 invalid_quotas[edge_type_key] = quota
                 continue
             normalized_groups.append(
@@ -336,7 +346,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         if invalid_quotas:
             raise ValueError(
-                "typed_channel_quotas must contain only positive quotas, "
+                "typed_channel_quotas must contain only positive integer quotas, "
                 f"got {invalid_quotas}."
             )
         return normalized_groups
@@ -1000,6 +1010,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 counts_cpu=counts_cpu,
                 candidate_limit=topup_candidate_limit,
             ):
+                # Both base and residual top-up candidates are calibrated using
+                # the extended candidate pool's max score. This keeps finalized
+                # PPR nodes and residual top-up nodes on the same per-channel
+                # scale before the global typed-PPR merge.
                 base_nodes_and_scores = [
                     (node_id, score)
                     for candidate_idx, node_id, score in entries
@@ -1063,13 +1077,19 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         candidates_by_channel: Sequence[Sequence[tuple[int, float]]],
         channel_quotas: Sequence[int],
     ) -> list[int]:
+        """Select typed-PPR nodes by channel quota, then global calibrated rank.
+
+        Each channel first contributes its own top candidates by that channel's
+        calibrated score. The pooled candidates are then globally ranked by the
+        best calibrated score across all channels for the seed.
+        """
         selected_node_ids: set[int] = set()
         selected_nodes: list[int] = []
 
         sorted_candidates_by_channel = [
             sorted(
                 candidates,
-                key=lambda item: (-seed_scores[item[0]][0], -item[1], item[0]),
+                key=lambda item: (-item[1], item[0]),
             )
             for candidates in candidates_by_channel
         ]
@@ -1098,11 +1118,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             selected_nodes.append(node_id)
 
         return selected_nodes
-
-    def _ppr_edge_attr_dim(self) -> int:
-        if self._typed_ppr_channel_quotas is None:
-            return 1
-        return 1 + (2 * len(self._typed_ppr_channel_quotas))
 
     async def _sample_from_nodes(
         self,

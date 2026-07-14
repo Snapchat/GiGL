@@ -21,7 +21,9 @@ TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
 
 A single canonical edge type creates one channel restricted to that edge type.
 A tuple of canonical edge types creates one channel whose forward-push state may
-traverse any edge type in the group.
+traverse any edge type in the group. When typed PPR emits multi-column
+``edge_attr`` tensors, channel columns follow the insertion order of the
+``typed_channel_quotas`` mapping.
 """
 
 
@@ -91,6 +93,9 @@ class PPRSamplerOptions:
             ``(src_type, relation, dst_type)`` or a tuple of canonical edge
             types. Each key defines one traversal channel whose PPR state may
             traverse only those exact edge types.
+            Channel order follows the insertion order of this mapping. The sum
+            of quotas must be no greater than ``max_ppr_nodes``; if it is
+            smaller, residual top-up can fill remaining output slots.
             If residual top-up is enabled and the base merge emits fewer than
             ``max_ppr_nodes``, the sampler appends discovered-but-unpushed
             residual candidates from the same completed PPR states. Those
