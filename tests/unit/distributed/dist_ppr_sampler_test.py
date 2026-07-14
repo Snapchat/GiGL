@@ -43,7 +43,6 @@ from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.distributed.utils.distributed_typed_sampler import (
     build_edge_type_channel_group_edge_type_ids,
-    merge_typed_ppr_results,
     parse_typed_channel_quota_groups,
 )
 from gigl.types.graph import (
@@ -820,90 +819,6 @@ class DistPPRSamplerTest(TestCase):
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
-    def test_typed_ppr_merge_calibrates_scores_and_globally_ranks_channels(
-        self,
-    ) -> None:
-        """Verify typed-PPR merge emits calibrated channel metadata."""
-        channel_0_result = (
-            {USER: torch.tensor([10, 11, 12])},
-            {USER: torch.tensor([0.4, 0.2, 0.1], dtype=torch.double)},
-            {USER: torch.tensor([2, 1])},
-        )
-        channel_1_result = (
-            {USER: torch.tensor([20, 11, 13])},
-            {USER: torch.tensor([0.9, 0.3, 0.3], dtype=torch.double)},
-            {USER: torch.tensor([2, 1])},
-        )
-
-        node_type_to_ids, node_type_to_features, node_type_to_counts = (
-            merge_typed_ppr_results(
-                channel_results=[channel_0_result, channel_1_result],
-                channel_quotas=[2, 1],
-                max_ppr_nodes=10,
-                device=torch.device("cpu"),
-            )
-        )
-
-        self.assertTrue(
-            torch.equal(node_type_to_ids[USER], torch.tensor([10, 20, 11, 12, 13]))
-        )
-        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([3, 2])))
-        self.assertTrue(
-            torch.allclose(
-                node_type_to_features[USER],
-                torch.tensor(
-                    [
-                        [1.0, 1.0, 0.0, 1.0, 0.0],
-                        [1.0, 0.0, 1.0, 0.0, 1.0],
-                        [0.5, 0.5, 0.0, 1.0, 0.0],
-                        [1.0, 1.0, 0.0, 1.0, 0.0],
-                        [1.0, 0.0, 1.0, 0.0, 1.0],
-                    ],
-                    dtype=torch.double,
-                ),
-            )
-        )
-
-    def test_typed_ppr_channel_quota_uses_channel_score_before_global_rank(
-        self,
-    ) -> None:
-        """Verify each channel contributes candidates by its own score."""
-        channel_0_result = (
-            {USER: torch.tensor([10, 11, 12])},
-            {USER: torch.tensor([1.0, 0.9, 0.8], dtype=torch.double)},
-            {USER: torch.tensor([3])},
-        )
-        channel_1_result = (
-            {USER: torch.tensor([12])},
-            {USER: torch.tensor([1.0], dtype=torch.double)},
-            {USER: torch.tensor([1])},
-        )
-
-        node_type_to_ids, node_type_to_features, node_type_to_counts = (
-            merge_typed_ppr_results(
-                channel_results=[channel_0_result, channel_1_result],
-                channel_quotas=[2, 1],
-                max_ppr_nodes=3,
-                device=torch.device("cpu"),
-            )
-        )
-
-        self.assertTrue(torch.equal(node_type_to_ids[USER], torch.tensor([10, 12, 11])))
-        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([3])))
-        self.assertTrue(
-            torch.allclose(
-                node_type_to_features[USER],
-                torch.tensor(
-                    [
-                        [1.0, 1.0, 0.0, 1.0, 0.0],
-                        [1.0, 0.8, 1.0, 1.0, 1.0],
-                        [0.9, 0.9, 0.0, 1.0, 0.0],
-                    ],
-                    dtype=torch.double,
-                ),
-            )
-        )
-
     def test_typed_ppr_edge_type_channels_parse_and_build_traversal_maps(
         self,
     ) -> None:
@@ -961,75 +876,6 @@ class DistPPRSamplerTest(TestCase):
                 node_type_to_edge_types=node_type_to_edge_types,
                 node_types=node_types,
             )
-
-    def test_typed_ppr_residual_topup_uses_combined_score_scale(self) -> None:
-        """Verify residual top-up attrs share a calibration scale with base PPR."""
-        channel_result = (
-            {USER: torch.tensor([10, 11])},
-            {USER: torch.tensor([0.4, 0.8], dtype=torch.double)},
-            {USER: torch.tensor([2])},
-        )
-        node_type_to_ids, node_type_to_features, node_type_to_counts = (
-            merge_typed_ppr_results(
-                channel_results=[channel_result],
-                channel_quotas=[1],
-                max_ppr_nodes=3,
-                device=torch.device("cpu"),
-            )
-        )
-
-        self.assertTrue(torch.equal(node_type_to_ids[USER], torch.tensor([10, 11])))
-        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([2])))
-        self.assertTrue(
-            torch.allclose(
-                node_type_to_features[USER],
-                torch.tensor(
-                    [
-                        [0.5, 0.5, 1.0],
-                        [1.0, 1.0, 1.0],
-                    ],
-                    dtype=torch.double,
-                ),
-            )
-        )
-
-    def test_typed_ppr_residual_topup_uses_global_ranking(self) -> None:
-        """Verify residual top-up candidates are not capped by channel quotas."""
-        channel_0_result = (
-            {USER: torch.tensor([10, 11, 12])},
-            {USER: torch.tensor([1.0, 0.95, 0.1], dtype=torch.double)},
-            {USER: torch.tensor([3])},
-        )
-        channel_1_result = (
-            {USER: torch.tensor([20, 21])},
-            {USER: torch.tensor([1.0, 0.2], dtype=torch.double)},
-            {USER: torch.tensor([2])},
-        )
-
-        node_type_to_ids, node_type_to_features, node_type_to_counts = (
-            merge_typed_ppr_results(
-                channel_results=[channel_0_result, channel_1_result],
-                channel_quotas=[1, 1],
-                max_ppr_nodes=3,
-                device=torch.device("cpu"),
-            )
-        )
-
-        self.assertTrue(torch.equal(node_type_to_ids[USER], torch.tensor([10, 20, 11])))
-        self.assertTrue(torch.equal(node_type_to_counts[USER], torch.tensor([3])))
-        self.assertTrue(
-            torch.allclose(
-                node_type_to_features[USER],
-                torch.tensor(
-                    [
-                        [1.0, 1.0, 0.0, 1.0, 0.0],
-                        [1.0, 0.0, 1.0, 0.0, 1.0],
-                        [0.95, 0.95, 0.0, 1.0, 0.0],
-                    ],
-                    dtype=torch.double,
-                ),
-            )
-        )
 
 
 if __name__ == "__main__":

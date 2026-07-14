@@ -90,6 +90,12 @@ public:
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
         int32_t maxPPRNodes, bool enableResidualTopUp);
 
+    friend std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+    extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
+                                      const std::vector<int32_t>& channelQuotas,
+                                      int32_t maxPPRNodes,
+                                      bool enableResidualTopUp);
+
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
     [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
@@ -137,5 +143,12 @@ private:
 DrainedTypedPPRQueues drainTypedPPRChannelQueues(const std::vector<PPRForwardPush*>& states,
                                                  const std::vector<int32_t>& fetchIterationCounts,
                                                  int32_t maxFetchIterations);
+
+// Extract and merge typed-PPR channel states in one C++ step.
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTypedTopKWithResidualTopUp(
+    const std::vector<PPRForwardPush*>& states,
+    const std::vector<int32_t>& channelQuotas,
+    int32_t maxPPRNodes,
+    bool enableResidualTopUp);
 
 } // namespace gigl

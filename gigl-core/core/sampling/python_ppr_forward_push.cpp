@@ -58,6 +58,21 @@ static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
                           std::move(drained.unionNodesByEdgeTypeId));
 }
 
+static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+extractTypedTopKWithResidualTopUpWrapper(const py::sequence& states,
+                                         const std::vector<int32_t>& channelQuotas,
+                                         int32_t maxPPRNodes,
+                                         bool enableResidualTopUp) {
+    std::vector<PPRForwardPush*> statePtrs;
+    statePtrs.reserve(py::len(states));
+    for (py::handle stateObj : states) {
+        statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
+    }
+
+    py::gil_scoped_release release;
+    return extractTypedTopKWithResidualTopUp(statePtrs, channelQuotas, maxPPRNodes, enableResidualTopUp);
+}
+
 } // namespace gigl
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
@@ -82,4 +97,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("states"),
           py::arg("fetch_iteration_counts"),
           py::arg("max_fetch_iterations") = -1);
+    m.def("extract_typed_top_k_with_residual_top_up",
+          &gigl::extractTypedTopKWithResidualTopUpWrapper,
+          py::arg("states"),
+          py::arg("channel_quotas"),
+          py::arg("max_ppr_nodes"),
+          py::arg("enable_residual_topup"));
 }

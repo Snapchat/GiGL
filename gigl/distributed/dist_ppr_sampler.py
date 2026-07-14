@@ -1,12 +1,16 @@
 import asyncio
 from collections import defaultdict
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
-from gigl_core import PPRForwardPush, drain_typed_ppr_channel_queues
+from gigl_core import (
+    PPRForwardPush,
+    drain_typed_ppr_channel_queues,
+    extract_typed_top_k_with_residual_top_up,
+)
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NodeSamplerInput,
@@ -21,7 +25,6 @@ from gigl.distributed.utils.distributed_typed_sampler import (
     PPRResult,
     TypedPPRChannelKey,
     build_edge_type_channel_group_edge_type_ids,
-    merge_typed_ppr_results,
     parse_typed_channel_quota_groups,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
@@ -65,6 +68,17 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     This sampler supports both homogeneous and heterogeneous graphs. For heterogeneous graphs,
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
+
+    Internal execution follows the same shape for regular and typed PPR. Regular
+    PPR owns one C++ ``PPRForwardPush`` state per seed type: ``drain_queue``
+    exposes the next frontier, Python performs the distributed neighbor fetch,
+    ``push_residuals`` updates the state, and C++ extraction emits the final
+    top-k plus residual top-up output. Typed PPR runs one ``PPRForwardPush``
+    state per traversal channel. Its typed drain step unions the channel
+    frontiers before the same distributed fetch, pushes results back into the
+    active channel states, and then uses one typed C++ extraction step to apply
+    channel quotas, deduplicate shared candidates, and emit the final typed
+    edge-attribute features.
 
     The ``edge_index`` and ``edge_attr`` fields on the output Data/HeteroData
     objects are populated with PPR seed-to-neighbor relationships (not edges
@@ -516,12 +530,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         seed_nodes: torch.Tensor,
         seed_node_type: NodeType,
     ) -> HeteroPPRResult:
-        """Run one PPR state per typed channel and merge the channel results.
+        """Run one PPR state per typed channel and extract the merged result.
 
         Each channel receives the same seed nodes but a different edge-type
         traversal allowlist. Fetch frontiers are unioned across active channels
         per iteration so shared graph neighborhoods are fetched once and reused
-        by every channel that requested them.
+        by every channel that requested them. After convergence, C++ applies
+        channel quotas, residual top-up, and cross-channel deduplication in one
+        extraction step.
 
         Args:
             seed_nodes: Global node IDs for the seed batch.
@@ -605,19 +621,28 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             if push_tasks:
                 await asyncio.gather(*push_tasks)
 
-        channel_results = [
-            self._extract_ppr_state_top_k(
-                ppr_state,
-                device=device,
-                ppr_node_limit=channel_quota,
-            )
-            for ppr_state, channel_quota in zip(ppr_states, channel_quotas)
-        ]
-        return merge_typed_ppr_results(
-            channel_results=channel_results,
-            channel_quotas=channel_quotas,
-            max_ppr_nodes=self._max_ppr_nodes,
-            device=device,
+        extracted_results = extract_typed_top_k_with_residual_top_up(
+            ppr_states,
+            channel_quotas,
+            self._max_ppr_nodes,
+            self._enable_residual_topup,
+        )
+        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+        for node_type_id, (
+            flat_ids,
+            flat_weights,
+            valid_counts,
+        ) in extracted_results.items():
+            node_type = self._ntype_id_to_ntype[node_type_id]
+            node_type_to_flat_ids[node_type] = flat_ids.to(device)
+            node_type_to_flat_weights[node_type] = flat_weights.to(device)
+            node_type_to_valid_counts[node_type] = valid_counts.to(device)
+        return (
+            node_type_to_flat_ids,
+            node_type_to_flat_weights,
+            node_type_to_valid_counts,
         )
 
     async def _sample_from_nodes(
@@ -699,11 +724,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if is_hetero:
             assert isinstance(nodes_to_sample, dict)
             assert input_type is not None
+            nodes_by_seed_type = cast(dict[NodeType, torch.Tensor], nodes_to_sample)
 
             # Register all seeds (anchors + supervision nodes for ABLP) with the
             # inducer first, so they occupy the lowest local indices.  source_dict maps
             # NodeType -> global IDs (same values as nodes_to_sample).
-            source_dict = inducer.init_node(nodes_to_sample)
+            source_dict = inducer.init_node(nodes_by_seed_type)
 
             # Compute PPR for all seed types concurrently, collecting flat global
             # neighbor IDs, weights, and per-seed counts.  Build neighbor_dict for a
@@ -717,11 +743,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # Running them with asyncio.gather allows their fetch phases to overlap,
             # which is most beneficial when there are 2+ distinct seed node types
             # (e.g. cross-type supervision edges like user→story).
-            seed_types = list(nodes_to_sample.keys())
+            seed_types = list(nodes_by_seed_type.keys())
             if self._typed_ppr_channel_quotas is None:
                 ppr_results = await asyncio.gather(
                     *[
-                        self._compute_ppr_scores(nodes_to_sample[seed_type], seed_type)
+                        self._compute_ppr_scores(
+                            nodes_by_seed_type[seed_type], seed_type
+                        )
                         for seed_type in seed_types
                     ]
                 )
@@ -729,7 +757,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ppr_results = await asyncio.gather(
                     *[
                         self._compute_typed_ppr_scores(
-                            nodes_to_sample[seed_type], seed_type
+                            nodes_by_seed_type[seed_type], seed_type
                         )
                         for seed_type in seed_types
                     ]
