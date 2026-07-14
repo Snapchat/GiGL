@@ -492,7 +492,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         fetch_iteration_count = 0
         loop = asyncio.get_running_loop()
-        nodes_by_edge_type_id = ppr_state.drain_queue()
+        nodes_by_edge_type_id = await loop.run_in_executor(None, ppr_state.drain_queue)
 
         # drain_queue returns None when the queue is truly empty (convergence),
         # or a dict (possibly empty) when nodes were drained.  An empty dict
@@ -517,12 +517,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ppr_state.push_residuals,
                 fetched_by_edge_type_id,
             )
-            nodes_by_edge_type_id = ppr_state.drain_queue()
+            nodes_by_edge_type_id = await loop.run_in_executor(
+                None, ppr_state.drain_queue
+            )
 
-        return self._extract_ppr_state_top_k(
+        return await loop.run_in_executor(
+            None,
+            self._extract_ppr_state_top_k,
             ppr_state,
             device,
-            ppr_node_limit=self._max_ppr_nodes,
+            self._max_ppr_nodes,
         )
 
     async def _compute_typed_ppr_scores(
@@ -580,7 +584,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 fetch_channel_indices,
                 edge_type_ids_by_fetch_channel,
                 union_nodes_by_edge_type_id,
-            ) = drain_typed_ppr_channel_queues(
+            ) = await loop.run_in_executor(
+                None,
+                drain_typed_ppr_channel_queues,
                 ppr_states,
                 fetch_iteration_counts,
                 max_fetch_iterations,
@@ -621,7 +627,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             if push_tasks:
                 await asyncio.gather(*push_tasks)
 
-        extracted_results = extract_typed_top_k_with_residual_top_up(
+        extracted_results = await loop.run_in_executor(
+            None,
+            extract_typed_top_k_with_residual_top_up,
             ppr_states,
             channel_quotas,
             self._max_ppr_nodes,

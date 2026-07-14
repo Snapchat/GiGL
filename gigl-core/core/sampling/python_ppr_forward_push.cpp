@@ -53,6 +53,18 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
     }
 }
 
+static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+extractTopKWithResidualTopUpWrapper(PPRForwardPush& state, int32_t maxPPRNodes, bool enableResidualTopUp) {
+    // C++ extraction only reads the completed state and builds C++
+    // tensors/containers. Reacquire the GIL before pybind converts the return.
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+    {
+        py::gil_scoped_release release;
+        result = state.extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp);
+    }
+    return result;
+}
+
 static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
                                                    const std::vector<int32_t>& fetchIterationCounts,
                                                    int32_t maxFetchIterations) {
@@ -119,7 +131,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",
-             &gigl::PPRForwardPush::extractTopKWithResidualTopUp,
+             &gigl::extractTopKWithResidualTopUpWrapper,
              py::arg("max_ppr_nodes"),
              py::arg("enable_residual_topup"));
     m.def("drain_typed_ppr_channel_queues",
