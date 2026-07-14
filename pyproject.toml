@@ -42,6 +42,7 @@ dependencies = [
   # When updating to a new tensorflow version, please ensure that the version changes align with
   # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
   "tensorflow~=2.16",
+  "uvloop",
 ]
 
 
