@@ -890,7 +890,11 @@ class DistributedNeighborLoaderTest(TestCase):
 
 
 class WithEdgeDerivationTest(TestCase):
-    """Regression coverage for deriving ``with_edge`` from edge-feature presence."""
+    """Covers ``create_sampling_config`` deriving ``with_edge`` from edge-feature presence.
+
+    Exercises both paths: ``with_edge=True`` when the dataset has edge features
+    (homogeneous or per-edge-type), and ``with_edge=False`` when it has none.
+    """
 
     def test_config_with_edge_false_when_no_edge_features(self) -> None:
         schema = DatasetSchema(

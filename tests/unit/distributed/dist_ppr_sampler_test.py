@@ -320,7 +320,7 @@ def _run_ppr_loader_correctness_check(
     # outputs come from metadata (ppr_edge_index/ppr_edge_attr), not sampled edge
     # ids, so with_edge must not affect the PPR results verified below.
     assert dataset.edge_features is None, (
-        "PPR regression fixture must be edge-feature-free so with_edge is False."
+        "PPR fixture must be edge-feature-free so with_edge is False."
     )
 
     loader = DistNeighborLoader(
