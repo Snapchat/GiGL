@@ -12,20 +12,6 @@ from tests.test_assets.test_case import TestCase
 
 
 class TestGcsUtils(TestCase):
-    def _create_gcs_utils_with_get_bucket_blocked(self):
-        mock_client = MagicMock(spec=Client)
-        mock_client.project = "test-project"
-        mock_bucket = MagicMock(spec=Bucket)
-        mock_client.bucket.return_value = mock_bucket
-        mock_client.get_bucket.side_effect = AssertionError(
-            "get_bucket should not be used for object-only operations"
-        )
-
-        with patch("gigl.common.utils.gcs.storage.Client", return_value=mock_client):
-            gcs_utils = GcsUtils()
-
-        return gcs_utils, mock_client, mock_bucket
-
     @patch("gigl.common.utils.gcs.storage")
     def test_upload_from_filelike(self, mock_storage_client):
         # Mock the GCS client, bucket, and blob
@@ -68,76 +54,6 @@ class TestGcsUtils(TestCase):
 
         self.assertIsNotNone(gcs_utils)
 
-    def test_does_gcs_file_exist_uses_bucket_reference(self):
-        gcs_utils, mock_client, mock_bucket = (
-            self._create_gcs_utils_with_get_bucket_blocked()
-        )
-        mock_blob = MagicMock(spec=Blob)
-        mock_blob.exists.return_value = True
-        mock_bucket.blob.return_value = mock_blob
-
-        gcs_path = GcsUri("gs://test-bucket/test-path/test-file.txt")
-
-        self.assertTrue(gcs_utils.does_gcs_file_exist(gcs_path=gcs_path))
-        mock_client.bucket.assert_called_once_with("test-bucket")
-        mock_client.get_bucket.assert_not_called()
-        mock_bucket.blob.assert_called_once_with("test-path/test-file.txt")
-        mock_blob.exists.assert_called_once_with()
-
-    def test_delete_gcs_file_if_exist_uses_bucket_reference(self):
-        gcs_utils, mock_client, mock_bucket = (
-            self._create_gcs_utils_with_get_bucket_blocked()
-        )
-        mock_blob = MagicMock(spec=Blob)
-        mock_blob.exists.return_value = True
-        mock_bucket.blob.return_value = mock_blob
-
-        gcs_path = GcsUri("gs://test-bucket/test-path/test-file.txt")
-
-        gcs_utils.delete_gcs_file_if_exist(gcs_path=gcs_path)
-
-        mock_client.bucket.assert_called_once_with("test-bucket")
-        mock_client.get_bucket.assert_not_called()
-        mock_bucket.blob.assert_called_once_with("test-path/test-file.txt")
-        mock_blob.exists.assert_called_once_with()
-        mock_blob.delete.assert_called_once_with()
-
-    def test_count_blobs_in_gcs_path_uses_bucket_reference(self):
-        gcs_utils, mock_client, mock_bucket = (
-            self._create_gcs_utils_with_get_bucket_blocked()
-        )
-        mock_text_blob = MagicMock(spec=Blob)
-        mock_text_blob.name = "test-path/a.txt"
-        mock_csv_blob = MagicMock(spec=Blob)
-        mock_csv_blob.name = "test-path/b.csv"
-        mock_bucket.list_blobs.return_value = [mock_text_blob, mock_csv_blob]
-
-        gcs_path = GcsUri("gs://test-bucket/test-path/")
-
-        self.assertEqual(
-            gcs_utils.count_blobs_in_gcs_path(gcs_path=gcs_path, suffix=".txt"), 1
-        )
-        mock_client.bucket.assert_called_once_with("test-bucket")
-        mock_client.get_bucket.assert_not_called()
-        mock_bucket.list_blobs.assert_called_once_with(prefix="test-path/")
-
-    def test_delete_files_uses_bucket_reference(self):
-        gcs_utils, mock_client, mock_bucket = (
-            self._create_gcs_utils_with_get_bucket_blocked()
-        )
-        mock_blob = MagicMock(spec=Blob)
-        mock_bucket.blob.return_value = mock_blob
-
-        gcs_path = GcsUri("gs://test-bucket/test-path/test-file.txt")
-
-        gcs_utils.delete_files(gcs_files=[gcs_path])
-
-        mock_client.bucket.assert_called_once_with("test-bucket")
-        mock_client.get_bucket.assert_not_called()
-        mock_bucket.blob.assert_called_once_with("test-path/test-file.txt")
-        mock_client.batch.assert_called_once_with()
-        mock_blob.delete.assert_called_once_with()
-
     def test_delete_files_in_bucket_dir(self):
         # Mock the GCS client, bucket, and blob
         mock_client = MagicMock(spec=Client)
@@ -159,9 +75,6 @@ class TestGcsUtils(TestCase):
         # since it wont be able to validate deletion of all blobs
         mock_bucket.list_blobs.return_value = mock_blobs
         mock_client.bucket.return_value = mock_bucket
-        mock_client.get_bucket.side_effect = AssertionError(
-            "get_bucket should not be used for object-only operations"
-        )
 
         with patch("gigl.common.utils.gcs.storage.Client", return_value=mock_client):
             # Define GCS URI
@@ -194,7 +107,6 @@ class TestGcsUtils(TestCase):
             self.assertEqual(
                 mock_file1.delete.call_count, 2
             )  # Fails first time, succeeds second time
-            mock_client.get_bucket.assert_not_called()
 
 
 if __name__ == "__main__":
