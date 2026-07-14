@@ -920,7 +920,9 @@ class TestSamplingErrorPropagation(TestCase):
                 ),
             },
             partitioned_node_features={
-                _USER: FeaturePartitionData(feats=torch.zeros(n, 2), ids=torch.arange(n)),
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
                 _STORY: FeaturePartitionData(
                     feats=torch.zeros(n, 2), ids=torch.arange(n)
                 ),
@@ -952,7 +954,9 @@ class TestSamplingErrorPropagation(TestCase):
         if alive:
             proc.terminate()
             proc.join(timeout=10)
-        self.assertFalse(alive, "loader hung instead of failing fast on a sampler error")
+        self.assertFalse(
+            alive, "loader hung instead of failing fast on a sampler error"
+        )
         message = error_holder.get("msg", "")
         # The training process raised with the worker's real traceback embedded.
         self.assertIn("sampling worker failed", message.lower())
