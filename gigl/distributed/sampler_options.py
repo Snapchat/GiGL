@@ -93,9 +93,11 @@ class PPRSamplerOptions:
             ``(src_type, relation, dst_type)`` or a tuple of canonical edge
             types. Each key defines one traversal channel whose PPR state may
             traverse only those exact edge types.
-            Channel order follows the insertion order of this mapping. The sum
-            of quotas must be no greater than ``max_ppr_nodes``; if it is
-            smaller, residual top-up can fill remaining output slots.
+            Channel order follows the insertion order of this mapping. Each
+            channel may contribute up to its quota to the candidate pool, while
+            the final returned sequence remains capped by ``max_ppr_nodes``.
+            Quotas may sum above ``max_ppr_nodes`` to give sparse or
+            overlapping channels room to fill the sequence.
             If residual top-up is enabled and the base merge emits fewer than
             ``max_ppr_nodes``, the sampler appends discovered-but-unpushed
             residual candidates from the same completed PPR states. Those

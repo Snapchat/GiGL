@@ -109,8 +109,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         typed_channel_quotas: Optional top-k quotas for typed PPR traversal
-            channels. Channels follow the insertion order of this mapping, and
-            the sum of quotas must be no greater than ``max_ppr_nodes``.
+            channels. Each channel may contribute up to its quota to the
+            candidate pool; the final returned sequence is still capped by
+            ``max_ppr_nodes``. Quotas may sum above ``max_ppr_nodes`` to give
+            sparse or overlapping channels room to fill the sequence.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
             by NodeType. The colocated and graph-store loader paths retrieve
@@ -182,12 +184,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             if self._is_homogeneous:
                 raise ValueError(
                     "Typed PPR channel quotas are only supported for heterogeneous PPR sampling."
-                )
-            if sum(self._typed_ppr_channel_quotas) > self._max_ppr_nodes:
-                raise ValueError(
-                    "Sum of typed_channel_quotas must be less than or equal to "
-                    f"max_ppr_nodes={self._max_ppr_nodes}, got "
-                    f"{sum(self._typed_ppr_channel_quotas)}."
                 )
 
         # Convert the public homogeneous/heterogeneous degree-tensor shape to
