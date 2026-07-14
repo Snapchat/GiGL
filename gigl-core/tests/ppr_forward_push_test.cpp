@@ -57,7 +57,7 @@ TEST(PPRForwardPush, PprScoreAbsorbsAlpha) {
     auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{0});
     state.drainQueue();
     state.pushResiduals({});
-    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*maxResidualNodes=*/0);
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
     const auto& [ids, weights, counts] = topk.at(0);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
@@ -79,7 +79,7 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
 
     EXPECT_FALSE(state.drainQueue().has_value());
 
-    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*maxResidualNodes=*/0);
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
     const auto& [ids, weights, counts] = topk.at(0);
     ASSERT_EQ(counts[0].item<int64_t>(), 2);
@@ -129,7 +129,7 @@ TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
     state.pushResiduals({});
     EXPECT_FALSE(state.drainQueue().has_value());
 
-    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*maxResidualNodes=*/0);
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
     const auto& [ids, weights, counts] = topk.at(0);
     // Each seed (batch indices 0 and 1) should have 2 nodes in its top-k.
@@ -150,17 +150,17 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpLimitsResultsWithoutResidualTop
     state.drainQueue();
     state.pushResiduals({});
 
-    auto topk1 = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/1, /*maxResidualNodes=*/0);
+    auto topk1 = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/1, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk1.find(0), topk1.end());
     EXPECT_EQ(std::get<2>(topk1.at(0))[0].item<int64_t>(), 1);
 
-    auto topk10 = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*maxResidualNodes=*/0);
+    auto topk10 = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk10.find(0), topk10.end());
     EXPECT_EQ(std::get<2>(topk10.at(0))[0].item<int64_t>(), 2);
 }
 
 // Residual top-up includes discovered nodes whose residual never crossed the
-// requeue threshold, while maxResidualNodes=0 keeps finalized-PPR-only behavior.
+// requeue threshold, while enableResidualTopUp=false keeps finalized-PPR-only behavior.
 TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
     const double alpha = 0.5;
     auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1.0, /*degrees=*/{2, 1, 1});
@@ -169,12 +169,12 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
     state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1, 2}, /*counts=*/{2}));
     EXPECT_FALSE(state.drainQueue().has_value());
 
-    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*maxResidualNodes=*/0);
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
     EXPECT_EQ(std::get<2>(topk.at(0))[0].item<int64_t>(), 1);
     EXPECT_EQ(std::get<0>(topk.at(0))[0].item<int64_t>(), 0);
 
-    auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/1, /*maxResidualNodes=*/2);
+    auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/3, /*enableResidualTopUp=*/true);
     ASSERT_NE(topkWithResiduals.find(0), topkWithResiduals.end());
     const auto& [ids, weights, counts] = topkWithResiduals.at(0);
     ASSERT_EQ(counts[0].item<int64_t>(), 3);
@@ -206,7 +206,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpSortsSelectedResultsByScore) {
     state.pushResiduals({});
     EXPECT_FALSE(state.drainQueue().has_value());
 
-    auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/3, /*maxResidualNodes=*/1);
+    auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/4, /*enableResidualTopUp=*/true);
     ASSERT_NE(topkWithResiduals.find(0), topkWithResiduals.end());
     const auto& [ids, weights, counts] = topkWithResiduals.at(0);
     ASSERT_EQ(counts[0].item<int64_t>(), 4);
@@ -227,9 +227,9 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpSortsSelectedResultsByScore) {
     EXPECT_NEAR(weightsByNodeId[3], static_cast<float>((1.0 - alpha) * (1.0 - alpha) * alpha / 2.0), 1e-5F);
 }
 
-// A total cap lets callers request residual top-up without materializing more
-// candidates than the downstream sampler can emit.
-TEST(PPRForwardPush, ExtractTopKWithResidualTopUpHonorsTotalCap) {
+// maxPPRNodes is the total output cap across finalized PPR and residual top-up
+// candidates.
+TEST(PPRForwardPush, ExtractTopKWithResidualTopUpUsesMaxPPRNodesAsTotalCap) {
     const double alpha = 0.5;
     auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1.0, /*degrees=*/{2, 1, 1});
 
@@ -237,10 +237,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpHonorsTotalCap) {
     state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1, 2}, /*counts=*/{2}));
     EXPECT_FALSE(state.drainQueue().has_value());
 
-    auto cappedTopk = state.extractTopKWithResidualTopUp(
-        /*maxPPRNodes=*/2,
-        /*maxResidualNodes=*/2,
-        /*maxTotalNodes=*/2);
+    auto cappedTopk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/2, /*enableResidualTopUp=*/true);
     ASSERT_NE(cappedTopk.find(0), cappedTopk.end());
     const auto& [ids, weights, counts] = cappedTopk.at(0);
 
@@ -249,11 +246,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpHonorsTotalCap) {
     EXPECT_NEAR(weights[0].item<float>(), static_cast<float>(alpha), 1e-5F);
 }
 
-TEST(PPRForwardPush, ExtractTopKWithResidualTopUpRejectsTotalCapBelowPprCap) {
+TEST(PPRForwardPush, ExtractTopKWithResidualTopUpRejectsNegativeMaxPPRNodes) {
     auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{0});
-    EXPECT_THROW(state.extractTopKWithResidualTopUp(
-                     /*maxPPRNodes=*/2,
-                     /*maxResidualNodes=*/1,
-                     /*maxTotalNodes=*/1),
-                 c10::Error);
+    EXPECT_THROW(state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/-1, /*enableResidualTopUp=*/true), c10::Error);
 }

@@ -19,6 +19,5 @@ class PPRForwardPush:
     def extract_top_k_with_residual_top_up(
         self,
         max_ppr_nodes: int,
-        max_residual_nodes: int,
-        max_total_nodes: int = -1,
+        enable_residual_topup: bool,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...

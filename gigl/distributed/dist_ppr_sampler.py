@@ -295,7 +295,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ppr_state,
         device: torch.device,
         max_ppr_nodes: int,
-        residual_topup_nodes: int,
     ) -> tuple[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -308,11 +307,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         preserves the homogeneous return shape expected by the rest of the
         sampler.
 
-        The quota arguments are passed in explicitly by the caller so this
-        helper only translates the C++ output shape.  ``residual_topup_nodes``
-        controls how many discovered residual candidates may be considered
-        after finalized PPR scores.  Regular PPR uses ``max_ppr_nodes`` as the
-        combined per-seed cap across finalized and residual candidates.
+        ``max_ppr_nodes`` is the combined per-seed cap across finalized PPR and
+        residual top-up candidates. If residual top-up is enabled, C++ derives
+        the residual candidate budget from this cap after selecting finalized
+        PPR nodes.
 
         Returns:
             ``(flat_ids, flat_weights, valid_counts)`` for homogeneous graphs,
@@ -328,8 +326,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         extracted_results = ppr_state.extract_top_k_with_residual_top_up(
             max_ppr_nodes,
-            residual_topup_nodes,
-            max_ppr_nodes,
+            self._enable_residual_topup,
         )
 
         for ntype_id, (
@@ -462,13 +459,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         # Regular sampling uses residual top-up as fill-only under the
         # max_ppr_nodes cap.  If finalized PPR scores already fill that cap,
-        # max_total_nodes leaves no budget for residual candidates.
-        residual_topup_nodes = self._max_ppr_nodes if self._enable_residual_topup else 0
+        # there is no remaining budget for residual candidates.
         return self._extract_ppr_state_top_k(
             ppr_state,
             device,
             max_ppr_nodes=self._max_ppr_nodes,
-            residual_topup_nodes=residual_topup_nodes,
         )
 
     async def _sample_from_nodes(

@@ -267,16 +267,8 @@ void PPRForwardPush::pushResiduals(
 }
 
 std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::
-    extractTopKWithResidualTopUp(int32_t maxPPRNodes, int32_t maxResidualNodes, int32_t maxTotalNodes) {
+    extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp) {
     TORCH_CHECK(maxPPRNodes >= 0, "maxPPRNodes must be non-negative, got ", maxPPRNodes, ".");
-    TORCH_CHECK(maxResidualNodes >= 0, "maxResidualNodes must be non-negative, got ", maxResidualNodes, ".");
-    TORCH_CHECK(maxTotalNodes >= -1, "maxTotalNodes must be >= -1 (-1 means unbounded), got ", maxTotalNodes, ".");
-    TORCH_CHECK(maxTotalNodes == -1 || maxTotalNodes >= maxPPRNodes,
-                "maxTotalNodes must be -1 or >= maxPPRNodes, got maxTotalNodes=",
-                maxTotalNodes,
-                " and maxPPRNodes=",
-                maxPPRNodes,
-                ".");
 
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
@@ -290,19 +282,15 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
             const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
             const auto& scores = nodeTypeState.pprScores;
-            int32_t totalNodeLimit = maxPPRNodes + maxResidualNodes;
-            if (maxTotalNodes >= 0) {
-                totalNodeLimit = maxTotalNodes;
-            }
             // With no residual top-up budget, emit finalized PPR scores as-is.
             // When residual top-up is enabled, residual candidates are scored as
             // ppr_score + residual; selected finalized PPR nodes must use that
             // same output score scale so the merged list is comparable and
             // sorted consistently.
-            bool includeResidualMassInOutputScores = maxResidualNodes > 0;
+            bool includeResidualMassInOutputScores = enableResidualTopUp;
 
             int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
-            int32_t residualBudget = std::min(maxResidualNodes, std::max<int32_t>(0, totalNodeLimit - topK));
+            int32_t residualBudget = enableResidualTopUp ? std::max<int32_t>(0, maxPPRNodes - topK) : 0;
             int32_t residualTopK = 0;
             std::vector<std::pair<int32_t, double>> selectedPairs;
             selectedPairs.reserve(static_cast<size_t>(topK + residualBudget));

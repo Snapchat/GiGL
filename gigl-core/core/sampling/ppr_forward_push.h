@@ -34,7 +34,7 @@ struct SeedNodeTypeState {
 //   2. drainQueue()                         → nodes needing neighbor lookup
 //   3. <Python: _batch_fetch_neighbors()>
 //   4. pushResiduals(fetchedByEtypeId)
-//   5. extractTopKWithResidualTopUp(maxPPRNodes, maxResidualNodes, maxTotalNodes)
+//   5. extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp)
 class PPRForwardPush {
 public:
     PPRForwardPush(const torch::Tensor& seedNodes,
@@ -67,14 +67,13 @@ public:
     // same mass scale as PPR scores: ppr_score(node) + residual(node), i.e. the
     // score the node would have if the remaining residual at that node were
     // absorbed locally.  Residual candidates only fill the requested top-up
-    // budget; they do not displace selected finalized-PPR nodes.  The returned
+    // budget; they do not displace selected finalized-PPR nodes. The returned
     // set is selected by this two-phase policy, then sorted by emitted score;
-    // it is not a global top-k over ppr_score + residual when maxTotalNodes is tight.
-    //
-    // maxTotalNodes caps finalized-PPR plus residual nodes per seed.  Pass -1
-    // to keep the uncapped "maxPPRNodes + maxResidualNodes" candidate behavior.
+    // it is not a global top-k over ppr_score + residual when maxPPRNodes is tight.
+    // maxPPRNodes is the final per-seed cap across finalized PPR and residual
+    // top-up candidates.
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
-        int32_t maxPPRNodes, int32_t maxResidualNodes, int32_t maxTotalNodes = -1);
+        int32_t maxPPRNodes, bool enableResidualTopUp);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
