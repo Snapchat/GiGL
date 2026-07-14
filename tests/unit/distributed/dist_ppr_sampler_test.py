@@ -41,7 +41,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
-from gigl.distributed.typed_ppr import (
+from gigl.distributed.utils.distributed_typed_sampler import (
     build_edge_type_channel_group_edge_type_ids,
     merge_typed_ppr_results,
     parse_typed_channel_quota_groups,

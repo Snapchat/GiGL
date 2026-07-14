@@ -25,6 +25,21 @@ struct SeedNodeTypeState {
     std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
 };
 
+// Batched drain result for typed-PPR channels.
+struct DrainedTypedPPRQueues {
+    // Channels that drained queued nodes and need pushResiduals() this iteration.
+    std::vector<int32_t> activeChannelIndices;
+
+    // Channels that have non-empty uncached frontiers and remaining fetch budget.
+    std::vector<int32_t> fetchChannelIndices;
+
+    // Edge types requested by each fetch channel, aligned with fetchChannelIndices.
+    std::vector<std::vector<int32_t>> edgeTypeIdsByFetchChannel;
+
+    // Unioned node frontier for one shared distributed neighbor fetch.
+    std::unordered_map<int32_t, torch::Tensor> unionNodesByEdgeTypeId;
+};
+
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
 // Hot-loop state lives here; distributed neighbor fetches are driven from Python.
 //
@@ -115,5 +130,12 @@ private:
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
     std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
 };
+
+// Drain several independent PPR states and union their fetch frontier by edge type.
+// Used by typed PPR to keep per-channel PPR state separate while issuing one
+// shared neighbor fetch for duplicate channel frontier requests.
+DrainedTypedPPRQueues drainTypedPPRChannelQueues(const std::vector<PPRForwardPush*>& states,
+                                                 const std::vector<int32_t>& fetchIterationCounts,
+                                                 int32_t maxFetchIterations);
 
 } // namespace gigl

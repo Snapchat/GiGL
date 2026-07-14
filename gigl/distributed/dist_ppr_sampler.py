@@ -1,12 +1,12 @@
 import asyncio
 from collections import defaultdict
-from typing import Optional, Sequence, Union
+from typing import Optional, Union
 
 import torch
 
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
-from gigl_core import PPRForwardPush
+from gigl_core import PPRForwardPush, drain_typed_ppr_channel_queues
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NodeSamplerInput,
@@ -16,7 +16,7 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
-from gigl.distributed.typed_ppr import (
+from gigl.distributed.utils.distributed_typed_sampler import (
     HeteroPPRResult,
     PPRResult,
     TypedPPRChannelKey,
@@ -348,43 +348,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for edge_type_id, output in zip(edge_type_ids, outputs)
         }
 
-    @staticmethod
-    def _union_nodes_by_edge_type_id(
-        nodes_by_edge_type_by_channel: Sequence[dict[int, torch.Tensor]],
-    ) -> dict[int, torch.Tensor]:
-        """Deduplicate typed-channel frontier nodes for one shared fetch.
-
-        Typed PPR runs one forward-push state per channel, but channels can ask
-        for the same graph neighbors in the same iteration. This helper unions
-        node IDs per integer edge-type ID so the sampler issues one one-hop
-        fetch per edge type and then shares the fetched neighbor cache back to
-        each channel that requested it.
-
-        Args:
-            nodes_by_edge_type_by_channel: Frontier nodes from each typed
-                channel, keyed by integer edge-type ID.
-
-        Returns:
-            Frontier nodes keyed by integer edge-type ID, with duplicate node IDs
-            removed across channels.
-        """
-        node_parts_by_edge_type_id: dict[int, list[torch.Tensor]] = defaultdict(list)
-        for nodes_by_edge_type_id in nodes_by_edge_type_by_channel:
-            for edge_type_id, nodes in nodes_by_edge_type_id.items():
-                if nodes.numel() > 0:
-                    node_parts_by_edge_type_id[edge_type_id].append(nodes)
-
-        union_nodes_by_edge_type_id: dict[int, torch.Tensor] = {}
-        for edge_type_id, node_parts in node_parts_by_edge_type_id.items():
-            if len(node_parts) == 1:
-                union_nodes_by_edge_type_id[edge_type_id] = node_parts[0]
-            else:
-                union_nodes_by_edge_type_id[edge_type_id] = torch.unique(
-                    torch.cat(node_parts),
-                    sorted=False,
-                )
-        return union_nodes_by_edge_type_id
-
     def _extract_ppr_state_top_k(
         self,
         ppr_state,
@@ -590,70 +553,47 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
         ]
         fetch_iteration_counts = [0 for _ in ppr_states]
+        max_fetch_iterations = (
+            self._max_fetch_iterations if self._max_fetch_iterations is not None else -1
+        )
         loop = asyncio.get_running_loop()
-        nodes_by_channel: list[Optional[dict[int, torch.Tensor]]] = [
-            ppr_state.drain_queue() for ppr_state in ppr_states
-        ]
 
-        while any(
-            nodes_by_edge_type_id is not None
-            for nodes_by_edge_type_id in nodes_by_channel
-        ):
-            # First decide which active channels need fresh neighbor fetches in
-            # this iteration. Channels whose fetch budget is exhausted still get
-            # pushed below using their existing C++ neighbor cache.
+        while True:
+            (
+                active_channel_indices,
+                fetch_channel_indices,
+                edge_type_ids_by_fetch_channel,
+                union_nodes_by_edge_type_id,
+            ) = drain_typed_ppr_channel_queues(
+                ppr_states,
+                fetch_iteration_counts,
+                max_fetch_iterations,
+            )
+            if not active_channel_indices:
+                break
+
             fetched_by_channel: list[
                 dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
             ] = [dict() for _ in ppr_states]
-            fetch_channel_indices: list[int] = []
-            nodes_by_edge_type_by_fetch_channel: list[dict[int, torch.Tensor]] = []
 
-            for channel_index, nodes_by_edge_type_id in enumerate(nodes_by_channel):
-                if nodes_by_edge_type_id is None:
-                    continue
-
-                fetch_budget_remaining = (
-                    self._max_fetch_iterations is None
-                    or fetch_iteration_counts[channel_index]
-                    < self._max_fetch_iterations
+            if union_nodes_by_edge_type_id:
+                union_fetched_by_edge_type_id = await self._batch_fetch_neighbors(
+                    union_nodes_by_edge_type_id
                 )
-                has_nodes_to_fetch = any(
-                    nodes.numel() > 0 for nodes in nodes_by_edge_type_id.values()
-                )
-                if has_nodes_to_fetch and fetch_budget_remaining:
-                    fetch_channel_indices.append(channel_index)
-                    nodes_by_edge_type_by_fetch_channel.append(nodes_by_edge_type_id)
+                for channel_index, edge_type_ids in zip(
+                    fetch_channel_indices,
+                    edge_type_ids_by_fetch_channel,
+                ):
                     fetch_iteration_counts[channel_index] += 1
-
-            if nodes_by_edge_type_by_fetch_channel:
-                # Multiple typed channels often request the same edge-type/node
-                # frontier. Unioning those requests avoids duplicate RPCs while
-                # preserving each channel's separate PPR state.
-                union_nodes_by_edge_type_id = self._union_nodes_by_edge_type_id(
-                    nodes_by_edge_type_by_fetch_channel
-                )
-                if union_nodes_by_edge_type_id:
-                    union_fetched_by_edge_type_id = await self._batch_fetch_neighbors(
-                        union_nodes_by_edge_type_id
-                    )
-                    for channel_index, nodes_by_edge_type_id in zip(
-                        fetch_channel_indices,
-                        nodes_by_edge_type_by_fetch_channel,
-                    ):
-                        fetched_by_channel[channel_index] = {
-                            edge_type_id: union_fetched_by_edge_type_id[edge_type_id]
-                            for edge_type_id in nodes_by_edge_type_id
-                            if edge_type_id in union_fetched_by_edge_type_id
-                        }
+                    fetched_by_channel[channel_index] = {
+                        edge_type_id: union_fetched_by_edge_type_id[edge_type_id]
+                        for edge_type_id in edge_type_ids
+                        if edge_type_id in union_fetched_by_edge_type_id
+                    }
 
             # Push every non-converged channel. The fetched_by_channel entry is
             # empty for channels that have no new fetch work; PPRForwardPush will
             # use its cached neighbors in that case.
-            active_channel_indices = [
-                channel_index
-                for channel_index, nodes_by_edge_type_id in enumerate(nodes_by_channel)
-                if nodes_by_edge_type_id is not None
-            ]
             push_tasks = [
                 loop.run_in_executor(
                     None,
@@ -664,10 +604,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             if push_tasks:
                 await asyncio.gather(*push_tasks)
-                for channel_index in active_channel_indices:
-                    nodes_by_channel[channel_index] = ppr_states[
-                        channel_index
-                    ].drain_queue()
 
         channel_results = [
             self._extract_ppr_state_top_k(

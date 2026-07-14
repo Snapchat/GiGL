@@ -1,3 +1,5 @@
+from typing import Sequence
+
 import torch
 
 class PPRForwardPush:
@@ -21,3 +23,9 @@ class PPRForwardPush:
         max_ppr_nodes: int,
         enable_residual_topup: bool,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+
+def drain_typed_ppr_channel_queues(
+    states: Sequence[PPRForwardPush],
+    fetch_iteration_counts: Sequence[int],
+    max_fetch_iterations: int = -1,
+) -> tuple[list[int], list[int], list[list[int]], dict[int, torch.Tensor]]: ...

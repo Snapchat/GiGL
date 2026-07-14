@@ -147,6 +147,65 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     return result;
 }
 
+DrainedTypedPPRQueues drainTypedPPRChannelQueues(const std::vector<PPRForwardPush*>& states,
+                                                 const std::vector<int32_t>& fetchIterationCounts,
+                                                 int32_t maxFetchIterations) {
+    TORCH_CHECK(states.size() == fetchIterationCounts.size(),
+                "Expected one fetch iteration count per PPR state, got ",
+                fetchIterationCounts.size(),
+                " counts for ",
+                states.size(),
+                " states.");
+
+    DrainedTypedPPRQueues drained;
+    std::unordered_map<int32_t, std::unordered_set<int64_t>> nodeIdsByEdgeTypeId;
+
+    for (size_t channelIndex = 0; channelIndex < states.size(); ++channelIndex) {
+        PPRForwardPush* state = states[channelIndex];
+        TORCH_CHECK(state != nullptr, "PPR state pointer must not be null.");
+
+        auto nodesByEdgeTypeId = state->drainQueue();
+        if (!nodesByEdgeTypeId.has_value()) {
+            continue;
+        }
+
+        drained.activeChannelIndices.push_back(static_cast<int32_t>(channelIndex));
+
+        bool fetchBudgetRemaining = maxFetchIterations < 0 || fetchIterationCounts[channelIndex] < maxFetchIterations;
+        if (!fetchBudgetRemaining) {
+            continue;
+        }
+
+        std::vector<int32_t> requestedEdgeTypeIds;
+        for (const auto& [edgeTypeId, nodes] : nodesByEdgeTypeId.value()) {
+            if (nodes.numel() == 0) {
+                continue;
+            }
+            TORCH_CHECK(nodes.dim() == 1, "drainQueue() must return 1-D node tensors.");
+            TORCH_CHECK(nodes.scalar_type() == torch::kInt64, "drainQueue() must return int64 node tensors.");
+
+            requestedEdgeTypeIds.push_back(edgeTypeId);
+            auto contiguousNodes = nodes.contiguous();
+            auto nodeAccessor = contiguousNodes.accessor<int64_t, 1>();
+            auto& nodeIds = nodeIdsByEdgeTypeId[edgeTypeId];
+            for (int64_t nodeIndex = 0; nodeIndex < contiguousNodes.size(0); ++nodeIndex) {
+                nodeIds.insert(nodeAccessor[nodeIndex]);
+            }
+        }
+
+        if (!requestedEdgeTypeIds.empty()) {
+            drained.fetchChannelIndices.push_back(static_cast<int32_t>(channelIndex));
+            drained.edgeTypeIdsByFetchChannel.push_back(std::move(requestedEdgeTypeIds));
+        }
+    }
+
+    for (const auto& [edgeTypeId, nodeIds] : nodeIdsByEdgeTypeId) {
+        std::vector<int64_t> nodeIdsToLookup(nodeIds.begin(), nodeIds.end());
+        drained.unionNodesByEdgeTypeId[edgeTypeId] = torch::tensor(nodeIdsToLookup, torch::kLong);
+    }
+    return drained;
+}
+
 void PPRForwardPush::pushResiduals(
     const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
     // Step 1: Persist fetched neighbor lists in the per-state cache. drainQueue()

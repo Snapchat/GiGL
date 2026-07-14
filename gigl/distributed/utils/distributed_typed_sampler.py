@@ -1,4 +1,4 @@
-"""Typed-PPR parsing and merge helpers for distributed PPR sampling."""
+"""Typed-PPR helpers for distributed sampler implementations."""
 
 import math
 from collections import defaultdict

@@ -42,6 +42,22 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
     }
 }
 
+static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
+                                                   const std::vector<int32_t>& fetchIterationCounts,
+                                                   int32_t maxFetchIterations) {
+    std::vector<PPRForwardPush*> statePtrs;
+    statePtrs.reserve(py::len(states));
+    for (py::handle stateObj : states) {
+        statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
+    }
+
+    auto drained = drainTypedPPRChannelQueues(statePtrs, fetchIterationCounts, maxFetchIterations);
+    return py::make_tuple(std::move(drained.activeChannelIndices),
+                          std::move(drained.fetchChannelIndices),
+                          std::move(drained.edgeTypeIdsByFetchChannel),
+                          std::move(drained.unionNodesByEdgeTypeId));
+}
+
 } // namespace gigl
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
@@ -61,4 +77,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              &gigl::PPRForwardPush::extractTopKWithResidualTopUp,
              py::arg("max_ppr_nodes"),
              py::arg("enable_residual_topup"));
+    m.def("drain_typed_ppr_channel_queues",
+          &gigl::drainTypedPPRChannelQueuesWrapper,
+          py::arg("states"),
+          py::arg("fetch_iteration_counts"),
+          py::arg("max_fetch_iterations") = -1);
 }
