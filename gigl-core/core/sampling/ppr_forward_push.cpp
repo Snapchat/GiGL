@@ -282,50 +282,57 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
             const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
             const auto& scores = nodeTypeState.pprScores;
-            // With no residual top-up budget, emit finalized PPR scores as-is.
-            // When residual top-up is enabled, residual candidates are scored as
-            // ppr_score + residual; selected finalized PPR nodes must use that
-            // same output score scale so the merged list is comparable and
-            // sorted consistently.
-            bool includeResidualMassInOutputScores = enableResidualTopUp;
+            const auto higherScore = [](const auto& a, const auto& b) {
+                return a.second > b.second;
+            };
 
-            int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
-            int32_t residualBudget = enableResidualTopUp ? std::max<int32_t>(0, maxPPRNodes - topK) : 0;
-            int32_t residualTopK = 0;
+            const int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
+            const int32_t residualTopUpBudget = enableResidualTopUp ? maxPPRNodes - topK : 0;
             std::vector<std::pair<int32_t, double>> selectedPairs;
-            selectedPairs.reserve(static_cast<size_t>(topK + residualBudget));
+            selectedPairs.reserve(static_cast<size_t>(topK + residualTopUpBudget));
             std::unordered_set<int32_t> selectedPPRNodeIds;
             if (topK > 0) {
-                if (residualBudget > 0) {
+                if (residualTopUpBudget > 0) {
                     selectedPPRNodeIds.reserve(static_cast<size_t>(topK));
                 }
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
                 // Selection is intentionally two-phase: finalized nodes are selected
                 // first by raw PPR score, and residual candidates only compete for
-                // the remaining budget. After selection, rows are emitted and sorted
-                // by outputScore.
-                std::partial_sort(scorePairs.begin(),
-                                  scorePairs.begin() + topK,
-                                  scorePairs.end(),
-                                  [](const auto& a, const auto& b) { return a.second > b.second; });
+                // the remaining budget.
+                if (enableResidualTopUp) {
+                    // The final emitted order is sorted by ppr_score + residual
+                    // after top-up candidates are selected, so this pass only
+                    // needs to partition out the raw-PPR top K.
+                    if (topK < static_cast<int32_t>(scorePairs.size())) {
+                        std::nth_element(scorePairs.begin(),
+                                         scorePairs.begin() + topK,
+                                         scorePairs.end(),
+                                         higherScore);
+                    }
+                } else {
+                    std::partial_sort(scorePairs.begin(),
+                                      scorePairs.begin() + topK,
+                                      scorePairs.end(),
+                                      higherScore);
+                }
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
                     int32_t nodeId = scorePairs[rankIdx].first;
                     double outputScore = scorePairs[rankIdx].second;
-                    if (includeResidualMassInOutputScores) {
+                    if (enableResidualTopUp) {
                         auto residualIter = nodeTypeState.residuals.find(nodeId);
                         if (residualIter != nodeTypeState.residuals.end()) {
                             outputScore += residualIter->second;
                         }
                     }
                     selectedPairs.emplace_back(nodeId, outputScore);
-                    if (residualBudget > 0) {
+                    if (residualTopUpBudget > 0) {
                         selectedPPRNodeIds.insert(nodeId);
                     }
                 }
             }
 
-            if (residualBudget > 0) {
+            if (residualTopUpBudget > 0) {
                 std::vector<std::pair<int32_t, double>> residualPairs;
                 residualPairs.reserve(nodeTypeState.residuals.size());
                 for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
@@ -339,12 +346,17 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                     residualPairs.emplace_back(nodeId, outputScore);
                 }
 
-                residualTopK = std::min(residualBudget, static_cast<int32_t>(residualPairs.size()));
+                const int32_t residualTopK =
+                    std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
                 if (residualTopK > 0) {
-                    std::partial_sort(residualPairs.begin(),
-                                      residualPairs.begin() + residualTopK,
-                                      residualPairs.end(),
-                                      [](const auto& a, const auto& b) { return a.second > b.second; });
+                    // Residual candidates only need selection here; selected
+                    // finalized and residual rows are sorted together below.
+                    if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
+                        std::nth_element(residualPairs.begin(),
+                                         residualPairs.begin() + residualTopK,
+                                         residualPairs.end(),
+                                         higherScore);
+                    }
 
                     for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
                         selectedPairs.emplace_back(residualPairs[rankIdx].first, residualPairs[rankIdx].second);
@@ -352,10 +364,8 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                 }
             }
 
-            if (includeResidualMassInOutputScores && selectedPairs.size() > 1) {
-                std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
-                    return a.second > b.second;
-                });
+            if (enableResidualTopUp && selectedPairs.size() > 1) {
+                std::sort(selectedPairs.begin(), selectedPairs.end(), higherScore);
             }
             for (const auto& [nodeId, score] : selectedPairs) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
