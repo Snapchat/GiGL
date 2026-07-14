@@ -172,12 +172,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        self._typed_channel_groups = self._normalize_typed_channel_quotas(
+        typed_channel_groups = self._normalize_typed_channel_quotas(
             typed_channel_quotas
         )
         self._typed_ppr_channel_quotas = (
-            [quota for _, quota in self._typed_channel_groups]
-            if self._typed_channel_groups is not None
+            [quota for _, quota in typed_channel_groups]
+            if typed_channel_groups is not None
             else None
         )
         if self._typed_ppr_channel_quotas is not None:
@@ -246,11 +246,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for nt in all_node_types
         ]
 
-        if self._typed_channel_groups is not None:
+        if typed_channel_groups is not None:
             self._typed_ppr_channel_to_node_type_id_to_edge_type_ids = (
                 self._build_edge_type_channel_group_edge_type_ids(
-                    self._typed_channel_groups,
-                    option_name="typed_channel_quotas",
+                    typed_channel_groups,
                 )
             )
         else:
@@ -258,20 +257,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
     def _build_edge_type_channel_group_edge_type_ids(
         self,
-        edge_type_groups: Optional[list[tuple[tuple[EdgeType, ...], int]]],
-        option_name: str,
+        edge_type_groups: list[tuple[tuple[EdgeType, ...], int]],
     ) -> list[list[list[int]]]:
         """Build per-node-type edge-type allowlists for canonical edge-type channels."""
-        if edge_type_groups is None:
-            return []
-
         known_edge_types = set(self._etype_to_etype_id.keys())
         edge_type_group_to_node_type_id_to_edge_type_ids: list[list[list[int]]] = []
         for edge_types, _ in edge_type_groups:
             unknown_edge_types = set(edge_types) - known_edge_types
             if unknown_edge_types:
                 raise ValueError(
-                    f"{option_name} includes non-traversable edge types "
+                    "typed_channel_quotas includes non-traversable edge types "
                     f"{sorted(unknown_edge_types)!r}. Edge types must exist in the "
                     "graph and must not be label edge types."
                 )
@@ -287,7 +282,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             if not any(node_type_id_to_edge_type_ids):
                 raise ValueError(
-                    f"{option_name} includes edge-type channel={edge_types!r}, "
+                    f"typed_channel_quotas includes edge-type channel={edge_types!r}, "
                     "but no traversable edge types exist for that channel."
                 )
             edge_type_group_to_node_type_id_to_edge_type_ids.append(

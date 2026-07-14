@@ -95,7 +95,7 @@ _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
 
 
-def _new_uninitialized_ppr_sampler(max_ppr_nodes: int) -> DistPPRNeighborSampler:
+def _new_typed_ppr_merge_sampler(max_ppr_nodes: int) -> DistPPRNeighborSampler:
     """Create a minimal sampler shell for typed-PPR merge tests."""
     sampler = object.__new__(DistPPRNeighborSampler)
     sampler._max_ppr_nodes = max_ppr_nodes
@@ -826,7 +826,7 @@ class DistPPRSamplerTest(TestCase):
         self,
     ) -> None:
         """Verify typed-PPR merge emits calibrated channel metadata."""
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=10)
+        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=10)
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
             {USER: torch.tensor([0.4, 0.2, 0.1], dtype=torch.double)},
@@ -872,7 +872,7 @@ class DistPPRSamplerTest(TestCase):
         self,
     ) -> None:
         """Verify each channel contributes candidates by its own score."""
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
+        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
 
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
@@ -915,7 +915,7 @@ class DistPPRSamplerTest(TestCase):
         self,
     ) -> None:
         """Verify typed-PPR can use canonical edge-type channels."""
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
+        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
         sampler._node_type_to_edge_types = {
             USER: [USER_TO_STORY],
             STORY: [STORY_TO_USER],
@@ -945,7 +945,6 @@ class DistPPRSamplerTest(TestCase):
         self.assertEqual(
             sampler._build_edge_type_channel_group_edge_type_ids(
                 normalized_channel_quotas,
-                option_name="typed_channel_quotas",
             ),
             [
                 [[0], []],
@@ -960,12 +959,11 @@ class DistPPRSamplerTest(TestCase):
         with self.assertRaisesRegex(ValueError, "non-traversable edge types"):
             sampler._build_edge_type_channel_group_edge_type_ids(
                 [((("unknown", "edge", "type"),), 1)],
-                option_name="typed_channel_quotas",
             )
 
     def test_typed_ppr_residual_topup_uses_combined_score_scale(self) -> None:
         """Verify residual top-up attrs share a calibration scale with base PPR."""
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
+        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
 
         channel_result = (
             {USER: torch.tensor([10, 11])},
@@ -999,7 +997,7 @@ class DistPPRSamplerTest(TestCase):
 
     def test_typed_ppr_residual_topup_uses_global_ranking(self) -> None:
         """Verify residual top-up candidates are not capped by channel quotas."""
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=3)
+        sampler = _new_typed_ppr_merge_sampler(max_ppr_nodes=3)
 
         channel_0_result = (
             {USER: torch.tensor([10, 11, 12])},
