@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fail node id enumeration fast when the source node table contains NULL node ids, instead of silently enumerating NULL
+  as its own node (https://github.com/Snapchat/GiGL/issues/288)
+
 ## [0.3.1] - Jun 4, 2026
 
 ### Fixed
