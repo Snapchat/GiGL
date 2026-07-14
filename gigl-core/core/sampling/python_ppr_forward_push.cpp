@@ -8,6 +8,7 @@
 #include <torch/extension.h>
 
 #include <cstdint>
+#include <optional>
 #include <tuple>
 #include <unordered_map>
 
@@ -17,9 +18,19 @@ namespace py = pybind11;
 
 namespace gigl {
 
-// pushResiduals: a wrapper is needed solely to release the GIL during the C++ push.
-// pybind11/stl.h handles all type conversions automatically; the other methods use
-// direct member function pointers for the same reason.
+static std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueueWrapper(PPRForwardPush& state) {
+    // C++ drain only mutates the PPRForwardPush state and creates tensor outputs.
+    // Reacquire the GIL before pybind converts the optional/map return value.
+    // REQUIREMENT: no other thread may read or mutate this PPRForwardPush while
+    // the GIL is released. The sampler owns each state within one coroutine.
+    std::optional<std::unordered_map<int32_t, torch::Tensor>> drained;
+    {
+        py::gil_scoped_release release;
+        drained = state.drainQueue();
+    }
+    return drained;
+}
+
 static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> neighborTensorsByEtypeId;
     // Dict iteration touches Python objects — GIL must be held here.
@@ -47,11 +58,22 @@ static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
                                                    int32_t maxFetchIterations) {
     std::vector<PPRForwardPush*> statePtrs;
     statePtrs.reserve(py::len(states));
+    // Sequence iteration and casting touch Python objects, so keep the GIL
+    // while copying raw C++ state pointers out of the Python container.
     for (py::handle stateObj : states) {
         statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
     }
 
-    auto drained = drainTypedPPRChannelQueues(statePtrs, fetchIterationCounts, maxFetchIterations);
+    // C++ typed drain only reads/mutates PPRForwardPush states and builds C++
+    // containers. Reacquire the GIL before constructing the Python tuple.
+    // REQUIREMENT: no other thread may read or mutate these channel states
+    // while the GIL is released. The typed sampler drains and pushes each
+    // channel in a single sequenced loop iteration.
+    DrainedTypedPPRQueues drained;
+    {
+        py::gil_scoped_release release;
+        drained = drainTypedPPRChannelQueues(statePtrs, fetchIterationCounts, maxFetchIterations);
+    }
     return py::make_tuple(std::move(drained.activeChannelIndices),
                           std::move(drained.fetchChannelIndices),
                           std::move(drained.edgeTypeIdsByFetchChannel),
@@ -65,12 +87,20 @@ extractTypedTopKWithResidualTopUpWrapper(const py::sequence& states,
                                          bool enableResidualTopUp) {
     std::vector<PPRForwardPush*> statePtrs;
     statePtrs.reserve(py::len(states));
+    // Sequence iteration and casting touch Python objects, so keep the GIL
+    // while copying raw C++ state pointers out of the Python container.
     for (py::handle stateObj : states) {
         statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
     }
 
-    py::gil_scoped_release release;
-    return extractTypedTopKWithResidualTopUp(statePtrs, channelQuotas, maxPPRNodes, enableResidualTopUp);
+    // C++ extraction only reads the completed channel states and builds C++
+    // tensors/containers. Reacquire the GIL before pybind converts the return.
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+    {
+        py::gil_scoped_release release;
+        result = extractTypedTopKWithResidualTopUp(statePtrs, channelQuotas, maxPPRNodes, enableResidualTopUp);
+    }
+    return result;
 }
 
 } // namespace gigl
@@ -86,7 +116,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       std::vector<std::vector<int32_t>>,
                       std::vector<int32_t>,
                       std::vector<torch::Tensor>>())
-        .def("drain_queue", &gigl::PPRForwardPush::drainQueue)
+        .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",
              &gigl::PPRForwardPush::extractTopKWithResidualTopUp,
