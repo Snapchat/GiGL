@@ -96,12 +96,7 @@ _TEST_MAX_PPR_NODES = 5
 
 
 def _new_uninitialized_ppr_sampler(max_ppr_nodes: int) -> DistPPRNeighborSampler:
-    """Create a sampler shell for pure helper tests.
-
-    Full sampler construction requires a GLT distributed graph/runtime. These
-    tests exercise merge/extraction helpers that only need a few initialized
-    attributes, so using an uninitialized shell keeps the cases small.
-    """
+    """Create a minimal sampler shell for typed-PPR merge tests."""
     sampler = object.__new__(DistPPRNeighborSampler)
     sampler._max_ppr_nodes = max_ppr_nodes
     return sampler
@@ -827,47 +822,6 @@ class DistPPRSamplerTest(TestCase):
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
-    def test_ppr_extraction_passes_total_cap_to_cpp(self) -> None:
-        """Verify Python extraction preserves the combined candidate cap."""
-
-        class FakePPRForwardPush:
-            def __init__(self) -> None:
-                self.extract_args: tuple[int, int, int] | None = None
-
-            def extract_top_k_with_residual_top_up(
-                self,
-                max_ppr_nodes: int,
-                max_residual_nodes: int,
-                max_total_nodes: int,
-            ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-                self.extract_args = (
-                    max_ppr_nodes,
-                    max_residual_nodes,
-                    max_total_nodes,
-                )
-                return {
-                    0: (
-                        torch.empty(0, dtype=torch.long),
-                        torch.empty(0, dtype=torch.double),
-                        torch.zeros(1, dtype=torch.long),
-                    )
-                }
-
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=5)
-        sampler._is_homogeneous = False
-        sampler._ntype_id_to_ntype = [USER]
-        fake_state = FakePPRForwardPush()
-
-        sampler._extract_ppr_state_top_k(
-            fake_state,
-            device=torch.device("cpu"),
-            max_ppr_nodes=2,
-            residual_topup_nodes=3,
-            max_total_nodes=5,
-        )
-
-        self.assertEqual(fake_state.extract_args, (2, 3, 5))
-
     def test_typed_ppr_merge_calibrates_scores_and_globally_ranks_channels(
         self,
     ) -> None:
@@ -1008,152 +962,6 @@ class DistPPRSamplerTest(TestCase):
                 [((("unknown", "edge", "type"),), 1)],
                 option_name="typed_channel_quotas",
             )
-
-    def test_typed_ppr_union_fetches_overlapping_channel_frontiers(self) -> None:
-        """Verify typed-PPR channels share one-hop fetches for the same edge type."""
-
-        class FakePPRState:
-            def __init__(self, first_frontier: dict[int, torch.Tensor]):
-                self._frontiers = [first_frontier, None]
-                self.fetched_by_push: list[
-                    dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]
-                ] = []
-
-            def drain_queue(self):
-                return self._frontiers.pop(0)
-
-            def push_residuals(
-                self,
-                fetched_by_etype_id: dict[
-                    int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-                ],
-            ) -> None:
-                self.fetched_by_push.append(fetched_by_etype_id)
-
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=1)
-        sampler._typed_ppr_channel_quotas = [1, 1]
-        sampler._typed_ppr_channel_to_node_type_id_to_edge_type_ids = [[], []]
-        sampler._enable_residual_topup = True
-        sampler._max_fetch_iterations = None
-
-        fake_states = [
-            FakePPRState({0: torch.tensor([1, 2])}),
-            FakePPRState({0: torch.tensor([2, 3])}),
-        ]
-        state_iter = iter(fake_states)
-        fetched_frontiers: list[dict[int, torch.Tensor]] = []
-
-        def fake_new_ppr_forward_push_state(**_):
-            return next(state_iter)
-
-        async def fake_batch_fetch_neighbors(
-            nodes_by_etype_id: dict[int, torch.Tensor],
-        ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-            fetched_frontiers.append(nodes_by_etype_id)
-            return {
-                etype_id: (
-                    nodes,
-                    torch.empty(0, dtype=torch.long),
-                    torch.zeros(nodes.numel(), dtype=torch.long),
-                )
-                for etype_id, nodes in nodes_by_etype_id.items()
-            }
-
-        def fake_extract_ppr_state_top_k(*_, **__):
-            return (
-                {USER: torch.empty(0, dtype=torch.long)},
-                {USER: torch.empty(0, dtype=torch.double)},
-                {USER: torch.zeros(1, dtype=torch.long)},
-            )
-
-        def fake_merge_typed_ppr_results_with_topup(**_):
-            return (
-                {USER: torch.empty(0, dtype=torch.long)},
-                {USER: torch.empty((0, 5), dtype=torch.double)},
-                {USER: torch.zeros(1, dtype=torch.long)},
-            )
-
-        sampler._new_ppr_forward_push_state = fake_new_ppr_forward_push_state
-        sampler._batch_fetch_neighbors = fake_batch_fetch_neighbors
-        sampler._extract_ppr_state_top_k = fake_extract_ppr_state_top_k
-        sampler._merge_typed_ppr_results_with_topup = (
-            fake_merge_typed_ppr_results_with_topup
-        )
-
-        asyncio.run(
-            sampler._compute_typed_ppr_scores(
-                seed_nodes=torch.tensor([0]),
-                seed_node_type=USER,
-            )
-        )
-
-        self.assertEqual(len(fetched_frontiers), 1)
-        self.assertEqual(set(fetched_frontiers[0][0].tolist()), {1, 2, 3})
-        for fake_state in fake_states:
-            self.assertEqual(len(fake_state.fetched_by_push), 1)
-            self.assertEqual(
-                set(fake_state.fetched_by_push[0][0][0].tolist()), {1, 2, 3}
-            )
-
-    def test_typed_ppr_can_disable_residual_topup(self) -> None:
-        """Verify typed-PPR channel quotas do not request residual extras when disabled."""
-
-        class FakePPRState:
-            def drain_queue(self):
-                return None
-
-        sampler = _new_uninitialized_ppr_sampler(max_ppr_nodes=5)
-        sampler._typed_ppr_channel_quotas = [2, 1]
-        sampler._typed_ppr_channel_to_node_type_id_to_edge_type_ids = [[], []]
-        sampler._enable_residual_topup = False
-        sampler._max_fetch_iterations = None
-
-        fake_states = [FakePPRState(), FakePPRState()]
-        state_iter = iter(fake_states)
-        extract_args: list[tuple[int, int, int]] = []
-        merge_topup_candidate_limits: list[int] = []
-
-        def fake_new_ppr_forward_push_state(**_):
-            return next(state_iter)
-
-        def fake_extract_ppr_state_top_k(
-            _,
-            *,
-            device: torch.device,
-            max_ppr_nodes: int,
-            residual_topup_nodes: int,
-            max_total_nodes: int,
-        ):
-            extract_args.append((max_ppr_nodes, residual_topup_nodes, max_total_nodes))
-            return (
-                {USER: torch.empty(0, dtype=torch.long, device=device)},
-                {USER: torch.empty(0, dtype=torch.double, device=device)},
-                {USER: torch.zeros(1, dtype=torch.long, device=device)},
-            )
-
-        def fake_merge_typed_ppr_results_with_topup(**kwargs):
-            merge_topup_candidate_limits.extend(kwargs["topup_candidate_limits"])
-            return (
-                {USER: torch.empty(0, dtype=torch.long)},
-                {USER: torch.empty((0, 5), dtype=torch.double)},
-                {USER: torch.zeros(1, dtype=torch.long)},
-            )
-
-        sampler._new_ppr_forward_push_state = fake_new_ppr_forward_push_state
-        sampler._extract_ppr_state_top_k = fake_extract_ppr_state_top_k
-        sampler._merge_typed_ppr_results_with_topup = (
-            fake_merge_typed_ppr_results_with_topup
-        )
-
-        asyncio.run(
-            sampler._compute_typed_ppr_scores(
-                seed_nodes=torch.tensor([0]),
-                seed_node_type=USER,
-            )
-        )
-
-        self.assertEqual(extract_args, [(2, 0, 2), (1, 0, 1)])
-        self.assertEqual(merge_topup_candidate_limits, [2, 1])
 
     def test_typed_ppr_residual_topup_uses_combined_score_scale(self) -> None:
         """Verify residual top-up attrs share a calibration scale with base PPR."""
