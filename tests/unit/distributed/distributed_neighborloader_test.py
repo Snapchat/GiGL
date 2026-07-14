@@ -8,10 +8,12 @@ from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_free_port
+from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -26,6 +28,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeatureInfo,
     FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
@@ -890,9 +893,6 @@ class WithEdgeDerivationTest(TestCase):
     """Regression coverage for deriving ``with_edge`` from edge-feature presence."""
 
     def test_config_with_edge_false_when_no_edge_features(self) -> None:
-        from gigl.distributed.base_dist_loader import BaseDistLoader
-        from gigl.distributed.utils.neighborloader import DatasetSchema
-
         schema = DatasetSchema(
             is_homogeneous_with_labeled_edge_type=False,
             edge_types=None,
@@ -906,10 +906,6 @@ class WithEdgeDerivationTest(TestCase):
         self.assertFalse(config.with_edge)
 
     def test_config_with_edge_true_when_edge_features_present(self) -> None:
-        from gigl.distributed.base_dist_loader import BaseDistLoader
-        from gigl.distributed.utils.neighborloader import DatasetSchema
-        from gigl.types.graph import FeatureInfo
-
         schema = DatasetSchema(
             is_homogeneous_with_labeled_edge_type=False,
             edge_types=None,
@@ -923,10 +919,6 @@ class WithEdgeDerivationTest(TestCase):
         self.assertTrue(config.with_edge)
 
     def test_config_with_edge_true_for_heterogeneous_edge_feature_dict(self) -> None:
-        from gigl.distributed.base_dist_loader import BaseDistLoader
-        from gigl.distributed.utils.neighborloader import DatasetSchema
-        from gigl.types.graph import FeatureInfo
-
         schema = DatasetSchema(
             is_homogeneous_with_labeled_edge_type=False,
             edge_types=[_USER_TO_STORY, _STORY_TO_USER],
