@@ -1,7 +1,7 @@
 import asyncio
 import math
 from collections import defaultdict
-from typing import Iterator, Optional, Sequence, Union, cast
+from typing import Optional, Sequence, Union, cast
 
 import torch
 
@@ -48,8 +48,6 @@ _HeteroPPRResult = tuple[
 _TypedPPRScoreMap = dict[NodeType, list[dict[int, list[float]]]]
 _TypedPPRCandidates = dict[NodeType, list[list[list[tuple[int, float]]]]]
 _TypedPPRMergeState = tuple[_TypedPPRScoreMap, _TypedPPRCandidates]
-_ChannelResultItem = tuple[int, NodeType, list[int], list[float], list[int]]
-_SeedCandidateEntry = tuple[int, int, float]
 _TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
 
 
@@ -291,38 +289,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         return edge_type_group_to_node_type_id_to_edge_type_ids
 
     @staticmethod
-    def _is_canonical_edge_type(value: object) -> bool:
-        """Return whether ``value`` has the runtime shape of a canonical edge type."""
-        return (
-            isinstance(value, tuple)
-            and len(value) == 3
-            and all(isinstance(part, str) for part in value)
-        )
-
-    @classmethod
-    def _normalize_edge_type_channel_key(
-        cls,
-        edge_type_key: _TypedPPRChannelKey,
-    ) -> tuple[EdgeType, ...]:
-        if cls._is_canonical_edge_type(edge_type_key):
-            return (cast(EdgeType, edge_type_key),)
-        if (
-            isinstance(edge_type_key, tuple)
-            and edge_type_key
-            and all(
-                cls._is_canonical_edge_type(edge_type) for edge_type in edge_type_key
-            )
-        ):
-            return cast(tuple[EdgeType, ...], edge_type_key)
-        raise ValueError(
-            "typed_channel_quotas keys must be a canonical edge type "
-            "(src_type, relation, dst_type) or a non-empty tuple of canonical "
-            f"edge types, got {edge_type_key!r}."
-        )
-
-    @classmethod
     def _normalize_typed_channel_quotas(
-        cls,
         typed_channel_quotas: Optional[dict[_TypedPPRChannelKey, int]],
     ) -> Optional[list[tuple[tuple[EdgeType, ...], int]]]:
         """Normalize typed-PPR canonical edge-type channel quota keys."""
@@ -331,13 +298,35 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         normalized_groups: list[tuple[tuple[EdgeType, ...], int]] = []
         invalid_quotas: dict[_TypedPPRChannelKey, object] = {}
+
+        def is_canonical_edge_type(value: object) -> bool:
+            return (
+                isinstance(value, tuple)
+                and len(value) == 3
+                and all(isinstance(part, str) for part in value)
+            )
+
         for edge_type_key, quota in typed_channel_quotas.items():
             if not isinstance(quota, int) or isinstance(quota, bool) or quota <= 0:
                 invalid_quotas[edge_type_key] = quota
                 continue
-            normalized_groups.append(
-                (cls._normalize_edge_type_channel_key(edge_type_key), quota)
-            )
+            if is_canonical_edge_type(edge_type_key):
+                edge_types = (cast(EdgeType, edge_type_key),)
+            elif (
+                isinstance(edge_type_key, tuple)
+                and edge_type_key
+                and all(
+                    is_canonical_edge_type(edge_type) for edge_type in edge_type_key
+                )
+            ):
+                edge_types = cast(tuple[EdgeType, ...], edge_type_key)
+            else:
+                raise ValueError(
+                    "typed_channel_quotas keys must be a canonical edge type "
+                    "(src_type, relation, dst_type) or a non-empty tuple of "
+                    f"canonical edge types, got {edge_type_key!r}."
+                )
+            normalized_groups.append((edge_types, quota))
 
         if invalid_quotas:
             raise ValueError(
@@ -540,8 +529,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         seed_nodes: torch.Tensor,
         seed_node_type: Optional[NodeType] = None,
-        node_type_id_to_edge_type_ids: Optional[list[list[int]]] = None,
-        max_ppr_nodes: Optional[int] = None,
     ) -> _PPRResult:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
@@ -566,11 +553,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_nodes: Tensor of seed node IDs, shape ``[batch_size]``.
             seed_node_type: Node type of seed nodes.  Pass ``None`` for
                 homogeneous graphs (internally mapped to a sentinel type).
-            node_type_id_to_edge_type_ids: Optional traversal map. When omitted,
-                PPR can traverse all configured edge types for each node type.
-                Typed PPR passes a channel-restricted traversal map here.
-            max_ppr_nodes: Optional top-k cap for this PPR run. Typed PPR uses
-                this as the per-channel quota before the merge step.
 
         Returns:
             A 3-tuple ``(flat_neighbor_ids, flat_weights, valid_counts)``.
@@ -603,7 +585,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ppr_state = self._new_ppr_forward_push_state(
             seed_nodes=seed_nodes,
             seed_node_type=seed_node_type,
-            node_type_id_to_edge_type_ids=node_type_id_to_edge_type_ids,
         )
 
         fetch_iteration_count = 0
@@ -635,13 +616,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
             nodes_by_etype_id = ppr_state.drain_queue()
 
-        ppr_node_quota = (
-            max_ppr_nodes if max_ppr_nodes is not None else self._max_ppr_nodes
-        )
         return self._extract_ppr_state_top_k(
             ppr_state,
             device,
-            max_ppr_nodes=ppr_node_quota,
+            max_ppr_nodes=self._max_ppr_nodes,
         )
 
     async def _compute_ppr_scores_for_sampler_mode(
@@ -867,15 +845,22 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 valid_counts.append(len(selected_nodes))
                 flat_ids.extend(selected_nodes)
 
-            (
-                ntype_to_flat_ids_out[ntype],
-                ntype_to_flat_weights_out[ntype],
-                ntype_to_valid_counts_out[ntype],
-            ) = self._typed_ppr_output_tensors(
-                flat_ids=flat_ids,
-                flat_weights=flat_weights,
-                valid_counts=valid_counts,
-                num_edge_attr_features=num_edge_attr_features,
+            ntype_to_flat_ids_out[ntype] = torch.tensor(
+                flat_ids,
+                dtype=torch.long,
+                device=device,
+            )
+            ntype_to_flat_weights_out[ntype] = torch.tensor(
+                flat_weights,
+                dtype=torch.double,
+                device=device,
+            ).reshape(
+                len(flat_weights),
+                num_edge_attr_features,
+            )
+            ntype_to_valid_counts_out[ntype] = torch.tensor(
+                valid_counts,
+                dtype=torch.long,
                 device=device,
             )
 
@@ -898,81 +883,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         )
         return merged_scores, channel_candidates
 
-    @staticmethod
-    def _clamp_ppr_score(raw_score: float) -> Optional[float]:
-        if not math.isfinite(raw_score):
-            return None
-        return min(max(raw_score, 0.0), 1.0)
-
-    @staticmethod
-    def _typed_ppr_output_tensors(
-        flat_ids: Sequence[int],
-        flat_weights: Sequence[Sequence[float]],
-        valid_counts: Sequence[int],
-        num_edge_attr_features: int,
-        device: torch.device,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return (
-            torch.tensor(flat_ids, dtype=torch.long, device=device),
-            torch.tensor(
-                flat_weights,
-                dtype=torch.double,
-                device=device,
-            ).reshape(len(flat_weights), num_edge_attr_features),
-            torch.tensor(valid_counts, dtype=torch.long, device=device),
-        )
-
-    @staticmethod
-    def _iter_channel_result_items(
-        channel_results: Sequence[_PPRResult],
-    ) -> Iterator[_ChannelResultItem]:
-        for channel_idx, (
-            ntype_to_flat_ids,
-            ntype_to_flat_weights,
-            ntype_to_valid_counts,
-        ) in enumerate(channel_results):
-            assert isinstance(ntype_to_flat_ids, dict)
-            assert isinstance(ntype_to_flat_weights, dict)
-            assert isinstance(ntype_to_valid_counts, dict)
-
-            for ntype, flat_ids in ntype_to_flat_ids.items():
-                yield (
-                    channel_idx,
-                    ntype,
-                    flat_ids.detach().cpu().tolist(),
-                    ntype_to_flat_weights[ntype].detach().cpu().tolist(),
-                    ntype_to_valid_counts[ntype].detach().cpu().tolist(),
-                )
-
-    @classmethod
-    def _iter_seed_candidate_entries(
-        cls,
-        ids_cpu: Sequence[int],
-        weights_cpu: Sequence[float],
-        counts_cpu: Sequence[int],
-        candidate_limit: int,
-    ) -> Iterator[tuple[int, list[_SeedCandidateEntry], float]]:
-        offset = 0
-        for seed_index, count in enumerate(counts_cpu):
-            entries: list[_SeedCandidateEntry] = []
-            max_score = 0.0
-            quota_count = min(count, candidate_limit)
-
-            for candidate_idx, (node_id, raw_score) in enumerate(
-                zip(
-                    ids_cpu[offset : offset + quota_count],
-                    weights_cpu[offset : offset + quota_count],
-                )
-            ):
-                score = cls._clamp_ppr_score(raw_score)
-                if score is None:
-                    continue
-                entries.append((candidate_idx, node_id, score))
-                max_score = max(max_score, score)
-
-            yield seed_index, entries, max_score
-            offset += count
-
     def _populate_typed_ppr_topup_merge_states(
         self,
         channel_results: Sequence[_PPRResult],
@@ -985,61 +895,72 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         num_edge_attr_features: int,
         num_channels: int,
     ) -> None:
-        for (
-            channel_idx,
-            ntype,
-            ids_cpu,
-            weights_cpu,
-            counts_cpu,
-        ) in self._iter_channel_result_items(channel_results):
+        for channel_idx, (
+            ntype_to_flat_ids,
+            ntype_to_flat_weights,
+            ntype_to_valid_counts,
+        ) in enumerate(channel_results):
+            assert isinstance(ntype_to_flat_ids, dict)
+            assert isinstance(ntype_to_flat_weights, dict)
+            assert isinstance(ntype_to_valid_counts, dict)
+
             base_channel_quota = base_channel_quotas[channel_idx]
             topup_candidate_limit = topup_candidate_limits[channel_idx]
 
-            for (
-                seed_index,
-                entries,
-                extended_max_score,
-            ) in self._iter_seed_candidate_entries(
-                ids_cpu=ids_cpu,
-                weights_cpu=weights_cpu,
-                counts_cpu=counts_cpu,
-                candidate_limit=topup_candidate_limit,
-            ):
-                # Both base and residual top-up candidates are calibrated using
-                # the extended candidate pool's max score. This keeps finalized
-                # PPR nodes and residual top-up nodes on the same per-channel
-                # scale before the global typed-PPR merge.
-                base_nodes_and_scores = [
-                    (node_id, score)
-                    for candidate_idx, node_id, score in entries
-                    if candidate_idx < base_channel_quota
-                ]
-                extended_nodes_and_scores = [
-                    (node_id, score) for _, node_id, score in entries
-                ]
+            for ntype, flat_ids in ntype_to_flat_ids.items():
+                ids_cpu = flat_ids.detach().cpu().tolist()
+                weights_cpu = ntype_to_flat_weights[ntype].detach().cpu().tolist()
+                counts_cpu = ntype_to_valid_counts[ntype].detach().cpu().tolist()
+                offset = 0
 
-                self._add_typed_ppr_seed_candidates(
-                    seed_scores=base_scores[ntype][seed_index],
-                    seed_channel_candidates=base_candidates[ntype][seed_index][
-                        channel_idx
-                    ],
-                    seed_nodes_and_scores=base_nodes_and_scores,
-                    max_score=extended_max_score,
-                    channel_idx=channel_idx,
-                    num_edge_attr_features=num_edge_attr_features,
-                    num_channels=num_channels,
-                )
-                self._add_typed_ppr_seed_candidates(
-                    seed_scores=extended_scores[ntype][seed_index],
-                    seed_channel_candidates=extended_candidates[ntype][seed_index][
-                        channel_idx
-                    ],
-                    seed_nodes_and_scores=extended_nodes_and_scores,
-                    max_score=extended_max_score,
-                    channel_idx=channel_idx,
-                    num_edge_attr_features=num_edge_attr_features,
-                    num_channels=num_channels,
-                )
+                for seed_index, count in enumerate(counts_cpu):
+                    base_nodes_and_scores: list[tuple[int, float]] = []
+                    extended_nodes_and_scores: list[tuple[int, float]] = []
+                    extended_max_score = 0.0
+                    candidate_count = min(count, topup_candidate_limit)
+
+                    for candidate_idx, (node_id, raw_score) in enumerate(
+                        zip(
+                            ids_cpu[offset : offset + candidate_count],
+                            weights_cpu[offset : offset + candidate_count],
+                        )
+                    ):
+                        if not math.isfinite(raw_score):
+                            continue
+                        score = min(max(raw_score, 0.0), 1.0)
+                        extended_nodes_and_scores.append((node_id, score))
+                        extended_max_score = max(extended_max_score, score)
+                        if candidate_idx < base_channel_quota:
+                            base_nodes_and_scores.append((node_id, score))
+
+                    offset += count
+
+                    # Both base and residual top-up candidates are calibrated using
+                    # the extended candidate pool's max score. This keeps finalized
+                    # PPR nodes and residual top-up nodes on the same per-channel
+                    # scale before the global typed-PPR merge.
+                    self._add_typed_ppr_seed_candidates(
+                        seed_scores=base_scores[ntype][seed_index],
+                        seed_channel_candidates=base_candidates[ntype][seed_index][
+                            channel_idx
+                        ],
+                        seed_nodes_and_scores=base_nodes_and_scores,
+                        max_score=extended_max_score,
+                        channel_idx=channel_idx,
+                        num_edge_attr_features=num_edge_attr_features,
+                        num_channels=num_channels,
+                    )
+                    self._add_typed_ppr_seed_candidates(
+                        seed_scores=extended_scores[ntype][seed_index],
+                        seed_channel_candidates=extended_candidates[ntype][seed_index][
+                            channel_idx
+                        ],
+                        seed_nodes_and_scores=extended_nodes_and_scores,
+                        max_score=extended_max_score,
+                        channel_idx=channel_idx,
+                        num_edge_attr_features=num_edge_attr_features,
+                        num_channels=num_channels,
+                    )
 
     def _add_typed_ppr_seed_candidates(
         self,
