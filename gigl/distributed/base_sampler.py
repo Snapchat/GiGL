@@ -306,6 +306,11 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             ]
             if self.dist_node_feature is not None:
                 if self.use_all2all:
+                    # NOTE: The all2all path is intentionally left unguarded against
+                    # featureless node types. GiGL never enables use_all2all (it
+                    # defaults to False and is never set True), so this branch is
+                    # unreachable in practice; get_all2all would raise the same
+                    # swallowed KeyError for a featureless type if it were used.
                     sorted_ntype = sorted(self.dist_node_feature.feature_pb.keys())
                     nfeat_dict = self.dist_node_feature.get_all2all(
                         output, sorted_ntype
@@ -314,7 +319,14 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
                 else:
                     nfeat_fut_dict = {}
+                    # Only fetch features for node types that actually have a feature
+                    # store entry. ``local_feature`` is the per-type dict in the
+                    # heterogeneous case; a type absent from it has no features, and
+                    # fetching it would raise a KeyError swallowed by GLT's event loop.
+                    featured_node_types = self.dist_node_feature.local_feature
                     for ntype, nodes in output.node.items():
+                        if ntype not in featured_node_types:
+                            continue
                         nodes = nodes.to(torch.long)
                         nfeat_fut_dict[ntype] = self.dist_node_feature.async_get(
                             nodes, ntype
@@ -324,7 +336,14 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
             if self.dist_edge_feature is not None and self.with_edge:
                 efeat_fut_dict = {}
+                # Only fetch features for edge types that actually have a feature
+                # store entry. ``local_feature`` is the per-type dict in the
+                # heterogeneous case; a type absent from it has no features, and
+                # fetching it would raise a KeyError swallowed by GLT's event loop.
+                featured_edge_types = self.dist_edge_feature.local_feature
                 for etype in self.edge_types:
+                    if etype not in featured_edge_types:
+                        continue
                     if self.edge_dir == "in":
                         eids = result_map.get(
                             f"{as_str(reverse_edge_type(etype))}.eids", None

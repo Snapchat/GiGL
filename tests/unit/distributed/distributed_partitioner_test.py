@@ -1,12 +1,13 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
+import traceback
 from collections import abc, defaultdict
 from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union, cast
 
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
-from graphlearn_torch.distributed import init_rpc, init_worker_group
+from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_rpc
 from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
@@ -15,7 +16,7 @@ from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.partition_book import get_ids_on_rank
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
 from tests.test_assets.distributed.constants import (
     EDGE_TYPE_TO_FEATURE_DIMENSION_MAP,
@@ -1431,6 +1432,352 @@ class DistRandomPartitionerTestCase(TestCase):
             ValueError, "Node labels have already been registered"
         ):
             partitioner3.register_node_labels(node_labels=node_labels)
+
+
+_NORM_USER = NodeType("user")
+_NORM_ITEM = NodeType("item")
+_NORM_EDGE_A = EdgeType(_NORM_USER, Relation("a"), _NORM_USER)
+_NORM_EDGE_B = EdgeType(_NORM_USER, Relation("b"), _NORM_USER)
+_NORM_USER_TO_ITEM = EdgeType(_NORM_USER, Relation("to"), _NORM_ITEM)
+
+
+def _run_divergent_edge_feature_registration(
+    rank: int,
+    world_size: int,
+    master_addr: str,
+    master_port: int,
+    output_dict: MutableMapping[int, dict],
+    scenario: str,
+    partitioner_class: Type[DistPartitioner],
+) -> None:
+    """Partition a graph whose ranks register different edge-feature type sets.
+
+    Both ranks register topology for edge types A and B (topology is assumed
+    consistent). Edge features on A are registered on both ranks; edge features on
+    B diverge per ``scenario`` to exercise the cross-rank registration normalization.
+    """
+    init_worker_group(
+        world_size=world_size, rank=rank, group_name=get_process_group_name(0)
+    )
+    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
+    try:
+        local_node_ids = torch.tensor([0, 1]) if rank == 0 else torch.tensor([2, 3])
+        node_ids: dict[NodeType, torch.Tensor] = {_NORM_USER: local_node_ids}
+        edge_index: dict[EdgeType, torch.Tensor] = {
+            _NORM_EDGE_A: (
+                torch.tensor([[0], [1]]) if rank == 0 else torch.tensor([[2], [3]])
+            ),
+        }
+        if scenario == "backfill":
+            # Rank 1 has zero local B edges, so a missing B feature tensor is
+            # backfillable. Rank 0 holds all B edges, with source nodes spanning
+            # both ranks' node ranges so that after partitioning each rank owns some
+            # B edges (range partitioning cannot represent an empty per-rank edge
+            # range).
+            edge_index[_NORM_EDGE_B] = (
+                torch.tensor([[0, 1, 2, 3], [1, 2, 3, 0]])
+                if rank == 0
+                else torch.empty((2, 0), dtype=torch.int64)
+            )
+        else:
+            # Both ranks hold local B edges.
+            edge_index[_NORM_EDGE_B] = (
+                torch.tensor([[0], [1]]) if rank == 0 else torch.tensor([[2], [3]])
+            )
+
+        node_features: dict[NodeType, torch.Tensor] = {
+            _NORM_USER: torch.rand(local_node_ids.size(0), 2)
+        }
+        edge_features: dict[EdgeType, torch.Tensor] = {
+            _NORM_EDGE_A: torch.rand(edge_index[_NORM_EDGE_A].size(1), 3)
+        }
+        if scenario == "backfill":
+            if rank == 0:
+                edge_features[_NORM_EDGE_B] = torch.rand(
+                    edge_index[_NORM_EDGE_B].size(1), 4
+                )
+            # Rank 1 omits B features (zero local B edges -> backfilled).
+        elif scenario == "nonzero_rows_raises":
+            if rank == 0:
+                edge_features[_NORM_EDGE_B] = torch.rand(1, 4)
+            # Rank 1 omits B features but has one local B edge -> must raise.
+        elif scenario == "dim_conflict":
+            edge_features[_NORM_EDGE_B] = (
+                torch.rand(1, 4) if rank == 0 else torch.rand(1, 8)
+            )
+
+        partitioner = partitioner_class(
+            should_assign_edges_by_src_node=True,
+            node_ids=node_ids,
+            edge_index=edge_index,
+            node_features=node_features,
+            edge_features=edge_features,
+        )
+        output = partitioner.partition()
+        partitioned_edge_features = output.partitioned_edge_features
+        assert isinstance(partitioned_edge_features, abc.Mapping)
+        output_dict[rank] = {
+            "status": "ok",
+            "edge_feature_types": sorted(
+                str(edge_type) for edge_type in partitioned_edge_features.keys()
+            ),
+        }
+    except Exception as exception:
+        output_dict[rank] = {
+            "status": "error",
+            "error": f"{type(exception).__name__}: {exception}",
+            "traceback": traceback.format_exc(),
+        }
+    finally:
+        try:
+            shutdown_rpc()
+        except Exception:
+            pass
+
+
+def _run_node_feature_and_label_union(
+    rank: int,
+    master_addr: str,
+    master_port: int,
+    output_dict: MutableMapping[int, dict],
+) -> None:
+    """Partition a graph with feature-only and label-only node types.
+
+    ``user`` has node features but no labels; ``item`` has node labels but no
+    features. Both must be partitioned — a label-only node type cannot be dropped
+    just because some other node type carries features.
+    """
+    init_worker_group(world_size=1, rank=rank, group_name=get_process_group_name(0))
+    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
+    try:
+        partitioner = DistPartitioner(
+            should_assign_edges_by_src_node=True,
+            node_ids={_NORM_USER: torch.arange(3), _NORM_ITEM: torch.arange(3)},
+            edge_index={_NORM_USER_TO_ITEM: torch.tensor([[0, 1, 2], [0, 1, 2]])},
+            node_features={_NORM_USER: torch.rand(3, 2)},
+            node_labels={_NORM_ITEM: torch.randint(0, 2, (3, 1))},
+        )
+        output = partitioner.partition()
+        partitioned_node_features = output.partitioned_node_features
+        partitioned_node_labels = output.partitioned_node_labels
+        assert isinstance(partitioned_node_features, abc.Mapping)
+        assert isinstance(partitioned_node_labels, abc.Mapping)
+        output_dict[rank] = {
+            "status": "ok",
+            "feature_types": sorted(str(t) for t in partitioned_node_features.keys()),
+            "label_types": sorted(str(t) for t in partitioned_node_labels.keys()),
+        }
+    except Exception as exception:
+        output_dict[rank] = {
+            "status": "error",
+            "error": f"{type(exception).__name__}: {exception}",
+            "traceback": traceback.format_exc(),
+        }
+    finally:
+        try:
+            shutdown_rpc()
+        except Exception:
+            pass
+
+
+def _run_zero_local_rows_featured_type(
+    rank: int,
+    world_size: int,
+    master_addr: str,
+    master_port: int,
+    output_dict: MutableMapping[int, dict],
+) -> None:
+    """Partition where one rank holds zero edges of a consistently-featured type.
+
+    Both ranks register edge features for type B, but rank 1 has zero local B edges
+    and registers an empty ``(0, dim)`` B feature tensor (mirroring the TFRecord
+    zero-shard path). The partitioner must still emit B in the partitioned edge
+    feature dict on every rank, so the featured type stays a feature-store key even
+    on a rank that received no rows of it — this is the cross-rank consistency the
+    per-type feature-fetch guard relies on.
+    """
+    init_worker_group(
+        world_size=world_size, rank=rank, group_name=get_process_group_name(0)
+    )
+    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
+    try:
+        local_node_ids = torch.tensor([0, 1]) if rank == 0 else torch.tensor([2, 3])
+        node_ids: dict[NodeType, torch.Tensor] = {_NORM_USER: local_node_ids}
+        edge_index = {
+            _NORM_EDGE_A: (
+                torch.tensor([[0], [1]]) if rank == 0 else torch.tensor([[2], [3]])
+            ),
+            _NORM_EDGE_B: (
+                torch.tensor([[0, 1], [1, 0]])
+                if rank == 0
+                else torch.empty((2, 0), dtype=torch.int64)
+            ),
+        }
+        edge_features = {
+            _NORM_EDGE_A: torch.rand(edge_index[_NORM_EDGE_A].size(1), 3),
+            # Rank 1 registers an empty B feature tensor rather than omitting it.
+            _NORM_EDGE_B: (torch.rand(2, 4) if rank == 0 else torch.empty((0, 4))),
+        }
+        partitioner = DistPartitioner(
+            should_assign_edges_by_src_node=True,
+            node_ids=node_ids,
+            edge_index=edge_index,
+            node_features={_NORM_USER: torch.rand(local_node_ids.size(0), 2)},
+            edge_features=edge_features,
+        )
+        output = partitioner.partition()
+        partitioned_edge_features = output.partitioned_edge_features
+        assert isinstance(partitioned_edge_features, abc.Mapping)
+        output_dict[rank] = {
+            "status": "ok",
+            "edge_feature_types": sorted(
+                str(edge_type) for edge_type in partitioned_edge_features.keys()
+            ),
+        }
+    except Exception as exception:
+        output_dict[rank] = {
+            "status": "error",
+            "error": f"{type(exception).__name__}: {exception}",
+            "traceback": traceback.format_exc(),
+        }
+    finally:
+        try:
+            shutdown_rpc()
+        except Exception:
+            pass
+
+
+class TestRegistrationNormalization(TestCase):
+    """Cross-rank normalization of divergent feature/label/weight registration."""
+
+    def setUp(self) -> None:
+        self._master_ip_address = "localhost"
+
+    def test_missing_edge_feature_type_zero_rows_backfilled(self) -> None:
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, dict] = manager.dict()
+        mp.spawn(
+            _run_divergent_edge_feature_registration,
+            args=(
+                MOCKED_NUM_PARTITIONS,
+                self._master_ip_address,
+                master_port,
+                output_dict,
+                "backfill",
+                DistPartitioner,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+        for rank in range(MOCKED_NUM_PARTITIONS):
+            result = output_dict[rank]
+            self.assertEqual(result["status"], "ok", result.get("error"))
+            self.assertIn(str(_NORM_EDGE_A), result["edge_feature_types"])
+            self.assertIn(str(_NORM_EDGE_B), result["edge_feature_types"])
+
+    def test_missing_edge_feature_type_zero_rows_backfilled_range(self) -> None:
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, dict] = manager.dict()
+        mp.spawn(
+            _run_divergent_edge_feature_registration,
+            args=(
+                MOCKED_NUM_PARTITIONS,
+                self._master_ip_address,
+                master_port,
+                output_dict,
+                "backfill",
+                DistRangePartitioner,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+        for rank in range(MOCKED_NUM_PARTITIONS):
+            result = output_dict[rank]
+            self.assertEqual(result["status"], "ok", result.get("error"))
+            self.assertIn(str(_NORM_EDGE_B), result["edge_feature_types"])
+
+    def test_missing_edge_feature_type_nonzero_rows_raises(self) -> None:
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, dict] = manager.dict()
+        mp.spawn(
+            _run_divergent_edge_feature_registration,
+            args=(
+                MOCKED_NUM_PARTITIONS,
+                self._master_ip_address,
+                master_port,
+                output_dict,
+                "nonzero_rows_raises",
+                DistPartitioner,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+        for rank in range(MOCKED_NUM_PARTITIONS):
+            result = output_dict[rank]
+            self.assertEqual(result["status"], "error")
+            self.assertIn(str(_NORM_EDGE_B), result["error"])
+
+    def test_edge_feature_dim_conflict_raises(self) -> None:
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, dict] = manager.dict()
+        mp.spawn(
+            _run_divergent_edge_feature_registration,
+            args=(
+                MOCKED_NUM_PARTITIONS,
+                self._master_ip_address,
+                master_port,
+                output_dict,
+                "dim_conflict",
+                DistPartitioner,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+        for rank in range(MOCKED_NUM_PARTITIONS):
+            result = output_dict[rank]
+            self.assertEqual(result["status"], "error")
+            self.assertIn(str(_NORM_EDGE_B), result["error"])
+
+    def test_node_feature_and_label_union_partitioned(self) -> None:
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, dict] = manager.dict()
+        mp.spawn(
+            _run_node_feature_and_label_union,
+            args=(self._master_ip_address, master_port, output_dict),
+            nprocs=1,
+            join=True,
+        )
+        result = output_dict[0]
+        self.assertEqual(result["status"], "ok", result.get("error"))
+        self.assertIn(str(_NORM_USER), result["feature_types"])
+        self.assertNotIn(str(_NORM_ITEM), result["feature_types"])
+        self.assertIn(str(_NORM_ITEM), result["label_types"])
+        self.assertNotIn(str(_NORM_USER), result["label_types"])
+
+    def test_zero_local_rows_featured_type_survives(self) -> None:
+        master_port = get_free_port()
+        manager = Manager()
+        output_dict: MutableMapping[int, dict] = manager.dict()
+        mp.spawn(
+            _run_zero_local_rows_featured_type,
+            args=(
+                MOCKED_NUM_PARTITIONS,
+                self._master_ip_address,
+                master_port,
+                output_dict,
+            ),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+        for rank in range(MOCKED_NUM_PARTITIONS):
+            result = output_dict[rank]
+            self.assertEqual(result["status"], "ok", result.get("error"))
+            self.assertIn(str(_NORM_EDGE_B), result["edge_feature_types"])
 
 
 if __name__ == "__main__":

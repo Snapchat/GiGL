@@ -52,6 +52,7 @@ _USER = NodeType("user")
 _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
+_USER_TO_USER = EdgeType(_USER, Relation("to"), _USER)
 
 # GLT requires subclasses of DistNeighborLoader to be run in a separate process. Otherwise, we may run into segmentation fault
 # or other memory issues. Calling these functions in separate proceses also allows us to use shutdown_rpc() to ensure cleanup of
@@ -395,6 +396,33 @@ def _run_cora_supervised_node_classification(
             f"Number of labels should match number of nodes, got {datum.y.size(0)} labels and {datum.node.size(0)} nodes"
         )
 
+    shutdown_rpc()
+
+
+def _run_partial_feature_coverage_loader(
+    _,
+    dataset: DistDataset,
+    holder,
+):
+    """Iterate a heterogeneous loader over ``user`` seeds and record the batch count.
+
+    Used by the partial-feature-coverage regression tests. Without the per-type
+    feature-fetch guard this hangs on a swallowed ``KeyError`` inside the sampling
+    coroutine, so callers must join the spawned process with a timeout and assert it
+    terminated.
+    """
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type, not-subscriptable] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+    holder["count"] = count
     shutdown_rpc()
 
 
@@ -859,6 +887,112 @@ class DistributedNeighborLoaderTest(TestCase):
         create_test_process_group()
         with self.assertRaises(expected_error):
             DistNeighborLoader(**kwargs)
+
+
+class TestPartialFeatureCoverage(TestCase):
+    """Regression tests for heterogeneous datasets with features on a type subset.
+
+    Without the per-type feature-fetch guard, ``_collate_fn`` fetched features for
+    every sampled node/edge type, so a featureless-but-reachable type raised a
+    ``KeyError`` inside the sampling coroutine that GLT swallowed, hanging the loader
+    forever. Each test therefore joins the spawned worker with a timeout and asserts
+    it terminated with batches.
+    """
+
+    def _build_partial_edge_feature_dataset(self) -> DistDataset:
+        """Two edge types both reachable from ``user`` seeds; only U2S has features."""
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(5),
+                _STORY: torch.zeros(5),
+            },
+            edge_partition_book={
+                _USER_TO_USER: torch.zeros(5),
+                _USER_TO_STORY: torch.zeros(5),
+            },
+            partitioned_edge_index={
+                _USER_TO_USER: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
+                    edge_ids=None,
+                ),
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                    edge_ids=None,
+                ),
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
+                ),
+            },
+            # Edge features on U2S only; U2U is reachable but featureless.
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.zeros(5, 3), ids=torch.arange(5)
+                ),
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+        return dataset
+
+    def _build_partial_node_feature_dataset(self) -> DistDataset:
+        """Both node types reachable; only ``user`` has node features."""
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(5),
+                _STORY: torch.zeros(5),
+            },
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(5),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]]),
+                    edge_ids=None,
+                ),
+            },
+            # Node features on ``user`` only; ``story`` is reachable but featureless.
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(5, 2), ids=torch.arange(5)
+                ),
+            },
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+        return dataset
+
+    def _run_and_assert_batches(self, dataset: DistDataset) -> None:
+        holder = mp.Manager().dict()
+        proc = mp.get_context("spawn").Process(
+            target=_run_partial_feature_coverage_loader,
+            args=(0, dataset, holder),
+        )
+        proc.start()
+        proc.join(timeout=120)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join()
+            self.fail("loader hung — partial feature coverage not handled")
+        self.assertEqual(proc.exitcode, 0, "loader worker exited with an error")
+        self.assertGreater(holder.get("count", 0), 0)
+
+    def test_partial_edge_features_yields_batches(self) -> None:
+        self._run_and_assert_batches(self._build_partial_edge_feature_dataset())
+
+    def test_partial_node_features_yields_batches(self) -> None:
+        self._run_and_assert_batches(self._build_partial_node_feature_dataset())
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, TypeVar, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -24,6 +24,9 @@ from gigl.types.graph import (
 )
 
 logger = Logger()
+
+# Node or edge type key for the registration-normalization helpers.
+_EntityType = TypeVar("_EntityType", NodeType, EdgeType)
 
 
 class _DistLinkPredicitonPartitionManager(DistPartitionManager):
@@ -183,6 +186,13 @@ class DistPartitioner:
         self._partition_mgr: _DistLinkPredicitonPartitionManager
 
         self._is_rpc_initialized: bool = False
+
+        # Guards against re-running the cross-rank registration-normalization
+        # collectives (see ``_normalize_node_feature_and_label_registration`` and
+        # ``_normalize_edge_feature_and_weight_registration``). Each category is
+        # normalized at most once per partitioner instance.
+        self._node_registration_normalized: bool = False
+        self._edge_registration_normalized: bool = False
 
         self._is_input_homogeneous: Optional[bool] = None
         self._should_assign_edges_by_src_node: bool = should_assign_edges_by_src_node
@@ -1412,6 +1422,216 @@ class DistPartitioner:
 
         return partitioned_label_edge_index
 
+    @staticmethod
+    def _local_feature_schema(
+        registered: Optional[dict[_EntityType, torch.Tensor]],
+    ) -> dict[_EntityType, tuple[tuple[int, ...], torch.dtype]]:
+        """Summarize a registered feature/label/weight dict as a per-type schema.
+
+        Args:
+            registered: A registered ``{type: tensor}`` dict, or ``None`` if the
+                category was never registered on this rank.
+
+        Returns:
+            A ``{type: (trailing_shape, dtype)}`` dict, where ``trailing_shape`` is
+            the tensor shape excluding the leading (per-entity) dimension. Empty if
+            ``registered`` is ``None``.
+        """
+        if registered is None:
+            return {}
+        return {
+            entity_type: (tuple(tensor.shape[1:]), tensor.dtype)
+            for entity_type, tensor in registered.items()
+        }
+
+    def _apply_registration_normalization(
+        self,
+        gathered: dict[str, tuple],
+        schema_index: int,
+        count_index: int,
+        feat_attr: str,
+        dim_attr: Optional[str],
+        category_name: str,
+    ) -> None:
+        """Backfill or reject a single feature/label/weight category using gathered schemas.
+
+        For every type in the global union of registered types, validates that all
+        ranks that registered it agree on trailing shape and dtype, then either
+        backfills an empty tensor on a rank that is missing it with zero local rows,
+        or raises when a rank is missing it but has nonzero local rows (the values
+        cannot be reconstructed). All raise conditions are evaluated from the gathered
+        (schema, count) tuples, so every rank raises symmetrically rather than one rank
+        raising while the others hang on the next collective.
+
+        Args:
+            gathered: Mapping of worker name to the all_gathered payload tuple.
+            schema_index: Index of this category's ``{type: (shape, dtype)}`` schema
+                within each payload tuple.
+            count_index: Index of the relevant per-type local-count dict within each
+                payload tuple (node counts for node categories, edge counts for edge
+                categories).
+            feat_attr: Name of the registration dict attribute to backfill into (e.g.
+                ``"_edge_feat"``).
+            dim_attr: Name of the companion dimension-dict attribute to backfill (e.g.
+                ``"_edge_feat_dim"``), or ``None`` for 1-D categories like edge weights.
+            category_name: Human-readable category label used in error messages.
+        """
+        union_types: set[Union[NodeType, EdgeType]] = set()
+        for payload in gathered.values():
+            union_types.update(payload[schema_index].keys())
+        if not union_types:
+            return
+
+        local_feats: Optional[dict[Union[NodeType, EdgeType], torch.Tensor]] = getattr(
+            self, feat_attr
+        )
+        for entity_type in union_types:
+            distinct_schemas: set[tuple[tuple[int, ...], torch.dtype]] = set()
+            for payload in gathered.values():
+                type_schema = payload[schema_index]
+                if entity_type in type_schema:
+                    distinct_schemas.add(type_schema[entity_type])
+            if len(distinct_schemas) > 1:
+                raise ValueError(
+                    f"Inconsistent {category_name} schema for type {entity_type} "
+                    f"across ranks: {sorted(str(s) for s in distinct_schemas)}. All "
+                    f"ranks registering a type must agree on trailing shape and dtype."
+                )
+            trailing_shape, dtype = next(iter(distinct_schemas))
+
+            # A rank missing the tensor but holding local rows cannot be backfilled
+            # (an empty tensor would desync from its entity ids). Detected from
+            # gathered counts so every rank raises, not just the offending one.
+            for payload in gathered.values():
+                missing_rank = payload[0]
+                if entity_type not in payload[schema_index]:
+                    local_count = payload[count_index].get(entity_type, 0)
+                    if local_count > 0:
+                        raise ValueError(
+                            f"Type {entity_type} is globally registered with "
+                            f"{category_name}, but rank {missing_rank} has "
+                            f"{local_count} local rows of it and no {category_name} "
+                            f"tensor; the missing values cannot be reconstructed. "
+                            f"Register {category_name} for {entity_type} on that rank."
+                        )
+
+            # This rank is missing the type (with zero local rows, per the check
+            # above) — backfill an empty tensor so its per-type collective still runs.
+            if local_feats is None or entity_type not in local_feats:
+                if local_feats is None:
+                    local_feats = {}
+                    setattr(self, feat_attr, local_feats)
+                local_feats[entity_type] = torch.empty(
+                    (0, *trailing_shape), dtype=dtype
+                )
+                if dim_attr is not None:
+                    dim_map: Optional[dict[Union[NodeType, EdgeType], int]] = getattr(
+                        self, dim_attr
+                    )
+                    if dim_map is None:
+                        dim_map = {}
+                        setattr(self, dim_attr, dim_map)
+                    dim_map[entity_type] = trailing_shape[0] if trailing_shape else 0
+
+    def _normalize_node_feature_and_label_registration(self) -> None:
+        """Make every rank hold the union of registered node feature/label types.
+
+        Direct ``DistPartitioner`` users may register different node feature/label
+        type sets on different ranks. Because each type is partitioned via its own
+        cross-rank collective, divergent registration desynchronizes those
+        collectives (hang or corrupt output). This all_gathers each rank's
+        ``{type: (shape, dtype)}`` node feature and label schemas together with
+        per-type local node counts, then backfills empty tensors for missing types
+        with zero local rows and raises on nonzero-rows-without-tensor or shape/dtype
+        conflicts (see ``_apply_registration_normalization``).
+
+        Idempotent: runs its collective at most once per partitioner instance.
+
+        Uses GLT RPC (``glt_rpc.all_gather``), not ``torch.distributed``, which is not
+        generally initialized during partitioning.
+        """
+        if self._node_registration_normalized:
+            return
+        self._assert_and_get_rpc_setup()
+        self._node_registration_normalized = True
+        if self._world_size <= 1:
+            return
+
+        node_counts = {
+            node_type: node_ids.size(0)
+            for node_type, node_ids in (self._node_ids or {}).items()
+        }
+        gathered: dict[str, tuple] = glt_rpc.all_gather(
+            (
+                self._rank,
+                node_counts,
+                self._local_feature_schema(self._node_feat),
+                self._local_feature_schema(self._node_labels),
+            )
+        )
+        self._apply_registration_normalization(
+            gathered=gathered,
+            schema_index=2,
+            count_index=1,
+            feat_attr="_node_feat",
+            dim_attr="_node_feat_dim",
+            category_name="node features",
+        )
+        self._apply_registration_normalization(
+            gathered=gathered,
+            schema_index=3,
+            count_index=1,
+            feat_attr="_node_labels",
+            dim_attr="_node_labels_dim",
+            category_name="node labels",
+        )
+
+    def _normalize_edge_feature_and_weight_registration(self) -> None:
+        """Make every rank hold the union of registered edge feature/weight types.
+
+        The edge-side counterpart of
+        ``_normalize_node_feature_and_label_registration``: all_gathers each rank's
+        edge feature and edge weight schemas plus per-type local edge counts, then
+        backfills or raises per type (see ``_apply_registration_normalization``).
+
+        Idempotent: runs its collective at most once per partitioner instance.
+        """
+        if self._edge_registration_normalized:
+            return
+        self._assert_and_get_rpc_setup()
+        self._edge_registration_normalized = True
+        if self._world_size <= 1:
+            return
+
+        edge_counts = {
+            edge_type: edge_index.size(1)
+            for edge_type, edge_index in (self._edge_index or {}).items()
+        }
+        gathered: dict[str, tuple] = glt_rpc.all_gather(
+            (
+                self._rank,
+                edge_counts,
+                self._local_feature_schema(self._edge_feat),
+                self._local_feature_schema(self._edge_weights),
+            )
+        )
+        self._apply_registration_normalization(
+            gathered=gathered,
+            schema_index=2,
+            count_index=1,
+            feat_attr="_edge_feat",
+            dim_attr="_edge_feat_dim",
+            category_name="edge features",
+        )
+        self._apply_registration_normalization(
+            gathered=gathered,
+            schema_index=3,
+            count_index=1,
+            feat_attr="_edge_weights",
+            dim_attr=None,
+            category_name="edge weights",
+        )
+
     def partition_node(self) -> Union[PartitionBook, dict[NodeType, PartitionBook]]:
         """
         Partitions nodes of a graph. If heterogeneous, partitions nodes for all node types.
@@ -1484,6 +1704,10 @@ class DistPartitioner:
 
         self._assert_and_get_rpc_setup()
 
+        # Normalize divergent cross-rank node feature/label registration before
+        # partitioning, so each per-type collective below runs on every rank.
+        self._normalize_node_feature_and_label_registration()
+
         logger.info("Partitioning Node Features and Labels ...")
         start_time = time.time()
 
@@ -1502,20 +1726,22 @@ class DistPartitioner:
             input_entity=self._node_ids, is_node_entity=True, is_subset=False
         )
 
+        # Partition the UNION of node types that have features or labels. A
+        # label-only node type must still be partitioned even when other node types
+        # have features, so we cannot select feature keys in an ``if`` and labels
+        # only in an ``elif``.
         node_feature_types: set[NodeType] = set()
         if self._node_feat is not None:
             self._assert_data_type_consistency(
                 input_entity=self._node_feat, is_node_entity=True, is_subset=True
             )
-            for node_type in self._node_feat.keys():
-                node_feature_types.add(node_type)
-        elif self._node_labels is not None:
+            node_feature_types.update(self._node_feat.keys())
+        if self._node_labels is not None:
             self._assert_data_type_consistency(
                 input_entity=self._node_labels, is_node_entity=True, is_subset=True
             )
-            for node_type in self._node_labels.keys():
-                node_feature_types.add(node_type)
-        else:
+            node_feature_types.update(self._node_labels.keys())
+        if not node_feature_types:
             raise ValueError(
                 "Node features or labels must be registered prior to partitioning."
             )
@@ -1583,6 +1809,10 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Normalize divergent cross-rank edge feature/weight registration before
+        # partitioning, so each per-type collective below runs on every rank.
+        self._normalize_edge_feature_and_weight_registration()
 
         assert (
             self._edge_index is not None
@@ -1754,6 +1984,13 @@ class DistPartitioner:
         """
 
         self._assert_and_get_rpc_setup()
+
+        # Normalize divergent cross-rank feature/label/weight registration up front,
+        # while node ids and edge index (needed for local counts) are still
+        # registered. The per-category guard flags stop the individual partition_*
+        # methods below from gathering a second time.
+        self._normalize_edge_feature_and_weight_registration()
+        self._normalize_node_feature_and_label_registration()
 
         logger.info(f"Rank {self._rank} starting partitioning ...")
         start_time = time.time()

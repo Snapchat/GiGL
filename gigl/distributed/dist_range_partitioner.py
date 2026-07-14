@@ -392,6 +392,10 @@ class DistRangePartitioner(DistPartitioner):
 
         self._assert_and_get_rpc_setup()
 
+        # Normalize divergent cross-rank edge feature/weight registration before
+        # partitioning, so each per-type collective below runs on every rank.
+        self._normalize_edge_feature_and_weight_registration()
+
         assert self._edge_index is not None and self._num_edges is not None, (
             "Must have registered edges prior to partitioning them"
         )
