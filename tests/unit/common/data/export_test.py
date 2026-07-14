@@ -419,13 +419,48 @@ class TestEmbeddingExporter(TestCase):
         )
 
         # Assertions
-        mock_bigquery_client.assert_called_once_with(project=project_id)
+        # When quota_project_id is omitted, no quota project is forced (client_options=None).
+        mock_bigquery_client.assert_called_once_with(
+            project=project_id, client_options=None
+        )
         mock_client.load_table_from_uri.assert_called_once_with(
             source_uris=f"{gcs_folder.uri}/*.avro",
             destination=mock_client.dataset.return_value.table.return_value,
             job_config=ANY,
         )
         self.assertEqual(load_job.output_rows, 1000)
+
+    @patch("gigl.common.data.export.bigquery.Client")
+    def test_load_embedding_to_bigquery_with_quota_project(self, mock_bigquery_client):
+        # Mock inputs
+        gcs_folder = GcsUri("gs://test-bucket/test-folder")
+        project_id = "test-project"
+        dataset_id = "test-dataset"
+        table_id = "test-table"
+        quota_project_id = "test-quota-project"
+
+        # Mock BigQuery client and load job
+        mock_client = MagicMock()
+        mock_client.load_table_from_uri.return_value.output_rows = 1000
+        mock_bigquery_client.return_value = mock_client
+
+        # Call the function
+        load_embeddings_to_bigquery(
+            gcs_folder,
+            project_id,
+            dataset_id,
+            table_id,
+            quota_project_id=quota_project_id,
+        )
+
+        # The BigQuery client should be constructed with client_options whose
+        # quota_project_id is scoped to the provided value.
+        mock_bigquery_client.assert_called_once()
+        _, call_kwargs = mock_bigquery_client.call_args
+        self.assertEqual(call_kwargs["project"], project_id)
+        self.assertEqual(
+            call_kwargs["client_options"].quota_project_id, quota_project_id
+        )
 
 
 class TestPredictionsExporter(TestCase):
@@ -771,13 +806,48 @@ class TestPredictionsExporter(TestCase):
         )
 
         # Assertions
-        mock_bigquery_client.assert_called_once_with(project=project_id)
+        # When quota_project_id is omitted, no quota project is forced (client_options=None).
+        mock_bigquery_client.assert_called_once_with(
+            project=project_id, client_options=None
+        )
         mock_client.load_table_from_uri.assert_called_once_with(
             source_uris=f"{gcs_folder.uri}/*.avro",
             destination=mock_client.dataset.return_value.table.return_value,
             job_config=ANY,
         )
         self.assertEqual(load_job.output_rows, 1000)
+
+    @patch("gigl.common.data.export.bigquery.Client")
+    def test_load_prediction_to_bigquery_with_quota_project(self, mock_bigquery_client):
+        # Mock inputs
+        gcs_folder = GcsUri("gs://test-bucket/test-folder")
+        project_id = "test-project"
+        dataset_id = "test-dataset"
+        table_id = "test-table"
+        quota_project_id = "test-quota-project"
+
+        # Mock BigQuery client and load job
+        mock_client = MagicMock()
+        mock_client.load_table_from_uri.return_value.output_rows = 1000
+        mock_bigquery_client.return_value = mock_client
+
+        # Call the function
+        load_predictions_to_bigquery(
+            gcs_folder,
+            project_id,
+            dataset_id,
+            table_id,
+            quota_project_id=quota_project_id,
+        )
+
+        # The BigQuery client should be constructed with client_options whose
+        # quota_project_id is scoped to the provided value.
+        mock_bigquery_client.assert_called_once()
+        _, call_kwargs = mock_bigquery_client.call_args
+        self.assertEqual(call_kwargs["project"], project_id)
+        self.assertEqual(
+            call_kwargs["client_options"].quota_project_id, quota_project_id
+        )
 
 
 if __name__ == "__main__":
