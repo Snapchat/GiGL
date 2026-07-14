@@ -911,7 +911,7 @@ class DistPPRSamplerTest(TestCase):
             )
         )
 
-    def test_typed_ppr_edge_type_channels_normalize_and_build_traversal_maps(
+    def test_typed_ppr_edge_type_channels_parse_and_build_traversal_maps(
         self,
     ) -> None:
         """Verify typed-PPR can use canonical edge-type channels."""
@@ -926,17 +926,15 @@ class DistPPRSamplerTest(TestCase):
             STORY_TO_USER: 1,
         }
 
-        normalized_channel_quotas = (
-            DistPPRNeighborSampler._normalize_typed_channel_quotas(
-                {
-                    USER_TO_STORY: 2,
-                    (USER_TO_STORY, STORY_TO_USER): 3,
-                }
-            )
+        typed_channel_groups = DistPPRNeighborSampler._parse_typed_channel_quota_groups(
+            {
+                USER_TO_STORY: 2,
+                (USER_TO_STORY, STORY_TO_USER): 3,
+            }
         )
 
         self.assertEqual(
-            normalized_channel_quotas,
+            typed_channel_groups,
             [
                 ((USER_TO_STORY,), 2),
                 ((USER_TO_STORY, STORY_TO_USER), 3),
@@ -944,7 +942,7 @@ class DistPPRSamplerTest(TestCase):
         )
         self.assertEqual(
             sampler._build_edge_type_channel_group_edge_type_ids(
-                normalized_channel_quotas,
+                typed_channel_groups,
             ),
             [
                 [[0], []],
@@ -953,9 +951,9 @@ class DistPPRSamplerTest(TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "canonical edge type"):
-            DistPPRNeighborSampler._normalize_typed_channel_quotas({("bad",): 1})
+            DistPPRNeighborSampler._parse_typed_channel_quota_groups({("bad",): 1})
         with self.assertRaisesRegex(ValueError, "positive quotas"):
-            DistPPRNeighborSampler._normalize_typed_channel_quotas({USER_TO_STORY: 0})
+            DistPPRNeighborSampler._parse_typed_channel_quota_groups({USER_TO_STORY: 0})
         with self.assertRaisesRegex(ValueError, "non-traversable edge types"):
             sampler._build_edge_type_channel_group_edge_type_ids(
                 [((("unknown", "edge", "type"),), 1)],

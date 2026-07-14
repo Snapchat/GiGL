@@ -172,7 +172,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        typed_channel_groups = self._normalize_typed_channel_quotas(
+        typed_channel_groups = self._parse_typed_channel_quota_groups(
             typed_channel_quotas
         )
         self._typed_ppr_channel_quotas = (
@@ -285,14 +285,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         return edge_type_group_to_node_type_id_to_edge_type_ids
 
     @staticmethod
-    def _normalize_typed_channel_quotas(
+    def _parse_typed_channel_quota_groups(
         typed_channel_quotas: Optional[dict[_TypedPPRChannelKey, int]],
     ) -> Optional[list[tuple[tuple[EdgeType, ...], int]]]:
-        """Normalize typed-PPR canonical edge-type channel quota keys."""
+        """Validate quotas and parse public channel keys into edge-type groups."""
         if not typed_channel_quotas:
             return None
 
-        normalized_groups: list[tuple[tuple[EdgeType, ...], int]] = []
+        typed_channel_groups: list[tuple[tuple[EdgeType, ...], int]] = []
         invalid_quotas: dict[_TypedPPRChannelKey, object] = {}
 
         def is_canonical_edge_type(value: object) -> bool:
@@ -322,14 +322,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     "(src_type, relation, dst_type) or a non-empty tuple of "
                     f"canonical edge types, got {edge_type_key!r}."
                 )
-            normalized_groups.append((edge_types, quota))
+            typed_channel_groups.append((edge_types, quota))
 
         if invalid_quotas:
             raise ValueError(
                 "typed_channel_quotas must contain only positive integer quotas, "
                 f"got {invalid_quotas}."
             )
-        return normalized_groups
+        return typed_channel_groups
 
     def _convert_degree_tensors_to_dict(
         self,
