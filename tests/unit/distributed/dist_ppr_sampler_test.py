@@ -926,12 +926,16 @@ class DistPPRSamplerTest(TestCase):
             STORY_TO_USER: 1,
         }
 
-        typed_channel_groups = DistPPRNeighborSampler._parse_typed_channel_quota_groups(
-            {
-                USER_TO_STORY: 2,
-                (USER_TO_STORY, STORY_TO_USER): 3,
-            }
+        typed_channel_groups, typed_channel_quota_list = (
+            DistPPRNeighborSampler._parse_typed_channel_quota_groups(
+                {
+                    USER_TO_STORY: 2,
+                    (USER_TO_STORY, STORY_TO_USER): 3,
+                }
+            )
         )
+        assert typed_channel_groups is not None
+        assert typed_channel_quota_list is not None
 
         self.assertEqual(
             typed_channel_groups,
@@ -940,6 +944,7 @@ class DistPPRSamplerTest(TestCase):
                 ((USER_TO_STORY, STORY_TO_USER), 3),
             ],
         )
+        self.assertEqual(typed_channel_quota_list, [2, 3])
         self.assertEqual(
             sampler._build_edge_type_channel_group_edge_type_ids(
                 typed_channel_groups,

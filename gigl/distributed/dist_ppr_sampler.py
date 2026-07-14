@@ -49,6 +49,7 @@ _TypedPPRScoreMap = dict[NodeType, list[dict[int, list[float]]]]
 _TypedPPRCandidates = dict[NodeType, list[list[list[tuple[int, float]]]]]
 _TypedPPRMergeState = tuple[_TypedPPRScoreMap, _TypedPPRCandidates]
 _TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
+_TypedPPRChannelGroups = list[tuple[tuple[EdgeType, ...], int]]
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
@@ -113,6 +114,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             candidate pool; the final returned sequence is still capped by
             ``max_ppr_nodes``. Quotas may sum above ``max_ppr_nodes`` to give
             sparse or overlapping channels room to fill the sequence.
+            Example::
+
+                typed_channel_quotas = {
+                    ("user", "views", "item"): 64,
+                    (
+                        ("user", "likes", "item"),
+                        ("user", "shares", "item"),
+                    ): 32,
+                }
+
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
             by NodeType. The colocated and graph-store loader paths retrieve
@@ -172,13 +183,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        typed_channel_groups = self._parse_typed_channel_quota_groups(
-            typed_channel_quotas
-        )
-        self._typed_ppr_channel_quotas = (
-            [quota for _, quota in typed_channel_groups]
-            if typed_channel_groups is not None
-            else None
+        typed_channel_groups, self._typed_ppr_channel_quotas = (
+            self._parse_typed_channel_quota_groups(typed_channel_quotas)
         )
         if self._typed_ppr_channel_quotas is not None:
             if self._is_homogeneous:
@@ -251,7 +257,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
     def _build_edge_type_channel_group_edge_type_ids(
         self,
-        edge_type_groups: list[tuple[tuple[EdgeType, ...], int]],
+        edge_type_groups: _TypedPPRChannelGroups,
     ) -> list[list[list[int]]]:
         """Build per-node-type edge-type allowlists for canonical edge-type channels."""
         known_edge_types = set(self._etype_to_etype_id.keys())
@@ -287,12 +293,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     @staticmethod
     def _parse_typed_channel_quota_groups(
         typed_channel_quotas: Optional[dict[_TypedPPRChannelKey, int]],
-    ) -> Optional[list[tuple[tuple[EdgeType, ...], int]]]:
-        """Validate quotas and parse public channel keys into edge-type groups."""
+    ) -> tuple[Optional[_TypedPPRChannelGroups], Optional[list[int]]]:
+        """Validate quotas and return edge-type groups plus aligned quota values."""
         if not typed_channel_quotas:
-            return None
+            return None, None
 
-        typed_channel_groups: list[tuple[tuple[EdgeType, ...], int]] = []
+        typed_channel_groups: _TypedPPRChannelGroups = []
+        typed_channel_quota_list: list[int] = []
         invalid_quotas: dict[_TypedPPRChannelKey, object] = {}
 
         def is_canonical_edge_type(value: object) -> bool:
@@ -323,13 +330,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     f"canonical edge types, got {edge_type_key!r}."
                 )
             typed_channel_groups.append((edge_types, quota))
+            typed_channel_quota_list.append(quota)
 
         if invalid_quotas:
             raise ValueError(
                 "typed_channel_quotas must contain only positive integer quotas, "
                 f"got {invalid_quotas}."
             )
-        return typed_channel_groups
+        return typed_channel_groups, typed_channel_quota_list
 
     def _convert_degree_tensors_to_dict(
         self,

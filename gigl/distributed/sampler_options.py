@@ -98,6 +98,16 @@ class PPRSamplerOptions:
             the final returned sequence remains capped by ``max_ppr_nodes``.
             Quotas may sum above ``max_ppr_nodes`` to give sparse or
             overlapping channels room to fill the sequence.
+            Example::
+
+                typed_channel_quotas = {
+                    ("user", "views", "item"): 64,
+                    (
+                        ("user", "likes", "item"),
+                        ("user", "shares", "item"),
+                    ): 32,
+                }
+
             If residual top-up is enabled and the base merge emits fewer than
             ``max_ppr_nodes``, the sampler appends discovered-but-unpushed
             residual candidates from the same completed PPR states. Those
