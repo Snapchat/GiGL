@@ -127,7 +127,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       double,
                       std::vector<std::vector<int32_t>>,
                       std::vector<int32_t>,
-                      std::vector<torch::Tensor>>())
+                      std::vector<torch::Tensor>>(),
+             py::call_guard<py::gil_scoped_release>())
         .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",

@@ -423,6 +423,37 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 node_type_to_valid_counts,
             )
 
+    def _extract_typed_ppr_state_top_k(
+        self,
+        ppr_states,
+        channel_quotas: list[int],
+        device: torch.device,
+    ) -> HeteroPPRResult:
+        """Extract typed PPR results and move output tensors to the sampler device."""
+        extracted_results = extract_typed_top_k_with_residual_top_up(
+            ppr_states,
+            channel_quotas,
+            self._max_ppr_nodes,
+            self._enable_residual_topup,
+        )
+        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+        for node_type_id, (
+            flat_ids,
+            flat_weights,
+            valid_counts,
+        ) in extracted_results.items():
+            node_type = self._ntype_id_to_ntype[node_type_id]
+            node_type_to_flat_ids[node_type] = flat_ids.to(device)
+            node_type_to_flat_weights[node_type] = flat_weights.to(device)
+            node_type_to_valid_counts[node_type] = valid_counts.to(device)
+        return (
+            node_type_to_flat_ids,
+            node_type_to_flat_weights,
+            node_type_to_valid_counts,
+        )
+
     async def _compute_ppr_scores(
         self,
         seed_nodes: torch.Tensor,
@@ -479,8 +510,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if seed_node_type is None:
             seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
+        loop = asyncio.get_running_loop()
 
-        ppr_state = PPRForwardPush(
+        ppr_state = await loop.run_in_executor(
+            None,
+            PPRForwardPush,
             seed_nodes,
             self._node_type_to_id[seed_node_type],
             self._alpha,
@@ -491,7 +525,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         )
 
         fetch_iteration_count = 0
-        loop = asyncio.get_running_loop()
         nodes_by_edge_type_id = await loop.run_in_executor(None, ppr_state.drain_queue)
 
         # drain_queue returns None when the queue is truly empty (convergence),
@@ -554,29 +587,32 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         assert self._typed_ppr_channel_quotas is not None
         channel_quotas = self._typed_ppr_channel_quotas
         device = seed_nodes.device
+        loop = asyncio.get_running_loop()
 
         # Build one Forward Push state per typed channel. All states use the
         # same seeds, restart probability, degree tensors, and destination-type
         # map; only the per-node-type edge traversal allowlist differs.
-        ppr_states = [
-            PPRForwardPush(
-                seed_nodes,
-                self._node_type_to_id[seed_node_type],
-                self._alpha,
-                self._requeue_threshold_factor,
-                node_type_id_to_edge_type_ids,
-                self._edge_type_id_to_dst_ntype_id,
-                self._degree_tensors_for_cpp,
-            )
-            for node_type_id_to_edge_type_ids in (
-                self._typed_ppr_channel_to_node_type_id_to_edge_type_ids
-            )
-        ]
+        def build_ppr_states():
+            return [
+                PPRForwardPush(
+                    seed_nodes,
+                    self._node_type_to_id[seed_node_type],
+                    self._alpha,
+                    self._requeue_threshold_factor,
+                    node_type_id_to_edge_type_ids,
+                    self._edge_type_id_to_dst_ntype_id,
+                    self._degree_tensors_for_cpp,
+                )
+                for node_type_id_to_edge_type_ids in (
+                    self._typed_ppr_channel_to_node_type_id_to_edge_type_ids
+                )
+            ]
+
+        ppr_states = await loop.run_in_executor(None, build_ppr_states)
         fetch_iteration_counts = [0 for _ in ppr_states]
         max_fetch_iterations = (
             self._max_fetch_iterations if self._max_fetch_iterations is not None else -1
         )
-        loop = asyncio.get_running_loop()
 
         while True:
             (
@@ -627,30 +663,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             if push_tasks:
                 await asyncio.gather(*push_tasks)
 
-        extracted_results = await loop.run_in_executor(
+        return await loop.run_in_executor(
             None,
-            extract_typed_top_k_with_residual_top_up,
+            self._extract_typed_ppr_state_top_k,
             ppr_states,
             channel_quotas,
-            self._max_ppr_nodes,
-            self._enable_residual_topup,
-        )
-        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
-        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
-        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-        for node_type_id, (
-            flat_ids,
-            flat_weights,
-            valid_counts,
-        ) in extracted_results.items():
-            node_type = self._ntype_id_to_ntype[node_type_id]
-            node_type_to_flat_ids[node_type] = flat_ids.to(device)
-            node_type_to_flat_weights[node_type] = flat_weights.to(device)
-            node_type_to_valid_counts[node_type] = valid_counts.to(device)
-        return (
-            node_type_to_flat_ids,
-            node_type_to_flat_weights,
-            node_type_to_valid_counts,
+            device,
         )
 
     async def _sample_from_nodes(
