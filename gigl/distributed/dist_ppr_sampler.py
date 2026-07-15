@@ -48,6 +48,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     scores are approximated here using the Forward Push algorithm (Andersen et
     al., 2006).
 
+    Residual top-up provides a cheaper way to increase returned sequence volume
+    without lowering ``eps``.  Lower ``eps`` thresholds re-enqueue more
+    low-residual nodes, but also increase push iterations and neighbor-fetch
+    work.  Top-up instead fills unused output slots with positive-residual nodes
+    already discovered during Forward Push; these are the nodes that are closest
+    to being re-enqueued if the threshold were lower.
+
     This sampler supports both homogeneous and heterogeneous graphs. For heterogeneous graphs,
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
@@ -72,7 +79,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                keep samples closer to seeds. Typical values: 0.15-0.25.
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
-        max_ppr_nodes: Maximum number of nodes to return per seed based on PPR scores.
+        max_ppr_nodes: Maximum number of nodes to return per seed. If finalized
+            PPR scores produce fewer than this cap and residual top-up is
+            enabled, discovered residual candidates fill the remaining slots
+            with score ``ppr_score + residual``.  Returned nodes are sorted by
+            emitted score, but residual candidates do not displace finalized
+            PPR nodes when finalized scores already fill the cap.
+        enable_residual_topup: Whether to include residual candidates discovered
+            during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
+            scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
@@ -87,6 +102,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         alpha: float = 0.5,
         eps: float = 1e-4,
         max_ppr_nodes: int = 50,
+        enable_residual_topup: bool = True,
         num_neighbors_per_hop: int = 100_000,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
@@ -95,6 +111,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         super().__init__(*args, **kwargs)
         self._alpha = alpha
         self._max_ppr_nodes = max_ppr_nodes
+        self._enable_residual_topup = enable_residual_topup
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
@@ -273,6 +290,72 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for eid, output in zip(eids, outputs)
         }
 
+    def _extract_ppr_state_top_k(
+        self,
+        ppr_state,
+        device: torch.device,
+        max_ppr_nodes: int,
+    ) -> tuple[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    ]:
+        """Extract PPR neighbors from a completed C++ Forward Push state.
+
+        The C++ kernel indexes node types by compact integer IDs for speed.
+        This helper translates those IDs back to GiGL node-type keys and
+        preserves the homogeneous return shape expected by the rest of the
+        sampler.
+
+        ``max_ppr_nodes`` is the combined per-seed cap across finalized PPR and
+        residual top-up candidates. If residual top-up is enabled, C++ derives
+        the residual candidate budget from this cap after selecting finalized
+        PPR nodes.
+
+        Returns:
+            ``(flat_ids, flat_weights, valid_counts)`` for homogeneous graphs,
+            or three dictionaries keyed by node type for heterogeneous graphs.
+            ``flat_ids`` and ``flat_weights`` are concatenated across seeds;
+            ``valid_counts`` stores how many selected nodes belong to each seed.
+        """
+        # Translate ntype_id integer keys back to NodeType strings for the rest
+        # of the pipeline, and move tensors to the correct device.
+        ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+
+        extracted_results = ppr_state.extract_top_k_with_residual_top_up(
+            max_ppr_nodes,
+            self._enable_residual_topup,
+        )
+
+        for ntype_id, (
+            flat_ids,
+            flat_weights,
+            valid_counts,
+        ) in extracted_results.items():
+            ntype = self._ntype_id_to_ntype[ntype_id]
+            ntype_to_flat_ids[ntype] = flat_ids.to(device)
+            ntype_to_flat_weights[ntype] = flat_weights.to(device)
+            ntype_to_valid_counts[ntype] = valid_counts.to(device)
+
+        if self._is_homogeneous:
+            assert (
+                len(ntype_to_flat_ids) == 1
+                and DEFAULT_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
+            )
+            return (
+                ntype_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                ntype_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            )
+        else:
+            return (
+                ntype_to_flat_ids,
+                ntype_to_flat_weights,
+                ntype_to_valid_counts,
+            )
+
     async def _compute_ppr_scores(
         self,
         seed_nodes: torch.Tensor,
@@ -374,36 +457,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 None, ppr_state.push_residuals, fetched_by_etype_id
             )
 
-        # Translate ntype_id integer keys back to NodeType strings for the rest
-        # of the pipeline, and move tensors to the correct device.
-        ntype_to_flat_ids: dict[NodeType, torch.Tensor] = {}
-        ntype_to_flat_weights: dict[NodeType, torch.Tensor] = {}
-        ntype_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-
-        for ntype_id, (flat_ids, flat_weights, valid_counts) in ppr_state.extract_top_k(
-            self._max_ppr_nodes
-        ).items():
-            ntype = self._ntype_id_to_ntype[ntype_id]
-            ntype_to_flat_ids[ntype] = flat_ids.to(device)
-            ntype_to_flat_weights[ntype] = flat_weights.to(device)
-            ntype_to_valid_counts[ntype] = valid_counts.to(device)
-
-        if self._is_homogeneous:
-            assert (
-                len(ntype_to_flat_ids) == 1
-                and DEFAULT_HOMOGENEOUS_NODE_TYPE in ntype_to_flat_ids
-            )
-            return (
-                ntype_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                ntype_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-            )
-        else:
-            return (
-                ntype_to_flat_ids,
-                ntype_to_flat_weights,
-                ntype_to_valid_counts,
-            )
+        # Regular sampling uses residual top-up as fill-only under the
+        # max_ppr_nodes cap.  If finalized PPR scores already fill that cap,
+        # there is no remaining budget for residual candidates.
+        return self._extract_ppr_state_top_k(
+            ppr_state,
+            device,
+            max_ppr_nodes=self._max_ppr_nodes,
+        )
 
     async def _sample_from_nodes(
         self,
