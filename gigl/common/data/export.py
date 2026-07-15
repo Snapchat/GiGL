@@ -348,7 +348,6 @@ def _load_records_to_bigquery(
     table_id: str,
     schema: Sequence[bigquery.SchemaField],
     should_run_async: bool = False,
-    quota_project_id: Optional[str] = None,
 ) -> LoadJob:
     """
     Loads multiple Avro files containing GNN records from GCS into BigQuery.
@@ -360,10 +359,10 @@ def _load_records_to_bigquery(
         table_id (str): The BigQuery table ID.
         schema (Sequence[bigquery.SchemaField]): The BigQuery schema for the records.
         should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
-        quota_project_id (Optional[str]): The GCP project to bill for BigQuery quota / usage. Scopes only this
-            BigQuery client, leaving other Google clients unaffected. When None (the default), the
-            ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable is consulted; if that is also unset, no quota
-            project is forced and google-auth's default resolution applies.
+
+    The BigQuery quota / billing project may be overridden via the
+    ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable, which is resolved by
+    :class:`~gigl.src.common.utils.bq.BqUtils`.
 
     Returns:
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
@@ -372,7 +371,7 @@ def _load_records_to_bigquery(
         `should_run_async=True`.
     """
     logger.info(f"Loading records from {gcs_folder} to BigQuery.")
-    bq_utils = BqUtils(project=project_id, quota_project_id=quota_project_id)
+    bq_utils = BqUtils(project=project_id)
 
     # Configure the load job
     job_config = bigquery.LoadJobConfig(
@@ -398,7 +397,6 @@ def load_embeddings_to_bigquery(
     dataset_id: str,
     table_id: str,
     should_run_async: bool = False,
-    quota_project_id: Optional[str] = None,
 ) -> LoadJob:
     """
     Loads multiple Avro files containing GNN embeddings from GCS into BigQuery.
@@ -417,9 +415,10 @@ def load_embeddings_to_bigquery(
         dataset_id (str): The BigQuery dataset ID.
         table_id (str): The BigQuery table ID.
         should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
-        quota_project_id (Optional[str]): The GCP project to bill for BigQuery quota / usage. Scopes only this
-            BigQuery client, leaving other Google clients unaffected. When None (the default), no quota project
-            is forced and google-auth's default resolution applies.
+
+    The BigQuery quota / billing project may be overridden via the
+    ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable, which is resolved by
+    :class:`~gigl.src.common.utils.bq.BqUtils`.
 
     Returns:
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
@@ -434,7 +433,6 @@ def load_embeddings_to_bigquery(
         table_id,
         EMBEDDING_BIGQUERY_SCHEMA,
         should_run_async,
-        quota_project_id=quota_project_id,
     )
 
 
@@ -444,7 +442,6 @@ def load_predictions_to_bigquery(
     dataset_id: str,
     table_id: str,
     should_run_async: bool = False,
-    quota_project_id: Optional[str] = None,
 ) -> LoadJob:
     """
     Loads multiple Avro files containing GNN predictions from GCS into BigQuery.
@@ -463,9 +460,10 @@ def load_predictions_to_bigquery(
         dataset_id (str): The BigQuery dataset ID.
         table_id (str): The BigQuery table ID.
         should_run_async (bool): Whether loading to bigquery step should happen asynchronously. Defaults to False.
-        quota_project_id (Optional[str]): The GCP project to bill for BigQuery quota / usage. Scopes only this
-            BigQuery client, leaving other Google clients unaffected. When None (the default), no quota project
-            is forced and google-auth's default resolution applies.
+
+    The BigQuery quota / billing project may be overridden via the
+    ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable, which is resolved by
+    :class:`~gigl.src.common.utils.bq.BqUtils`.
 
     Returns:
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
@@ -480,5 +478,4 @@ def load_predictions_to_bigquery(
         table_id,
         PREDICTION_BIGQUERY_SCHEMA,
         should_run_async,
-        quota_project_id=quota_project_id,
     )
