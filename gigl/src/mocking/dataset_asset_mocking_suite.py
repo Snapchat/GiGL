@@ -11,9 +11,9 @@ from torch_geometric.data import HeteroData
 
 from gigl.common.constants import GIGL_ROOT_DIR
 from gigl.common.logger import Logger
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.mocking.dataset_asset_mocker import DatasetAssetMocker
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.pyg_datasets_forks import CoraFromGCS, DBLPFromGCS

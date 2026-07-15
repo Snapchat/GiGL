@@ -6,6 +6,7 @@ from typing import Optional
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
@@ -23,7 +24,6 @@ from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrappe
 from gigl.src.common.types.pb_wrappers.trained_model_metadata import (
     TrainedModelMetadataPbWrapper,
 )
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSchema
 from snapchat.research.gbml import (
     dataset_metadata_pb2,

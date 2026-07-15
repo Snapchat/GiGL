@@ -14,8 +14,11 @@ import gigl.src.common.constants.gcs as gcs_consts
 import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
+from gigl.common.utils.time import current_formatted_datetime
+from gigl.common.utils.timeout import timeout
 from gigl.src.common.constants.graph_metadata import (
     DEFAULT_CONDENSED_EDGE_TYPE,
     DEFAULT_CONDENSED_NODE_TYPE,
@@ -33,9 +36,6 @@ from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrap
 from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
-from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.time import current_formatted_datetime
-from gigl.src.common.utils.timeout import timeout
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo

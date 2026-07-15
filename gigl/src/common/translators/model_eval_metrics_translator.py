@@ -5,8 +5,8 @@ from pathlib import Path
 
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.src.common.types.model_eval_metrics import EvalMetricsCollection
-from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 

@@ -12,12 +12,12 @@ from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
+from gigl.common.utils.file_loader import FileLoader
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.env.pipelines_config import get_resource_config
 from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.file_loader import FileLoader
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )

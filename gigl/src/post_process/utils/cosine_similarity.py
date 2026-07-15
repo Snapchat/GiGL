@@ -4,9 +4,9 @@ from typing import Tuple
 
 import pandas as pd
 
+from gigl.common.constants import DEFAULT_DATE_FORMAT
+from gigl.common.utils.bq import BqUtils
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.constants.time import DEFAULT_DATE_FORMAT
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.inference.v1.lib.inference_output_schema import (
     DEFAULT_EMBEDDING_FIELD,
     DEFAULT_NODE_ID_FIELD,

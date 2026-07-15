@@ -17,11 +17,11 @@ from torch_geometric.data import HeteroData
 
 from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
+from gigl.common.utils.file_loader import FileLoader
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
 from gigl.src.common.types.graph_data import CondensedNodeType, EdgeType, Node, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
 
 gigl_root_dir = pathlib.Path(__file__).parent.parent.parent.parent.parent
@@ -60,7 +60,7 @@ class PbVisualizer:
         )
         graph_metadata_pb_wrapper = frozen_task_config.graph_metadata_pb_wrapper
 
-        from gigl.src.common.utils.bq import BqUtils
+        from gigl.common.utils.bq import BqUtils
 
         bq_utils = BqUtils()
 

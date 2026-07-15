@@ -204,7 +204,7 @@ def _load_yaml_payload(uri: str) -> dict[str, Any]:
         return payload or {}
 
     from gigl.common import UriFactory
-    from gigl.src.common.utils.file_loader import FileLoader
+    from gigl.common.utils.file_loader import FileLoader
 
     temp_file = FileLoader().load_to_temp_file(
         file_uri_src=UriFactory.create_uri(uri),

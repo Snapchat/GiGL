@@ -8,6 +8,7 @@ from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.gcs import GcsUtils
 from gigl.src.common.constants import gcs as gcs_constants
 from gigl.src.common.constants.components import GiGLComponents
@@ -18,7 +19,6 @@ from gigl.src.common.translators.model_eval_metrics_translator import (
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.model_eval_metrics import EvalMetricsCollection
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,

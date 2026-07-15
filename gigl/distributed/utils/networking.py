@@ -8,6 +8,7 @@ import torch
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.vertex_ai_context import (
     ClusterSpec,
     get_cluster_spec,
@@ -20,7 +21,6 @@ from gigl.env.distributed import (
     GraphStoreInfo,
 )
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 

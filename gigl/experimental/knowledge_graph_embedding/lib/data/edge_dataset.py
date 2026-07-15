@@ -8,6 +8,7 @@ from torch.utils.data import IterableDataset
 import gigl.experimental.knowledge_graph_embedding.lib.constants.gcs as gcs_constants
 from gigl.common.logger import Logger
 from gigl.common.types.uri.gcs_uri import GcsUri
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed.dist_context import DistributedContext
@@ -24,7 +25,6 @@ from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.dataset_split import DatasetSplit
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.data_preprocessor.lib.enumerate.utils import EnumeratorEdgeTypeMetadata
 from gigl.src.data_preprocessor.lib.ingest.bigquery import BigqueryEdgeDataReference
 

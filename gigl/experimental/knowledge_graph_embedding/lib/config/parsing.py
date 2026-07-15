@@ -10,12 +10,12 @@ import gigl.experimental.knowledge_graph_embedding.lib.constants.gcs as gcs_cons
 import gigl.experimental.knowledge_graph_embedding.lib.constants.local as local_constants
 from gigl.common import GcsUri, LocalUri, UriFactory
 from gigl.common.types.uri.uri import Uri
+from gigl.common.utils.file_loader import FileLoader
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
-from gigl.src.common.utils.file_loader import FileLoader
 
 
 def build_modeling_and_resource_config_from_args(

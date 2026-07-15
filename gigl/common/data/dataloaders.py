@@ -11,8 +11,8 @@ import torch
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
+from gigl.common.utils.file_loader import FileLoader
 from gigl.src.common.types.features import FeatureTypes
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 
 logger = Logger()

@@ -79,3 +79,11 @@ DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH: Final[str] = _make_file_vars[
     "DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH"
 ]
 # ===============================================================================================
+
+
+# Datetime format constants
+DEFAULT_DATETIME_FORMAT: Final[str] = "%Y-%m-%d--%H-%M-%S-%Z"
+DEFAULT_DATE_FORMAT: Final[str] = "%Y%m%d"
+NODASH_DATE_FMT: Final[str] = "%Y%m%d"
+NODASH_DATETIME_FORMAT: Final[str] = "%Y%m%d%H%M%S"
+DASH_DATE_FMT: Final[str] = "%Y-%m-%d"

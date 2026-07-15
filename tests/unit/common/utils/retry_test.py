@@ -2,7 +2,7 @@ from time import sleep, time
 
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
-from gigl.src.common.utils.timeout import TimedOutException
+from gigl.common.utils.timeout import TimedOutException
 from tests.test_assets.test_case import TestCase
 
 logger = Logger()

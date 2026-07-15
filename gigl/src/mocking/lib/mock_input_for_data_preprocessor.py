@@ -7,8 +7,8 @@ from google.cloud import bigquery
 
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.mocking.lib.constants import (
     get_example_task_edges_bq_table_path,
     get_example_task_nodes_bq_table_path,

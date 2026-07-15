@@ -5,6 +5,7 @@ from typing import Iterable, Set, Tuple
 
 from gigl.common import LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,
@@ -22,7 +23,6 @@ from gigl.src.common.types.pb_wrappers.graph_data_types import (
 from gigl.src.common.types.pb_wrappers.graph_data_types_utils import (
     get_dehydrated_node_pb_wrappers_from_edge_wrapper,
 )
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (

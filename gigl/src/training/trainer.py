@@ -4,10 +4,10 @@ from typing import Optional
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 
 # TODO: (svij) Rename Trainer to TrainerV1

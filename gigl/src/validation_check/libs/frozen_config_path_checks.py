@@ -2,10 +2,10 @@ from typing import Optional, Set
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import gbml_config_pb2
 
 logger = Logger()

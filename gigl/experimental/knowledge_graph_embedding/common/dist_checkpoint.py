@@ -15,8 +15,8 @@ from torch.distributed.checkpoint.stateful import Stateful
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.local_fs import delete_local_directory
-from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 

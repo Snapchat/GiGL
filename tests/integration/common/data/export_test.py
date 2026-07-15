@@ -7,9 +7,9 @@ from parameterized import param, parameterized
 from gigl.common import GcsUri
 from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.utils.bq import BqUtils
 from tests.test_assets.test_case import TestCase
 
 logger = Logger()

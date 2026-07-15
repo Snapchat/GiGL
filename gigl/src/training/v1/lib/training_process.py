@@ -13,12 +13,15 @@ import torch
 import torch.distributed
 import torch.nn.parallel
 
-import gigl.src.common.utils.model as model_utils
+import gigl.common.utils.model as model_utils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils, torch_training
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.local_fs import does_path_exist
+from gigl.common.utils.model import load_state_dict_from_uri
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.common.utils.torch_training import (
     get_distributed_backend,
     get_rank,
@@ -42,13 +45,10 @@ from gigl.src.common.translators.model_eval_metrics_translator import (
 from gigl.src.common.types.model_eval_metrics import EvalMetricsCollection
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
 )
-from gigl.src.common.utils.model import load_state_dict_from_uri
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.training.v1.lib.base_trainer import BaseTrainer
 
 logger = Logger()

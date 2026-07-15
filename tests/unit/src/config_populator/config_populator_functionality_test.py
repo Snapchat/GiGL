@@ -5,13 +5,13 @@ from parameterized import param, parameterized
 from gigl.common import GcsUri, LocalUri
 from gigl.common.logger import Logger
 from gigl.common.metrics.base_metrics import NopMetricsPublisher
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.common.utils import metrics_service_provider
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from snapchat.research.gbml import (
     dataset_metadata_pb2,

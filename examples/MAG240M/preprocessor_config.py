@@ -15,13 +15,13 @@ from examples.MAG240M.queries import (
     query_template_reindex_author_writes_paper_table,
 )
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessorConfig
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
     DataPreprocessorConfig,

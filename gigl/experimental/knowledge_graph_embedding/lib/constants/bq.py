@@ -1,7 +1,7 @@
 import gigl.src.common.constants.bq as bq_constants
+from gigl.common.utils.bq import BqUtils
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType
-from gigl.src.common.utils.bq import BqUtils
 
 
 def get_src_node_embedding_table_for_edge_type(

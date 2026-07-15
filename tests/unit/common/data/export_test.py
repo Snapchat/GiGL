@@ -271,7 +271,7 @@ class TestEmbeddingExporter(TestCase):
                 records = list(reader)
                 self.assertEqual(records, expected_records_by_batch[i])
 
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_flush_resets_buffer(self, mock_gcs_utils_class):
         # Mock inputs
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
@@ -324,7 +324,7 @@ class TestEmbeddingExporter(TestCase):
         self.assertEqual(records, expected_records)
 
     @patch("time.sleep")
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_write_embeddings_to_gcs_upload_retries_on_google_cloud_error_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
@@ -347,7 +347,7 @@ class TestEmbeddingExporter(TestCase):
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("time.sleep")
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_write_embeddings_to_gcs_upload_retries_on_request_exception_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
@@ -372,7 +372,7 @@ class TestEmbeddingExporter(TestCase):
             exporter.flush_records()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_skips_flush_if_empty(self, mock_gcs_utils_class):
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
 
@@ -632,7 +632,7 @@ class TestPredictionsExporter(TestCase):
                 records = list(reader)
                 self.assertRecordsAlmostEqual(records, expected_records_by_batch[i])
 
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_flush_resets_buffer(self, mock_gcs_utils_class):
         # Mock inputs
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
@@ -676,7 +676,7 @@ class TestPredictionsExporter(TestCase):
         self.assertRecordsAlmostEqual(records, expected_records)
 
     @patch("time.sleep")
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_write_predictions_to_gcs_upload_retries_on_google_cloud_error_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
@@ -699,7 +699,7 @@ class TestPredictionsExporter(TestCase):
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
     @patch("time.sleep")
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_write_predictions_to_gcs_upload_retries_on_request_exception_and_fails(
         self, mock_gcs_utils_class, mock_sleep
     ):
@@ -724,7 +724,7 @@ class TestPredictionsExporter(TestCase):
             exporter.flush_records()
         self.assertEqual(mock_gcs_utils.upload_from_filelike.call_count, 6)
 
-    @patch("gigl.src.common.utils.file_loader.GcsUtils")
+    @patch("gigl.common.utils.file_loader.GcsUtils")
     def test_skips_flush_if_empty(self, mock_gcs_utils_class):
         gcs_base_uri = GcsUri("gs://test-bucket/test-folder")
 

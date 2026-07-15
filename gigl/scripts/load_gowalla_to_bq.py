@@ -28,7 +28,7 @@ import requests
 
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
-from gigl.src.common.utils.bq import BqUtils
+from gigl.common.utils.bq import BqUtils
 
 logger = Logger()
 

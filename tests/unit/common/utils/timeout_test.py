@@ -1,6 +1,6 @@
 from time import sleep
 
-from gigl.src.common.utils.timeout import TimedOutException, timeout
+from gigl.common.utils.timeout import TimedOutException, timeout
 from tests.test_assets.test_case import TestCase
 
 

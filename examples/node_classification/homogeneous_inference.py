@@ -44,13 +44,13 @@ from examples.node_classification.models import (
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.data.export import PredictionExporter, load_predictions_to_bigquery
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
+from gigl.common.utils.model import load_state_dict_from_uri
 from gigl.distributed import DistDataset, build_dataset_from_task_config_uri
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.utils.sampling import parse_fanout
 

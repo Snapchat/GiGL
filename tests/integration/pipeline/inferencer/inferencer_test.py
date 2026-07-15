@@ -3,16 +3,16 @@ import tempfile
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.bq import get_embeddings_table, get_predictions_table
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.inference.v1.gnn_inferencer import InferencerV1
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata

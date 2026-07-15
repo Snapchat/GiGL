@@ -4,7 +4,7 @@ from typing import Callable, Optional, Tuple, Type, TypeVar, Union
 from xmlrpc.client import Boolean
 
 from gigl.common.logger import Logger
-from gigl.src.common.utils.timeout import TimedOutException, timeout
+from gigl.common.utils.timeout import TimedOutException, timeout
 
 T = TypeVar("T")  # return type
 

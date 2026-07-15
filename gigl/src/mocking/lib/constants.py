@@ -1,8 +1,8 @@
 import gigl.env.dep_constants as dep_constants
 from gigl.common import GcsUri, LocalUri
+from gigl.common.utils.bq import BqUtils
 from gigl.src.common.constants.local_fs import get_gigl_root_directory
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
-from gigl.src.common.utils.bq import BqUtils
 
 MOCK_DATA_GCS_BUCKET = GcsUri(f"gs://{dep_constants.GIGL_PUBLIC_BUCKET_NAME}/")
 MOCK_DATA_BQ_DATASET_NAME = dep_constants.GIGL_PUBLIC_DATASET_NAME

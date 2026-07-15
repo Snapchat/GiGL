@@ -6,9 +6,10 @@ from typing import Tuple
 import tensorflow as tf
 from google.cloud import bigquery
 
-import gigl.src.common.utils.model as model_utils
+import gigl.common.utils.model as model_utils
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.os_utils import import_obj
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
@@ -23,7 +24,6 @@ from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.inference.v1.lib.base_inferencer import BaseInferencer, InferBatchResults
 from gigl.src.inference.v1.lib.inference_output_schema import (
     DEFAULT_EMBEDDING_FIELD,

@@ -8,6 +8,7 @@ from tensorflow_transform.tf_metadata import schema_utils
 
 from gigl.common import GcsUri, LocalUri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,
@@ -16,7 +17,6 @@ from gigl.src.common.types.graph_data import (
     EdgeUsageType,
     NodeType,
 )
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict, InstanceDict
 from gigl.src.mocking.lib.constants import (

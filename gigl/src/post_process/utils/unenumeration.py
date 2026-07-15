@@ -8,11 +8,11 @@ import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
 import gigl.src.inference.v1.lib.queries as inference_queries
 from gigl.common.env_config import get_available_cpus
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.inference.lib.assets import InferenceAssets
 from gigl.src.inference.v1.lib.inference_output_schema import (
     DEFAULT_EMBEDDINGS_TABLE_SCHEMA,
