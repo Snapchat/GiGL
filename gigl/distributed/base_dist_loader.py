@@ -242,7 +242,6 @@ class BaseDistLoader(DistLoader):
         )
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
-        self._node_quantization_metadata = dataset_schema.node_quantization_metadata
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers
@@ -998,7 +997,12 @@ class BaseDistLoader(DistLoader):
             # transfers are complete before the parent _collate_fn processes
             # the message.
             torch.cuda.current_stream().synchronize()
-        return super()._collate_fn(msg)
+
+        collate_start_time = time.perf_counter()
+        out = super()._collate_fn(msg)
+        collate_time = time.perf_counter() - collate_start_time
+        logger.info(f"--* GLT base loader collate time: {collate_time}")
+        return out
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
