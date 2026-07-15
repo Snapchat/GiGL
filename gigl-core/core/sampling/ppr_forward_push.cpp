@@ -282,9 +282,7 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
             const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
             const auto& scores = nodeTypeState.pprScores;
-            const auto higherScore = [](const auto& a, const auto& b) {
-                return a.second > b.second;
-            };
+            const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
 
             const int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
             const int32_t residualTopUpBudget = enableResidualTopUp ? maxPPRNodes - topK : 0;
@@ -304,16 +302,10 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                     // after top-up candidates are selected, so this pass only
                     // needs to partition out the raw-PPR top K.
                     if (topK < static_cast<int32_t>(scorePairs.size())) {
-                        std::nth_element(scorePairs.begin(),
-                                         scorePairs.begin() + topK,
-                                         scorePairs.end(),
-                                         higherScore);
+                        std::nth_element(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
                     }
                 } else {
-                    std::partial_sort(scorePairs.begin(),
-                                      scorePairs.begin() + topK,
-                                      scorePairs.end(),
-                                      higherScore);
+                    std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
                 }
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
@@ -346,8 +338,7 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                     residualPairs.emplace_back(nodeId, outputScore);
                 }
 
-                const int32_t residualTopK =
-                    std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
+                const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
                 if (residualTopK > 0) {
                     // Residual candidates only need selection here; selected
                     // finalized and residual rows are sorted together below.
