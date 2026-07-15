@@ -287,7 +287,7 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
             const int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
             const int32_t residualTopUpBudget = enableResidualTopUp ? maxPPRNodes - topK : 0;
             std::vector<std::pair<int32_t, double>> selectedPairs;
-            selectedPairs.reserve(static_cast<size_t>(topK + residualTopUpBudget));
+            selectedPairs.reserve(static_cast<size_t>(topK) + static_cast<size_t>(residualTopUpBudget));
             std::unordered_set<int32_t> selectedPPRNodeIds;
             if (topK > 0) {
                 if (residualTopUpBudget > 0) {
