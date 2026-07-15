@@ -200,6 +200,58 @@ class TestRemoteDistDataset(RemoteDistDatasetTestBase):
         self.assertIsNone(remote_dataset.fetch_edge_types())
         self.assertIsNone(remote_dataset.fetch_node_types())
 
+    def test_fetch_edge_feature_info_populated_from_server(self, mock_request):
+        """Edge feature info is fetched from server rank 0 for the compute-side schema.
+
+        The ``with_edge`` sampling flag is derived on the compute side as
+        ``dataset_schema.edge_feature_info is not None`` (see
+        ``BaseDistLoader.create_sampling_config``). This test confirms the field
+        is populated from the storage cluster when the graph has edge features,
+        so that derivation yields ``with_edge=True`` off-node.
+        """
+        global _test_server
+        num_edges = DEFAULT_HOMOGENEOUS_EDGE_INDEX.shape[1]
+        dataset_with_edge_features = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+            node_features=torch.zeros(10, 3),
+            edge_features=torch.zeros(num_edges, 4),
+        )
+        _test_server = DistServer(dataset_with_edge_features)
+        dist_server_module._dist_server = _test_server
+
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        edge_feature_info = remote_dataset.fetch_edge_feature_info()
+        self.assertEqual(
+            edge_feature_info,
+            FeatureInfo(dim=4, dtype=torch.float32),
+        )
+        # The derivation used off-node by create_sampling_config.
+        self.assertTrue(edge_feature_info is not None)
+
+    def test_fetch_edge_feature_info_none_without_edge_features(self, mock_request):
+        """Edge feature info is ``None`` off-node when the graph has no edge features.
+
+        Sibling of ``test_fetch_edge_feature_info_populated_from_server`` for the
+        other ``with_edge`` path: a graph without edge features yields a ``None``
+        ``edge_feature_info``, so ``BaseDistLoader.create_sampling_config`` derives
+        ``with_edge=False`` on the compute side.
+        """
+        global _test_server
+        dataset_without_edge_features = create_homogeneous_dataset(
+            edge_index=DEFAULT_HOMOGENEOUS_EDGE_INDEX,
+            node_features=torch.zeros(10, 3),
+        )
+        _test_server = DistServer(dataset_without_edge_features)
+        dist_server_module._dist_server = _test_server
+
+        cluster_info = _create_mock_graph_store_info()
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+
+        # None edge_feature_info -> create_sampling_config derives with_edge=False.
+        self.assertIsNone(remote_dataset.fetch_edge_feature_info())
+
     def test_cluster_info_property(self, mock_request):
         cluster_info = _create_mock_graph_store_info(
             num_storage_nodes=3, num_compute_nodes=2
