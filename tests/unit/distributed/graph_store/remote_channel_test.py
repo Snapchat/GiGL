@@ -166,7 +166,7 @@ class RemoteReceivingChannelTest(TestCase):
         channel.reset()
 
         pill = {SAMPLING_ERROR_KEY: encode_sampling_error("boom")}
-        # Responses are mocked returned messages from the server 
+        # Responses are mocked returned messages from the server
         responses = iter([(pill, False), (None, True)])
 
         def _mock_async_request_server(server_rank, func, channel_id):
