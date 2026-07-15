@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <tuple>
 #include <unordered_map>
@@ -147,6 +149,65 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     return result;
 }
 
+DrainedTypedPPRQueues drainTypedPPRChannelQueues(const std::vector<PPRForwardPush*>& states,
+                                                 const std::vector<int32_t>& fetchIterationCounts,
+                                                 int32_t maxFetchIterations) {
+    TORCH_CHECK(states.size() == fetchIterationCounts.size(),
+                "Expected one fetch iteration count per PPR state, got ",
+                fetchIterationCounts.size(),
+                " counts for ",
+                states.size(),
+                " states.");
+
+    DrainedTypedPPRQueues drained;
+    std::unordered_map<int32_t, std::unordered_set<int64_t>> nodeIdsByEdgeTypeId;
+
+    for (size_t channelIndex = 0; channelIndex < states.size(); ++channelIndex) {
+        PPRForwardPush* state = states[channelIndex];
+        TORCH_CHECK(state != nullptr, "PPR state pointer must not be null.");
+
+        auto nodesByEdgeTypeId = state->drainQueue();
+        if (!nodesByEdgeTypeId.has_value()) {
+            continue;
+        }
+
+        drained.activeChannelIndices.push_back(static_cast<int32_t>(channelIndex));
+
+        bool fetchBudgetRemaining = maxFetchIterations < 0 || fetchIterationCounts[channelIndex] < maxFetchIterations;
+        if (!fetchBudgetRemaining) {
+            continue;
+        }
+
+        std::vector<int32_t> requestedEdgeTypeIds;
+        for (const auto& [edgeTypeId, nodes] : nodesByEdgeTypeId.value()) {
+            if (nodes.numel() == 0) {
+                continue;
+            }
+            TORCH_CHECK(nodes.dim() == 1, "drainQueue() must return 1-D node tensors.");
+            TORCH_CHECK(nodes.scalar_type() == torch::kInt64, "drainQueue() must return int64 node tensors.");
+
+            requestedEdgeTypeIds.push_back(edgeTypeId);
+            auto contiguousNodes = nodes.contiguous();
+            auto nodeAccessor = contiguousNodes.accessor<int64_t, 1>();
+            auto& nodeIds = nodeIdsByEdgeTypeId[edgeTypeId];
+            for (int64_t nodeIndex = 0; nodeIndex < contiguousNodes.size(0); ++nodeIndex) {
+                nodeIds.insert(nodeAccessor[nodeIndex]);
+            }
+        }
+
+        if (!requestedEdgeTypeIds.empty()) {
+            drained.fetchChannelIndices.push_back(static_cast<int32_t>(channelIndex));
+            drained.edgeTypeIdsByFetchChannel.push_back(std::move(requestedEdgeTypeIds));
+        }
+    }
+
+    for (const auto& [edgeTypeId, nodeIds] : nodeIdsByEdgeTypeId) {
+        std::vector<int64_t> nodeIdsToLookup(nodeIds.begin(), nodeIds.end());
+        drained.unionNodesByEdgeTypeId[edgeTypeId] = torch::tensor(nodeIdsToLookup, torch::kLong);
+    }
+    return drained;
+}
+
 void PPRForwardPush::pushResiduals(
     const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId) {
     // Step 1: Persist fetched neighbor lists in the per-state cache. drainQueue()
@@ -266,9 +327,196 @@ void PPRForwardPush::pushResiduals(
     }
 }
 
+static std::vector<std::pair<int32_t, double>> selectPPRPairsWithResidualTopUp(const SeedNodeTypeState& nodeTypeState,
+                                                                               int32_t maxPPRNodes,
+                                                                               int32_t maxResidualNodes,
+                                                                               int32_t maxTotalNodes) {
+    const auto& scores = nodeTypeState.pprScores;
+    const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
+
+    int32_t totalNodeLimit = maxPPRNodes + maxResidualNodes;
+    if (maxTotalNodes >= 0) {
+        totalNodeLimit = maxTotalNodes;
+    }
+
+    const int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
+    const int32_t residualTopUpBudget = std::min(maxResidualNodes, std::max<int32_t>(0, totalNodeLimit - topK));
+    std::vector<std::pair<int32_t, double>> selectedPairs;
+    selectedPairs.reserve(static_cast<size_t>(topK + residualTopUpBudget));
+    std::unordered_set<int32_t> selectedPPRNodeIds;
+    if (topK > 0) {
+        if (residualTopUpBudget > 0) {
+            selectedPPRNodeIds.reserve(static_cast<size_t>(topK));
+        }
+        std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
+        // Selection is intentionally two-phase: finalized nodes are selected
+        // first by raw PPR score, and residual candidates only compete for
+        // the remaining budget.
+        if (maxResidualNodes > 0) {
+            // The final emitted order is sorted by ppr_score + residual after
+            // top-up candidates are selected, so this pass only needs to
+            // partition out the raw-PPR top K.
+            if (topK < static_cast<int32_t>(scorePairs.size())) {
+                std::nth_element(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
+            }
+        } else {
+            std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
+        }
+
+        for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
+            int32_t nodeId = scorePairs[rankIdx].first;
+            double outputScore = scorePairs[rankIdx].second;
+            if (maxResidualNodes > 0) {
+                auto residualIter = nodeTypeState.residuals.find(nodeId);
+                if (residualIter != nodeTypeState.residuals.end()) {
+                    outputScore += residualIter->second;
+                }
+            }
+            selectedPairs.emplace_back(nodeId, outputScore);
+            if (residualTopUpBudget > 0) {
+                selectedPPRNodeIds.insert(nodeId);
+            }
+        }
+    }
+
+    if (residualTopUpBudget > 0) {
+        std::vector<std::pair<int32_t, double>> residualPairs;
+        residualPairs.reserve(nodeTypeState.residuals.size());
+        for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+            if (residual <= 0.0 || selectedPPRNodeIds.find(nodeId) != selectedPPRNodeIds.end()) {
+                continue;
+            }
+
+            auto scoreIter = scores.find(nodeId);
+            double pprScore = (scoreIter != scores.end()) ? scoreIter->second : 0.0;
+            double outputScore = pprScore + residual;
+            residualPairs.emplace_back(nodeId, outputScore);
+        }
+
+        const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
+        if (residualTopK > 0) {
+            // Residual candidates only need selection here; selected finalized
+            // and residual rows are sorted together below.
+            if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
+                std::nth_element(
+                    residualPairs.begin(), residualPairs.begin() + residualTopK, residualPairs.end(), higherScore);
+            }
+
+            for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
+                selectedPairs.emplace_back(residualPairs[rankIdx].first, residualPairs[rankIdx].second);
+            }
+        }
+    }
+
+    if (maxResidualNodes > 0 && selectedPairs.size() > 1) {
+        std::sort(selectedPairs.begin(), selectedPairs.end(), higherScore);
+    }
+    return selectedPairs;
+}
+
+static double clampTypedPPRScore(double score) {
+    if (!std::isfinite(score)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return std::min(std::max(score, 0.0), 1.0);
+}
+
+static void addTypedPPRSeedCandidates(std::unordered_map<int32_t, std::vector<double>>& seedScores,
+                                      std::vector<std::pair<int32_t, double>>& seedChannelCandidates,
+                                      const std::vector<std::pair<int32_t, double>>& nodesAndScores,
+                                      double maxScore,
+                                      int32_t channelIndex,
+                                      int32_t numEdgeAttrFeatures,
+                                      int32_t numChannels) {
+    for (const auto& [nodeId, rawScore] : nodesAndScores) {
+        double score = clampTypedPPRScore(rawScore);
+        if (!std::isfinite(score)) {
+            continue;
+        }
+        double calibratedScore = maxScore > 0.0 ? score / maxScore : 0.0;
+        auto scoreIter = seedScores.find(nodeId);
+        if (scoreIter == seedScores.end()) {
+            scoreIter = seedScores.emplace(nodeId, std::vector<double>(numEdgeAttrFeatures, 0.0)).first;
+        }
+        auto& scoreFeatures = scoreIter->second;
+        scoreFeatures[0] = std::max(scoreFeatures[0], calibratedScore);
+        int32_t channelScoreIndex = 1 + channelIndex;
+        int32_t channelPresenceIndex = 1 + numChannels + channelIndex;
+        scoreFeatures[channelScoreIndex] = std::max(scoreFeatures[channelScoreIndex], calibratedScore);
+        scoreFeatures[channelPresenceIndex] = 1.0;
+        seedChannelCandidates.emplace_back(nodeId, calibratedScore);
+    }
+}
+
+static std::vector<int32_t> selectTypedPPRNodeIds(
+    const std::unordered_map<int32_t, std::vector<double>>& seedScores,
+    std::vector<std::vector<std::pair<int32_t, double>>> candidatesByChannel,
+    const std::vector<int32_t>& channelQuotas,
+    int32_t maxPPRNodes) {
+    struct GlobalCandidate {
+        double bestCalibratedScore;
+        double channelCalibratedScore;
+        int32_t channelIndex;
+        int32_t nodeId;
+    };
+
+    std::vector<GlobalCandidate> globalCandidates;
+    for (int32_t channelIndex = 0; channelIndex < static_cast<int32_t>(candidatesByChannel.size()); ++channelIndex) {
+        auto& candidates = candidatesByChannel[channelIndex];
+        std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+            if (a.second != b.second) {
+                return a.second > b.second;
+            }
+            return a.first < b.first;
+        });
+
+        int32_t channelQuota = channelQuotas[channelIndex];
+        int32_t numCandidates = std::min(channelQuota, static_cast<int32_t>(candidates.size()));
+        for (int32_t candidateIndex = 0; candidateIndex < numCandidates; ++candidateIndex) {
+            int32_t nodeId = candidates[candidateIndex].first;
+            auto scoreIter = seedScores.find(nodeId);
+            if (scoreIter == seedScores.end()) {
+                continue;
+            }
+            globalCandidates.push_back({scoreIter->second[0], candidates[candidateIndex].second, channelIndex, nodeId});
+        }
+    }
+
+    std::sort(globalCandidates.begin(), globalCandidates.end(), [](const auto& a, const auto& b) {
+        if (a.bestCalibratedScore != b.bestCalibratedScore) {
+            return a.bestCalibratedScore > b.bestCalibratedScore;
+        }
+        if (a.channelCalibratedScore != b.channelCalibratedScore) {
+            return a.channelCalibratedScore > b.channelCalibratedScore;
+        }
+        if (a.channelIndex != b.channelIndex) {
+            return a.channelIndex < b.channelIndex;
+        }
+        return a.nodeId < b.nodeId;
+    });
+
+    std::unordered_set<int32_t> selectedNodeIds;
+    std::vector<int32_t> selectedNodes;
+    int32_t selectedReserveSize = std::min(maxPPRNodes, static_cast<int32_t>(globalCandidates.size()));
+    selectedNodeIds.reserve(static_cast<size_t>(selectedReserveSize));
+    selectedNodes.reserve(static_cast<size_t>(selectedReserveSize));
+    for (const auto& candidate : globalCandidates) {
+        if (static_cast<int32_t>(selectedNodes.size()) >= maxPPRNodes) {
+            break;
+        }
+        if (selectedNodeIds.find(candidate.nodeId) != selectedNodeIds.end()) {
+            continue;
+        }
+        selectedNodeIds.insert(candidate.nodeId);
+        selectedNodes.push_back(candidate.nodeId);
+    }
+    return selectedNodes;
+}
+
 std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::
     extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp) {
     TORCH_CHECK(maxPPRNodes >= 0, "maxPPRNodes must be non-negative, got ", maxPPRNodes, ".");
+    int32_t residualTopUpNodes = enableResidualTopUp ? maxPPRNodes : 0;
 
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
@@ -281,83 +529,8 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
             const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
-            const auto& scores = nodeTypeState.pprScores;
-            const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
-
-            const int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
-            const int32_t residualTopUpBudget = enableResidualTopUp ? maxPPRNodes - topK : 0;
-            std::vector<std::pair<int32_t, double>> selectedPairs;
-            selectedPairs.reserve(static_cast<size_t>(topK) + static_cast<size_t>(residualTopUpBudget));
-            std::unordered_set<int32_t> selectedPPRNodeIds;
-            if (topK > 0) {
-                if (residualTopUpBudget > 0) {
-                    selectedPPRNodeIds.reserve(static_cast<size_t>(topK));
-                }
-                std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
-                // Selection is intentionally two-phase: finalized nodes are selected
-                // first by raw PPR score, and residual candidates only compete for
-                // the remaining budget.
-                if (enableResidualTopUp) {
-                    // The final emitted order is sorted by ppr_score + residual
-                    // after top-up candidates are selected, so this pass only
-                    // needs to partition out the raw-PPR top K.
-                    if (topK < static_cast<int32_t>(scorePairs.size())) {
-                        std::nth_element(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
-                    }
-                } else {
-                    std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
-                }
-
-                for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
-                    int32_t nodeId = scorePairs[rankIdx].first;
-                    double outputScore = scorePairs[rankIdx].second;
-                    if (enableResidualTopUp) {
-                        auto residualIter = nodeTypeState.residuals.find(nodeId);
-                        if (residualIter != nodeTypeState.residuals.end()) {
-                            outputScore += residualIter->second;
-                        }
-                    }
-                    selectedPairs.emplace_back(nodeId, outputScore);
-                    if (residualTopUpBudget > 0) {
-                        selectedPPRNodeIds.insert(nodeId);
-                    }
-                }
-            }
-
-            if (residualTopUpBudget > 0) {
-                std::vector<std::pair<int32_t, double>> residualPairs;
-                residualPairs.reserve(nodeTypeState.residuals.size());
-                for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
-                    if (residual <= 0.0 || selectedPPRNodeIds.find(nodeId) != selectedPPRNodeIds.end()) {
-                        continue;
-                    }
-
-                    auto scoreIter = scores.find(nodeId);
-                    double pprScore = (scoreIter != scores.end()) ? scoreIter->second : 0.0;
-                    double outputScore = pprScore + residual;
-                    residualPairs.emplace_back(nodeId, outputScore);
-                }
-
-                const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
-                if (residualTopK > 0) {
-                    // Residual candidates only need selection here; selected
-                    // finalized and residual rows are sorted together below.
-                    if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
-                        std::nth_element(residualPairs.begin(),
-                                         residualPairs.begin() + residualTopK,
-                                         residualPairs.end(),
-                                         higherScore);
-                    }
-
-                    for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
-                        selectedPairs.emplace_back(residualPairs[rankIdx].first, residualPairs[rankIdx].second);
-                    }
-                }
-            }
-
-            if (enableResidualTopUp && selectedPairs.size() > 1) {
-                std::sort(selectedPairs.begin(), selectedPairs.end(), higherScore);
-            }
+            auto selectedPairs =
+                selectPPRPairsWithResidualTopUp(nodeTypeState, maxPPRNodes, residualTopUpNodes, maxPPRNodes);
             for (const auto& [nodeId, score] : selectedPairs) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
                 flatWeights.push_back(score);
@@ -369,6 +542,150 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                               torch::tensor(flatWeights, torch::kDouble),
                               torch::tensor(validCounts, torch::kLong)};
     }
+    return result;
+}
+
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTypedTopKWithResidualTopUp(
+    const std::vector<PPRForwardPush*>& states,
+    const std::vector<int32_t>& channelQuotas,
+    int32_t maxPPRNodes,
+    bool enableResidualTopUp) {
+    TORCH_CHECK(maxPPRNodes >= 0, "maxPPRNodes must be non-negative, got ", maxPPRNodes, ".");
+    TORCH_CHECK(!states.empty(), "Typed PPR extraction requires at least one channel state.");
+    TORCH_CHECK(states.size() == channelQuotas.size(),
+                "Expected one channel quota per typed PPR state, got ",
+                channelQuotas.size(),
+                " quotas for ",
+                states.size(),
+                " states.");
+
+    const auto* firstState = states.front();
+    TORCH_CHECK(firstState != nullptr, "PPR state pointer must not be null.");
+    int32_t batchSize = firstState->_batchSize;
+    int32_t numNodeTypes = firstState->_numNodeTypes;
+    int32_t numChannels = static_cast<int32_t>(states.size());
+    int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
+    int32_t residualTopUpNodes = enableResidualTopUp ? maxPPRNodes : 0;
+
+    for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
+        TORCH_CHECK(channelQuotas[channelIndex] >= 0,
+                    "channelQuotas must be non-negative, got ",
+                    channelQuotas[channelIndex],
+                    " at channel ",
+                    channelIndex,
+                    ".");
+        TORCH_CHECK(states[channelIndex] != nullptr, "PPR state pointer must not be null.");
+        TORCH_CHECK(states[channelIndex]->_batchSize == batchSize,
+                    "All typed PPR channel states must have the same batch size.");
+        TORCH_CHECK(states[channelIndex]->_numNodeTypes == numNodeTypes,
+                    "All typed PPR channel states must have the same node-type count.");
+    }
+
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+    std::vector<int32_t> topUpChannelQuotas(static_cast<size_t>(numChannels), maxPPRNodes);
+
+    for (int32_t nodeTypeId = 0; nodeTypeId < numNodeTypes; ++nodeTypeId) {
+        std::vector<int64_t> flatIds;
+        std::vector<double> flatFeatureValues;
+        std::vector<int64_t> validCounts;
+
+        for (int32_t seedIdx = 0; seedIdx < batchSize; ++seedIdx) {
+            std::unordered_map<int32_t, std::vector<double>> baseScores;
+            std::unordered_map<int32_t, std::vector<double>> extendedScores;
+            std::vector<std::vector<std::pair<int32_t, double>>> baseCandidatesByChannel(
+                static_cast<size_t>(numChannels));
+            std::vector<std::vector<std::pair<int32_t, double>>> extendedCandidatesByChannel(
+                static_cast<size_t>(numChannels));
+
+            for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
+                const auto& nodeTypeState = states[channelIndex]->_state[seedIdx][nodeTypeId];
+                int32_t channelPPRLimit = std::min(channelQuotas[channelIndex], maxPPRNodes);
+                auto selectedPairs =
+                    selectPPRPairsWithResidualTopUp(nodeTypeState, channelPPRLimit, residualTopUpNodes, maxPPRNodes);
+
+                double extendedMaxScore = 0.0;
+                std::vector<std::pair<int32_t, double>> baseNodesAndScores;
+                std::vector<std::pair<int32_t, double>> extendedNodesAndScores;
+                baseNodesAndScores.reserve(static_cast<size_t>(
+                    std::min(channelQuotas[channelIndex], static_cast<int32_t>(selectedPairs.size()))));
+                extendedNodesAndScores.reserve(selectedPairs.size());
+                for (int32_t candidateIndex = 0; candidateIndex < static_cast<int32_t>(selectedPairs.size());
+                     ++candidateIndex) {
+                    double score = clampTypedPPRScore(selectedPairs[candidateIndex].second);
+                    if (!std::isfinite(score)) {
+                        continue;
+                    }
+                    extendedNodesAndScores.emplace_back(selectedPairs[candidateIndex].first, score);
+                    extendedMaxScore = std::max(extendedMaxScore, score);
+                    if (candidateIndex < channelQuotas[channelIndex]) {
+                        baseNodesAndScores.emplace_back(selectedPairs[candidateIndex].first, score);
+                    }
+                }
+
+                addTypedPPRSeedCandidates(baseScores,
+                                          baseCandidatesByChannel[channelIndex],
+                                          baseNodesAndScores,
+                                          extendedMaxScore,
+                                          channelIndex,
+                                          numEdgeAttrFeatures,
+                                          numChannels);
+                addTypedPPRSeedCandidates(extendedScores,
+                                          extendedCandidatesByChannel[channelIndex],
+                                          extendedNodesAndScores,
+                                          extendedMaxScore,
+                                          channelIndex,
+                                          numEdgeAttrFeatures,
+                                          numChannels);
+            }
+
+            std::vector<int32_t> selectedNodes;
+            std::unordered_set<int32_t> selectedNodeIds;
+            auto baseSelectedNodes =
+                selectTypedPPRNodeIds(baseScores, baseCandidatesByChannel, channelQuotas, maxPPRNodes);
+            selectedNodes.reserve(static_cast<size_t>(maxPPRNodes));
+            selectedNodeIds.reserve(static_cast<size_t>(maxPPRNodes));
+            for (int32_t nodeId : baseSelectedNodes) {
+                if (static_cast<int32_t>(selectedNodes.size()) >= maxPPRNodes) {
+                    break;
+                }
+                selectedNodes.push_back(nodeId);
+                selectedNodeIds.insert(nodeId);
+                flatIds.push_back(static_cast<int64_t>(nodeId));
+                const auto& features = baseScores.at(nodeId);
+                flatFeatureValues.insert(flatFeatureValues.end(), features.begin(), features.end());
+            }
+
+            if (static_cast<int32_t>(selectedNodes.size()) < maxPPRNodes) {
+                auto extendedSelectedNodes =
+                    selectTypedPPRNodeIds(extendedScores, extendedCandidatesByChannel, topUpChannelQuotas, maxPPRNodes);
+                for (int32_t nodeId : extendedSelectedNodes) {
+                    if (static_cast<int32_t>(selectedNodes.size()) >= maxPPRNodes) {
+                        break;
+                    }
+                    if (selectedNodeIds.find(nodeId) != selectedNodeIds.end()) {
+                        continue;
+                    }
+                    selectedNodes.push_back(nodeId);
+                    selectedNodeIds.insert(nodeId);
+                    flatIds.push_back(static_cast<int64_t>(nodeId));
+                    const auto& features = extendedScores.at(nodeId);
+                    flatFeatureValues.insert(flatFeatureValues.end(), features.begin(), features.end());
+                }
+            }
+
+            validCounts.push_back(static_cast<int64_t>(selectedNodes.size()));
+        }
+
+        auto flatWeights =
+            torch::tensor(flatFeatureValues, torch::kDouble)
+                .reshape({static_cast<int64_t>(flatIds.size()), static_cast<int64_t>(numEdgeAttrFeatures)});
+        result[nodeTypeId] = {
+            torch::tensor(flatIds, torch::kLong),
+            flatWeights,
+            torch::tensor(validCounts, torch::kLong),
+        };
+    }
+
     return result;
 }
 

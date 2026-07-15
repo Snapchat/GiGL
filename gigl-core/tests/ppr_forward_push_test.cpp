@@ -2,7 +2,10 @@
 #include "sampling/ppr_forward_push.h"
 
 #include <unordered_map>
+#include <unordered_set>
 
+using gigl::drainTypedPPRChannelQueues;
+using gigl::extractTypedTopKWithResidualTopUp;
 using gigl::PPRForwardPush;
 
 // Builds a single-edge-type, single-node-type PPRForwardPush.
@@ -30,6 +33,25 @@ static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torc
              {torch::tensor(nodeIds, torch::kLong),
               torch::tensor(flatNeighborIds, torch::kLong),
               torch::tensor(counts, torch::kLong)}}};
+}
+
+static std::unordered_set<int64_t> tensorValues(const torch::Tensor& values) {
+    std::unordered_set<int64_t> result;
+    auto accessor = values.accessor<int64_t, 1>();
+    for (int64_t index = 0; index < values.size(0); ++index) {
+        result.insert(accessor[index]);
+    }
+    return result;
+}
+
+static std::vector<int64_t> tensorToInt64Vector(const torch::Tensor& values) {
+    std::vector<int64_t> result;
+    auto accessor = values.accessor<int64_t, 1>();
+    result.reserve(static_cast<size_t>(values.size(0)));
+    for (int64_t index = 0; index < values.size(0); ++index) {
+        result.push_back(accessor[index]);
+    }
+    return result;
 }
 
 // After construction, drainQueue() returns the seed node under etype 0.
@@ -108,6 +130,106 @@ TEST(PPRForwardPush, NeighborCacheAvoidsRefetchingPreviouslyFetchedNode) {
     auto iter3 = state.drainQueue();
     ASSERT_TRUE(iter3.has_value());
     EXPECT_TRUE(iter3->empty());
+}
+
+TEST(PPRForwardPush, DrainTypedPPRChannelQueuesUnionsChannelFrontiers) {
+    auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 1});
+    auto channel1 = makeState(/*seeds=*/{1}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 1});
+
+    auto drained = drainTypedPPRChannelQueues(std::vector<PPRForwardPush*>{&channel0, &channel1},
+                                              /*fetchIterationCounts=*/{0, 0},
+                                              /*maxFetchIterations=*/-1);
+
+    EXPECT_EQ(drained.activeChannelIndices, std::vector<int32_t>({0, 1}));
+    EXPECT_EQ(drained.fetchChannelIndices, std::vector<int32_t>({0, 1}));
+    ASSERT_EQ(drained.edgeTypeIdsByFetchChannel.size(), 2);
+    EXPECT_EQ(drained.edgeTypeIdsByFetchChannel[0], std::vector<int32_t>({0}));
+    EXPECT_EQ(drained.edgeTypeIdsByFetchChannel[1], std::vector<int32_t>({0}));
+
+    ASSERT_NE(drained.unionNodesByEdgeTypeId.find(0), drained.unionNodesByEdgeTypeId.end());
+    EXPECT_EQ(tensorValues(drained.unionNodesByEdgeTypeId.at(0)), std::unordered_set<int64_t>({0, 1}));
+}
+
+TEST(PPRForwardPush, DrainTypedPPRChannelQueuesHonorsPerChannelFetchBudget) {
+    auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 1});
+    auto channel1 = makeState(/*seeds=*/{1}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 1});
+
+    auto drained = drainTypedPPRChannelQueues(std::vector<PPRForwardPush*>{&channel0, &channel1},
+                                              /*fetchIterationCounts=*/{1, 0},
+                                              /*maxFetchIterations=*/1);
+
+    EXPECT_EQ(drained.activeChannelIndices, std::vector<int32_t>({0, 1}));
+    EXPECT_EQ(drained.fetchChannelIndices, std::vector<int32_t>({1}));
+    ASSERT_EQ(drained.edgeTypeIdsByFetchChannel.size(), 1);
+    EXPECT_EQ(drained.edgeTypeIdsByFetchChannel[0], std::vector<int32_t>({0}));
+
+    ASSERT_NE(drained.unionNodesByEdgeTypeId.find(0), drained.unionNodesByEdgeTypeId.end());
+    EXPECT_EQ(tensorValues(drained.unionNodesByEdgeTypeId.at(0)), std::unordered_set<int64_t>({1}));
+}
+
+TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
+    std::vector<int32_t> degrees(21, 1);
+    auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
+    auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
+
+    channel0.drainQueue();
+    channel0.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{10}, /*counts=*/{1}));
+    channel1.drainQueue();
+    channel1.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{20}, /*counts=*/{1}));
+
+    auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
+                                                    /*channelQuotas=*/{2, 1},
+                                                    /*maxPPRNodes=*/3,
+                                                    /*enableResidualTopUp=*/true);
+
+    ASSERT_NE(result.find(0), result.end());
+    const auto& [ids, features, counts] = result.at(0);
+    EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 10, 20}));
+    EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({3}));
+    ASSERT_EQ(features.size(0), 3);
+    ASSERT_EQ(features.size(1), 5);
+
+    auto featureAccessor = features.accessor<double, 2>();
+    EXPECT_NEAR(featureAccessor[0][0], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][2], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
+
+    EXPECT_NEAR(featureAccessor[1][0], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][2], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][3], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
+
+    EXPECT_NEAR(featureAccessor[2][0], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][1], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][2], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][3], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][4], 1.0, 1e-9);
+}
+
+TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
+    std::vector<int32_t> degrees(21, 1);
+    auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
+    auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
+
+    channel0.drainQueue();
+    channel0.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{10}, /*counts=*/{1}));
+    channel1.drainQueue();
+    channel1.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{20}, /*counts=*/{1}));
+
+    auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
+                                                    /*channelQuotas=*/{2, 1},
+                                                    /*maxPPRNodes=*/3,
+                                                    /*enableResidualTopUp=*/false);
+
+    ASSERT_NE(result.find(0), result.end());
+    const auto& [ids, features, counts] = result.at(0);
+    EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0}));
+    EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({1}));
+    ASSERT_EQ(features.size(0), 1);
+    ASSERT_EQ(features.size(1), 5);
 }
 
 // Two seeds (0 and 1) both push residual to sink node 2.  The neighbor-lookup
