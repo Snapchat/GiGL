@@ -74,7 +74,7 @@ class TestGcsUtils(TestCase):
         # Since this will always return 3 blobs, delete_files_in_bucket_dir should throw assertion error
         # since it wont be able to validate deletion of all blobs
         mock_bucket.list_blobs.return_value = mock_blobs
-        mock_client.get_bucket.return_value = mock_bucket
+        mock_client.bucket.return_value = mock_bucket
 
         with patch("gigl.common.utils.gcs.storage.Client", return_value=mock_client):
             # Define GCS URI

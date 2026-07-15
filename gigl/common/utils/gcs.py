@@ -303,12 +303,12 @@ class GcsUtils:
 
     def does_gcs_file_exist(self, gcs_path: GcsUri) -> bool:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
-        blob = self.__storage_client.get_bucket(bucket_name).blob(blob_name)
+        blob = self.__storage_client.bucket(bucket_name).blob(blob_name)
         return blob.exists()
 
     def delete_gcs_file_if_exist(self, gcs_path: GcsUri) -> None:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
-        blob = self.__storage_client.get_bucket(bucket_name).blob(blob_name)
+        blob = self.__storage_client.bucket(bucket_name).blob(blob_name)
         if blob.exists():
             blob.delete()
             logger.info(f"Deleted GCS file '{gcs_path}'")
@@ -322,7 +322,7 @@ class GcsUtils:
     ) -> int:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
         matching_blobs = list(
-            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
+            self.__storage_client.bucket(bucket_name).list_blobs(prefix=blob_name)
         )
         if suffix:
             matching_blobs = [
@@ -357,7 +357,7 @@ class GcsUtils:
                 bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(
                     gcs_file
                 )
-                blob = self.__storage_client.get_bucket(bucket_name).blob(blob_name)
+                blob = self.__storage_client.bucket(bucket_name).blob(blob_name)
             else:
                 blob = gcs_file
             matching_blobs.append(blob)
@@ -530,13 +530,13 @@ class GcsUtils:
     def _delete_files_in_bucket_dir(self, gcs_path: GcsUri) -> None:
         bucket_name, blob_name = self.get_bucket_and_blob_path_from_gcs_path(gcs_path)
         matching_blobs = list(
-            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
+            self.__storage_client.bucket(bucket_name).list_blobs(prefix=blob_name)
         )
         logger.info(f"bucket {bucket_name}, prefix {blob_name}")
         self.delete_files(gcs_files=matching_blobs)
         logger.info(f"Files deleted in '{gcs_path}'")
         post_deletion_matching_blobs = list(
-            self.__storage_client.get_bucket(bucket_name).list_blobs(prefix=blob_name)
+            self.__storage_client.bucket(bucket_name).list_blobs(prefix=blob_name)
         )
         assert len(post_deletion_matching_blobs) == 0, (
             f"The GCS dir {gcs_path} could not be deleted completely. Remaining files: {post_deletion_matching_blobs}"
