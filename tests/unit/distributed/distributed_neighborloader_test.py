@@ -1,5 +1,5 @@
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 
 import torch
 import torch.multiprocessing as mp
@@ -8,10 +8,12 @@ from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_free_port
+from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -26,6 +28,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    FeatureInfo,
     FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
@@ -395,6 +398,31 @@ def _run_cora_supervised_node_classification(
             f"Number of labels should match number of nodes, got {datum.y.size(0)} labels and {datum.node.size(0)} nodes"
         )
 
+    shutdown_rpc()
+
+
+def _run_featureless_edge_ids_absent(
+    _,
+    dataset: DistDataset,
+    holder: MutableMapping,
+):
+    # A featureless dataset should sample with with_edge=False, so GLT never
+    # attaches sampled edge ids (``data.edge``) to the produced batches.
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    count = 0
+    edge_ids_absent = True
+    for datum in loader:
+        assert isinstance(datum, Data)
+        if getattr(datum, "edge", None) is not None:
+            edge_ids_absent = False
+        count += 1
+    holder["edge_ids_absent"] = edge_ids_absent
+    holder["count"] = count
     shutdown_rpc()
 
 
@@ -932,6 +960,68 @@ class TestSamplingErrorPropagation(TestCase):
                     feats=torch.ones(n, 3), ids=torch.arange(n)
                 ),
             },
+class WithEdgeDerivationTest(TestCase):
+    """Covers ``create_sampling_config`` deriving ``with_edge`` from edge-feature presence.
+
+    Exercises both paths: ``with_edge=True`` when the dataset has edge features
+    (homogeneous or per-edge-type), and ``with_edge=False`` when it has none.
+    """
+
+    def test_config_with_edge_false_when_no_edge_features(self) -> None:
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=None,  # no edge features
+            edge_dir="out",
+        )
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        self.assertFalse(config.with_edge)
+
+    def test_config_with_edge_true_when_edge_features_present(self) -> None:
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=FeatureInfo(dim=4, dtype=torch.float32),
+            edge_dir="out",
+        )
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        self.assertTrue(config.with_edge)
+
+    def test_config_with_edge_true_for_heterogeneous_edge_feature_dict(self) -> None:
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=[_USER_TO_STORY, _STORY_TO_USER],
+            node_feature_info=None,
+            edge_feature_info={
+                _USER_TO_STORY: FeatureInfo(dim=4, dtype=torch.float32),
+            },
+            edge_dir="out",
+        )
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        self.assertTrue(config.with_edge)
+
+    def test_featureless_dataset_produces_batches_without_edge_ids(self) -> None:
+        # Homogeneous dataset with node features but no edge features: the loader
+        # must still yield batches, and none carry sampled edge ids.
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(5),
+            edge_partition_book=torch.zeros(5),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(5, 2), ids=torch.arange(5)
+            ),
+            partitioned_edge_features=None,
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
             partitioned_node_labels=None,
@@ -961,6 +1051,17 @@ class TestSamplingErrorPropagation(TestCase):
         # The training process raised with the worker's real traceback embedded.
         self.assertIn("sampling worker failed", message.lower())
         self.assertIn("story-to-user", message)
+
+        manager = mp.Manager()
+        holder: MutableMapping = manager.dict()
+        proc = mp.spawn(
+            fn=_run_featureless_edge_ids_absent,
+            args=(dataset, holder),
+            join=False,
+        )
+        proc.join(timeout=120)
+        self.assertGreater(holder["count"], 0)
+        self.assertTrue(holder["edge_ids_absent"])
 
 
 if __name__ == "__main__":

@@ -416,7 +416,7 @@ class BaseDistLoader(DistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=True,
+            with_edge=dataset_schema.edge_feature_info is not None,
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,
