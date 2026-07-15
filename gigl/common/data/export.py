@@ -380,12 +380,9 @@ def _load_records_to_bigquery(
         schema=schema,
     )
 
-    # Build the destination path directly rather than via BqUtils.join_path,
-    # which asserts on dot count and would reject domain-scoped project IDs
-    # (e.g. "example.com:project").
     return bq_utils.load_files_to_bq(
         source_uris=os.path.join(gcs_folder.uri, "*.avro"),
-        bq_path=f"{project_id}.{dataset_id}.{table_id}",
+        bq_path=bq_utils.join_path(project_id, dataset_id, table_id),
         job_config=job_config,
         should_run_async=should_run_async,
     )
