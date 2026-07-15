@@ -8,6 +8,7 @@
 #include <torch/extension.h>
 
 #include <cstdint>
+#include <optional>
 #include <tuple>
 #include <unordered_map>
 
@@ -42,6 +43,29 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
     }
 }
 
+static std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueueWrapper(PPRForwardPush& state) {
+    std::optional<std::unordered_map<int32_t, torch::Tensor>> drained;
+    // The drain mutates only this PPRForwardPush instance and returns torch tensors.
+    // No Python objects are touched until pybind converts the result after return.
+    {
+        py::gil_scoped_release release;
+        drained = state.drainQueue();
+    }
+    return drained;
+}
+
+static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+extractTopKWithResidualTopUpWrapper(PPRForwardPush& state, int32_t maxPPRNodes, bool enableResidualTopUp) {
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+    // Extraction walks C++ state and builds torch tensors; Python only sees the
+    // result after pybind converts it on return.
+    {
+        py::gil_scoped_release release;
+        result = state.extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp);
+    }
+    return result;
+}
+
 } // namespace gigl
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
@@ -54,11 +78,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       double,
                       std::vector<std::vector<int32_t>>,
                       std::vector<int32_t>,
-                      std::vector<torch::Tensor>>())
-        .def("drain_queue", &gigl::PPRForwardPush::drainQueue)
+                      std::vector<torch::Tensor>>(),
+             py::call_guard<py::gil_scoped_release>())
+        .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",
-             &gigl::PPRForwardPush::extractTopKWithResidualTopUp,
+             gigl::extractTopKWithResidualTopUpWrapper,
              py::arg("max_ppr_nodes"),
              py::arg("enable_residual_topup"));
 }
