@@ -1,8 +1,11 @@
+import os
 from typing import Sequence
 from unittest.mock import MagicMock, patch
 
+import google.cloud.bigquery as bigquery
 from parameterized import param, parameterized
 
+from gigl.env.constants import GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
 from gigl.src.common.utils.bq import BqUtils
 from tests.test_assets.test_case import TestCase
 
@@ -141,3 +144,86 @@ class GetLatestTableTest(TestCase):
             bq_table_path_prefix=self.PREFIX, table_partition_suffix="YYYYMMDDHH"
         )
         self.assertEqual(result, "myproject.mydataset.events_2025010112")
+
+
+@patch("gigl.src.common.utils.bq.bigquery.Client")
+class BqClientConstructionTest(TestCase):
+    def test_no_quota_project_when_env_unset_and_no_param(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            BqUtils(project="my-project")
+        _, call_kwargs = mock_client_cls.call_args
+        self.assertEqual(call_kwargs["project"], "my-project")
+        self.assertIsNone(call_kwargs["client_options"])
+
+    def test_env_var_sets_quota_project(self, mock_client_cls: MagicMock) -> None:
+        with patch.dict(
+            os.environ, {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: "env-quota-project"}
+        ):
+            BqUtils(project="my-project")
+        _, call_kwargs = mock_client_cls.call_args
+        self.assertEqual(call_kwargs["project"], "my-project")
+        self.assertEqual(
+            call_kwargs["client_options"].quota_project_id, "env-quota-project"
+        )
+
+    def test_explicit_param_overrides_env_var(self, mock_client_cls: MagicMock) -> None:
+        with patch.dict(
+            os.environ, {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: "env-quota-project"}
+        ):
+            BqUtils(project="my-project", quota_project_id="param-quota-project")
+        _, call_kwargs = mock_client_cls.call_args
+        self.assertEqual(
+            call_kwargs["client_options"].quota_project_id, "param-quota-project"
+        )
+
+    def test_empty_env_var_is_treated_as_unset(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        with patch.dict(os.environ, {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: ""}):
+            BqUtils(project="my-project")
+        _, call_kwargs = mock_client_cls.call_args
+        self.assertIsNone(call_kwargs["client_options"])
+
+
+@patch("gigl.src.common.utils.bq.bigquery.Client")
+class LoadFilesToBqTest(TestCase):
+    def test_sync_load_waits_for_completion_and_returns_job(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_load_job = mock_client_cls.return_value.load_table_from_uri.return_value
+        mock_load_job.output_rows = 1000
+        bq_utils = BqUtils(project="my-project")
+        job_config = bigquery.LoadJobConfig(source_format=bigquery.SourceFormat.AVRO)
+
+        load_job = bq_utils.load_files_to_bq(
+            source_uris="gs://bucket/folder/*.avro",
+            bq_path="my-project.my-dataset.my-table",
+            job_config=job_config,
+            should_run_async=False,
+        )
+
+        mock_client_cls.return_value.load_table_from_uri.assert_called_once_with(
+            source_uris="gs://bucket/folder/*.avro",
+            destination="my-project.my-dataset.my-table",
+            job_config=job_config,
+        )
+        mock_load_job.result.assert_called_once()
+        self.assertIs(load_job, mock_load_job)
+
+    def test_async_load_returns_without_waiting(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_load_job = mock_client_cls.return_value.load_table_from_uri.return_value
+        bq_utils = BqUtils(project="my-project")
+
+        load_job = bq_utils.load_files_to_bq(
+            source_uris="gs://bucket/folder/*.avro",
+            bq_path="my-project.my-dataset.my-table",
+            job_config=bigquery.LoadJobConfig(),
+            should_run_async=True,
+        )
+
+        mock_load_job.result.assert_not_called()
+        self.assertIs(load_job, mock_load_job)
