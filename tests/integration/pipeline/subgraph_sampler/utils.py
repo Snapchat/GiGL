@@ -14,6 +14,7 @@ from gigl.common.constants import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.src.common.constants.local_fs import get_project_root_directory
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
 from gigl.src.common.types.graph_data import (
@@ -35,7 +36,6 @@ from gigl.src.common.types.pb_wrappers.graph_data_types_utils import (
     get_dehydrated_node_pb_wrappers_from_edge_wrapper,
 )
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.training.v1.lib.data_loaders.tf_records_iterable_dataset import (
     get_np_iterator_from_tfrecords,
 )

@@ -3,13 +3,13 @@ from typing import Optional
 import gigl.src.mocking.lib.constants as mocking_constants
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from gigl.src.mocking.lib import (
     mock_input_for_data_preprocessor,

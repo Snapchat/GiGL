@@ -7,12 +7,12 @@ from typing import Sequence, Tuple
 import google.cloud.bigquery as bigquery
 
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants import bq as bq_constants
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.data_preprocessor.lib.enumerate import queries as enumeration_queries
 from gigl.src.data_preprocessor.lib.ingest.bigquery import (
     BigqueryEdgeDataReference,

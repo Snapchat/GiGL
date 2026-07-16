@@ -1,10 +1,10 @@
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
+from gigl.common.utils.bq import BqUtils
 from gigl.common.utils.gcs import GcsUtils
 from gigl.src.common.constants import gcs as gcs_constants
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.bq import BqUtils
 
 logger = Logger()
 

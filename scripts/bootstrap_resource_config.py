@@ -12,7 +12,7 @@ from typing import Optional
 import yaml
 
 from gigl.common import GcsUri, HttpUri, LocalUri, UriFactory
-from gigl.src.common.utils.file_loader import FileLoader
+from gigl.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 LOCAL_DEV_TEMPLATE_RES_CONF = LocalUri(

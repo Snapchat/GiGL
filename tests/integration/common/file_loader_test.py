@@ -7,9 +7,9 @@ from parameterized import param, parameterized
 
 import gigl.common.utils.local_fs as local_fs
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.utils.file_loader import FileLoader
 from tests.test_assets.test_case import TestCase
 
 

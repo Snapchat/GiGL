@@ -15,13 +15,13 @@ from gigl.common.constants import (
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_SUBGRAPH_SAMPLER_S
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
     initialize_metrics,

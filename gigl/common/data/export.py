@@ -24,8 +24,8 @@ from typing_extensions import Self
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.retry import retry
-from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 

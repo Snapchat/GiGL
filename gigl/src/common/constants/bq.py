@@ -1,7 +1,7 @@
+from gigl.common.utils.bq import BqUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
-from gigl.src.common.utils.bq import BqUtils
 
 
 def get_embeddings_dataset_bq_path() -> str:

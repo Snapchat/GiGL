@@ -42,9 +42,9 @@ def _log_eval_metrics_to_ui(
 
     from gigl.common import UriFactory
     from gigl.common.logger import Logger
+    from gigl.common.utils.file_loader import FileLoader
     from gigl.common.utils.proto_utils import ProtoUtils
     from gigl.src.common.constants.components import GiGLComponents
-    from gigl.src.common.utils.file_loader import FileLoader
     from snapchat.research.gbml import gbml_config_pb2
 
     logger = Logger()

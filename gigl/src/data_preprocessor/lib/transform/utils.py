@@ -17,11 +17,11 @@ from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
 from gigl.common.logger import Logger
+from gigl.common.utils.time import current_formatted_datetime
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.dataflow import init_beam_pipeline_options
-from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.data_preprocessor.lib.ingest.reference import (
     DataReference,
     EdgeDataReference,

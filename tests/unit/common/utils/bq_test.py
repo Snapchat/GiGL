@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from parameterized import param, parameterized
 
-from gigl.src.common.utils.bq import BqUtils
+from gigl.common.utils.bq import BqUtils
 from tests.test_assets.test_case import TestCase
 
 
@@ -60,7 +60,7 @@ def _make_mock_table_list_items(
     return mock_tables
 
 
-@patch("gigl.src.common.utils.bq.bigquery.Client")
+@patch("gigl.common.utils.bq.bigquery.Client")
 class GetLatestTableTest(TestCase):
     PREFIX = "myproject.mydataset.events_"
 

@@ -6,6 +6,7 @@ from google.cloud.aiplatform_v1.types import env_var
 from parameterized import param, parameterized
 
 from gigl.common.services.vertex_ai import VertexAiJobConfig, VertexAIService
+from gigl.common.utils.file_loader import FileLoader
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.distributed.utils import get_graph_store_info
 from gigl.env.constants import (
@@ -13,7 +14,6 @@ from gigl.env.constants import (
     GIGL_RESOURCE_CONFIG_URI_ENV_KEY,
 )
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.utils.file_loader import FileLoader
 from tests.test_assets.test_case import TestCase
 
 # Short timeout so a broken fresh image fails fast instead of hanging CI until the

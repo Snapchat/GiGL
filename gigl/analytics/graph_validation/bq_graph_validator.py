@@ -3,7 +3,7 @@ from typing import Optional
 from google.cloud.bigquery.table import RowIterator
 
 from gigl.common.logger import Logger
-from gigl.src.common.utils.bq import BqUtils
+from gigl.common.utils.bq import BqUtils
 
 logger = Logger()
 

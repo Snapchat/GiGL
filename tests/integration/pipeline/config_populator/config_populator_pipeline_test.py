@@ -5,9 +5,9 @@ from gigl.common import GcsUri, LocalUri
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
+from gigl.common.utils.time import current_formatted_datetime
+from gigl.common.utils.timeout import timeout
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.time import current_formatted_datetime
-from gigl.src.common.utils.timeout import timeout
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from snapchat.research.gbml import gbml_config_pb2
 from tests.test_assets.test_case import TestCase
