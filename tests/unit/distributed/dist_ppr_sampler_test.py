@@ -41,6 +41,10 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.distributed.utils.distributed_typed_sampler import (
+    build_edge_type_channel_group_edge_type_ids,
+    parse_typed_channel_quota_groups,
+)
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -821,6 +825,64 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_homogeneous_ablp(self) -> None:
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
+
+    def test_typed_ppr_edge_type_channels_parse_and_build_traversal_maps(
+        self,
+    ) -> None:
+        """Verify typed-PPR can use canonical edge-type channels."""
+        node_type_to_edge_types = {
+            USER: [USER_TO_STORY],
+            STORY: [STORY_TO_USER],
+        }
+        node_types = [USER, STORY]
+        edge_type_to_edge_type_id = {
+            USER_TO_STORY: 0,
+            STORY_TO_USER: 1,
+        }
+
+        typed_channel_groups, typed_channel_quota_list = (
+            parse_typed_channel_quota_groups(
+                {
+                    USER_TO_STORY: 2,
+                    (USER_TO_STORY, STORY_TO_USER): 3,
+                }
+            )
+        )
+        assert typed_channel_groups is not None
+        assert typed_channel_quota_list is not None
+
+        self.assertEqual(
+            typed_channel_groups,
+            [
+                (USER_TO_STORY,),
+                (USER_TO_STORY, STORY_TO_USER),
+            ],
+        )
+        self.assertEqual(typed_channel_quota_list, [2, 3])
+        self.assertEqual(
+            build_edge_type_channel_group_edge_type_ids(
+                edge_type_groups=typed_channel_groups,
+                edge_type_to_edge_type_id=edge_type_to_edge_type_id,
+                node_type_to_edge_types=node_type_to_edge_types,
+                node_types=node_types,
+            ),
+            [
+                [[0], []],
+                [[0], [1]],
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "canonical edge type"):
+            parse_typed_channel_quota_groups({("bad",): 1})
+        with self.assertRaisesRegex(ValueError, "positive quotas"):
+            parse_typed_channel_quota_groups({USER_TO_STORY: 0})
+        with self.assertRaisesRegex(ValueError, "non-traversable edge types"):
+            build_edge_type_channel_group_edge_type_ids(
+                edge_type_groups=[(("unknown", "edge", "type"),)],
+                edge_type_to_edge_type_id=edge_type_to_edge_type_id,
+                node_type_to_edge_types=node_type_to_edge_types,
+                node_types=node_types,
+            )
 
 
 if __name__ == "__main__":
