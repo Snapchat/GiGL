@@ -970,5 +970,107 @@ class WithEdgeDerivationTest(TestCase):
         self.assertTrue(holder["edge_ids_absent"])
 
 
+# NOTE on the test strategy: GiGL loaders always sample via the multiprocess
+# producer, which spawns worker subprocesses with a *fresh* interpreter
+# (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
+# loader process therefore never reaches the sampler running in that subprocess, so we
+# cannot inject a synthetic failure by mocking the sampler. Instead we reproduce a real
+# sampler failure end-to-end: a heterogeneous dataset with edge features on only a
+# subset of its message-passing edge types. When the featureless type is reached during
+# sampling, its feature lookup raises `KeyError` inside the sampling coroutine — the exact
+# swallowed-exception case this change surfaces. Without the change this hangs forever, so
+# the test uses a bounded join.
+
+
+def _run_partial_edge_feature_coverage_raises(
+    _,
+    dataset: DistDataset,
+    error_holder,
+):
+    create_test_process_group()
+    assert isinstance(dataset.node_ids, Mapping)
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type]
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    try:
+        for _datum in loader:
+            pass
+    except RuntimeError as e:
+        error_holder["msg"] = str(e)
+    finally:
+        shutdown_rpc()
+
+
+class TestSamplingErrorPropagation(TestCase):
+    def _build_partial_edge_feature_dataset(self) -> DistDataset:
+        """Build a hetero dataset with edge features on only one message-passing type.
+
+        ``user-to-story`` has edge features; ``story-to-user`` does not. Both are
+        reachable from ``user`` seeds within a 2-hop fanout, so the featureless type is
+        actually sampled and its edge-feature lookup raises inside the coroutine.
+        """
+        n = 5
+        edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
+        partition_output = PartitionOutput(
+            node_partition_book={_USER: torch.zeros(n), _STORY: torch.zeros(n)},
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(n),
+                _STORY_TO_USER: torch.zeros(n),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=edge_index, edge_ids=None
+                ),
+                _STORY_TO_USER: GraphPartitionData(
+                    edge_index=edge_index, edge_ids=None
+                ),
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.zeros(n, 2), ids=torch.arange(n)
+                ),
+            },
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.ones(n, 3), ids=torch.arange(n)
+                ),
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+        return dataset
+
+    def test_reachable_sampler_failure_raises_not_hangs(self) -> None:
+        dataset = self._build_partial_edge_feature_dataset()
+        manager = mp.Manager()
+        error_holder = manager.dict()
+        proc = mp.get_context("spawn").Process(
+            target=_run_partial_edge_feature_coverage_raises,
+            args=(0, dataset, error_holder),
+        )
+        proc.start()
+        proc.join(timeout=180)  # bounded: the pre-fix behavior hangs indefinitely
+        alive = proc.is_alive()
+        if alive:
+            proc.terminate()
+            proc.join(timeout=10)
+        self.assertFalse(
+            alive, "loader hung instead of failing fast on a sampler error"
+        )
+        message = error_holder.get("msg", "")
+        # The training process raised with the worker's real traceback embedded.
+        self.assertIn("sampling worker failed", message.lower())
+        self.assertIn("story-to-user", message)
+
+
 if __name__ == "__main__":
     absltest.main()
