@@ -237,7 +237,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     async def _batch_fetch_neighbors(
         self,
         nodes_by_edge_type_id: dict[int, torch.Tensor],
-        device: torch.device,
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
@@ -247,8 +246,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         Args:
             nodes_by_edge_type_id: Dict mapping integer edge type ID to a 1-D int64
                 tensor of node IDs to fetch neighbors for.  Comes directly from
-                ``drain_queue()``; node IDs are already deduplicated.
-            device: Torch device for intermediate tensor creation.
+                ``drain_queue()`` as CPU tensors; node IDs are already deduplicated.
 
         Returns:
             Dict mapping edge type ID to ``(node_ids, flat_neighbors, counts)``
@@ -283,9 +281,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 else edge_type
             )
             edge_type_ids.append(edge_type_id)
+            # drain_queue materializes CPU frontier tensors; _sample_one_hop can
+            # consume them directly, so avoid a sampler-device round trip here.
             sample_tasks.append(
                 self._sample_one_hop(
-                    srcs=nodes_by_edge_type_id[edge_type_id].to(device),
+                    srcs=nodes_by_edge_type_id[edge_type_id],
                     num_nbr=self._num_neighbors_per_hop,
                     etype=rpc_edge_type,
                 )
@@ -427,8 +427,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if seed_node_type is None:
             seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
         device = seed_nodes.device
+        loop = asyncio.get_running_loop()
 
-        ppr_state = PPRForwardPush(
+        ppr_state = await loop.run_in_executor(
+            None,
+            PPRForwardPush,
             seed_nodes,
             self._node_type_to_id[seed_node_type],
             self._alpha,
@@ -440,13 +443,20 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         fetch_iteration_count = 0
 
+        # TODO: If Python/C++ boundary overhead in this loop becomes a blocker,
+        # consider a coarser C++ PPR iteration API while keeping Python
+        # responsible for async distributed neighbor fetches.
         while True:
             # drain_queue returns None when the queue is truly empty (convergence),
             # or a dict (possibly empty) when nodes were drained.  An empty dict
             # means all drained nodes either had cached neighbors or no outgoing
             # edges — we still call push_residuals to flush their residuals into
             # ppr_scores_.
-            nodes_by_edge_type_id = ppr_state.drain_queue()
+            # The pybind wrapper releases the GIL, but a direct call would still
+            # occupy this coroutine's event-loop thread until C++ returns.
+            nodes_by_edge_type_id = await loop.run_in_executor(
+                None, ppr_state.drain_queue
+            )
             if nodes_by_edge_type_id is None:
                 break
 
@@ -456,7 +466,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
             if nodes_by_edge_type_id and fetch_budget_remaining:
                 fetched_by_edge_type_id = await self._batch_fetch_neighbors(
-                    nodes_by_edge_type_id, device
+                    nodes_by_edge_type_id
                 )
                 fetch_iteration_count += 1
             else:
@@ -464,17 +474,19 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 fetched_by_edge_type_id = {}
 
             # Run in executor so the C++ push doesn't block the asyncio event loop.
-            await asyncio.get_running_loop().run_in_executor(
+            await loop.run_in_executor(
                 None, ppr_state.push_residuals, fetched_by_edge_type_id
             )
 
         # Regular sampling uses residual top-up as fill-only under the
         # max_ppr_nodes cap.  If finalized PPR scores already fill that cap,
         # there is no remaining budget for residual candidates.
-        return self._extract_ppr_state_top_k(
+        return await loop.run_in_executor(
+            None,
+            self._extract_ppr_state_top_k,
             ppr_state,
             device,
-            max_ppr_nodes=self._max_ppr_nodes,
+            self._max_ppr_nodes,
         )
 
     async def _sample_from_nodes(
