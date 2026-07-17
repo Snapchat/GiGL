@@ -26,6 +26,13 @@ GIGL_CPU_DOCKER_URI_ENV_KEY: Final[str] = "GIGL_CPU_DOCKER_URI"
 GIGL_CUDA_DOCKER_URI_ENV_KEY: Final[str] = "GIGL_CUDA_DOCKER_URI"
 GIGL_COMPONENT_ENV_KEY: Final[str] = "GIGL_COMPONENT"
 
+# Optional override for the quota / billing project used by GiGL's BigQuery
+# clients. When set to a non-empty value, every ``BqUtils`` BigQuery client
+# bills quota to this project. The override is scoped to BigQuery clients only,
+# leaving other Google clients (e.g. Cloud Storage) on their default quota
+# project. Unset (or empty) means no override.
+GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: Final[str] = "GIGL_BIGQUERY_QUOTA_PROJECT"
+
 _LEGACY_RESOURCE_CONFIG_ENV_KEY: Final[str] = "RESOURCE_CONFIG_PATH"
 _legacy_resource_config_env_warned: bool = False
 _logger = Logger()

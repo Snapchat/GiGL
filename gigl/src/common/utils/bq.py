@@ -1,18 +1,22 @@
 import datetime
 import itertools
+import os
 import re
-from typing import Iterable, Optional, Tuple, Union
+import time
+from typing import Iterable, Optional, Sequence, Tuple, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
+from google.api_core.client_options import ClientOptions
 from google.api_core.exceptions import NotFound
 from google.cloud.bigquery._helpers import _record_field_to_json
-from google.cloud.bigquery.job import _AsyncJob
+from google.cloud.bigquery.job import LoadJob, _AsyncJob
 from google.cloud.bigquery.table import RowIterator
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
+from gigl.env.constants import GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
 from gigl.src.common.constants.time import DEFAULT_DATE_FORMAT
 from gigl.src.common.utils.time import convert_days_to_ms, current_datetime
 
@@ -58,9 +62,44 @@ def _load_file_to_bq_with_retry(
 
 
 class BqUtils:
-    def __init__(self, project: Optional[str] = None) -> None:
-        logger.info(f"BqUtils initialized with project: {project}")
-        self.__bq_client = bigquery.Client(project=project)
+    def __init__(
+        self,
+        project: Optional[str] = None,
+        quota_project_id: Optional[str] = None,
+    ) -> None:
+        """Initializes a BqUtils instance wrapping a single BigQuery client.
+
+        The quota / billing project for the underlying client is resolved as:
+        the explicit ``quota_project_id`` argument if provided, else the
+        ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable if set to a
+        non-empty value, else no override (google-auth's default resolution).
+
+        The override scopes only this BigQuery client; other Google clients in
+        the process are unaffected.
+
+        Args:
+            project (Optional[str]): The GCP project the client acts on
+                (default project for datasets, tables, and jobs).
+            quota_project_id (Optional[str]): The GCP project billed for
+                BigQuery quota / usage for this client.
+        """
+        # An empty string (from either the argument or the env var) is treated
+        # as "unset" so callers can opt out with an empty value.
+        resolved_quota_project_id = quota_project_id or os.environ.get(
+            GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
+        )
+        client_options = (
+            ClientOptions(quota_project_id=resolved_quota_project_id)
+            if resolved_quota_project_id
+            else None
+        )
+        logger.info(
+            f"BqUtils initialized with project: {project}, "
+            f"quota project: {resolved_quota_project_id}"
+        )
+        self.__bq_client = bigquery.Client(
+            project=project, client_options=client_options
+        )
 
     def create_bq_dataset(self, dataset_id, exists_ok=True) -> None:
         dataset = bigquery.Dataset(dataset_id)
@@ -411,6 +450,53 @@ class BqUtils:
         bq_schema = self.__bq_client.get_table(bq_table).schema
         schema_dict = {field.name: field for field in bq_schema}
         return schema_dict
+
+    def load_files_to_bq(
+        self,
+        source_uris: Union[str, Sequence[str]],
+        bq_path: str,
+        job_config: bigquery.LoadJobConfig,
+        should_run_async: bool = False,
+    ) -> LoadJob:
+        """Loads one or more GCS files into a BigQuery table with a single load job.
+
+        ``source_uris`` may contain a trailing wildcard (e.g.
+        ``gs://bucket/folder/*.avro``) to load every matching file.
+
+        Args:
+            source_uris (Union[str, Sequence[str]]): GCS URI(s), optionally with
+                a ``*`` wildcard, of the file(s) to load.
+            bq_path (str): Destination table path in ``project.dataset.table``
+                format.
+            job_config (bigquery.LoadJobConfig): The load job configuration
+                (source format, write disposition, schema, ...).
+            should_run_async (bool): If True, return immediately after the load
+                job is created without waiting for completion. Defaults to False.
+
+        Returns:
+            LoadJob: The BigQuery load job. Completed if
+            ``should_run_async=False``; possibly still running if
+            ``should_run_async=True``.
+        """
+        # Timing is measured around the load job here (rather than at the call
+        # site) so all callers get consistent load-duration logging.
+        start = time.perf_counter()
+        load_job = self.__bq_client.load_table_from_uri(
+            source_uris=source_uris,
+            destination=bq_path,
+            job_config=job_config,
+        )
+        if should_run_async:
+            logger.info(
+                f"Started load job {load_job.job_id} for {bq_path}, running asynchronously."
+            )
+        else:
+            load_job.result()  # Waits for the job to complete.
+            logger.info(
+                f"Loaded {load_job.output_rows:,} rows into {bq_path} in "
+                f"{time.perf_counter() - start:.2f} seconds."
+            )
+        return load_job
 
     def load_file_to_bq(
         self,
