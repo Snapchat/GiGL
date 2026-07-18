@@ -550,7 +550,7 @@ class TestReadinessSignal(TestCase):
         self.addCleanup(temp_dir.cleanup)
         readiness_uri = LocalUri(temp_dir.name) / "readiness.txt"
         with self.assertRaises(TimeoutError):
-            wait_for_readiness_signal(readiness_uri, timeout=0.1, poll_interval=0.01)
+            wait_for_readiness_signal(readiness_uri, timeout=0.1, poll_interval_s=0.01)
 
         write_readiness_signal(readiness_uri)
 
