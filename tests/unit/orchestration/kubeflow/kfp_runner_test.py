@@ -5,6 +5,7 @@ from gigl.orchestration.kubeflow.runner import (
     _assert_required_flags,
     _get_parser,
     _parse_additional_job_args,
+    _parse_env_vars,
     _parse_labels,
 )
 from gigl.src.common.constants.components import GiGLComponents
@@ -108,6 +109,76 @@ class KFPRunnerTest(TestCase):
         )
 
         # Should not raise any exception
+        _assert_required_flags(args)
+
+    def test_parse_env_vars_single(self):
+        parsed = _parse_env_vars(["FOO=bar"])
+        self.assertEqual(parsed, {"FOO": "bar"})
+
+    def test_parse_env_vars_multiple(self):
+        parsed = _parse_env_vars(["FOO=bar", "BAZ=qux"])
+        self.assertEqual(parsed, {"FOO": "bar", "BAZ": "qux"})
+
+    def test_parse_env_vars_value_contains_equals(self):
+        # split("=", 1) means only the first '=' delimits key/value; the rest is value.
+        parsed = _parse_env_vars(["URL=https://example.com/?q=1&r=2"])
+        self.assertEqual(parsed, {"URL": "https://example.com/?q=1&r=2"})
+
+    def test_parse_env_vars_empty_value(self):
+        parsed = _parse_env_vars(["FOO="])
+        self.assertEqual(parsed, {"FOO": ""})
+
+    def test_parse_env_vars_empty_list(self):
+        self.assertEqual(_parse_env_vars([]), {})
+
+    def test_parse_env_vars_malformed_raises(self):
+        # No '=' in the entry — split("=", 1) returns a single-element list and the
+        # tuple unpack raises ValueError, mirroring _parse_labels semantics.
+        with self.assertRaises(ValueError):
+            _parse_env_vars(["NOT_A_VALID_ENTRY"])
+
+    def test_parse_env_vars_duplicate_keys_last_wins(self):
+        parsed = _parse_env_vars(["FOO=first", "FOO=second"])
+        self.assertEqual(parsed, {"FOO": "second"})
+
+    def test_assert_required_flags_rejects_env_vars_with_run_no_compile(self):
+        """--env_vars must not be combined with --action=run_no_compile."""
+        parser = _get_parser()
+        args = parser.parse_args(
+            [
+                "--action=run_no_compile",
+                "--task_config_uri=gs://bucket/task_config.yaml",
+                "--resource_config_uri=gs://bucket/resource_config.yaml",
+                "--compiled_pipeline_path=gs://bucket/pipeline.yaml",
+                "--env_vars=FOO=bar",
+            ]
+        )
+        with self.assertRaises(ValueError):
+            _assert_required_flags(args)
+
+    def test_assert_required_flags_allows_env_vars_with_run(self):
+        """--env_vars is valid for --action=run."""
+        parser = _get_parser()
+        args = parser.parse_args(
+            [
+                "--action=run",
+                "--task_config_uri=gs://bucket/task_config.yaml",
+                "--resource_config_uri=gs://bucket/resource_config.yaml",
+                "--env_vars=FOO=bar",
+            ]
+        )
+        _assert_required_flags(args)
+
+    def test_assert_required_flags_allows_env_vars_with_compile(self):
+        """--env_vars is valid for --action=compile."""
+        parser = _get_parser()
+        args = parser.parse_args(
+            [
+                "--action=compile",
+                "--compiled_pipeline_path=gs://bucket/pipeline.yaml",
+                "--env_vars=FOO=bar",
+            ]
+        )
         _assert_required_flags(args)
 
 
