@@ -59,9 +59,8 @@ def get_resource_config(
     Args:
         resource_config_uri: Optional[Uri] = None
             The URI of the resource config file. If None, the function will try to load the resource config from the
-            command-line argument --resource_config_uri or the environment variable GIGL_RESOURCE_CONFIG_URI (the
-            deprecated RESOURCE_CONFIG_PATH is still read as a fallback, with a one-time warning). If these are not
-            set, the function will try to load the resource config from the pipeline options.
+            command-line argument --resource_config_uri or the environment variable GIGL_RESOURCE_CONFIG_URI. If these
+            are not set, the function will try to load the resource config from the pipeline options.
 
     Returns:
         resource_config: GiglResourceConfigWrapper
