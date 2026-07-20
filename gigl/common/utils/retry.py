@@ -107,12 +107,7 @@ def retry(
             timed_f_retry = timeout(seconds=deadline_s)(f_retry)
 
             @wraps(f)
-            def f_retry_with_deadline(*args, **kwargs) -> T:  # type: ignore[type-var]
-                # deadline_s is enforced with a SIGALRM timeout, which CPython
-                # only permits in the main thread of the main interpreter. Off
-                # the main thread, fail with an actionable message instead of
-                # the opaque "signal only works in main thread of the main
-                # interpreter" error raised by signal.signal.
+            def f_retry_with_deadline(*args, **kwargs) -> T:
                 if threading.current_thread() is not threading.main_thread():
                     raise RuntimeError(
                         f"retry(deadline_s=...) uses a SIGALRM timeout that only "
