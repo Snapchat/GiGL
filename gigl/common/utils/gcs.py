@@ -44,10 +44,6 @@ def _upload_file_to_gcs(
         local_storage_client = storage.Client(project=project)
     bucket = local_storage_client.bucket(bucket_name)
     blob = bucket.blob(destination_blob_name)
-    # Bound and retry the upload with the storage client's own (non-signal)
-    # retry, so it is safe from any thread. The previous @retry(deadline_s=...)
-    # enforced the deadline with a SIGALRM timeout, which only works on the main
-    # thread of the main interpreter.
     blob.upload_from_filename(
         source_file_path.uri,
         retry=DEFAULT_RETRY.with_timeout(UPLOAD_RETRY_DEADLINE_S),
