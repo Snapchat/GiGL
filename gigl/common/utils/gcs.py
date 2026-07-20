@@ -19,6 +19,13 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 UPLOAD_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to upload something
+# Per-request timeout for each batched GCS delete commit. Carried over from the
+# old 2h SIGALRM deadline (which bounded the whole delete operation) rather than
+# the client's 60s default, to avoid a large behavior change now that the signal
+# deadline is gone.
+# TODO: revisit lowering this -- a single batch commit deletes at most
+# _BLOB_BATCH_SIZE objects, so 2h is very generous.
+DELETE_REQUEST_TIMEOUT_S = 60 * 60 * 2
 
 # No more than 100 calls should be included in a single batch request.
 # The total batch request payload must be less than 10MB
@@ -376,7 +383,10 @@ class GcsUtils:
             logger.info(f"Will delete ({len(blobs)}) gcs files")
             with self.__storage_client.batch():
                 for blob in blobs:
-                    blob.delete()
+                    # The batch commit's HTTP timeout is taken from the deferred
+                    # sub-requests; pass it explicitly so the commit is bounded
+                    # (thread-safe, unlike the removed SIGALRM deadline).
+                    blob.delete(timeout=DELETE_REQUEST_TIMEOUT_S)
 
         with ThreadPoolExecutor(max_workers=None) as executor:
             results = executor.map(__batch_delete_blobs, batched_blobs_to_delete)
