@@ -1,3 +1,4 @@
+import threading
 from time import sleep, time
 
 from gigl.common.logger import Logger
@@ -58,3 +59,26 @@ class RetryUtilsTest(TestCase):
         self.assertLessEqual(
             total_time_s, 10
         )  # If function took longer than 10s then timeout isnt working
+
+    def test_retry_deadline_off_main_thread_raises_clearly(self):
+        @retry(deadline_s=1)
+        def fn():
+            return "ok"
+
+        captured: dict = {}
+
+        def target():
+            try:
+                fn()
+            except BaseException as e:  # noqa: BLE001 - capture whatever it raises
+                captured["err"] = e
+
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join()
+
+        # Off the main thread, deadline_s must fail with a clear, actionable
+        # message rather than the opaque signal ValueError.
+        err = captured.get("err")
+        self.assertIsInstance(err, RuntimeError)
+        self.assertIn("main thread", str(err))

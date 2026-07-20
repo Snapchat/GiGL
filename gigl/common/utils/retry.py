@@ -1,3 +1,4 @@
+import threading
 import time
 from functools import wraps
 from typing import Callable, Optional, Tuple, Type, TypeVar, Union
@@ -103,8 +104,27 @@ def retry(
             return ret_val
 
         if deadline_s is not None:
-            global_retry_timeout_decorator = timeout(seconds=deadline_s)
-            return global_retry_timeout_decorator(f_retry)
+            timed_f_retry = timeout(seconds=deadline_s)(f_retry)
+
+            @wraps(f)
+            def f_retry_with_deadline(*args, **kwargs) -> T:  # type: ignore[type-var]
+                # deadline_s is enforced with a SIGALRM timeout, which CPython
+                # only permits in the main thread of the main interpreter. Off
+                # the main thread, fail with an actionable message instead of
+                # the opaque "signal only works in main thread of the main
+                # interpreter" error raised by signal.signal.
+                if threading.current_thread() is not threading.main_thread():
+                    raise RuntimeError(
+                        f"retry(deadline_s=...) uses a SIGALRM timeout that only "
+                        f"works on the main thread; {f.__module__}:{f.__name__} was "
+                        f"called from thread "
+                        f"{threading.current_thread().name!r}. Enforce "
+                        f"off-main-thread deadlines on the operation itself (e.g. a "
+                        f"client-native timeout)."
+                    )
+                return timed_f_retry(*args, **kwargs)
+
+            return f_retry_with_deadline
 
         return f_retry
 
