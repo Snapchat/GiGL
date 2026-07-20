@@ -1,3 +1,4 @@
+import threading
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -6,9 +7,25 @@ from google.cloud.storage.blob import Blob
 from google.cloud.storage.bucket import Bucket
 from google.cloud.storage.client import Client
 
-from gigl.common import GcsUri
-from gigl.common.utils.gcs import GcsUtils
+from gigl.common import GcsUri, LocalUri
+from gigl.common.utils.gcs import GcsUtils, _upload_file_to_gcs
 from tests.test_assets.test_case import TestCase
+
+
+def _run_in_thread(fn):
+    """Runs ``fn`` in a worker thread; returns the exception it raised, or None."""
+    captured: dict = {}
+
+    def target():
+        try:
+            fn()
+        except BaseException as e:  # noqa: BLE001 - capture whatever the call raises
+            captured["err"] = e
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join()
+    return captured.get("err")
 
 
 class TestGcsUtils(TestCase):
@@ -107,6 +124,48 @@ class TestGcsUtils(TestCase):
             self.assertEqual(
                 mock_file1.delete.call_count, 2
             )  # Fails first time, succeeds second time
+
+
+class GcsUploadThreadSafetyTest(TestCase):
+    @patch("gigl.common.utils.gcs.storage")
+    def test_upload_from_worker_thread_uses_native_retry(self, mock_storage):
+        mock_blob = MagicMock(spec=Blob)
+        mock_storage.Client.return_value.bucket.return_value.blob.return_value = (
+            mock_blob
+        )
+
+        err = _run_in_thread(
+            lambda: _upload_file_to_gcs(
+                source_file_path=LocalUri("/tmp/does-not-matter"),
+                dest_gcs_path=GcsUri("gs://test-bucket/test-path/file.txt"),
+                project=None,
+            )
+        )
+
+        # Previously raised "signal only works in main thread of the main
+        # interpreter" off the main thread; the upload now bounds+retries via the
+        # storage client's own (non-signal) retry.
+        self.assertIsNone(err)
+        mock_blob.upload_from_filename.assert_called_once()
+        self.assertIn("retry", mock_blob.upload_from_filename.call_args.kwargs)
+
+
+class GcsDeleteThreadSafetyTest(TestCase):
+    @patch("gigl.common.utils.gcs.storage")
+    def test_delete_dir_from_worker_thread(self, mock_storage):
+        # No blobs at the prefix -> delete no-ops; the post-delete check passes.
+        mock_storage.Client.return_value.bucket.return_value.list_blobs.return_value = []
+
+        err = _run_in_thread(
+            lambda: GcsUtils().delete_files_in_bucket_dir(
+                GcsUri("gs://test-bucket/test-path/")
+            )
+        )
+
+        # Previously raised "signal only works in main thread of the main
+        # interpreter"; dropping the signal deadline makes the batched delete
+        # safe off the main thread.
+        self.assertIsNone(err)
 
 
 if __name__ == "__main__":
