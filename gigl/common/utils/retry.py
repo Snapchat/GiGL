@@ -113,9 +113,9 @@ def retry(
                         f"retry(deadline_s=...) uses a SIGALRM timeout that only "
                         f"works on the main thread; {f.__module__}:{f.__name__} was "
                         f"is called from thread:  "
-                        f"{threading.current_thread().name!r}. Enforce "
-                        f"off-main-thread deadlines on the operation itself (e.g. a "
-                        f"client-native timeout)."
+                        f"{threading.current_thread().name!r}. "
+                        f"If using deadline_s ensure you are calling from main "
+                        f"thread, or set the deadline in the target function."
                     )
                 return timed_f_retry(*args, **kwargs)
 
