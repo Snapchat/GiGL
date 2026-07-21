@@ -31,7 +31,6 @@ class MonitoredChannel(ChannelBase):
     def flush_metrics(self):
         publisher = get_metrics_service_instance()
         publisher.flush_metrics()
-        publisher.add_count(self._reset_metric, 1)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._channel, name)
