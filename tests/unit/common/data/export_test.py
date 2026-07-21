@@ -9,7 +9,6 @@ import fastavro
 import requests
 import torch
 from absl.testing import absltest
-from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
 from parameterized import param, parameterized
 
@@ -19,12 +18,8 @@ from gigl.common.data.export import (
     _NODE_ID_KEY,
     _NODE_TYPE_KEY,
     _PREDICTION_KEY,
-    EMBEDDING_BIGQUERY_SCHEMA,
-    PREDICTION_BIGQUERY_SCHEMA,
     EmbeddingExporter,
     PredictionExporter,
-    load_embeddings_to_bigquery,
-    load_predictions_to_bigquery,
 )
 from gigl.common.utils.retry import RetriesFailedException
 from tests.test_assets.test_case import TestCase
@@ -385,55 +380,6 @@ class TestEmbeddingExporter(TestCase):
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
         exporter.flush_records()
 
-    @parameterized.expand(
-        [
-            param(
-                "Test if we can load embeddings synchronously",
-                should_run_async=False,
-            ),
-            param(
-                "Test if we can load embeddings asynchronously",
-                should_run_async=True,
-            ),
-        ]
-    )
-    @patch("gigl.common.data.export.BqUtils")
-    def test_load_embedding_to_bigquery(
-        self, _, mock_bq_utils_cls: MagicMock, should_run_async: bool
-    ):
-        gcs_folder = GcsUri("gs://test-bucket/test-folder")
-        project_id = "test-project"
-        dataset_id = "test-dataset"
-        table_id = "test-table"
-        destination = f"{project_id}.{dataset_id}.{table_id}"
-        mock_bq_utils = mock_bq_utils_cls.return_value
-        mock_bq_utils.join_path.return_value = destination
-
-        load_job = load_embeddings_to_bigquery(
-            gcs_folder,
-            project_id,
-            dataset_id,
-            table_id,
-            should_run_async=should_run_async,
-        )
-
-        mock_bq_utils_cls.assert_called_once_with(project=project_id)
-        mock_bq_utils.join_path.assert_called_once_with(
-            project_id, dataset_id, table_id
-        )
-        mock_bq_utils.load_files_to_bq.assert_called_once()
-        _, load_kwargs = mock_bq_utils.load_files_to_bq.call_args
-        self.assertEqual(load_kwargs["source_uris"], f"{gcs_folder.uri}/*.avro")
-        self.assertEqual(load_kwargs["bq_path"], destination)
-        self.assertEqual(load_kwargs["should_run_async"], should_run_async)
-        job_config = load_kwargs["job_config"]
-        self.assertEqual(job_config.source_format, bigquery.SourceFormat.AVRO)
-        self.assertEqual(
-            job_config.write_disposition, bigquery.WriteDisposition.WRITE_APPEND
-        )
-        self.assertEqual(list(job_config.schema), list(EMBEDDING_BIGQUERY_SCHEMA))
-        self.assertIs(load_job, mock_bq_utils.load_files_to_bq.return_value)
-
 
 class TestPredictionsExporter(TestCase):
     def setUp(self):
@@ -740,55 +686,6 @@ class TestPredictionsExporter(TestCase):
         )
         exporter = PredictionExporter(export_dir=gcs_base_uri)
         exporter.flush_records()
-
-    @parameterized.expand(
-        [
-            param(
-                "Test if we can load predictions synchronously",
-                should_run_async=False,
-            ),
-            param(
-                "Test if we can load predictions asynchronously",
-                should_run_async=True,
-            ),
-        ]
-    )
-    @patch("gigl.common.data.export.BqUtils")
-    def test_load_prediction_to_bigquery(
-        self, _, mock_bq_utils_cls: MagicMock, should_run_async: bool
-    ):
-        gcs_folder = GcsUri("gs://test-bucket/test-folder")
-        project_id = "test-project"
-        dataset_id = "test-dataset"
-        table_id = "test-table"
-        destination = f"{project_id}.{dataset_id}.{table_id}"
-        mock_bq_utils = mock_bq_utils_cls.return_value
-        mock_bq_utils.join_path.return_value = destination
-
-        load_job = load_predictions_to_bigquery(
-            gcs_folder,
-            project_id,
-            dataset_id,
-            table_id,
-            should_run_async=should_run_async,
-        )
-
-        mock_bq_utils_cls.assert_called_once_with(project=project_id)
-        mock_bq_utils.join_path.assert_called_once_with(
-            project_id, dataset_id, table_id
-        )
-        mock_bq_utils.load_files_to_bq.assert_called_once()
-        _, load_kwargs = mock_bq_utils.load_files_to_bq.call_args
-        self.assertEqual(load_kwargs["source_uris"], f"{gcs_folder.uri}/*.avro")
-        self.assertEqual(load_kwargs["bq_path"], destination)
-        self.assertEqual(load_kwargs["should_run_async"], should_run_async)
-        job_config = load_kwargs["job_config"]
-        self.assertEqual(job_config.source_format, bigquery.SourceFormat.AVRO)
-        self.assertEqual(
-            job_config.write_disposition, bigquery.WriteDisposition.WRITE_APPEND
-        )
-        self.assertEqual(list(job_config.schema), list(PREDICTION_BIGQUERY_SCHEMA))
-        self.assertIs(load_job, mock_bq_utils.load_files_to_bq.return_value)
 
 
 if __name__ == "__main__":

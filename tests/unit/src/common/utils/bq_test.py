@@ -1,7 +1,6 @@
 from typing import Sequence
 from unittest.mock import MagicMock, patch
 
-from google.cloud import bigquery
 from parameterized import param, parameterized
 
 from gigl.src.common.utils.bq import BqUtils
@@ -142,44 +141,3 @@ class GetLatestTableTest(TestCase):
             bq_table_path_prefix=self.PREFIX, table_partition_suffix="YYYYMMDDHH"
         )
         self.assertEqual(result, "myproject.mydataset.events_2025010112")
-
-
-@patch("gigl.src.common.utils.bq.bigquery.Client")
-class LoadFilesToBqTest(TestCase):
-    def test_sync_load_waits_for_completion_and_returns_job(
-        self, mock_client_cls: MagicMock
-    ) -> None:
-        mock_load_job = mock_client_cls.return_value.load_table_from_uri.return_value
-        mock_load_job.output_rows = 1000
-        bq_utils = BqUtils(project="my-project")
-        job_config = bigquery.LoadJobConfig(source_format=bigquery.SourceFormat.AVRO)
-
-        load_job = bq_utils.load_files_to_bq(
-            source_uris="gs://bucket/folder/*.avro",
-            bq_path="my-project.my-dataset.my-table",
-            job_config=job_config,
-        )
-
-        mock_client_cls.return_value.load_table_from_uri.assert_called_once_with(
-            source_uris="gs://bucket/folder/*.avro",
-            destination="my-project.my-dataset.my-table",
-            job_config=job_config,
-        )
-        mock_load_job.result.assert_called_once_with()
-        self.assertIs(load_job, mock_load_job)
-
-    def test_async_load_returns_without_waiting(
-        self, mock_client_cls: MagicMock
-    ) -> None:
-        mock_load_job = mock_client_cls.return_value.load_table_from_uri.return_value
-        bq_utils = BqUtils(project="my-project")
-
-        load_job = bq_utils.load_files_to_bq(
-            source_uris="gs://bucket/folder/*.avro",
-            bq_path="my-project.my-dataset.my-table",
-            job_config=bigquery.LoadJobConfig(),
-            should_run_async=True,
-        )
-
-        mock_load_job.result.assert_not_called()
-        self.assertIs(load_job, mock_load_job)

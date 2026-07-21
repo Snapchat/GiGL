@@ -126,28 +126,32 @@ class PredictionExportIntegrationTest(TestCase):
         self.prediction_output_bq_table = test_unique_name
 
     def tearDown(self):
-        GcsUtils().delete_files_in_bucket_dir(self.prediction_output_dir)
-        bq_utils = BqUtils()
-        bq_export_table_path = bq_utils.join_path(
+        gcs_utils = GcsUtils()
+        gcs_utils.delete_files_in_bucket_dir(self.prediction_output_dir)
+        bq_client = BqUtils()
+        bq_export_table_path = bq_client.join_path(
             self.prediction_output_bq_project,
             self.prediction_output_bq_dataset,
             self.prediction_output_bq_table,
         )
-        bq_utils.delete_bq_table_if_exist(bq_table_path=bq_export_table_path)
+        bq_client.delete_bq_table_if_exist(
+            bq_table_path=bq_export_table_path,
+        )
 
     def test_prediction_export(self):
         num_nodes = 100
         with PredictionExporter(export_dir=self.prediction_output_dir) as exporter:
-            for node_id in torch.arange(num_nodes):
-                exporter.add_prediction(
-                    torch.tensor([node_id]), torch.ones(1) * node_id, "node"
-                )
+            for i in torch.arange(num_nodes):
+                exporter.add_prediction(torch.tensor([i]), torch.ones(1) * i, "node")
 
-        bq_utils = BqUtils()
-        bq_export_table_path = bq_utils.join_path(
+        bq_client = BqUtils()
+        bq_export_table_path = bq_client.join_path(
             self.prediction_output_bq_project,
             self.prediction_output_bq_dataset,
             self.prediction_output_bq_table,
+        )
+        logger.info(
+            f"Will try exporting {self.prediction_output_dir} to BQ: {bq_export_table_path}"
         )
         load_job = load_predictions_to_bigquery(
             gcs_folder=self.prediction_output_dir,
@@ -158,6 +162,6 @@ class PredictionExportIntegrationTest(TestCase):
 
         self.assertEqual(load_job.output_rows, num_nodes)
         self.assertEqual(
-            bq_utils.count_number_of_rows_in_bq_table(bq_export_table_path),
+            bq_client.count_number_of_rows_in_bq_table(bq_export_table_path),
             num_nodes,
         )
