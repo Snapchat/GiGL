@@ -445,7 +445,7 @@ class BaseDistLoader(DistLoader):
         )
         if worker_options.pin_memory:
             channel.pin_memory()
-        return MonitoredChannel(channel, metric_prefix=channel_name)
+        return MonitoredChannel(channel, channel_name)
 
     @staticmethod
     def create_mp_producer(
