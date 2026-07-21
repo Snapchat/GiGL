@@ -61,7 +61,7 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
         return False
 
 
-def get_metrics_service_instance() -> Optional[OpsMetricPublisher]:
+def get_metrics_service_instance() -> OpsMetricPublisher:
     if _metrics_instance is None:
         logger.warning(
             "initialize_metrics() was not called, using NopMetricsPulisher as default"
