@@ -49,6 +49,7 @@ def retry(
             a lot of extra room so retries can actually take place.
             If timeout occurs, src.common.utils.timeout.TimedOutException is raised.
             Defaults to None.
+            Only applicable if run in a main thread. Raise RuntimeError if not in main thread.
         should_throw_original_exception (Optional[bool]): Defaults to False.
     """
 
@@ -110,12 +111,11 @@ def retry(
             def f_retry_with_deadline(*args, **kwargs) -> T:
                 if threading.current_thread() is not threading.main_thread():
                     raise RuntimeError(
-                        f"retry(deadline_s=...) uses a SIGALRM timeout that only "
-                        f"works on the main thread; {f.__module__}:{f.__name__} was "
-                        f"is called from thread:  "
-                        f"{threading.current_thread().name!r}. "
-                        f"If using deadline_s ensure you are calling from main "
-                        f"thread, or set the deadline in the target function."
+                        "retry(deadline_s=...) only works in the main thread."
+                        f"{f.__module__}:{f.__name__} was called from thread: "
+                        f"{threading.current_thread().name!r}."
+                        "This failure is because deadline_s uses SIGALRM, "
+                        "under the hood, which only works in the main thread."
                     )
                 return timed_f_retry(*args, **kwargs)
 
