@@ -5,7 +5,12 @@ import torch
 from parameterized import param, parameterized
 
 from gigl.common import GcsUri
-from gigl.common.data.export import EmbeddingExporter, load_embeddings_to_bigquery
+from gigl.common.data.export import (
+    EmbeddingExporter,
+    PredictionExporter,
+    load_embeddings_to_bigquery,
+    load_predictions_to_bigquery,
+)
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
@@ -104,4 +109,55 @@ class EmbeddingExportIntegrationTest(TestCase):
         self.assertEqual(
             bq_client.count_number_of_rows_in_bq_table(bq_export_table_path),
             num_nodes * 2,
+        )
+
+
+class PredictionExportIntegrationTest(TestCase):
+    def setUp(self):
+        resource_config = get_resource_config()
+        test_unique_name = f"GiGL-Integration-Prediction-Exporter-{uuid.uuid4().hex}"
+        self.prediction_output_dir = GcsUri.join(
+            resource_config.temp_assets_regional_bucket_path,
+            test_unique_name,
+            "predictions",
+        )
+        self.prediction_output_bq_project = resource_config.project
+        self.prediction_output_bq_dataset = resource_config.temp_assets_bq_dataset_name
+        self.prediction_output_bq_table = test_unique_name
+
+    def tearDown(self):
+        GcsUtils().delete_files_in_bucket_dir(self.prediction_output_dir)
+        bq_utils = BqUtils()
+        bq_export_table_path = bq_utils.join_path(
+            self.prediction_output_bq_project,
+            self.prediction_output_bq_dataset,
+            self.prediction_output_bq_table,
+        )
+        bq_utils.delete_bq_table_if_exist(bq_table_path=bq_export_table_path)
+
+    def test_prediction_export(self):
+        num_nodes = 100
+        with PredictionExporter(export_dir=self.prediction_output_dir) as exporter:
+            for node_id in torch.arange(num_nodes):
+                exporter.add_prediction(
+                    torch.tensor([node_id]), torch.ones(1) * node_id, "node"
+                )
+
+        bq_utils = BqUtils()
+        bq_export_table_path = bq_utils.join_path(
+            self.prediction_output_bq_project,
+            self.prediction_output_bq_dataset,
+            self.prediction_output_bq_table,
+        )
+        load_job = load_predictions_to_bigquery(
+            gcs_folder=self.prediction_output_dir,
+            project_id=self.prediction_output_bq_project,
+            dataset_id=self.prediction_output_bq_dataset,
+            table_id=self.prediction_output_bq_table,
+        )
+
+        self.assertEqual(load_job.output_rows, num_nodes)
+        self.assertEqual(
+            bq_utils.count_number_of_rows_in_bq_table(bq_export_table_path),
+            num_nodes,
         )
