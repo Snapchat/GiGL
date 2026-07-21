@@ -15,8 +15,9 @@ from tests.test_assets.test_case import TestCase
 
 # Short timeout so a broken image fails fast instead of hanging CI until the outer
 # Cloud Build timeout. launch_graph_store_job passes this through to Vertex AI
-# directly (it does not apply the 24h launch_job default).
-_INTEGRATION_JOB_TIMEOUT_S = 30 * 60
+# directly (it does not apply the 24h launch_job default). The worker only asserts
+# os.cpu_count() after importing, which runs in ~2 min, so 10 min is ample headroom.
+_INTEGRATION_JOB_TIMEOUT_S = 10 * 60
 
 
 def _assert_machine_cpu_count(expected_cpu_count: int) -> None:
@@ -27,6 +28,15 @@ def _assert_machine_cpu_count(expected_cpu_count: int) -> None:
     the machine_type's vCPUs on Vertex AI's dedicated VMs. An ``AssertionError`` exits
     the worker non-zero, failing the job — surfaced back in the test by the launch's
     blocking wait.
+
+    Note:
+        Importing this module on the worker transitively runs ``import gigl``
+        (tensorflow/keras/matplotlib), reading hundreds of files. On rare occasions
+        one read hits a transient backend disk-I/O error (``OSError: [Errno 5]``)
+        and flakes the job — seen ~twice in 30 days, only on this test's cold,
+        freshly built image on small VMs. If it recurs often enough to matter,
+        consider wrapping the worker import in a small retry loop (retry on
+        ``OSError`` only, so a real ``ImportError`` still fails fast).
 
     Args:
         expected_cpu_count: vCPU count the machine_type should provision.
