@@ -41,29 +41,21 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 # Default path for compiled KFP pipeline
 GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
-# Find Markdown files while pruning generated artifacts and external dependency trees.
-MD_FILES := $(shell find . \
-	\( \
-		-type d \( \
-			-name ".cache" -o \
-			-name ".pytest_cache" -o \
-			-name ".sdd" -o \
-			-name ".superpowers" -o \
-			-name ".venv" -o \
-			-name "build" -o \
-			-name "dist" -o \
-			-name "gh_pages_build" -o \
-			-name "tools" \
-		\) \
-		-o -path "*/.claude/plans" \
-		-o -path "*/.claude/tmp" \
-		-o -path "*/.claude/worktrees" \
-		-o -path "*/docs/plans" \
-		-o -path "*/docs/superpowers/plans" \
-	\) -prune \
-	-o -type f -name "*.md" -print)
-# Documentation is checked for formatting but is not automatically rewritten.
-FORMAT_MD_FILES := $(filter-out ./docs/%,$(MD_FILES))
+MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
+MD_EXCLUDE_PATTERNS := \
+	./.claude/plans/% \
+	./.claude/tmp/% \
+	./.claude/worktrees/% \
+	./.pytest_cache/% \
+	./.sdd/% \
+	./.superpowers/% \
+	./build/% \
+	./dist/% \
+	./docs/% \
+	./experimental/% \
+	./gh_pages_build/% \
+	./GiGL/%
+FILTERED_MD_FILES := $(filter-out $(MD_EXCLUDE_PATTERNS),$(MD_FILES))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -141,7 +133,7 @@ check_format_scala:
 
 check_format_md:
 	@echo "Checking markdown files..."
-	uv run mdformat --check ${MD_FILES}
+	uv run mdformat --check ${FILTERED_MD_FILES}
 
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
@@ -184,7 +176,7 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	uv run mdformat ${FORMAT_MD_FILES}
+	uv run mdformat ${FILTERED_MD_FILES}
 
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
