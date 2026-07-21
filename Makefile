@@ -44,7 +44,17 @@ GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yam
 # Find Markdown files while pruning generated artifacts and external dependency trees.
 MD_FILES := $(shell find . \
 	\( \
-		-type d \( -name ".cache" -o -name ".pytest_cache" -o -name ".sdd" -o -name ".superpowers" -o -name ".venv" -o -name "build" -o -name "dist" -o -name "gh_pages_build" -o -name "tools" \) \
+		-type d \( \
+			-name ".cache" -o \
+			-name ".pytest_cache" -o \
+			-name ".sdd" -o \
+			-name ".superpowers" -o \
+			-name ".venv" -o \
+			-name "build" -o \
+			-name "dist" -o \
+			-name "gh_pages_build" -o \
+			-name "tools" \
+		\) \
 		-o -path "*/.claude/plans" \
 		-o -path "*/.claude/tmp" \
 		-o -path "*/.claude/worktrees" \
