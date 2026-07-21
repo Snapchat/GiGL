@@ -12,11 +12,10 @@ class MonitoredChannel(ChannelBase):
     Decorator that wraps any glt.ChannelBase implementation to record queue metrics.
     """
 
-    def __init__(self, channel: ChannelBase, metric_prefix: str = "channel"):
+    def __init__(self, channel: ChannelBase, metric_prefix: str):
         self._channel = channel
         self._enqueued_metric = f"{metric_prefix}.enqueued"
         self._dequeued_metric = f"{metric_prefix}.dequeued"
-        self._reset_metric = f"{metric_prefix}.reset"
 
     def send(self, msg: SampleMessage, **kwargs) -> None:
         self._channel.send(msg, **kwargs)
