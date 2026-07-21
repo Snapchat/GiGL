@@ -1,10 +1,12 @@
 import datetime
 import itertools
+import os
 import re
 from typing import Iterable, Optional, Tuple, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
+from google.api_core.client_options import ClientOptions
 from google.api_core.exceptions import NotFound
 from google.cloud.bigquery._helpers import _record_field_to_json
 from google.cloud.bigquery.job import _AsyncJob
@@ -13,6 +15,7 @@ from google.cloud.bigquery.table import RowIterator
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
+from gigl.env.constants import GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
 from gigl.src.common.constants.time import DEFAULT_DATE_FORMAT
 from gigl.src.common.utils.time import convert_days_to_ms, current_datetime
 
@@ -58,9 +61,39 @@ def _load_file_to_bq_with_retry(
 
 
 class BqUtils:
-    def __init__(self, project: Optional[str] = None) -> None:
-        logger.info(f"BqUtils initialized with project: {project}")
-        self.__bq_client = bigquery.Client(project=project)
+    def __init__(
+        self,
+        project: Optional[str] = None,
+        quota_project_id: Optional[str] = None,
+    ) -> None:
+        """Initialize a BqUtils instance.
+
+        A non-empty ``quota_project_id`` takes precedence over the
+        ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable. If neither is
+        set, the BigQuery client uses google-auth's default quota project.
+
+        Args:
+            project (Optional[str]): Default project for BigQuery resources and
+                jobs.
+            quota_project_id (Optional[str]): Project used for BigQuery quota
+                and billing.
+        """
+        resolved_quota_project_id = quota_project_id or os.environ.get(
+            GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
+        )
+        logger.info(
+            f"BqUtils initialized with project: {project}, "
+            f"quota project: {resolved_quota_project_id}"
+        )
+        if resolved_quota_project_id:
+            self.__bq_client = bigquery.Client(
+                project=project,
+                client_options=ClientOptions(
+                    quota_project_id=resolved_quota_project_id
+                ),
+            )
+        else:
+            self.__bq_client = bigquery.Client(project=project)
 
     def create_bq_dataset(self, dataset_id, exists_ok=True) -> None:
         dataset = bigquery.Dataset(dataset_id)
