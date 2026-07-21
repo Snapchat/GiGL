@@ -41,10 +41,19 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 # Default path for compiled KFP pipeline
 GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
-# Check only tracked Markdown files.
-MD_FILES := $(shell git ls-files -- "*.md")
+# Find Markdown files while pruning generated artifacts and external dependency trees.
+MD_FILES := $(shell find . \
+	\( \
+		-type d \( -name ".cache" -o -name ".pytest_cache" -o -name ".sdd" -o -name ".superpowers" -o -name ".venv" -o -name "build" -o -name "dist" -o -name "gh_pages_build" -o -name "tools" \) \
+		-o -path "*/.claude/plans" \
+		-o -path "*/.claude/tmp" \
+		-o -path "*/.claude/worktrees" \
+		-o -path "*/docs/plans" \
+		-o -path "*/docs/superpowers/plans" \
+	\) -prune \
+	-o -type f -name "*.md" -print)
 # Documentation is checked for formatting but is not automatically rewritten.
-FORMAT_MD_FILES := $(filter-out docs/%,$(MD_FILES))
+FORMAT_MD_FILES := $(filter-out ./docs/%,$(MD_FILES))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
