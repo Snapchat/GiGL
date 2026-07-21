@@ -55,3 +55,11 @@ gigl-core/**/*.so
 
 # Local-only scripts with hardcoded internal identifiers
 scripts/_local/
+
+# Agent-generated plans and workspaces
+.claude/plans/
+.claude/worktrees/
+.sdd/
+.superpowers/
+docs/plans/
+docs/superpowers/plans/

@@ -41,10 +41,10 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 # Default path for compiled KFP pipeline
 GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
-GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-
-# Find all markdown files in the repo except for those in .venv, tools, or cmake cache directories.
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
+# Check only tracked Markdown files.
+MD_FILES := $(shell git ls-files -- "*.md")
+# Documentation is checked for formatting but is not automatically rewritten.
+FORMAT_MD_FILES := $(filter-out docs/%,$(MD_FILES))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -165,7 +165,7 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	uv run mdformat ${MD_FILES}
+	uv run mdformat ${FORMAT_MD_FILES}
 
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
