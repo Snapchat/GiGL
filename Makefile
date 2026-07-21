@@ -51,7 +51,8 @@ MD_EXCLUDE_PATTERNS := \
 	./.superpowers/% \
 	./build/% \
 	./dist/% \
-	./docs/% \
+	./docs/plans/% \
+	./docs/superpowers/plans/% \
 	./gh_pages_build/%
 FILTERED_MD_FILES := $(filter-out $(MD_EXCLUDE_PATTERNS),$(MD_FILES))
 GIGL_ALERT_EMAILS?=""
