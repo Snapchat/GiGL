@@ -52,9 +52,7 @@ MD_EXCLUDE_PATTERNS := \
 	./build/% \
 	./dist/% \
 	./docs/% \
-	./experimental/% \
-	./gh_pages_build/% \
-	./GiGL/%
+	./gh_pages_build/%
 FILTERED_MD_FILES := $(filter-out $(MD_EXCLUDE_PATTERNS),$(MD_FILES))
 GIGL_ALERT_EMAILS?=""
 
