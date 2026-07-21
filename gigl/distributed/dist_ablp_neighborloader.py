@@ -882,7 +882,7 @@ class DistABLPLoader(BaseDistLoader):
 
         data, metadata = self._apply_ppr_outputs(data, metadata)
 
-        dequantize_start_time = time.time()
+        dequantize_start_time = time.perf_counter()
         data, metadata = materialize_quantized_node_features(
             data=data,
             metadata=metadata,

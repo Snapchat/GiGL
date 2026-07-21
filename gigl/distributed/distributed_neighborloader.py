@@ -555,7 +555,7 @@ class DistNeighborLoader(BaseDistLoader):
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
 
         data, metadata = self._apply_ppr_outputs(data, metadata)
-        dequantize_start_time = time.time()
+        dequantize_start_time = time.perf_counter()
         data, metadata = materialize_quantized_node_features(
             data=data,
             metadata=metadata,
