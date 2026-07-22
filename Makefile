@@ -41,20 +41,23 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 # Default path for compiled KFP pipeline
 GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
-MD_EXCLUDE_PATTERNS := \
-	./.claude/plans/% \
-	./.claude/tmp/% \
-	./.claude/worktrees/% \
-	./.pytest_cache/% \
-	./.sdd/% \
-	./.superpowers/% \
-	./build/% \
-	./dist/% \
-	./docs/plans/% \
-	./docs/superpowers/plans/% \
-	./gh_pages_build/%
-FILTERED_MD_FILES := $(filter-out $(MD_EXCLUDE_PATTERNS),$(MD_FILES))
+MD_EXCLUDE_DIRS := \
+	*/.cache \
+	*/.venv \
+	*/tools \
+	./.claude/plans \
+	./.claude/tmp \
+	./.claude/worktrees \
+	./.pytest_cache \
+	./.sdd \
+	./.superpowers \
+	./build \
+	./dist \
+	./docs/plans \
+	./docs/superpowers/plans \
+	./gh_pages_build
+MD_FILES := $(shell find . -type f -name "*.md" \
+	$(foreach dir,$(MD_EXCLUDE_DIRS),! -path "$(dir)/*"))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -132,7 +135,7 @@ check_format_scala:
 
 check_format_md:
 	@echo "Checking markdown files..."
-	uv run mdformat --check ${FILTERED_MD_FILES}
+	uv run mdformat --check ${MD_FILES}
 
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
@@ -175,7 +178,7 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	uv run mdformat ${FILTERED_MD_FILES}
+	uv run mdformat ${MD_FILES}
 
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
