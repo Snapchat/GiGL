@@ -272,9 +272,7 @@ class DistNeighborLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            channel_name = (
-                f"gbml.node_{runtime.node_rank}.worker_{runtime.local_rank}.nbr_channel"
-            )
+            channel_name = f"gbml.node_{runtime.node_rank}.nbr_channel"
             producer = BaseDistLoader.create_mp_producer(
                 dataset=dataset,
                 sampler_input=input_data,
