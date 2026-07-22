@@ -1009,7 +1009,7 @@ class BaseDistLoader(DistLoader):
         if self._is_collocated_worker:
             self._collocated_producer.reset()
         elif self._is_mp_worker:
-            self._channel.flush_metrics()
+            #self._channel.flush_metrics()
             self._mp_producer.produce_all()
         else:
             rpc_futures: list[torch.futures.Future[None]] = []
