@@ -13,6 +13,7 @@ logger = Logger()
 
 _metrics_instance: Optional[OpsMetricPublisher] = None
 JOB_NAME_GROUPING_ENV_KEY = "GBML_JOB_NAME"
+TASK_CONFIG_URI_ENV_KEY = "GBML_TASK_CONFIG_URI"
 
 
 def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
@@ -33,6 +34,7 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
     """
     global _metrics_instance
     os.environ[JOB_NAME_GROUPING_ENV_KEY] = service_name
+    os.environ[TASK_CONFIG_URI_ENV_KEY] = str(task_config_uri)
     proto_utils = ProtoUtils()
     task_config: GbmlConfig = proto_utils.read_proto_from_yaml(
         uri=task_config_uri, proto_cls=GbmlConfig
@@ -62,6 +64,16 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
 
 
 def get_metrics_service_instance() -> OpsMetricPublisher:
+    if _metrics_instance is None:
+        env_task_uri = os.environ.get(TASK_CONFIG_URI_ENV_KEY)
+        env_service_name = os.environ.get(JOB_NAME_GROUPING_ENV_KEY)
+        if env_task_uri and env_service_name:
+            logger.info(
+                f"Uninitialized process detected, initializing metrics from env vars (URI: {env_task_uri}, Service: {env_service_name})."
+            )
+            initialize_metrics(
+                task_config_uri=Uri(env_task_uri), service_name=env_service_name
+            )
     if _metrics_instance is None:
         logger.warning(
             "initialize_metrics() was not called, using NopMetricsPulisher as default"
