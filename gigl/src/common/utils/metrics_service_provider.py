@@ -65,22 +65,16 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
 
 def get_metrics_service_instance() -> OpsMetricPublisher:
     if _metrics_instance is None:
-        env_task_uri = os.environ.get(TASK_CONFIG_URI_ENV_KEY)
-        env_service_name = os.environ.get(JOB_NAME_GROUPING_ENV_KEY) or os.environ.get(
+        task_config_uri = os.environ.get(TASK_CONFIG_URI_ENV_KEY)
+        service_name = os.environ.get(JOB_NAME_GROUPING_ENV_KEY) or os.environ.get(
             "GIGL_APPLIED_TASK_IDENTIFIER"
         )
-        logger.debug(
-            f"Detected task_config_uri={env_task_uri}, service_name={env_service_name} from env vars"
-        )
-
-        if env_task_uri and env_service_name:
+        if task_config_uri and service_name:
             logger.info(
-                f"Uninitialized process detected, initializing metrics instance from env vars (task_config_uri={env_task_uri}, service_name={env_service_name})"
+                f"Attempting to initialize metrics instance from env vars (task_config_uri={task_config_uri}, service_name={service_name})"
             )
-            initialize_metrics(
-                task_config_uri=UriFactory.create_uri(env_task_uri),
-                service_name=env_service_name,
-            )
+            task_config_uri = UriFactory.create_uri(task_config_uri)
+            initialize_metrics(task_config_uri, service_name=service_name)
 
     if _metrics_instance is None:
         raise RuntimeError(
