@@ -359,9 +359,7 @@ class DistABLPLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            channel_name = (
-                f"gbml.node_{runtime.node_rank}.worker_{runtime.local_rank}.ablp_channel"
-            )
+            channel_name = f"gbml.node_{runtime.node_rank}.worker_{runtime.local_rank}.ablp_channel"
             producer = BaseDistLoader.create_mp_producer(
                 dataset=dataset,
                 sampler_input=sampler_input,

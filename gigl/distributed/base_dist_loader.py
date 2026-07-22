@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage, ShmChannel
+from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -53,7 +53,7 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
-from gigl.distributed.utils.channel import MonitoredChannel
+from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -428,24 +428,24 @@ class BaseDistLoader(DistLoader):
     @staticmethod
     def create_colocated_channel(
         worker_options: MpDistSamplingWorkerOptions, channel_name: str
-    ) -> MonitoredChannel:
-        """Creates a MonitoredChannel wrapping a ShmChannel for colocated mode.
+    ) -> MonitoredShmChannel:
+        """Creates a MonitoredShmChannel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
         Args:
             worker_options: The colocated worker options (must already be fully configured).
-            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredChannel).
+            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredShmChannel).
 
         Returns:
-            A MonitoredChannel ready to be passed to a DistSamplingProducer.
+            A MonitoredShmChannel ready to be passed to a DistSamplingProducer.
         """
-        channel = ShmChannel(
-            worker_options.channel_capacity, worker_options.channel_size
+        channel = MonitoredShmChannel(
+            channel_name, worker_options.channel_capacity, worker_options.channel_size
         )
         if worker_options.pin_memory:
             channel.pin_memory()
-        return MonitoredChannel(channel, channel_name)
+        return channel
 
     @staticmethod
     def create_mp_producer(
@@ -471,7 +471,7 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
-            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredChannel).
+            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredShmChannel).
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
@@ -1005,11 +1005,11 @@ class BaseDistLoader(DistLoader):
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
-        self._channel.flush_metrics()
         self._num_recv = 0
         if self._is_collocated_worker:
             self._collocated_producer.reset()
         elif self._is_mp_worker:
+            self._channel.flush_metrics()
             self._mp_producer.produce_all()
         else:
             rpc_futures: list[torch.futures.Future[None]] = []

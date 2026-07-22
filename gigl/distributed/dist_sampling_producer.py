@@ -11,6 +11,7 @@ from typing import Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
+from graphlearn_torch.channel import ChannelBase
 from graphlearn_torch.distributed import (
     DistDataset,
     DistMpSamplingProducer,
@@ -37,7 +38,6 @@ from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
 from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.utils.channel import MonitoredChannel
 from gigl.distributed.utils.dist_sampler import create_dist_sampler
 
 logger = Logger()
@@ -50,7 +50,7 @@ def _sampling_worker_loop(
     unshuffled_index: Optional[torch.Tensor],
     sampling_config: SamplingConfig,
     worker_options: MpDistSamplingWorkerOptions,
-    channel: MonitoredChannel,
+    channel: ChannelBase,
     task_queue: mp.Queue,
     sampling_completed_worker_count,  # mp.Value
     mp_barrier: Barrier,
@@ -178,7 +178,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
         sampler_input: Union[NodeSamplerInput, EdgeSamplerInput],
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
-        channel: MonitoredChannel,
+        channel: ChannelBase,
         sampler_options: SamplerOptions,
         degree_tensors: Optional[
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]
