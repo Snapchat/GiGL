@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 
-from gigl.common import Uri
+from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.metrics.base_metrics import NopMetricsPublisher
 from gigl.common.metrics.metrics_interface import OpsMetricPublisher
@@ -13,7 +13,7 @@ logger = Logger()
 
 _metrics_instance: Optional[OpsMetricPublisher] = None
 JOB_NAME_GROUPING_ENV_KEY = "GBML_JOB_NAME"
-TASK_CONFIG_URI_ENV_KEY = "GBML_TASK_CONFIG_URI"
+TASK_CONFIG_URI_ENV_KEY = "GIGL_TASK_CONFIG_URI"
 
 
 def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
@@ -65,17 +65,21 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
 
 def get_metrics_service_instance() -> OpsMetricPublisher:
     if _metrics_instance is None:
-        env_task_uri = os.environ.get(TASK_CONFIG_URI_ENV_KEY) or os.environ.get("GIGL_TASK_CONFIG_URI")
-        env_service_name = os.environ.get(JOB_NAME_GROUPING_ENV_KEY) or os.environ.get("GIGL_APPLIED_TASK_IDENTIFIER")
-        logger.debug(f"Detected task_config_uri={env_task_uri}, service_name={env_service_name} from env vars")
+        env_task_uri = os.environ.get(TASK_CONFIG_URI_ENV_KEY)
+        env_service_name = os.environ.get(JOB_NAME_GROUPING_ENV_KEY) or os.environ.get(
+            "GIGL_APPLIED_TASK_IDENTIFIER"
+        )
+        logger.debug(
+            f"Detected task_config_uri={env_task_uri}, service_name={env_service_name} from env vars"
+        )
 
         if env_task_uri and env_service_name:
             logger.info(
-                f"Uninitialized process detected. Lazily initializing metrics from env vars "
-                f"(URI: {env_task_uri}, Service: {env_service_name})."
+                f"Uninitialized process detected, initializing metrics instance from env vars (task_config_uri={env_task_uri}, service_name={env_service_name})"
             )
             initialize_metrics(
-                task_config_uri=Uri(env_task_uri), service_name=env_service_name
+                task_config_uri=UriFactory.create_uri(env_task_uri),
+                service_name=env_service_name,
             )
 
     if _metrics_instance is None:
