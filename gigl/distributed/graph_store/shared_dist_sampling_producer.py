@@ -395,6 +395,24 @@ def _shared_sampling_worker_loop(
     state_lock = threading.RLock()
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
+    # Per-channel in-flight submission cap.  The scheduler parks a channel
+    # (skips its submit) once it has this many batches submitted but not yet
+    # completed, so the single scheduler thread never issues a submit that could
+    # block in the sampler's ``BoundedSemaphore(worker_concurrency).acquire()``
+    # on a saturated output channel.  The cap mirrors that semaphore exactly:
+    # each in-flight coroutine holds one slot from submit until its
+    # ``channel.send`` completes, so at ``worker_concurrency`` in flight the next
+    # submit would block this thread -- parking co-located channels and, at high
+    # fan-out, closing a cross-rank deadlock cycle.  Keeping the scheduler
+    # wait-free (rotate past saturated channels, keep draining commands) is the
+    # core of the stall fix.
+    #
+    # The ``submitted - completed`` mirror of the semaphore holds WITHIN an
+    # epoch: ``START_EPOCH`` resets ``submitted_batches`` to 0, so the invariant
+    # relies on the "previous epoch fully completes before the next
+    # ``START_EPOCH``" contract that ``BaseDistLoader.__iter__`` enforces today
+    # (it drains every batch via ``__next__`` before re-entering the loop).
+    worker_concurrency = worker_options.worker_concurrency
 
     # --- Scheduler helper functions ---
 
@@ -410,6 +428,24 @@ def _shared_sampling_worker_loop(
             return
         runnable_channel_ids.append(channel_id)
         runnable_channel_id_set.add(channel_id)
+
+    def _is_channel_parked_locked(channel_id: int) -> bool:
+        """Return whether a channel has hit its in-flight submission cap.
+
+        A parked channel has ``worker_concurrency`` batches submitted but not
+        yet completed, so submitting another could block the scheduler thread in
+        the sampler's bounded semaphore on a saturated output channel.
+
+        The pump skips a parked channel (and drops it from the runnable queue);
+        ``_on_batch_done`` re-enqueues it once an in-flight batch completes and
+        frees a slot.
+
+        Must be called while holding ``state_lock``.
+        """
+        state = active_epoch_by_channel_id.get(channel_id)
+        if state is None:
+            return False
+        return state.submitted_batches - state.completed_batches >= worker_concurrency
 
     def _drain_channel_locked(channel_id: int) -> int:
         """Lossily drain buffered sampled messages for a removing channel.
@@ -555,6 +591,14 @@ def _shared_sampling_worker_loop(
             if state is None or state.epoch != epoch:
                 return
             state.completed_batches += 1
+            # WAKE: an in-flight slot just freed, so the channel may have been
+            # parked by the in-flight cap.  Re-enter it into the runnable queue.
+            # This is the ONLY path that wakes a parked channel (the pump never
+            # re-enqueues a channel it parked), so a channel whose consumer had
+            # paused resumes within one scheduler tick of draining a batch.
+            # Idempotent via the membership guard and a no-op for cancelled or
+            # fully-submitted channels, so it is safe to call on every batch.
+            _enqueue_channel_if_runnable_locked(channel_id)
             if channel_id in removing_channel_ids:
                 drained_messages = _drain_channel_locked(channel_id)
                 if drained_messages > 0:
@@ -580,15 +624,53 @@ def _shared_sampling_worker_loop(
         """Submit the next batch for a channel to its sampler.
 
         Re-enqueues the channel into ``runnable_channel_ids`` if more batches
-        remain.
-        Returns True if a batch was submitted, False if the channel had no
-        pending work.
+        remain (via the membership-guarded ``_enqueue_channel_if_runnable_locked``).
+
+        Parks the channel — returning without submitting and without
+        re-enqueueing — when it already has ``worker_concurrency`` batches in
+        flight, keeping the scheduler thread wait-free.  A parked channel is
+        woken only by ``_on_batch_done`` when an in-flight batch completes.
+
+        TODO(kmonte): failed-task finalization (fix step 4) is deferred.  GLT's
+        ``ConcurrentEventLoop.on_done`` fires this channel's callback only after
+        ``f.result()`` succeeds; a coroutine that truly raises/cancels releases
+        the semaphore without incrementing ``completed_batches``, so the channel
+        would park forever and any deferred unregister would stick at
+        ``completed < submitted``.  In practice GiGL's ``_send_adapter`` override
+        (``base_sampler.py``) swallows sampling/collate errors in channel mode,
+        sends a one-time poison pill, and returns ``None`` normally — so the
+        callback still fires and in-flight decrements — which covers the common
+        failure path.  Closing the residual raise/cancel gap needs an
+        always-fired finalization wrapping GLT's future (``add_task`` returns
+        ``None`` and does not expose it), so it is left as a follow-up.
+
+        Returns True if a batch was submitted, False if the channel was parked
+        or had no pending work (so a park-only pump cycle leaves
+        ``made_progress`` unset).
         """
-        # Hold the lock only to read state and advance the cursor.
-        # Release before the sampler call to avoid blocking other threads.
+        # Hold the lock only to read state and advance the cursor; release
+        # before the sampler call.
+        #
+        # INVARIANT (load-bearing): the sampler ``sample_*`` call MUST stay
+        # OUTSIDE ``state_lock``.  Moving it under the lock turns the bounded
+        # semaphore handoff into a real deadlock, since ``_on_batch_done`` needs
+        # ``state_lock`` before the sampler's coroutine can release its
+        # semaphore slot -- the scheduler would then hold the lock while waiting
+        # on ``add_task``'s ``_sem.acquire()`` for a slot only the callback can
+        # free.
         with state_lock:
             state = active_epoch_by_channel_id.get(channel_id)
             if state is None:
+                return False
+            # PARK: if the channel already has ``worker_concurrency`` batches in
+            # flight, submitting another could block this thread in the sampler's
+            # bounded semaphore on a saturated output channel.  Return without
+            # submitting AND without re-enqueueing -- ``_on_batch_done`` is the
+            # sole path that re-enqueues (wakes) the channel once an in-flight
+            # batch completes.  Returning False leaves ``made_progress`` unset in
+            # the pump, so a cycle that only parks does not busy-spin: Phase 3's
+            # idle tick engages instead.
+            if _is_channel_parked_locked(channel_id):
                 return False
             batch_indices = _epoch_batch_indices(state)
             if batch_indices is None:
@@ -599,9 +681,11 @@ def _shared_sampling_worker_loop(
             channel_input = input_by_channel_id[channel_id]
             current_epoch = state.epoch
             # Re-enqueue for the next round-robin pass if more batches remain.
-            if state.submitted_batches < state.total_batches and not state.cancelled:
-                runnable_channel_ids.append(channel_id)
-                runnable_channel_id_set.add(channel_id)
+            # Use the membership-guarded enqueue rather than an unconditional
+            # append: a concurrent ``_on_batch_done`` (running on a sampler
+            # thread) may have re-enqueued this channel between the pump's pop
+            # and here, and a second append would create a duplicate turn.
+            _enqueue_channel_if_runnable_locked(channel_id)
 
         sampler_input = channel_input[batch_indices]
 
@@ -636,6 +720,15 @@ def _shared_sampling_worker_loop(
 
     def _pump_runnable_channel_ids() -> bool:
         """Submit one batch per runnable channel in round-robin order.
+
+        Channels that have hit their in-flight cap are parked by
+        ``_submit_one_batch`` (return False, no re-enqueue); ``_on_batch_done``
+        re-enqueues them once a slot frees.  A cycle whose only visited channels
+        park submits nothing, so ``made_progress`` stays False and Phase 3's idle
+        tick engages instead of busy-spinning.
+
+        Channels re-enqueued during this pass are deferred to the next pump cycle
+        to preserve round-robin fairness.
 
         Returns True if at least one batch was submitted.
         """
