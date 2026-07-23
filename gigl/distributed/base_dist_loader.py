@@ -441,7 +441,7 @@ class BaseDistLoader(DistLoader):
             A MonitoredShmChannel ready to be passed to a DistSamplingProducer.
         """
         channel = MonitoredShmChannel(
-           channel_name, worker_options.channel_capacity, worker_options.channel_size
+            channel_name, worker_options.channel_capacity, worker_options.channel_size
         )
         if worker_options.pin_memory:
             channel.pin_memory()

@@ -272,7 +272,7 @@ class DistNeighborLoader(BaseDistLoader):
         if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
             assert isinstance(dataset, DistDataset)
             assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            channel_name = f"nbr_channel_{runtime.rank}/{runtime.world_size}"
+            channel_name = f"ablp_channel_{runtime.rank}_of_{runtime.world_size}_qsize"
             producer = BaseDistLoader.create_mp_producer(
                 dataset=dataset,
                 sampler_input=input_data,

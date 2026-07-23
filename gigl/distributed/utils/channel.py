@@ -5,15 +5,15 @@ from graphlearn_torch.channel import SampleMessage, ShmChannel
 
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 
-libc = ctypes.CDLL("libc.so.6", use_errno=True)
+_libc = ctypes.CDLL("libc.so.6", use_errno=True)
 
 # void *shmat(int shmid, const void *shmaddr, int shmflg);
-libc.shmat.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-libc.shmat.restype = ctypes.c_void_p
+_libc.shmat.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+_libc.shmat.restype = ctypes.c_void_p
 
 # int shmdt(const void *shmaddr);
-libc.shmdt.argtypes = [ctypes.c_void_p]
-libc.shmdt.restype = ctypes.c_int
+_libc.shmdt.argtypes = [ctypes.c_void_p]
+_libc.shmdt.restype = ctypes.c_int
 
 
 class SizedShmChannel(ShmChannel):
@@ -24,10 +24,8 @@ class SizedShmChannel(ShmChannel):
         shmid = self._queue.__getstate__()
 
         # Attach to the shared memory segment in the current process
-        ptr = libc.shmat(shmid, None, 0)
-        if (
-            ptr == ctypes.c_void_p(-1).value or ptr is None
-        ):  # shmat returns ((void *)-1) on failure
+        ptr = _libc.shmat(shmid, None, 0)  # shmat returns (void *)(-1) on failure
+        if ptr == ctypes.c_void_p(-1).value or ptr is None:
             err_num = ctypes.get_errno()
             error_msg = os.strerror(err_num)
             raise RuntimeError(
@@ -54,7 +52,7 @@ class SizedShmChannel(ShmChannel):
             read_block_id = ctypes.c_size_t.from_address(ptr + 40).value
             return write_block_id - read_block_id
         finally:
-            libc.shmdt(ptr)
+            _libc.shmdt(ptr)
 
 
 class MonitoredShmChannel(SizedShmChannel):
@@ -65,8 +63,9 @@ class MonitoredShmChannel(SizedShmChannel):
         self._metric = f"{channel_name}.qsize"
 
     def recv(self, *args, **kwargs) -> SampleMessage:
-        msg = super().recv(*args, **kwargs)
         publisher = get_metrics_service_instance()
         publisher.add_gauge(self._metric, self.qsize())
-        publisher.flush_metrics()  # TODO(jchmura): Can we afford this on each recv()?
-        return msg
+        try:
+            return super().recv(*args, **kwargs)
+        finally:
+            publisher.flush_metrics()  # TODO(jchmura): Can we afford this on each recv()?
