@@ -914,6 +914,20 @@ def _shared_sampling_worker_loop(
                 processed_command = True
                 keep_running = _handle_command(command, payload)
 
+            # STOP drained above (``keep_running`` only ever goes False on STOP),
+            # so exit before Phase 2 rather than pumping once more.  A final pump
+            # here could submit a fresh batch on a channel that a completion
+            # callback just re-enqueued (the callback runs concurrently and both
+            # re-enqueues the channel and wakes Phase 3), and that batch's
+            # ``channel.send`` can block forever on a full output channel whose
+            # consumer is already gone at teardown -- wedging ``finally``'s
+            # ``sampler.wait_all()``.  Teardown needs no final pump: the
+            # ``finally`` block drains and shuts down every sampler, and any
+            # pending unregister finalizes through its own destroy/unregister
+            # protocol.
+            if not keep_running:
+                break
+
             # Phase 2: Submit batches round-robin from runnable channels.
             made_progress = _pump_runnable_channel_ids()
             made_progress = _finish_ready_unregistrations() or made_progress

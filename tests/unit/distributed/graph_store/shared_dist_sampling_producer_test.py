@@ -541,11 +541,13 @@ class _GltOrderFakeSampler:
 class _CountingTaskQueue:
     """Task queue that counts blocking vs non-blocking gets.
 
-    Lets a test distinguish a scheduler idling in Phase 3 (``get`` with a
-    timeout, ~one per ``SCHEDULER_TICK_SECS``) from one busy-spinning through the
-    phases (``get_nowait`` many times per tick, zero blocking ``get`` calls) --
-    the signature of a regression that wrongly reports progress on a park-only
-    pump cycle and pins the core at 100% CPU instead of engaging the idle tick.
+    Phase 3 idles on ``wake_event.wait()``, not on the task queue, so a correctly
+    parked scheduler issues ZERO blocking ``task_queue.get`` calls and only a
+    handful of ``get_nowait`` calls -- one per idle wake, each iteration draining
+    commands once before blocking on the event for a full ``SCHEDULER_TICK_SECS``.
+    The counts let a test catch a busy-spin regression: a scheduler that wrongly
+    reports progress on a park-only pump cycle skips the wait and burns thousands
+    of ``get_nowait`` calls at 100% CPU instead of engaging the idle wait.
     """
 
     def __init__(self) -> None:
@@ -985,6 +987,7 @@ class StallFixWorkerLoopTest(TestCase):
             def __init__(self) -> None:
                 self.callbacks: list[Callable[[object], None]] = []
                 self.submit_signals: queue.Queue[int] = queue.Queue()
+                self.submit_count = 0
                 self._lock = threading.Lock()
 
             def start_loop(self) -> None: ...
@@ -998,7 +1001,8 @@ class StallFixWorkerLoopTest(TestCase):
             ) -> None:
                 with self._lock:
                     self.callbacks.append(callback)
-                    index = len(self.callbacks)
+                    self.submit_count += 1
+                    index = self.submit_count
                 self.submit_signals.put(index)
 
         sampler = _WithheldSampler()
@@ -1096,3 +1100,12 @@ class StallFixWorkerLoopTest(TestCase):
         self.assertFalse(worker_thread.is_alive())
         # Phase 3 never blocked on the task queue across the whole run.
         self.assertEqual(task_queue.blocking_get_calls, 0)
+        # No submit after STOP: the epoch has 3 batches, but the STOP iteration
+        # must break right after Phase 1 drains STOP -- BEFORE Phase 2 -- so the
+        # 3rd batch is never submitted.  With event-wake command handling in
+        # Phase 1, firing the 2nd completion both re-enqueues the channel and
+        # wakes Phase 3; without the pre-Phase-2 break the scheduler would then
+        # pump that 3rd batch after teardown began, whose ``channel.send`` would
+        # block on a full output channel at real teardown.  Exactly the two
+        # submits observed above (initial + event-woken refill) occurred.
+        self.assertEqual(sampler.submit_count, 2)
