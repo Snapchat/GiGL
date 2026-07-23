@@ -901,12 +901,15 @@ class StallFixWorkerLoopTest(TestCase):
             # It stays put -- no submits past the cap.
             self.assertEqual(sampler.submit_count, expected_parked_submits)
             self.assertEqual(channel_b.total_received, 0)
-            # Phase 3's timed wait is engaged (>=1 blocking get over a ~0.3s /
-            # 0.05s tick window) and the loop is NOT busy-spinning: a regression
-            # that wrongly set ``made_progress`` on a park-only cycle would skip
-            # the blocking get entirely and burn thousands of ``get_nowait``
-            # calls at 100% CPU.
-            self.assertGreaterEqual(blocking_gets, 1)
+            # F3 event-wake: Phase 3 now waits on the completion ``wake_event``, NOT on
+            # ``task_queue``, so the scheduler issues ZERO blocking ``task_queue.get``
+            # calls while parked.  Still NOT busy-spinning: each idle iteration does one
+            # Phase-1 ``get_nowait()`` then blocks in ``wake_event.wait()`` for a full
+            # tick, so over ~0.3s / 0.05s tick only a handful of ``get_nowait`` calls
+            # accrue -- a regression that wrongly set ``made_progress`` on a park-only
+            # cycle would skip the wait and burn thousands of ``get_nowait`` at 100% CPU.
+            self.assertEqual(blocking_gets, 0)
+            self.assertGreaterEqual(nowait_gets, 1)
             self.assertLess(nowait_gets, 100)
 
             # Unregister while parked: must drain buffered output, unblock the
@@ -923,3 +926,173 @@ class StallFixWorkerLoopTest(TestCase):
         # Every wedged coroutine was released during teardown.
         for thread in sampler._threads:
             self.assertFalse(thread.is_alive())
+
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.SCHEDULER_TICK_SECS",
+        30.0,
+    )
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer._set_worker_signal_handlers"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.torch.set_num_threads"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.create_dist_sampler"
+    )
+    def test_completion_event_wakes_parked_channel_without_tick(
+        self,
+        mock_create_dist_sampler: MagicMock,
+        _mock_set_num_threads: MagicMock,
+        _mock_signal_handlers: MagicMock,
+        _mock_init_worker_group: MagicMock,
+        _mock_init_rpc: MagicMock,
+        _mock_shutdown_rpc: MagicMock,
+    ) -> None:
+        """A batch completion wakes the parked scheduler immediately via the F3
+        ``wake_event`` -- it does NOT wait out the Phase-3 fallback tick.
+
+        ``SCHEDULER_TICK_SECS`` is patched to 30s so the fallback tick is
+        effectively disabled: the ONLY way the parked channel's freed slot is
+        refilled within the test timeout is the event-wake.  This makes the wake
+        path load-bearing (non-vacuous).  Without the fix -- i.e. no
+        ``wake_event.set()`` in ``_on_batch_done`` and Phase 3 sleeping on the
+        tick -- the second submit would not issue for 30s and the
+        ``submit_signals.get(timeout=5.0)`` below would time out (this is exactly
+        the ~25ms-mean freed-slot idle the fix removes, amplified to 30s here).
+
+        ``worker_concurrency=1`` so a single in-flight batch parks the channel;
+        the sampler withholds completion callbacks so parking is fully
+        controlled by the test.  ``_CountingTaskQueue`` confirms Phase 3 waits on
+        the event rather than issuing any blocking ``task_queue.get``.
+        """
+        worker_concurrency = 1
+        channel_id = 3
+
+        class _WithheldSampler:
+            """Sampler that records each submit and withholds its callback.
+
+            Withholding the callback keeps the single in-flight batch pending, so
+            at ``worker_concurrency=1`` the channel parks after one submit and
+            only the test can drive completion (and thus the wake).
+            """
+
+            def __init__(self) -> None:
+                self.callbacks: list[Callable[[object], None]] = []
+                self.submit_signals: queue.Queue[int] = queue.Queue()
+                self._lock = threading.Lock()
+
+            def start_loop(self) -> None: ...
+
+            def wait_all(self) -> None: ...
+
+            def shutdown_loop(self) -> None: ...
+
+            def sample_from_nodes(
+                self, _sampler_input: object, callback: Callable[[object], None]
+            ) -> None:
+                with self._lock:
+                    self.callbacks.append(callback)
+                    index = len(self.callbacks)
+                self.submit_signals.put(index)
+
+        sampler = _WithheldSampler()
+        mock_create_dist_sampler.side_effect = lambda **_: sampler
+
+        worker_options = self._make_worker_options(worker_concurrency)
+        task_queue = _CountingTaskQueue()
+        event_queue: queue.Queue[tuple[object, ...]] = queue.Queue()
+        barrier = MagicMock(wait=MagicMock())
+        data = MagicMock(num_partitions=1)
+        sampling_config = _make_sampling_config()
+
+        # 3 batches (6 seeds / batch_size 2): enough to submit, park, then resume.
+        task_queue.put(
+            (
+                SharedMpCommand.REGISTER_INPUT,
+                RegisterInputCmd(
+                    channel_id=channel_id,
+                    worker_key="loader_compute_rank_3",
+                    sampler_input=NodeSamplerInput(node=torch.arange(6)),
+                    sampling_config=sampling_config,
+                    channel=MagicMock(),
+                ),
+            )
+        )
+        task_queue.put(
+            (
+                SharedMpCommand.START_EPOCH,
+                StartEpochCmd(
+                    channel_id=channel_id,
+                    epoch=0,
+                    seeds_index=torch.arange(6),
+                ),
+            )
+        )
+
+        worker_thread = threading.Thread(
+            target=_shared_sampling_worker_loop,
+            args=(
+                0,
+                data,
+                worker_options,
+                cast(mp.Queue, task_queue),
+                cast(mp.Queue, event_queue),
+                barrier,
+                KHopNeighborSamplerOptions(num_neighbors=[2]),
+                None,
+            ),
+        )
+        worker_thread.start()
+        try:
+            # First batch submits, then the channel parks (in-flight == cap with
+            # the callback withheld) and the scheduler enters Phase 3, blocking
+            # on wake_event with the (patched 30s) fallback tick.
+            first_submit = sampler.submit_signals.get(timeout=10.0)
+            self.assertEqual(first_submit, 1)
+
+            # Parked: no further submit issues on its own.  With the 30s tick
+            # this also confirms the scheduler is genuinely blocked in the wait,
+            # not spinning through ticks.
+            time.sleep(0.2)
+            self.assertTrue(sampler.submit_signals.empty())
+            self.assertEqual(len(sampler.callbacks), 1)
+            # Phase 3 has NOT touched task_queue -- it waits on the event.
+            self.assertEqual(task_queue.blocking_get_calls, 0)
+
+            # Fire the withheld completion from a separate thread (mirroring the
+            # sampler worker thread): _on_batch_done re-enqueues the channel and
+            # wake_event.set()s, waking Phase 3.
+            first_callback = sampler.callbacks[0]
+            wake_thread = threading.Thread(target=lambda: first_callback(None))
+            wake_thread.start()
+            wake_thread.join(timeout=5.0)
+            self.assertFalse(wake_thread.is_alive())
+
+            # LOAD-BEARING: the freed slot is refilled PROMPTLY via the event --
+            # within 5s, far under the 30s fallback tick.  Without
+            # wake_event.set() the scheduler would sleep the full 30s and this
+            # get would time out.
+            second_submit = sampler.submit_signals.get(timeout=5.0)
+            self.assertEqual(second_submit, 2)
+
+            # The wake came purely from the event: still zero blocking
+            # task_queue.get calls.
+            self.assertEqual(task_queue.blocking_get_calls, 0)
+        finally:
+            # The channel re-parked after the second submit (callback 2 withheld),
+            # so STOP alone would sit unseen until the 30s tick.  Fire the second
+            # completion to set wake_event -> Phase 3 wakes -> Phase 1 drains STOP.
+            task_queue.put((SharedMpCommand.STOP, None))
+            if len(sampler.callbacks) >= 2:
+                sampler.callbacks[1](None)
+            worker_thread.join(timeout=10.0)
+
+        self.assertFalse(worker_thread.is_alive())
+        # Phase 3 never blocked on the task queue across the whole run.
+        self.assertEqual(task_queue.blocking_get_calls, 0)
