@@ -43,9 +43,24 @@ GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yam
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-# Find all markdown files in the repo except for those in .venv, tools, or cmake cache directories.
-# .claude/skills holds SKILL.md agent files whose YAML frontmatter mdformat corrupts, so exclude them.
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*" ! -path "*/.claude/skills/*")
+# Directories whose markdown we never format: virtualenvs, caches, build output,
+# vendored tooling, experimental sub-projects, plan docs, and agent runtime dirs.
+# .claude/skills holds SKILL.md files whose YAML frontmatter mdformat corrupts, so
+# they are excluded (the other .claude docs are still formatted).
+MD_EXCLUDE_DIRS := \
+	*/.cache \
+	*/.claude/skills \
+	*/.venv \
+	*/experimental \
+	*/tools \
+	./.pytest_cache \
+	./.sdd \
+	./.superpowers \
+	./build \
+	./dist \
+	./docs/plans
+MD_FILES := $(shell find . -type f -name "*.md" \
+	$(foreach dir,$(MD_EXCLUDE_DIRS),! -path "$(dir)/*"))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
