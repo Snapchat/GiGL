@@ -381,11 +381,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         eids = result_map.get(f"{as_str(etype)}.eids", None)
                     if eids is not None:
                         eids = eids.to(torch.long)
-                        result_key = (
-                            f"{as_str(etype)}.efeats"
-                            if self.edge_dir == "out"
-                            else f"{as_str(reverse_edge_type(etype))}.efeats"
-                        )
+                        if self.edge_dir == "in":
+                            result_key = f"{as_str(reverse_edge_type(etype))}.efeats"
+                        else:
+                            result_key = f"{as_str(etype)}.efeats"
                         futs[result_key] = wrap_torch_future(
                             self.dist_edge_feature.async_get(eids, etype)
                         )
