@@ -179,8 +179,11 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    query_node_type = supervision_edge_type.dst_node_type
-    labeled_node_type = supervision_edge_type.src_node_type
+    # Supervision edges are directed outward (query -> labeled), matching taskMetadata,
+    # so the anchor/query node is the src and the labeled node is the dst. This mirrors
+    # standard/colocated mode (see `examples/link_prediction/heterogeneous_training.py`).
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
     anchor_node_type = query_node_type
 
     print(
@@ -273,9 +276,10 @@ def _compute_loss(
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    # Extract relevant node types from the supervision edge.
-    query_node_type = supervision_edge_type.dst_node_type
-    labeled_node_type = supervision_edge_type.src_node_type
+    # Extract relevant node types from the supervision edge. Supervision edges are directed
+    # outward (query -> labeled), matching taskMetadata, so query is the src and labeled is the dst.
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
 
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]

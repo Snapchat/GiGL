@@ -2,7 +2,6 @@
 
 #include <torch/torch.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <tuple>
@@ -20,10 +19,10 @@ namespace gigl {
 // not co-located in memory — only the control-plane metadata (size, bucket pointer)
 // lives inside the struct.
 struct SeedNodeTypeState {
-    std::unordered_map<int32_t, double> pprScores;   // absorbed PPR mass
-    std::unordered_map<int32_t, double> residuals;   // unabsorbed mass waiting to push
-    std::unordered_set<int32_t> queue;               // nodes queued for the next drain
-    std::unordered_set<int32_t> queuedNodes;         // snapshot captured by drainQueue()
+    std::unordered_map<int32_t, double> pprScores; // absorbed PPR mass
+    std::unordered_map<int32_t, double> residuals; // unabsorbed mass waiting to push
+    std::unordered_set<int32_t> queue;             // nodes queued for the next drain
+    std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
 };
 
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
@@ -35,16 +34,16 @@ struct SeedNodeTypeState {
 //   2. drainQueue()                         → nodes needing neighbor lookup
 //   3. <Python: _batch_fetch_neighbors()>
 //   4. pushResiduals(fetchedByEtypeId)
-//   5. extractTopK(maxPprNodes)
+//   5. extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp)
 class PPRForwardPush {
-   public:
+public:
     PPRForwardPush(const torch::Tensor& seedNodes,
-                        int32_t seedNodeTypeId,
-                        double alpha,
-                        double requeueThresholdFactor,
-                        std::vector<std::vector<int32_t>> nodeTypeToEdgeTypeIds,
-                        std::vector<int32_t> edgeTypeToDstNtypeId,
-                        std::vector<torch::Tensor> degreeTensors);
+                   int32_t seedNodeTypeId,
+                   double alpha,
+                   double requeueThresholdFactor,
+                   std::vector<std::vector<int32_t>> nodeTypeToEdgeTypeIds,
+                   std::vector<int32_t> edgeTypeToDstNtypeId,
+                   std::vector<torch::Tensor> degreeTensors);
 
     // Drain queued nodes and return {etype_id: int64 node tensor} for neighbor lookup.
     // Returns nullopt when the queue is empty (convergence). Empty map means all nodes
@@ -53,30 +52,43 @@ class PPRForwardPush {
 
     // Push residuals given fetched neighbor data.
     // fetchedByEtypeId: {etype_id: (node_ids[N], flat_nbrs[sum(counts)], counts[N])}
-    void pushResiduals(const std::unordered_map<
-                       int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>&
-                           fetchedByEtypeId);
+    // TODO: Move these repeated tensor tuple/map types into aliases in a follow-up
+    // refactor-only PR.
+    void pushResiduals(
+        const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId);
 
-    // Return top-k PPR nodes per seed per node type.
-    // Result: {ntype_id: (flat_ids, flat_weights, valid_counts)} — one entry per node type,
-    // including types unreachable in this batch (empty tensors, all-zero valid_counts).
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-    extractTopK(int32_t maxPprNodes);
+    // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
+    //
+    // Residual top-up does not issue new neighbor fetches.  It only reads the
+    // residual table already built by Forward Push.  This gives callers a way
+    // to fill short sequences with nodes that were discovered but did not cross
+    // the requeue threshold, without lowering eps and running more push steps.
+    // Scores are emitted on the
+    // same mass scale as PPR scores: ppr_score(node) + residual(node), i.e. the
+    // score the node would have if the remaining residual at that node were
+    // absorbed locally.  Residual candidates only fill the requested top-up
+    // budget; they do not displace selected finalized-PPR nodes. The returned
+    // set is selected by this two-phase policy, then sorted by emitted score;
+    // it is not a global top-k over ppr_score + residual when maxPPRNodes is tight.
+    // maxPPRNodes is the final per-seed cap across finalized PPR and residual
+    // top-up candidates.
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
+        int32_t maxPPRNodes, bool enableResidualTopUp);
 
-   private:
+private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
     [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
 
     double _alpha;
-    double _requeueThresholdFactor;  // alpha * eps; per-node requeue threshold = factor * degree
+    double _requeueThresholdFactor; // alpha * eps; per-node requeue threshold = factor * degree
 
     // NOTE: int32_t is used for batch size, node IDs, and type IDs throughout this class.
     // All of this code will break silently (overflow) if batch size or node IDs exceed ~2B
     // (INT32_MAX = 2,147,483,647).  This is not a realistic concern today, but if graph
     // scale ever approaches that threshold, these should be widened to int64_t.
-    int32_t _batchSize;       // number of seed nodes in the current batch
-    int32_t _numNodeTypes;    // total distinct node types (1 for homogeneous graphs)
-    int32_t _numNodesInQueue{0};  // running count of queued nodes across all seeds and types
+    int32_t _batchSize;          // number of seed nodes in the current batch
+    int32_t _numNodeTypes;       // total distinct node types (1 for homogeneous graphs)
+    int32_t _numNodesInQueue{0}; // running count of queued nodes across all seeds and types
 
     // Graph structure — set at construction, read-only during the algorithm.
     // _nodeTypeToEdgeTypeIds[ntype_id] → list of edge type IDs that originate from that node type.
@@ -102,7 +114,6 @@ class PPRForwardPush {
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
     std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
-
 };
 
-}  // namespace gigl
+} // namespace gigl

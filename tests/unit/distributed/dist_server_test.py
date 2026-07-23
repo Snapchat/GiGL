@@ -404,6 +404,70 @@ class TestRemoteDataset(TestCase):
                 assert neg_labels is not None
                 self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
 
+    def test_get_ablp_input_edge_dir_in(self) -> None:
+        """Test get_ablp_input reverses the outward supervision edge for in-sampled datasets.
+
+        With edge_dir="in" the stored positive/negative label edges are reversed relative to
+        the outward supervision edge type the caller provides. Passing the same outward
+        USER_TO_STORY edge must therefore return the same anchors/labels as the edge_dir="out"
+        case; without the in-direction reversal the server-side label lookup would raise.
+        """
+        create_test_process_group()
+        positive_labels = {
+            0: [0, 1],
+            1: [1, 2],
+            2: [2, 3],
+            3: [3, 4],
+            4: [4, 0],
+        }
+        negative_labels = {
+            0: [2],
+            1: [3],
+            2: [4],
+            3: [0],
+            4: [1],
+        }
+
+        split_to_user_ids = {
+            "train": [0, 1, 2],
+            "val": [3],
+            "test": [4],
+        }
+
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=positive_labels,
+            negative_labels=negative_labels,
+            train_node_ids=split_to_user_ids["train"],
+            val_node_ids=split_to_user_ids["val"],
+            test_node_ids=split_to_user_ids["test"],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+            edge_dir="in",
+        )
+        server = dist_server.DistServer(dataset)
+
+        for split, expected_user_ids in split_to_user_ids.items():
+            with self.subTest(split=split):
+                anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+                    FetchABLPInputRequest(
+                        split=split,
+                        node_type=USER,
+                        supervision_edge_type=USER_TO_STORY,
+                    )
+                )
+
+                self.assert_tensor_equality(
+                    anchor_nodes, torch.tensor(expected_user_ids)
+                )
+
+                expected_positive = [positive_labels[uid] for uid in expected_user_ids]
+                self.assert_tensor_equality(
+                    pos_labels, torch.tensor(expected_positive), dim=1
+                )
+
+                expected_negative = [negative_labels[uid] for uid in expected_user_ids]
+                assert neg_labels is not None
+                self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
+
     def test_get_ablp_input_with_server_slicing(self) -> None:
         """Test get_ablp_input with server slices to verify sharding."""
         create_test_process_group()
