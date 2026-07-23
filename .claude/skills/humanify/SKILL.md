@@ -1,48 +1,21 @@
-______________________________________________________________________
-
-## name: humanify description: Use when writing or editing code comments, docstrings, or PR/commit descriptions.
+---
+name: humanify
+description: Use when writing or editing code comments, docstrings, or PR/commit descriptions.
+---
 
 # Humanify
 
 ## Overview
 
 Write for a hurried teammate reading the diff, not a spec reviewer. The code already shows *what* it does — comment the
-*why*, concretely, then stop. Every comment is a promise to keep it true, so write fewer and better ones — trimming
-prose, never structure.
+*why*, concretely, then stop. A comment that merely restates the line next to it rots the moment the code changes;
+delete it, or fix the name. Every comment is a promise to keep it true: write fewer and better ones — trimming prose,
+never structure.
 
-## Comment the why, not the what
+## Length earns its place when the danger needs it
 
-The code is the *what*. A comment earns its place only by speaking at a **different level than the code** — higher
-(intent, rationale) or lower (a precise caveat). A comment at the *same* level as the line next to it just restates it:
-cut it.
-
-Why this, not just "be concise": a *what*-comment mirrors the code, so it rots the moment the code changes — and a
-comment that contradicts the code is worse than none (code and comments stay in sync only ~20% of the time; mismatched
-comments track with bugs). A *why*-comment describes intent, which barely moves.
-
-## First pass — should this comment exist at all?
-
-Decide before you shorten:
-
-- Restates the code → **delete it** (`# increment i` adds nothing).
-- A clearer name would remove the need → **rename instead of commenting**.
-- Commented-out code, changelog/byline/banner noise → **delete** (the VCS remembers).
-
-## The contract — what a kept comment looks like
-
-In order, nothing else:
-
-1. A plain one-line lead — what it is or what to do.
-2. A concrete example — the real command, path, or value.
-3. The one-sentence *why* — the reason a reader would otherwise get wrong.
-
-## When a longer comment earns its length
-
-Some comments must be long — don't amputate these; give them the sentences the danger needs, plus a link:
-
-- Rationale and **rejected alternatives** ("not X because…") — unrecoverable from code.
-- **Warnings**: not thread-safe, O(n²), mutates input, ordering matters.
-- A **workaround / unidiomatic line** — say why it's needed and link the bug/spec, so nobody "fixes" it into a break.
+A warning or workaround keeps the sentences its danger needs — and its bug/spec link. Don't amputate the *why* or the
+link to save lines.
 
 ## Write the standing state, not the change
 
@@ -58,8 +31,7 @@ them as what's true rather than what an experiment found:
 # at this scale. c3 is not cheaper here — it OOMs on this workload.
 ```
 
-The commit message and PR own the change story, so those details stay out of the comment. Cut anything that only
-resolves if you saw the PR:
+The commit and PR own the change story. Cut anything that only resolves if you saw the PR:
 
 - the thing the code moved *from* — "replaced", "switched from", "the old n2d".
 - the event that decided it — "a sweep on 20260711 measured…", "execution_date=…".
@@ -72,50 +44,35 @@ Litmus: read each clause as a stranger a year out. "the old n2d" fails (old vers
 ## Trim prose, not structure
 
 Brevity is about prose, not layout. Keep scannable structure — bulleted `Args`/`Returns`/`Raises`, tables, per-field
-lists — even when it costs lines; a reader finding the one field they need fast is the whole point of writing for a
-hurried teammate. Two entries that read alike (e.g. two returned tensors with the same shape) are parallel structure,
-not redundant prose — keep them as separate bullets; parallel form scans faster than a merged sentence. Follow the
-project's docstring convention (e.g. Google-style `Args`/`Returns`/`Raises`): "write fewer and better" governs redundant
-prose and what-restatement, not required structure.
+lists — even when it costs lines; a reader finding the one field they need fast is the whole point. Two entries that
+read alike (e.g. two returned tensors with the same shape) are parallel structure, not redundant prose — keep them as
+separate bullets. Follow the project's docstring convention: "write fewer and better" governs redundant prose and
+what-restatement, not required structure.
 
-## Before / after (real)
+## Enumerations become lists
 
-Before — an essay that buries the point:
+Prose that names three or more parallel things — flags, knobs, fields, options, steps — hides them: a reader scanning
+for one has to parse a whole sentence. Break the set into a list, one item per line; keep the surrounding sentences for
+the *why*.
 
-```
-Invoke with -m rather than `python gigl/src/training/trainer.py`: in the image
-gigl is an editable install whose finder points at a build-time path that
-doesn't exist at runtime, so a plain file invocation can't import gigl.common.
--m puts the package root on sys.path so gigl resolves to the source baked into
-the image — matching how every other pipeline entrypoint is launched. A file
-invocation would import a half-broken gigl and fail deep in training with a
-confusing traceback...
-```
+Trigger: you're about to write a parenthetical or comma-run of items — e.g.
+`(job_name, task_config_uri, resource_config_uri, cpu_docker_uri, cuda_docker_uri)`. That comma-run is the signal to
+make a list.
 
-After — lead, example, one why:
+Before — five knobs buried in a parenthetical:
 
 ```
-Launch the trainer as a module, not by file path:
-    python -m gigl.src.training.trainer --job_name=my_job \
-      --task_config_uri=... --resource_config_uri=...
-
-Run as -m (not python <path>) so `import gigl` resolves to the copy installed
-in the image, not the working directory.
+...forwarding the launch knobs (job_name, task_config_uri, resource_config_uri,
+cpu_docker_uri, cuda_docker_uri) to the trainer entrypoint...
 ```
 
-## Quick reference
+After — the knobs as a list:
 
-| Instead of                                                | Write                                         |
-| --------------------------------------------------------- | --------------------------------------------- |
-| a comment that restates the code                          | delete it — or a clearer name                 |
-| a paragraph justifying one line                           | one sentence, or nothing                      |
-| how sys.path / finders / probes work                      | "run as -m so imports resolve"                |
-| "basically", "in general", hedges                         | the claim, stated plainly                     |
-| "t2d replaced n2d after the 20260711 sweep measured -37%" | "t2d is ~37% cheaper than n2d-highmem here"   |
-| "max replicas unchanged per reviewer request"             | the live constraint: "don't rescale replicas" |
-| collapsing bulleted Args/Returns into prose to save lines | keep the bullets — structure *is* readability |
-
-## Litmus test
-
-Read it aloud. Sounds like a person explaining to a colleague → ship it. Documentation of documentation → cut it,
-rename, or delete.
+```
+The trainer entrypoint takes these launch knobs:
+  - `--job_name`
+  - `--task_config_uri`
+  - `--resource_config_uri`
+  - `--cpu_docker_uri`     (CPU image; optional)
+  - `--cuda_docker_uri`    (GPU image; optional)
+```
