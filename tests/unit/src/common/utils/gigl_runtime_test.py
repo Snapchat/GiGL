@@ -11,6 +11,7 @@ from gigl.common.metrics.base_metrics import NopMetricsPublisher
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.constants import (
     GIGL_APPLIED_TASK_IDENTIFIER_ENV_KEY,
+    GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY,
     GIGL_COMPONENT_ENV_KEY,
     GIGL_CPU_DOCKER_URI_ENV_KEY,
     GIGL_CUDA_DOCKER_URI_ENV_KEY,
@@ -84,6 +85,40 @@ class GiGLRuntimeTest(TestCase):
             env_vars[GIGL_CUDA_DOCKER_URI_ENV_KEY],
             DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA,
         )
+
+    def test_get_gigl_runtime_env_vars_propagates_bigquery_quota_project(
+        self,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: "quota-project"},
+            clear=True,
+        ):
+            env_vars = get_gigl_runtime_env_vars(
+                applied_task_identifier="job-42",
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                component=GiGLComponents.DataPreprocessor,
+            )
+
+        self.assertEqual(env_vars[GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY], "quota-project")
+
+    def test_get_gigl_runtime_env_vars_omits_empty_bigquery_quota_project(
+        self,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: ""},
+            clear=True,
+        ):
+            env_vars = get_gigl_runtime_env_vars(
+                applied_task_identifier="job-42",
+                task_config_uri=Uri("gs://bucket/task.yaml"),
+                resource_config_uri=Uri("gs://bucket/resource.yaml"),
+                component=GiGLComponents.DataPreprocessor,
+            )
+
+        self.assertNotIn(GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY, env_vars)
 
     def test_initialize_gigl_runtime_sets_env_and_initializes_metrics(self) -> None:
         task_config_uri = self._write_task_config(gbml_config_pb2.GbmlConfig())
