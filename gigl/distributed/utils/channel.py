@@ -24,10 +24,6 @@ from gigl.src.common.utils.metrics_service_provider import (
 #        publisher.add_count(self._dequeued_metric, 1)
 #        return msg
 #
-#    def flush_metrics(self):
-#        publisher = get_metrics_service_instance()
-#        publisher.flush_metrics()
-#
 import multiprocessing
 
 
@@ -45,7 +41,7 @@ class MonitoredShmChannel(ShmChannel):
             qsize = self._shared_qsize.value
 
         publisher = get_metrics_service_instance()
-        publisher.add_gauge(self._metric_name, qsize)
+        publisher.add_gauge(self._metric, qsize)
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         msg = super().recv(*args, **kwargs)
@@ -55,5 +51,5 @@ class MonitoredShmChannel(ShmChannel):
             qsize = self._shared_qsize.value
 
         publisher = get_metrics_service_instance()
-        publisher.add_gauge(self._metric_name, qsize)
+        publisher.add_gauge(self._metric, qsize)
         return msg
