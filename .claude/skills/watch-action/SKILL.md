@@ -1,6 +1,8 @@
-______________________________________________________________________
-
-## description: Monitor a GitHub Actions workflow run end-to-end through GH Actions, CloudBuild, and Vertex AI Pipelines. Invoke with a run URL or run ID. argument-hint: "<run-url-or-id> [--repo owner/repo]"
+---
+name: watch-action
+description: Monitor a GitHub Actions workflow run end-to-end through GH Actions, CloudBuild, and Vertex AI Pipelines. Invoke with a run URL or run ID.
+argument-hint: "<run-url-or-id> [--repo owner/repo]"
+---
 
 # Watch Action
 

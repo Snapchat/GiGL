@@ -1,6 +1,8 @@
-______________________________________________________________________
-
-## description: Apply KISS and pragmatic simplification to code, diffs, or plans. Invoke when the user says kiss, keep it simple, be pragmatic, don't overcomplicate, simplify this, reduce abstraction, avoid overengineering, or asks for the smallest correct change. argument-hint: "[file-path | plan | (empty for unstaged diff)]"
+---
+name: pragmatic
+description: Apply KISS and pragmatic simplification to code, diffs, or plans. Invoke when the user says kiss, keep it simple, be pragmatic, don't overcomplicate, simplify this, reduce abstraction, avoid overengineering, or asks for the smallest correct change.
+argument-hint: "[file-path | plan | (empty for unstaged diff)]"
+---
 
 # Pragmatic
 
