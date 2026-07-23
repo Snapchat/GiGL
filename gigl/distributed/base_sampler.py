@@ -1,5 +1,6 @@
 import asyncio
 import time
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -23,12 +24,13 @@ from gigl.distributed.sampler import (
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
+from gigl.distributed.utils.sampling_errors import (
+    SAMPLING_ERROR_KEY,
+    encode_sampling_error,
+)
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
-_PERF_TIMING_LOG_PREFIX = "PERF_TIMING"
-_COLLATE_TIMING_LOG_INTERVAL = 500
-
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
     """Return unique 1-D values while preserving first-occurrence order.
@@ -97,6 +99,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     Subclasses must override ``_sample_from_nodes`` with their specific
     sampling strategy (e.g., k-hop neighbor sampling, PPR-based sampling).
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize the sampler and the one-time sampling-error guard.
+
+        ``GLTDistNeighborSampler`` has no GiGL-owned state; we only add
+        ``_sampling_error_sent`` so ``_send_adapter`` can forward at most one
+        poison pill per sampler instance. Initializing it here (rather than
+        lazily) guarantees the failure handler never raises ``AttributeError``,
+        which GLT's event loop would swallow the same way it swallows the
+        original sampling exception.
+        """
+        super().__init__(*args, **kwargs)
+        self._sampling_error_sent: bool = False
 
     def _prepare_sample_loop_inputs(
         self,
@@ -219,9 +234,38 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         Copied from ``graphlearn_torch.distributed.DistNeighborSampler._send_adapter``
         (GLT 0.2.4) with the single change of ``_colloate_fn`` → ``_collate_fn``.
+
+        Additionally, any exception raised while sampling or collating is caught
+        and surfaced instead of swallowed. GLT's ``ConcurrentEventLoop`` logs a
+        failed coroutine as a one-line ``str(e)`` and drops the batch, so the
+        channel never receives a message and the loader hangs forever. Here we
+        log the full traceback and forward a one-time poison-pill ``SampleMessage``
+        (in channel mode) so the consumer raises promptly, or re-raise (in
+        channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
-        sampler_output = await async_func(*args, **kwargs)
-        res = await self._collate_fn(sampler_output)
+        try:
+            sampler_output = await async_func(*args, **kwargs)
+            res = await self._collate_fn(sampler_output)
+        except Exception:
+            logger.exception(
+                "Sampling coroutine failed; forwarding error to the loader."
+            )
+            if self.channel is not None:
+                # Send at most one poison pill per sampler instance. The consumer
+                # raises on the first pill anyway, and ``ShmChannel.send`` blocks;
+                # a failure storm into a bounded channel that nobody drains would
+                # wedge the sampler-side event loop.
+                if not self._sampling_error_sent:
+                    self._sampling_error_sent = True
+                    self.channel.send(
+                        {
+                            SAMPLING_ERROR_KEY: encode_sampling_error(
+                                traceback.format_exc()
+                            )
+                        }
+                    )
+                return None
+            raise  # channel-less mode: propagates via run_task / torch RPC
         if self.channel is None:
             return res
         self.channel.send(res)
