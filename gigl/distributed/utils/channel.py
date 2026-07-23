@@ -65,7 +65,4 @@ class MonitoredShmChannel(SizedShmChannel):
     def recv(self, *args, **kwargs) -> SampleMessage:
         publisher = get_metrics_service_instance()
         publisher.add_gauge(f"{self._channel_name}_qsize", self.qsize())
-        try:
-            return super().recv(*args, **kwargs)
-        finally:
-            publisher.flush_metrics()  # TODO(jchmura): Can we afford this on each recv()?
+        return super().recv(*args, **kwargs)
