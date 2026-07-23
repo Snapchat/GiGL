@@ -60,11 +60,11 @@ class MonitoredShmChannel(SizedShmChannel):
 
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._metric = f"{channel_name}.qsize"
+        self._channel_name = channel_name
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         publisher = get_metrics_service_instance()
-        publisher.add_gauge(self._metric, self.qsize())
+        publisher.add_gauge(f"{self._channel_name}_qsize", self.qsize())
         try:
             return super().recv(*args, **kwargs)
         finally:
