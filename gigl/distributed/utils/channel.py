@@ -17,7 +17,7 @@ _libc.shmdt.restype = ctypes.c_int
 
 
 class SizedShmChannel(ShmChannel):
-    """A ShmChannel subclass that adds direct shared-memory size inspection."""
+    """Extends ShmChannel with queue size method `qsize()` by attaching to the channels memory region and inspecting the C++ struct layout."""
 
     def qsize(self) -> int:
         # Obtain the shmid from the underlying C++ SampleQueue instance
@@ -56,7 +56,7 @@ class SizedShmChannel(ShmChannel):
 
 
 class MonitoredShmChannel(SizedShmChannel):
-    """Monitored variant of SizedShmChannel that automatically records qsize on recv() as a gauge."""
+    """Monitored variant of SizedShmChannel that integrats with GiGL metrics_service and records queue size on recv() as a gauge."""
 
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
