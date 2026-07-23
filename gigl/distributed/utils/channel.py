@@ -1,42 +1,72 @@
-import multiprocessing
+import ctypes
+import os
+
 from graphlearn_torch.channel import SampleMessage, ShmChannel
 
-from gigl.src.common.utils.metrics_service_provider import (
-    get_metrics_service_instance,
-)
+from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
+
+libc = ctypes.CDLL("libc.so.6", use_errno=True)
+
+# void *shmat(int shmid, const void *shmaddr, int shmflg);
+libc.shmat.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+libc.shmat.restype = ctypes.c_void_p
+
+# int shmdt(const void *shmaddr);
+libc.shmdt.argtypes = [ctypes.c_void_p]
+libc.shmdt.restype = ctypes.c_int
 
 
-class MonitoredShmChannel(ShmChannel):
-    """Monitored variant of ShmChannel that automatically records enqueue/dequeue metrics."""
+class SizedShmChannel(ShmChannel):
+    """A ShmChannel subclass that adds direct shared-memory size inspection."""
+
+    def qsize(self) -> int:
+        # Obtain the shmid from the underlying C++ SampleQueue instance
+        shmid = self._queue.__getstate__()
+
+        # Attach to the shared memory segment in the current process
+        ptr = libc.shmat(shmid, None, 0)
+        if (
+            ptr == ctypes.c_void_p(-1).value or ptr is None
+        ):  # shmat returns ((void *)-1) on failure
+            err_num = ctypes.get_errno()
+            error_msg = os.strerror(err_num)
+            raise RuntimeError(
+                f"shmat failed for shmid={shmid} with errno {err_num}: {error_msg}"
+            )
+
+        try:
+            # ShmQueueMeta Memory Layout in Shared Memory (64-bit Architecture)
+            # Reference: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/shm_queue.h#L65
+            # ==================================================================================
+            # Byte Offset | C++ Member Variable | Type     | Size    | Description
+            # ------------+---------------------+----------+---------+--------------------------
+            # 00 - 07     | max_block_num_      | size_t   | 8 bytes | Capacity (max block count)
+            # 08 - 15     | max_buf_size_       | size_t   | 8 bytes | Max buffer size in bytes
+            # 16 - 23     | block_meta_offset_  | size_t   | 8 bytes | Offset to BlockMeta array
+            # 24 - 31     | data_buf_offset_    | size_t   | 8 bytes | Offset to raw data buffer
+            # 32 - 39     | write_block_id_     | size_t   | 8 bytes | Total messages enqueued <-- READ HERE
+            # 40 - 47     | read_block_id_      | size_t   | 8 bytes | Total messages dequeued <-- READ HERE
+            # 48 - 55     | alloc_offset_       | size_t   | 8 bytes | Internal ring write ptr
+            # 56 - 63     | released_offset_    | size_t   | 8 bytes | Internal ring release ptr
+            # 64 - ...    | sem_t locks         | sem_t    | N bytes | POSIX semaphores
+            # ==================================================================================
+            write_block_id = ctypes.c_size_t.from_address(ptr + 32).value
+            read_block_id = ctypes.c_size_t.from_address(ptr + 40).value
+            return write_block_id - read_block_id
+        finally:
+            libc.shmdt(ptr)
+
+
+class MonitoredShmChannel(SizedShmChannel):
+    """Monitored variant of SizedShmChannel that automatically records qsize on recv() as a gauge."""
 
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._enqueued_metric = f"{channel_name}.enqueued"
-        self._dequeued_metric = f"{channel_name}.dequeued"
-
-        #self._metric = f"{channel_name}.queue_size"
-        #self._shared_qsize = multiprocessing.Value("i", 0)
-
-    def send(self, msg: SampleMessage, **kwargs) -> None:
-        super().send(msg, **kwargs)
-        publisher = get_metrics_service_instance()
-        publisher.add_count(self._enqueued_metric, 1)
-
-        #with self._shared_qsize.get_lock():
-        #    self._shared_qsize.value += 1
-        #    qsize = self._shared_qsize.value
-
-        #publisher = get_metrics_service_instance()
-        #publisher.add_gauge(self._metric, qsize)
+        self._metric = f"{channel_name}.qsize"
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         msg = super().recv(*args, **kwargs)
         publisher = get_metrics_service_instance()
-        publisher.add_count(self._dequeued_metric, 1)
-        #with self._shared_qsize.get_lock():
-        #    self._shared_qsize.value = max(0, self._shared_qsize.value - 1)
-        #    qsize = self._shared_qsize.value
-
-        #publisher = get_metrics_service_instance()
-        #publisher.add_gauge(self._metric, qsize)
+        publisher.add_gauge(self._metric, self.qsize())
+        publisher.flush_metrics()  # TODO(jchmura): Can we afford this on each recv()?
         return msg
