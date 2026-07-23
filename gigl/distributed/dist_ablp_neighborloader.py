@@ -37,6 +37,7 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     strip_label_edges,
 )
+from gigl.distributed.utils.sampling_errors import raise_if_sampling_error
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -856,6 +857,10 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        # A sampling worker that failed forwards a poison-pill message instead of
+        # a batch; surface it as a RuntimeError with the worker traceback before
+        # doing any parsing that would choke on the sentinel payload.
+        raise_if_sampling_error(msg)
         # extract_metadata separates #META. keys from the message to work
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
         # pulls out labels by prefix.

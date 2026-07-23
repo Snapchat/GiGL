@@ -7,7 +7,7 @@ from google.cloud.storage.bucket import Bucket
 from google.cloud.storage.client import Client
 
 from gigl.common import GcsUri
-from gigl.common.utils.gcs import GcsUtils
+from gigl.common.utils.gcs import DELETE_REQUEST_TIMEOUT_S, GcsUtils
 from tests.test_assets.test_case import TestCase
 
 
@@ -136,7 +136,7 @@ class TestGcsUtils(TestCase):
         mock_client.get_bucket.assert_not_called()
         mock_bucket.blob.assert_called_once_with("test-path/test-file.txt")
         mock_client.batch.assert_called_once_with()
-        mock_blob.delete.assert_called_once_with()
+        mock_blob.delete.assert_called_once_with(timeout=DELETE_REQUEST_TIMEOUT_S)
 
     def test_delete_files_in_bucket_dir(self):
         # Mock the GCS client, bucket, and blob

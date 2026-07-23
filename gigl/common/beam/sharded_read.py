@@ -35,7 +35,7 @@ def _assert_shard_key_in_table(table_name: str, shard_key: str) -> None:
     # parsing, so it accepts the same `project.dataset.table` strings (and, as a
     # superset, `project:dataset.table`) as the previous TableReference lookup.
     bq_utils = BqUtils()
-    column_names = list(bq_utils.fetch_bq_table_schema(bq_table=table_name).keys())
+    column_names = list(bq_utils.fetch_bq_table_schema(bq_table=table_name))
 
     if shard_key not in column_names:
         raise ValueError(

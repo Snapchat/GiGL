@@ -2,6 +2,7 @@
 
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <optional>
@@ -265,8 +266,10 @@ void PPRForwardPush::pushResiduals(
     }
 }
 
-std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::extractTopK(
-    int32_t maxPprNodes) {
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> PPRForwardPush::
+    extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp) {
+    TORCH_CHECK(maxPPRNodes >= 0, "maxPPRNodes must be non-negative, got ", maxPPRNodes, ".");
+
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
     // Emit an entry for every node type, even if unreachable in this batch (empty tensors,
     // all-zero valid_counts).  This keeps the output shape consistent across batches so
@@ -277,21 +280,89 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
         std::vector<int64_t> validCounts;
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
-            const auto& scores = _state[seedIdx][nodeTypeId].pprScores;
-            int32_t topK = std::min(maxPprNodes, static_cast<int32_t>(scores.size()));
+            const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
+            const auto& scores = nodeTypeState.pprScores;
+            const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
+
+            const int32_t topK = std::min(maxPPRNodes, static_cast<int32_t>(scores.size()));
+            const int32_t residualTopUpBudget = enableResidualTopUp ? maxPPRNodes - topK : 0;
+            std::vector<std::pair<int32_t, double>> selectedPairs;
+            selectedPairs.reserve(static_cast<size_t>(topK) + static_cast<size_t>(residualTopUpBudget));
+            std::unordered_set<int32_t> selectedPPRNodeIds;
             if (topK > 0) {
+                if (residualTopUpBudget > 0) {
+                    selectedPPRNodeIds.reserve(static_cast<size_t>(topK));
+                }
                 std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
-                std::partial_sort(scorePairs.begin(),
-                                  scorePairs.begin() + topK,
-                                  scorePairs.end(),
-                                  [](const auto& a, const auto& b) { return a.second > b.second; });
+                // Selection is intentionally two-phase: finalized nodes are selected
+                // first by raw PPR score, and residual candidates only compete for
+                // the remaining budget.
+                if (enableResidualTopUp) {
+                    // The final emitted order is sorted by ppr_score + residual
+                    // after top-up candidates are selected, so this pass only
+                    // needs to partition out the raw-PPR top K.
+                    if (topK < static_cast<int32_t>(scorePairs.size())) {
+                        std::nth_element(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
+                    }
+                } else {
+                    std::partial_sort(scorePairs.begin(), scorePairs.begin() + topK, scorePairs.end(), higherScore);
+                }
 
                 for (int32_t rankIdx = 0; rankIdx < topK; ++rankIdx) {
-                    flatIds.push_back(static_cast<int64_t>(scorePairs[rankIdx].first));
-                    flatWeights.push_back(scorePairs[rankIdx].second);
+                    int32_t nodeId = scorePairs[rankIdx].first;
+                    double outputScore = scorePairs[rankIdx].second;
+                    if (enableResidualTopUp) {
+                        auto residualIter = nodeTypeState.residuals.find(nodeId);
+                        if (residualIter != nodeTypeState.residuals.end()) {
+                            outputScore += residualIter->second;
+                        }
+                    }
+                    selectedPairs.emplace_back(nodeId, outputScore);
+                    if (residualTopUpBudget > 0) {
+                        selectedPPRNodeIds.insert(nodeId);
+                    }
                 }
             }
-            validCounts.push_back(static_cast<int64_t>(topK));
+
+            if (residualTopUpBudget > 0) {
+                std::vector<std::pair<int32_t, double>> residualPairs;
+                residualPairs.reserve(nodeTypeState.residuals.size());
+                for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+                    if (residual <= 0.0 || selectedPPRNodeIds.find(nodeId) != selectedPPRNodeIds.end()) {
+                        continue;
+                    }
+
+                    auto scoreIter = scores.find(nodeId);
+                    double pprScore = (scoreIter != scores.end()) ? scoreIter->second : 0.0;
+                    double outputScore = pprScore + residual;
+                    residualPairs.emplace_back(nodeId, outputScore);
+                }
+
+                const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
+                if (residualTopK > 0) {
+                    // Residual candidates only need selection here; selected
+                    // finalized and residual rows are sorted together below.
+                    if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
+                        std::nth_element(residualPairs.begin(),
+                                         residualPairs.begin() + residualTopK,
+                                         residualPairs.end(),
+                                         higherScore);
+                    }
+
+                    for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
+                        selectedPairs.emplace_back(residualPairs[rankIdx].first, residualPairs[rankIdx].second);
+                    }
+                }
+            }
+
+            if (enableResidualTopUp && selectedPairs.size() > 1) {
+                std::sort(selectedPairs.begin(), selectedPairs.end(), higherScore);
+            }
+            for (const auto& [nodeId, score] : selectedPairs) {
+                flatIds.push_back(static_cast<int64_t>(nodeId));
+                flatWeights.push_back(score);
+            }
+            validCounts.push_back(static_cast<int64_t>(selectedPairs.size()));
         }
 
         result[nodeTypeId] = {torch::tensor(flatIds, torch::kLong),
