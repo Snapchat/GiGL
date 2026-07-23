@@ -441,13 +441,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             result_map[result_key] = value
 
         collate_time = time.perf_counter() - collate_start
-        collected_tensors_to_bytes: dict[str, int] = {
-            result_key: result_map[result_key].nbytes for result_key in futs
-        }
-        total_bytes = sum(collected_tensors_to_bytes.values())
-        tensor_sizes = {
-            k: f"{v / 1e6:.2f}MB" for k, v in collected_tensors_to_bytes.items()
-        }
+        tensor_sizes = {}
+        total_bytes = 0
+        for k in futs:
+            nbytes = result_map[k].nbytes
+            total_bytes += nbytes
+            tensor_sizes[k] = f"{nbytes / 1e6:.2f}MB"
+
         logger.debug(
             f"Collected remote tensors: {tensor_sizes} | Total: {total_bytes / 1e6:.2f}MB | Time: {collate_time:.3f}s"
         )
