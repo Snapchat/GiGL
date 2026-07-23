@@ -32,6 +32,7 @@ from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
 
+
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
     """Return unique 1-D values while preserving first-occurrence order.
 
@@ -439,33 +440,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 value = value if value.shape[1] > 1 else value.T[0]
             result_map[result_key] = value
 
-        self._record_collate_timing(time.perf_counter() - collate_start)
-
+        collate_time = time.perf_counter() - collate_start
         collected_tensors_to_bytes: dict[str, int] = {
             result_key: result_map[result_key].nbytes for result_key in futs
         }
         total_bytes = sum(collected_tensors_to_bytes.values())
-        collate_time = time.perf_counter() - collate_start
-        # TODO: Bact to debug level
-        tensor_sizes = {k: f"{v / 1e6:.2f}MB" for k, v in collected_tensors_to_bytes.items()}
-        logger.info(f"Collected remote tensors: {tensor_sizes} | Total: {total_bytes / 1e6:.2f}MB | Time: {collate_time:.3f}s")
+        tensor_sizes = {
+            k: f"{v / 1e6:.2f}MB" for k, v in collected_tensors_to_bytes.items()
+        }
+        logger.debug(
+            f"Collected remote tensors: {tensor_sizes} | Total: {total_bytes / 1e6:.2f}MB | Time: {collate_time:.3f}s"
+        )
 
         return result_map
-
-    def _record_collate_timing(self, collate_s: float) -> None:
-        count = getattr(self, "_collate_timing_count", 0) + 1
-        collate_sum = getattr(self, "_collate_timing_collate_sum", 0.0) + collate_s
-
-        if count < _COLLATE_TIMING_LOG_INTERVAL:
-            self._collate_timing_count = count
-            self._collate_timing_collate_sum = collate_sum
-            return
-
-        logger.info(
-            f"{_PERF_TIMING_LOG_PREFIX} sampler_collate_timing mean_collate_ms={1000 * collate_sum / count:.3f}"
-        )
-        self._collate_timing_count = 0
-        self._collate_timing_collate_sum = 0.0
 
     async def _sample_from_nodes(
         self,
