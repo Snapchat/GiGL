@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage, ShmChannel
+from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -53,6 +53,7 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -426,20 +427,21 @@ class BaseDistLoader(DistLoader):
 
     @staticmethod
     def create_colocated_channel(
-        worker_options: MpDistSamplingWorkerOptions,
-    ) -> ShmChannel:
-        """Creates a ShmChannel for colocated mode.
+        worker_options: MpDistSamplingWorkerOptions, channel_name: str
+    ) -> MonitoredShmChannel:
+        """Creates a MonitoredShmChannel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
         Args:
             worker_options: The colocated worker options (must already be fully configured).
+            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredShmChannel).
 
         Returns:
-            A ShmChannel ready to be passed to a DistSamplingProducer.
+            A MonitoredShmChannel ready to be passed to a DistSamplingProducer.
         """
-        channel = ShmChannel(
-            worker_options.channel_capacity, worker_options.channel_size
+        channel = MonitoredShmChannel(
+            channel_name, worker_options.channel_capacity, worker_options.channel_size
         )
         if worker_options.pin_memory:
             channel.pin_memory()
@@ -452,6 +454,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
+        channel_name: str,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -468,12 +471,13 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
+            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredShmChannel).
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
             ``_init_colocated_connections``.
         """
-        channel = BaseDistLoader.create_colocated_channel(worker_options)
+        channel = BaseDistLoader.create_colocated_channel(worker_options, channel_name)
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
             share_memory(degree_tensors)
