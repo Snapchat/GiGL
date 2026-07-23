@@ -1,5 +1,4 @@
 import asyncio
-import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
@@ -309,7 +308,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             A ``SampleMessage`` (``dict[str, torch.Tensor]``) ready to be sent
             over the sampling channel or returned directly to the loader.
         """
-        collate_start = time.perf_counter()
         result_map: SampleMessage = {}
         is_hetero = self.dist_graph.data_cls == "hetero"
         result_map["#IS_HETERO"] = torch.LongTensor([int(is_hetero)])
@@ -438,18 +436,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
                 value = value if value.shape[1] > 1 else value.T[0]
             result_map[result_key] = value
-
-        collate_time = time.perf_counter() - collate_start
-        tensor_sizes = {}
-        total_bytes = 0
-        for k in futs:
-            nbytes = result_map[k].nbytes
-            total_bytes += nbytes
-            tensor_sizes[k] = f"{nbytes / 1e6:.2f}MB"
-
-        logger.debug(
-            f"Collected remote tensors: {tensor_sizes} | Total: {total_bytes / 1e6:.2f}MB | Time: {collate_time:.3f}s"
-        )
 
         return result_map
 
