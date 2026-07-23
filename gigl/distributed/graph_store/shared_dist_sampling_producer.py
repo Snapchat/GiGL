@@ -60,7 +60,8 @@ Worker event-loop internals::
     ├─────────────────────────────────────────────────┤
     │ Phase 3: Idle wait                              │
     │   if no commands and no batches submitted:      │
-    │     task_queue.get(timeout=SCHEDULER_TICK_SECS) │
+    │     wake_event.wait(timeout=SCHEDULER_TICK_SECS)│
+    │     (a completion's _on_batch_done set()s it)   │
     └─────────────────────────────────────────────────┘
 """
 
@@ -375,8 +376,11 @@ def _shared_sampling_worker_loop(
            b. Submitting batches round-robin from ``runnable_channel_ids`` — a FIFO
               queue of channels that have pending work. Each channel gets one batch
               submitted per round to prevent starvation.
-           c. If no commands were processed and no batches submitted, blocking on
-              ``task_queue`` with a short timeout to avoid busy-waiting.
+           c. If no commands were processed and no batches submitted, waiting on
+              a completion wake-event with a short fallback timeout to avoid
+              busy-waiting.  ``_on_batch_done`` sets the event when it frees an
+              in-flight slot, so a parked channel refills immediately rather than
+              after the full tick.
         3. Completion callbacks from the sampler update per-channel state and emit
            ``EPOCH_DONE_EVENT`` to ``event_queue`` when all batches for an epoch
            are finished.
@@ -393,6 +397,12 @@ def _shared_sampling_worker_loop(
     removing_channel_ids: set[int] = set()
     cleanup_ready_channel_ids: set[int] = set()
     state_lock = threading.RLock()
+    # Level-triggered event the completion callback (``_on_batch_done``) sets
+    # after re-enqueueing a parked channel, so the scheduler's Phase-3 idle wait
+    # returns at once instead of sleeping the full ``SCHEDULER_TICK_SECS``.
+    # Loop-local: the single scheduler thread is the only waiter, callback
+    # threads only ``set()``, so nothing leaks across worker instances.
+    wake_event = threading.Event()
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
     # Per-channel in-flight submission cap.  The scheduler parks a channel
@@ -599,6 +609,14 @@ def _shared_sampling_worker_loop(
             # Idempotent via the membership guard and a no-op for cancelled or
             # fully-submitted channels, so it is safe to call on every batch.
             _enqueue_channel_if_runnable_locked(channel_id)
+            # Wake the scheduler's Phase-3 idle wait so the just-freed in-flight
+            # slot is refilled at once rather than after up to
+            # ``SCHEDULER_TICK_SECS``.  ``Event.set()`` is non-blocking and safe
+            # under ``state_lock``; being level-triggered it can never be a lost
+            # wakeup even if the scheduler is not yet waiting.  Never
+            # ``task_queue.put`` here: that queue is bounded and would
+            # backpressure this callback thread.
+            wake_event.set()
             if channel_id in removing_channel_ids:
                 drained_messages = _drain_channel_locked(channel_id)
                 if drained_messages > 0:
@@ -903,13 +921,25 @@ def _shared_sampling_worker_loop(
             if not keep_running:
                 break
 
-            # Phase 3: If idle (no commands, no batches), block until next command.
+            # Phase 3: Idle (no commands drained, no batches submitted), so wait
+            # on the completion wake-event with a fallback tick, then loop back
+            # to Phase 1.  A batch completion (``_on_batch_done``) re-enqueues
+            # the freed channel and ``wake_event.set()``s, so this returns at
+            # once and the freed slot refills without idling ~25ms on average.
+            # ``wake_event`` is level-triggered: a ``set()`` racing ahead of this
+            # ``wait()`` returns True immediately (no lost wakeup); a ``set()``
+            # seen before we reach the wait costs at most one extra non-sleeping
+            # spin.  Commands are not handled here -- the ``continue`` returns to
+            # Phase 1, which drains ``task_queue`` via ``get_nowait()`` every
+            # iteration -- so worst-case command latency is one
+            # ``SCHEDULER_TICK_SECS`` tick, negligible against the per-epoch
+            # (~1e5 batches apart) command cadence.
             if not (processed_command or made_progress):
-                try:
-                    command, payload = task_queue.get(timeout=SCHEDULER_TICK_SECS)
-                except queue.Empty:
-                    continue
-                keep_running = _handle_command(command, payload)
+                if wake_event.wait(timeout=SCHEDULER_TICK_SECS):
+                    # A completion woke us: clear so the next idle wait blocks
+                    # again.
+                    wake_event.clear()
+                continue
     except KeyboardInterrupt:
         pass
     finally:
