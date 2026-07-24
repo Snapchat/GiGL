@@ -92,6 +92,7 @@ class SizedShmChannel(ShmChannel):
 
 class MonitoredShmChannel(SizedShmChannel):
     """Monitored variant of SizedShmChannel that integrats with GiGL metrics_service and records queue size on recv() as a gauge."""
+
     # Counts instantiations of this class, per process.
     # This is needed so we can generate unique channel names for each instance within the same process.
     # NOTE: This is per-class, not per-instance.
