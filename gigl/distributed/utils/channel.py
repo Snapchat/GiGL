@@ -20,7 +20,11 @@ class SizedShmChannel(ShmChannel):
         super().__init__(*args, **kwargs)
         self._finalizer: Optional[weakref.finalize] = None
 
+    def __len__(self) -> int:
+        return self.qsize()
+
     def qsize(self) -> int:
+        """The number of SampleMessage items currently in the channel."""
         # ShmQueueMeta Memory Layout in Shared Memory (64-bit Architecture)
         # Reference: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/shm_queue.h#L65
         # ==================================================================================

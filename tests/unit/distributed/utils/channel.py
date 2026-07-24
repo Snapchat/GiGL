@@ -20,25 +20,30 @@ class TestSizedShmChannel(TestCase):
 
     def test_single_process_qsize(self):
         # Initially empty channel
+        self.assertEqual(len(self.channel), 0)
         self.assertEqual(self.channel.qsize(), 0)
         self.assertTrue(self.channel.empty())
 
         # Send first message
         self.channel.send(self.msg_1)
+        self.assertEqual(len(self.channel), 1)
         self.assertEqual(self.channel.qsize(), 1)
         self.assertFalse(self.channel.empty())
 
         # Send second message
         self.channel.send(self.msg_2)
+        self.assertEqual(len(self.channel), 2)
         self.assertEqual(self.channel.qsize(), 2)
 
         # Receive first message
         recv_1 = self.channel.recv()
+        self.assertEqual(len(self.channel), 1)
         self.assertEqual(self.channel.qsize(), 1)
         torch.testing.assert_close(recv_1, self.msg_1)
 
         # Receive second message
         recv_2 = self.channel.recv()
+        self.assertEqual(len(self.channel), 0)
         self.assertEqual(self.channel.qsize(), 0)
         self.assertTrue(self.channel.empty())
         torch.testing.assert_close(recv_2, self.msg_2)
