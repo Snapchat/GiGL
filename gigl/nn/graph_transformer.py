@@ -246,8 +246,23 @@ class GraphTransformerEncoderLayer(nn.Module):
             changes attention weights, not value/message content.
             ``"edge_type_hgt"`` replaces the base query/key score on relation
             edges with an HGT-style relation transform and relation prior.
+        relation_message_mode: Optional relation-aware message channel run in
+            parallel with self-attention. ``"none"`` preserves the default
+            layer. ``"edge_type_linear"`` adds, for every sampled directed graph
+            edge, a per-edge-type linear transform of the source token
+            (mean-aggregated per target and relation) into the attention
+            residual — the message analog of HGT's per-relation value transform
+            (``v_rel``) and per-edge-type GATv2 weights. ``"edge_type_attention"``
+            replaces the mean with a per-head softmax over each target's
+            relation neighbors, scored HGT-style from the layer's own query/key
+            projections with per-(relation, head) transforms and priors —
+            coupling attention weighting with relation-transformed content.
+            Either way compute scales with the number of relation edges, not
+            seq^2, and message weights are zero-initialized so startup behavior
+            matches the plain layer.
         num_relations: Number of relation channels expected in
-            ``pairwise_relation_indices`` when relation-aware attention is enabled.
+            ``pairwise_relation_indices`` when relation-aware attention or
+            messages are enabled.
 
     Raises:
         ValueError: If model_dim is not divisible by num_heads.
@@ -265,6 +280,11 @@ class GraphTransformerEncoderLayer(nn.Module):
             "none",
             "edge_type_bilinear",
             "edge_type_hgt",
+        ] = "none",
+        relation_message_mode: Literal[
+            "none",
+            "edge_type_linear",
+            "edge_type_attention",
         ] = "none",
         num_relations: int = 0,
     ) -> None:
@@ -287,11 +307,24 @@ class GraphTransformerEncoderLayer(nn.Module):
             raise ValueError(
                 "Relation-aware attention mode requires num_relations > 0."
             )
+        if relation_message_mode not in {
+            "none",
+            "edge_type_linear",
+            "edge_type_attention",
+        }:
+            raise ValueError(
+                "relation_message_mode must be one of "
+                "{'none', 'edge_type_linear', 'edge_type_attention'}, "
+                f"got '{relation_message_mode}'"
+            )
+        if relation_message_mode != "none" and num_relations <= 0:
+            raise ValueError("Relation-aware message mode requires num_relations > 0.")
 
         self._num_heads = num_heads
         self._head_dim = model_dim // num_heads
         self._attention_dropout_rate = attention_dropout_rate
         self._relation_attention_mode = relation_attention_mode
+        self._relation_message_mode = relation_message_mode
         self._num_relations = num_relations
 
         self._attention_norm = nn.LayerNorm(model_dim)
@@ -320,6 +353,32 @@ class GraphTransformerEncoderLayer(nn.Module):
                 torch.empty(num_relations)
             )
             self._reset_hgt_relation_attention_parameters()
+        self._relation_message_matrices: Optional[nn.Parameter] = None
+        if relation_message_mode in {"edge_type_linear", "edge_type_attention"}:
+            # message(target <- source, relation) = W_relation @ x_norm[source],
+            # aggregated per (target, relation) and added to the attention
+            # residual. This is the per-relation value/message transform of HGT
+            # (``v_rel``) / per-edge-type GATv2 weights, applied sparsely over
+            # sampled graph edges. Zero init keeps startup behavior identical to
+            # the plain layer regardless of the aggregation weights.
+            self._relation_message_matrices = nn.Parameter(
+                torch.zeros(num_relations, model_dim, model_dim)
+            )
+        self._relation_message_attention_matrices: Optional[nn.Parameter] = None
+        self._relation_message_attention_priors: Optional[nn.Parameter] = None
+        if relation_message_mode == "edge_type_attention":
+            # HGT-style per-(relation, head) score transform and per-head
+            # relation priors for the message-channel softmax:
+            # score = prior * <q_target, W_relation k_source> / sqrt(head_dim).
+            # Identity/one init makes the initial scores the plain query/key
+            # dot product.
+            self._relation_message_attention_matrices = nn.Parameter(
+                torch.empty(num_relations, num_heads, self._head_dim, self._head_dim)
+            )
+            self._relation_message_attention_priors = nn.Parameter(
+                torch.empty(num_relations, num_heads)
+            )
+            self._reset_relation_message_attention_parameters()
 
         self._ffn_norm = nn.LayerNorm(model_dim)
         self._ffn = FeedForwardNetwork(
@@ -341,6 +400,9 @@ class GraphTransformerEncoderLayer(nn.Module):
         if self._relation_attention_matrices is not None:
             nn.init.zeros_(self._relation_attention_matrices)
         self._reset_hgt_relation_attention_parameters()
+        if self._relation_message_matrices is not None:
+            nn.init.zeros_(self._relation_message_matrices)
+        self._reset_relation_message_attention_parameters()
         self._ffn_norm.reset_parameters()
         self._ffn.reset_parameters()
 
@@ -360,6 +422,23 @@ class GraphTransformerEncoderLayer(nn.Module):
                 relation_identity.expand(self._num_relations, -1, -1)
             )
             self._relation_hgt_attention_priors.fill_(1.0)
+
+    def _reset_relation_message_attention_parameters(self) -> None:
+        if self._relation_message_attention_matrices is None:
+            return
+        if self._relation_message_attention_priors is None:
+            raise ValueError("Relation message attention priors are not initialized.")
+
+        with torch.no_grad():
+            relation_identity = torch.eye(
+                self._head_dim,
+                dtype=self._relation_message_attention_matrices.dtype,
+                device=self._relation_message_attention_matrices.device,
+            )
+            self._relation_message_attention_matrices.copy_(
+                relation_identity.expand(self._num_relations, self._num_heads, -1, -1)
+            )
+            self._relation_message_attention_priors.fill_(1.0)
 
     def forward(
         self,
@@ -421,6 +500,26 @@ class GraphTransformerEncoderLayer(nn.Module):
         attention_output = self._dropout(attention_output)
 
         x = residual + attention_output
+        if self._relation_message_mode == "edge_type_attention":
+            x = x + self._dropout(
+                self._compute_relation_attention_messages(
+                    x_norm=x_norm,
+                    query=query,
+                    key=key,
+                    pairwise_relation_indices=pairwise_relation_indices,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                )
+            )
+        elif self._relation_message_mode != "none":
+            x = x + self._dropout(
+                self._compute_relation_messages(
+                    x_norm=x_norm,
+                    pairwise_relation_indices=pairwise_relation_indices,
+                    batch_size=batch_size,
+                    seq_len=seq_len,
+                )
+            )
         if valid_mask is not None:
             x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
@@ -621,6 +720,278 @@ class GraphTransformerEncoderLayer(nn.Module):
             )
         return relation_scores / math.sqrt(self._head_dim)
 
+    def _compute_relation_messages(
+        self,
+        x_norm: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+        batch_size: int,
+        seq_len: int,
+    ) -> Tensor:
+        """Aggregate per-relation linear messages over sampled directed edges.
+
+        For every relation edge ``(batch_idx, query_pos=target, key_pos=source,
+        relation_idx)`` the target token receives
+        ``W_relation @ x_norm[source]``, mean-aggregated per (target, relation)
+        and summed across relations.
+
+        Compute scales with the number of relation edges (not seq^2) and never
+        materializes any (seq, seq) tensor, so the scaled-dot-product attention
+        path and its memory profile are unaffected.
+
+        Returns:
+            Message tensor of shape ``(batch_size, seq_len, model_dim)``.
+        """
+        if self._relation_message_matrices is None:
+            raise ValueError("Relation message matrices are not initialized.")
+        if pairwise_relation_indices is None:
+            raise ValueError(
+                "pairwise_relation_indices is required when "
+                "relation_message_mode is relation-aware."
+            )
+        messages = torch.zeros(
+            (batch_size, seq_len, x_norm.size(-1)),
+            dtype=x_norm.dtype,
+            device=x_norm.device,
+        )
+        if pairwise_relation_indices.numel() == 0:
+            return messages
+        if (
+            pairwise_relation_indices.dim() != 2
+            or pairwise_relation_indices.size(-1) != 4
+        ):
+            raise ValueError(
+                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+            )
+
+        pairwise_relation_indices = pairwise_relation_indices.to(
+            device=x_norm.device,
+            dtype=torch.long,
+        )
+        batch_indices = pairwise_relation_indices[:, 0]
+        target_indices = pairwise_relation_indices[:, 1]
+        source_indices = pairwise_relation_indices[:, 2]
+        relation_indices = pairwise_relation_indices[:, 3]
+        if (
+            relation_indices.min().item() < 0
+            or relation_indices.max().item() >= self._num_relations
+        ):
+            raise ValueError(
+                "pairwise_relation_indices contains relation ids outside "
+                f"[0, {self._num_relations})."
+            )
+
+        # Per-(relation, batch, target) in-degree for mean aggregation, computed
+        # globally up front so grouping order of the entries does not matter.
+        target_degrees = torch.zeros(
+            (self._num_relations, batch_size, seq_len),
+            dtype=x_norm.dtype,
+            device=x_norm.device,
+        )
+        target_degrees.index_put_(
+            (relation_indices, batch_indices, target_indices),
+            torch.ones(
+                relation_indices.size(0), dtype=x_norm.dtype, device=x_norm.device
+            ),
+            accumulate=True,
+        )
+        edge_degrees = target_degrees[relation_indices, batch_indices, target_indices]
+
+        relation_matrices = self._relation_message_matrices.to(dtype=x_norm.dtype)
+        unique_relation_indices, relation_counts = torch.unique_consecutive(
+            relation_indices,
+            return_counts=True,
+        )
+        relation_start = 0
+        for relation_idx_tensor, relation_count_tensor in zip(
+            unique_relation_indices,
+            relation_counts,
+        ):
+            relation_idx = int(relation_idx_tensor.item())
+            relation_end = relation_start + int(relation_count_tensor.item())
+            edge_batch_indices = batch_indices[relation_start:relation_end]
+            edge_target_indices = target_indices[relation_start:relation_end]
+            edge_source_indices = source_indices[relation_start:relation_end]
+
+            source_features = x_norm[edge_batch_indices, edge_source_indices]
+            edge_messages = source_features @ relation_matrices[relation_idx].t()
+            edge_messages = edge_messages / edge_degrees[
+                relation_start:relation_end
+            ].unsqueeze(-1)
+            messages.index_put_(
+                (edge_batch_indices, edge_target_indices),
+                edge_messages.to(dtype=messages.dtype),
+                accumulate=True,
+            )
+            relation_start = relation_end
+
+        return messages
+
+    def _compute_relation_attention_messages(
+        self,
+        x_norm: Tensor,
+        query: Tensor,
+        key: Tensor,
+        pairwise_relation_indices: Optional[Tensor],
+        batch_size: int,
+        seq_len: int,
+    ) -> Tensor:
+        """Aggregate per-relation messages weighted by renormalized attention.
+
+        Like ``_compute_relation_messages`` but each edge is weighted by a
+        per-head softmax over the target's relation-``r`` neighbors instead of a
+        uniform mean, with HGT-style scores
+        ``prior * <q_target, W_relation k_source> / sqrt(head_dim)`` computed
+        from the layer's own query/key projections. This couples attention
+        weighting with relation-transformed message content (HGT's ``v_rel``
+        semantics) while keeping every tensor edge-sparse: no (seq, seq)
+        buffer is ever materialized.
+
+        Args:
+            x_norm: Pre-norm token states of shape
+                ``(batch_size, seq_len, model_dim)``.
+            query: Projected queries of shape
+                ``(batch_size, num_heads, seq_len, head_dim)``.
+            key: Projected keys of the same shape as ``query``.
+            pairwise_relation_indices: Sparse relation coordinates shaped
+                ``(num_relation_edges, 4)`` storing
+                ``(batch_idx, query_pos=target, key_pos=source, relation_idx)``.
+            batch_size: Number of sequences in the batch.
+            seq_len: Sequence length.
+
+        Returns:
+            Message tensor of shape ``(batch_size, seq_len, model_dim)``.
+        """
+        if self._relation_message_matrices is None:
+            raise ValueError("Relation message matrices are not initialized.")
+        if self._relation_message_attention_matrices is None:
+            raise ValueError("Relation message attention matrices are not initialized.")
+        if self._relation_message_attention_priors is None:
+            raise ValueError("Relation message attention priors are not initialized.")
+        if pairwise_relation_indices is None:
+            raise ValueError(
+                "pairwise_relation_indices is required when "
+                "relation_message_mode is relation-aware."
+            )
+        messages = torch.zeros(
+            (batch_size, seq_len, x_norm.size(-1)),
+            dtype=x_norm.dtype,
+            device=x_norm.device,
+        )
+        if pairwise_relation_indices.numel() == 0:
+            return messages
+        if (
+            pairwise_relation_indices.dim() != 2
+            or pairwise_relation_indices.size(-1) != 4
+        ):
+            raise ValueError(
+                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+            )
+
+        pairwise_relation_indices = pairwise_relation_indices.to(
+            device=x_norm.device,
+            dtype=torch.long,
+        )
+        batch_indices = pairwise_relation_indices[:, 0]
+        target_indices = pairwise_relation_indices[:, 1]
+        source_indices = pairwise_relation_indices[:, 2]
+        relation_indices = pairwise_relation_indices[:, 3]
+        if (
+            relation_indices.min().item() < 0
+            or relation_indices.max().item() >= self._num_relations
+        ):
+            raise ValueError(
+                "pairwise_relation_indices contains relation ids outside "
+                f"[0, {self._num_relations})."
+            )
+
+        # Gather per-edge queries/keys: (num_edges, num_heads, head_dim).
+        edge_queries = query[batch_indices, :, target_indices]
+        edge_keys = key[batch_indices, :, source_indices]
+
+        relation_attention_matrices = self._relation_message_attention_matrices.to(
+            dtype=edge_queries.dtype
+        )
+        relation_attention_priors = self._relation_message_attention_priors.to(
+            dtype=edge_queries.dtype
+        )
+        unique_relation_indices, relation_counts = torch.unique_consecutive(
+            relation_indices,
+            return_counts=True,
+        )
+        score_parts: list[Tensor] = []
+        relation_start = 0
+        for relation_idx_tensor, relation_count_tensor in zip(
+            unique_relation_indices,
+            relation_counts,
+        ):
+            relation_idx = int(relation_idx_tensor.item())
+            relation_end = relation_start + int(relation_count_tensor.item())
+            transformed_keys = torch.einsum(
+                "ehd,hdf->ehf",
+                edge_keys[relation_start:relation_end],
+                relation_attention_matrices[relation_idx],
+            )
+            slice_scores = (
+                edge_queries[relation_start:relation_end] * transformed_keys
+            ).sum(dim=-1)
+            score_parts.append(
+                slice_scores
+                * relation_attention_priors[relation_idx]
+                / math.sqrt(self._head_dim)
+            )
+            relation_start = relation_end
+        scores = torch.cat(score_parts, dim=0)  # (num_edges, num_heads)
+
+        # Numerically stable scatter-softmax per (relation, batch, target) group
+        # and head. Group buffers are (num_relations * batch * seq, num_heads) —
+        # tiny compared to any (seq, seq) tensor.
+        group_indices = (
+            relation_indices * batch_size + batch_indices
+        ) * seq_len + target_indices
+        head_group_indices = group_indices.unsqueeze(-1).expand(-1, self._num_heads)
+        num_groups = self._num_relations * batch_size * seq_len
+        group_score_max = scores.new_full(
+            (num_groups, self._num_heads), torch.finfo(scores.dtype).min
+        )
+        group_score_max.scatter_reduce_(
+            0, head_group_indices, scores.detach(), reduce="amax", include_self=True
+        )
+        normalized_scores = torch.exp(
+            scores - group_score_max.gather(0, head_group_indices)
+        )
+        group_denominators = scores.new_zeros(
+            (num_groups, self._num_heads)
+        ).scatter_add(0, head_group_indices, normalized_scores)
+        edge_weights = normalized_scores / group_denominators.gather(
+            0, head_group_indices
+        )  # (num_edges, num_heads), sums to 1 per (relation, target) and head
+
+        relation_matrices = self._relation_message_matrices.to(dtype=x_norm.dtype)
+        relation_start = 0
+        for relation_idx_tensor, relation_count_tensor in zip(
+            unique_relation_indices,
+            relation_counts,
+        ):
+            relation_idx = int(relation_idx_tensor.item())
+            relation_end = relation_start + int(relation_count_tensor.item())
+            edge_batch_indices = batch_indices[relation_start:relation_end]
+            edge_target_indices = target_indices[relation_start:relation_end]
+            edge_source_indices = source_indices[relation_start:relation_end]
+
+            source_features = x_norm[edge_batch_indices, edge_source_indices]
+            edge_messages = source_features @ relation_matrices[relation_idx].t()
+            weighted_messages = edge_messages.view(
+                -1, self._num_heads, self._head_dim
+            ) * edge_weights[relation_start:relation_end].unsqueeze(-1)
+            messages.index_put_(
+                (edge_batch_indices, edge_target_indices),
+                weighted_messages.reshape(-1, x_norm.size(-1)).to(dtype=messages.dtype),
+                accumulate=True,
+            )
+            relation_start = relation_end
+
+        return messages
+
 
 class GraphTransformerEncoder(nn.Module):
     """Graph Transformer encoder for heterogeneous graphs.
@@ -727,7 +1098,24 @@ class GraphTransformerEncoder(nn.Module):
             ``"edge_type_bilinear"`` adds a learned per-edge-type bilinear score
             term for sampled directed edges. ``"edge_type_hgt"`` replaces base
             query/key scores on relation edges with an HGT-style relation
-            transform and relation prior.
+            transform and relation prior. Both change attention weights only,
+            not value/message content.
+        relation_message_mode: Optional relation-aware message channel run in
+            parallel with self-attention in every layer. ``"none"`` preserves
+            the current path. ``"edge_type_linear"`` adds, for every sampled
+            directed graph edge, a per-edge-type linear transform of the source
+            token (mean-aggregated per target and relation) into the attention
+            residual — the message analog of HGT's per-relation value transform
+            (``v_rel``) and of per-edge-type GATv2 weights.
+            ``"edge_type_attention"`` replaces the mean with a per-head softmax
+            over each target's relation neighbors, scored HGT-style from each
+            layer's own query/key projections with per-(relation, head)
+            transforms and priors — the full coupled HGT message semantics.
+            Either way compute scales with the number of relation edges (never
+            seq^2) and message weights are zero-initialized, so startup behavior
+            matches ``"none"``. Composes with ``relation_attention_mode``, and
+            with ``relation_attention_mode="none"`` keeps the dense attention
+            bias broadcastable (no per-layer (seq, seq) bias materialization).
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -786,6 +1174,11 @@ class GraphTransformerEncoder(nn.Module):
             "none",
             "edge_type_bilinear",
             "edge_type_hgt",
+        ] = "none",
+        relation_message_mode: Literal[
+            "none",
+            "edge_type_linear",
+            "edge_type_attention",
         ] = "none",
         **kwargs: object,
     ) -> None:
@@ -855,6 +1248,16 @@ class GraphTransformerEncoder(nn.Module):
                 "{'none', 'edge_type_bilinear', 'edge_type_hgt'}, "
                 f"got '{relation_attention_mode}'"
             )
+        if relation_message_mode not in {
+            "none",
+            "edge_type_linear",
+            "edge_type_attention",
+        }:
+            raise ValueError(
+                "relation_message_mode must be one of "
+                "{'none', 'edge_type_linear', 'edge_type_attention'}, "
+                f"got '{relation_message_mode}'"
+            )
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
@@ -888,13 +1291,17 @@ class GraphTransformerEncoder(nn.Module):
         self._pe_integration_mode = pe_integration_mode
         self._num_heads = num_heads
         self._relation_attention_mode = relation_attention_mode
+        self._relation_message_mode = relation_message_mode
         self._edge_type_to_feat_dim_map = {
             edge_type: edge_type_to_feat_dim_map[edge_type]
             for edge_type in sorted(edge_type_to_feat_dim_map.keys())
         }
+        # Relation vocabulary shared by relation-aware attention and messages;
+        # each output relation index corresponds to one edge type in this list.
         self._relation_attention_edge_types = (
             list(self._edge_type_to_feat_dim_map.keys())
             if relation_attention_mode in {"edge_type_bilinear", "edge_type_hgt"}
+            or relation_message_mode != "none"
             else []
         )
         anchor_input_embedding_attr_names = (
@@ -995,6 +1402,7 @@ class GraphTransformerEncoder(nn.Module):
                     attention_dropout_rate=attention_dropout_rate,
                     activation=activation,
                     relation_attention_mode=relation_attention_mode,
+                    relation_message_mode=relation_message_mode,
                     num_relations=len(self._relation_attention_edge_types),
                 )
                 for _ in range(num_layers)
@@ -1140,6 +1548,7 @@ class GraphTransformerEncoder(nn.Module):
                 self._relation_attention_edge_types
                 if self._relation_attention_mode
                 in {"edge_type_bilinear", "edge_type_hgt"}
+                or self._relation_message_mode != "none"
                 else None
             ),
         )
@@ -1288,9 +1697,11 @@ class GraphTransformerEncoder(nn.Module):
         This function constructs a combined attention bias tensor that is added to
         attention scores before softmax. The bias has three components:
 
-        1. **Padding mask bias**: Sets padded positions to -inf so they receive zero
-           attention weight after softmax. Shape: (batch, 1, 1, seq) broadcasts to
-           (batch, num_heads, seq, seq) for key masking.
+        1. **Padding mask bias**: Sets padded positions to a large negative value
+           (``finfo.min / 2``, leaving additive headroom in low-precision dtypes)
+           so they receive exactly zero attention weight after softmax.
+           Shape: (batch, 1, 1, seq) broadcasts to (batch, num_heads, seq, seq)
+           for key masking.
 
         2. **Anchor-relative bias** (optional): For each sequence position, looks up
            the PE value relative to the anchor (e.g., hop distance from anchor).
@@ -1328,7 +1739,13 @@ class GraphTransformerEncoder(nn.Module):
         batch_size, seq_len = valid_mask.shape
         dtype = sequences.dtype
         device = sequences.device
-        negative_inf = torch.finfo(dtype).min
+        # Large negative fill for padded key positions. finfo.min / 2 (rather
+        # than finfo.min) leaves headroom so later ADDITIVE bias terms
+        # (anchor-relative / pairwise projections) cannot overflow to -inf in
+        # low-precision dtypes (fp16 min is only -65504) and yield NaNs in the
+        # softmax. Half the dtype minimum still zeroes the attention weight
+        # exactly after softmax.
+        negative_inf = torch.finfo(dtype).min / 2.0
 
         # Step 1: Initialize with padding mask bias
         # Shape: (batch, 1, 1, seq) - broadcasts to mask invalid keys for all queries/heads
