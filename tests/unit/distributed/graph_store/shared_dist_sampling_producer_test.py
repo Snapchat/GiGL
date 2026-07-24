@@ -1063,8 +1063,17 @@ class StallFixWorkerLoopTest(TestCase):
             done = event_queue.get(timeout=10.0)
             self.assertEqual(done, (EPOCH_DONE_EVENT, channel_id, 0, 0))
 
-            # The woken channel submitted and drained every remaining batch.
+            # The woken channel submitted every remaining batch (deterministic:
+            # EPOCH_DONE implies all batches completed, so all were submitted).
             self.assertEqual(sampler.submit_count, total_batches)
+            # EPOCH_DONE fires when the last batch is SENT (buffered); the
+            # consumer drains that tail a beat later, so poll rather than race it.
+            drain_deadline = time.monotonic() + 5.0
+            while (
+                channel.total_received < total_batches
+                and time.monotonic() < drain_deadline
+            ):
+                time.sleep(0.01)
             self.assertEqual(channel.total_received, total_batches)
         finally:
             with self._draining(channel):
