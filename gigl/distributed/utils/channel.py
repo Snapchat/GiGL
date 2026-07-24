@@ -3,6 +3,7 @@ import ctypes.util
 import os
 import weakref
 from functools import cached_property
+from itertools import count
 from typing import Any, Optional
 
 from graphlearn_torch.channel import SampleMessage, ShmChannel
@@ -91,10 +92,14 @@ class SizedShmChannel(ShmChannel):
 
 class MonitoredShmChannel(SizedShmChannel):
     """Monitored variant of SizedShmChannel that integrats with GiGL metrics_service and records queue size on recv() as a gauge."""
+    # Counts instantiations of this class, per process.
+    # This is needed so we can generate unique channel names for each instance within the same process.
+    # NOTE: This is per-class, not per-instance.
+    _counter = count(0)
 
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._channel_name = channel_name
+        self._channel_name = f"{channel_name}_id{next(self._counter)}"
         self._publisher: Optional[OpsMetricPublisher] = get_metrics_service_instance()
 
     def recv(self, *args, **kwargs) -> SampleMessage:
