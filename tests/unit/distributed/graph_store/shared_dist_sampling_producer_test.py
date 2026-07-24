@@ -1109,3 +1109,164 @@ class StallFixWorkerLoopTest(TestCase):
         # block on a full output channel at real teardown.  Exactly the two
         # submits observed above (initial + event-woken refill) occurred.
         self.assertEqual(sampler.submit_count, 2)
+
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer._set_worker_signal_handlers"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.torch.set_num_threads"
+    )
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.create_dist_sampler"
+    )
+    def test_parked_channel_resumes_and_completes_when_consumer_drains(
+        self,
+        mock_create_dist_sampler: MagicMock,
+        _mock_set_num_threads: MagicMock,
+        _mock_signal_handlers: MagicMock,
+        _mock_init_worker_group: MagicMock,
+        _mock_init_rpc: MagicMock,
+        _mock_shutdown_rpc: MagicMock,
+    ) -> None:
+        """A parked channel wakes and finishes its epoch once its consumer drains.
+
+        The other stall-fix tests only park a channel; none resumes it.  This
+        pins the WAKE path directly: ``_on_batch_done`` re-enqueuing the parked
+        channel is the SOLE way a paused-then-resumed channel makes progress
+        again (the pump never revisits a channel it parked).  If that re-enqueue
+        regressed, the epoch would hang after the consumer resumed and the
+        ``event_queue.get`` below would time out.
+        """
+        worker_concurrency = 2
+        channel = _BoundedBlockingChannel(capacity=worker_concurrency)
+        created_samplers: list[_GltOrderFakeSampler] = []
+
+        def _make_sampler(**kwargs: object) -> _GltOrderFakeSampler:
+            sampler = _GltOrderFakeSampler(
+                cast(_BoundedBlockingChannel, kwargs["channel"]), worker_concurrency
+            )
+            created_samplers.append(sampler)
+            return sampler
+
+        mock_create_dist_sampler.side_effect = _make_sampler
+
+        worker_options = self._make_worker_options(worker_concurrency)
+        task_queue: queue.Queue[tuple[SharedMpCommand, object]] = queue.Queue()
+        event_queue: queue.Queue[tuple[object, ...]] = queue.Queue()
+        barrier = MagicMock(wait=MagicMock())
+        data = MagicMock(num_partitions=1)
+        sampling_config = _make_sampling_config()
+        channel_id, total_batches = 7, 12  # batch_size 2 -> 24 seeds
+
+        task_queue.put(
+            (
+                SharedMpCommand.REGISTER_INPUT,
+                RegisterInputCmd(
+                    channel_id=channel_id,
+                    worker_key="loader_compute_rank_7",
+                    sampler_input=NodeSamplerInput(
+                        node=torch.arange(total_batches * 2)
+                    ),
+                    sampling_config=sampling_config,
+                    channel=channel,
+                ),
+            )
+        )
+        task_queue.put(
+            (
+                SharedMpCommand.START_EPOCH,
+                StartEpochCmd(
+                    channel_id=channel_id,
+                    epoch=0,
+                    seeds_index=torch.arange(total_batches * 2),
+                ),
+            )
+        )
+
+        # The consumer stays paused until ``resume`` is set, so the channel
+        # saturates and parks first; only then do we resume draining.
+        resume = threading.Event()
+        stop_consumer = threading.Event()
+
+        def _consume() -> None:
+            resume.wait()
+            while not stop_consumer.is_set():
+                try:
+                    channel.recv(timeout_ms=20)
+                except QueueTimeoutError:
+                    continue
+
+        consumer_thread = threading.Thread(target=_consume, daemon=True)
+        consumer_thread.start()
+
+        worker_thread = threading.Thread(
+            target=_shared_sampling_worker_loop,
+            args=(
+                0,
+                data,
+                worker_options,
+                task_queue,
+                event_queue,
+                barrier,
+                KHopNeighborSamplerOptions(num_neighbors=[2]),
+                None,
+            ),
+        )
+        worker_thread.start()
+        try:
+            # Wait for the channel to park at the in-flight cap: with the
+            # consumer paused, submit_count climbs to worker_concurrency
+            # (buffered) + capacity (wedged in send) and stops.
+            expected_parked_submits = worker_concurrency + channel._capacity
+            deadline = time.monotonic() + 10.0
+            sampler: _GltOrderFakeSampler | None = None
+            while time.monotonic() < deadline:
+                if created_samplers:
+                    sampler = created_samplers[0]
+                    if sampler.submit_count >= expected_parked_submits:
+                        break
+                time.sleep(0.01)
+            self.assertIsNotNone(sampler)
+            assert sampler is not None
+
+            # Confirm it is genuinely parked (stuck at the cap, well short of the
+            # full epoch, nothing drained) before resuming -- not merely slow.
+            time.sleep(0.2)
+            self.assertEqual(sampler.submit_count, expected_parked_submits)
+            self.assertEqual(channel.total_received, 0)
+            self.assertLess(sampler.submit_count, total_batches)
+
+            # Resume the consumer.  Draining a batch completes a wedged send,
+            # which fires the callback -> _on_batch_done increments completed and
+            # WAKES the parked channel.  Without that wake the epoch never
+            # finishes and this get times out.
+            resume.set()
+            done = event_queue.get(timeout=10.0)
+            self.assertEqual(done, (EPOCH_DONE_EVENT, channel_id, 0, 0))
+
+            # The woken channel submitted every remaining batch (deterministic:
+            # EPOCH_DONE implies all batches completed, so all were submitted).
+            self.assertEqual(sampler.submit_count, total_batches)
+            # EPOCH_DONE fires when the last batch is SENT (buffered); the
+            # consumer drains that tail a beat later, so poll rather than race it.
+            drain_deadline = time.monotonic() + 5.0
+            while (
+                channel.total_received < total_batches
+                and time.monotonic() < drain_deadline
+            ):
+                time.sleep(0.01)
+            self.assertEqual(channel.total_received, total_batches)
+        finally:
+            with self._draining(channel):
+                task_queue.put((SharedMpCommand.STOP, None))
+                worker_thread.join(timeout=10.0)
+            stop_consumer.set()
+            resume.set()  # unblock the consumer if we failed before resuming
+            consumer_thread.join(timeout=5.0)
+
+        self.assertFalse(worker_thread.is_alive())
