@@ -15,12 +15,10 @@ def _producer_worker(channel, msg_list):
 
 
 class TestSizedShmChannel(TestCase):
-    def setUp(self):
-        self.msg_1 = {"foo": torch.rand(1), "bar": torch.rand(3)}
-        self.msg_2 = {"baz": torch.rand(3), "bat": torch.rand(7)}
-
     def test_single_process_qsize(self):
         channel = SizedShmChannel()
+        msg_1 = {"foo": torch.rand(1), "bar": torch.rand(3)}
+        msg_2 = {"baz": torch.rand(3), "bat": torch.rand(7)}
 
         # Initially empty channel
         self.assertEqual(len(channel), 0)
@@ -28,13 +26,13 @@ class TestSizedShmChannel(TestCase):
         self.assertTrue(channel.empty())
 
         # Send first message
-        channel.send(self.msg_1)
+        channel.send(msg_1)
         self.assertEqual(len(channel), 1)
         self.assertEqual(channel.qsize(), 1)
         self.assertFalse(channel.empty())
 
         # Send second message
-        channel.send(self.msg_2)
+        channel.send(msg_2)
         self.assertEqual(len(channel), 2)
         self.assertEqual(channel.qsize(), 2)
 
@@ -42,22 +40,25 @@ class TestSizedShmChannel(TestCase):
         recv_1 = channel.recv()
         self.assertEqual(len(channel), 1)
         self.assertEqual(channel.qsize(), 1)
-        torch.testing.assert_close(recv_1, self.msg_1)
+        torch.testing.assert_close(recv_1, msg_1)
 
         # Receive second message
         recv_2 = channel.recv()
         self.assertEqual(len(channel), 0)
         self.assertEqual(channel.qsize(), 0)
         self.assertTrue(channel.empty())
-        torch.testing.assert_close(recv_2, self.msg_2)
+        torch.testing.assert_close(recv_2, msg_2)
 
     def test_multiprocessing_qsize(self):
         channel = SizedShmChannel()
+        messages = [
+            {"foo": torch.rand(1), "bar": torch.rand(3)},
+            {"baz": torch.rand(3), "bat": torch.rand(7)},
+        ]
 
         # Note: We use `fork` because glt.ShmChannel (from which we inherit) relies on
         # page table duplication (fork) to inherit C++ memory maps. It does not support `spawn`.
         ctx = mp.get_context("fork")
-        messages = [self.msg_1, self.msg_2]
 
         # Start producer process
         process = ctx.Process(target=_producer_worker, args=(channel, messages))
@@ -76,9 +77,10 @@ class TestSizedShmChannel(TestCase):
 
     def test_pickling_roundtrip(self):
         channel = SizedShmChannel()
+        msg_1 = {"foo": torch.rand(1), "bar": torch.rand(3)}
 
         # Push a message
-        channel.send(self.msg_1)
+        channel.send(msg_1)
         self.assertEqual(channel.qsize(), 1)
 
         # Pickle and unpickle (simulates IPC)
@@ -98,13 +100,14 @@ class MonitoredShmChannelTest(TestCase):
     def setUp(self) -> None:
         self._original_metrics_instance = metrics_service_provider._metrics_instance
         self.mock_metrics = metrics_service_provider._metrics_instance = MagicMock()
-        self.msg_1 = {"foo": torch.rand(1), "bar": torch.rand(3)}
-        self.msg_2 = {"baz": torch.rand(3), "bat": torch.rand(7)}
 
     def tearDown(self) -> None:
         metrics_service_provider._metrics_instance = self._original_metrics_instance
 
     def test_recv_publishes_qsize_gauge(self) -> None:
+        msg_1 = {"foo": torch.rand(1), "bar": torch.rand(3)}
+        msg_2 = {"baz": torch.rand(3), "bat": torch.rand(7)}
+
         for instance_count in range(3):
             channel_name = "test_channel"
             channel = MonitoredShmChannel(channel_name=channel_name)
@@ -112,8 +115,8 @@ class MonitoredShmChannelTest(TestCase):
             metric_name = f"{channel_name}_id{instance_count}_qsize"
 
             # Push 2 messages
-            channel.send(self.msg_1)
-            channel.send(self.msg_2)
+            channel.send(msg_1)
+            channel.send(msg_2)
 
             # First recv, qsize gauge before dequeue should be 2
             channel.recv()
