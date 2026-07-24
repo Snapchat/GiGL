@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 
-from gigl.common import Uri, UriFactory
+from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.metrics.base_metrics import NopMetricsPublisher
 from gigl.common.metrics.metrics_interface import OpsMetricPublisher
@@ -13,7 +13,6 @@ logger = Logger()
 
 _metrics_instance: Optional[OpsMetricPublisher] = None
 JOB_NAME_GROUPING_ENV_KEY = "GBML_JOB_NAME"
-TASK_CONFIG_URI_ENV_KEY = "GIGL_TASK_CONFIG_URI"
 
 
 def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
@@ -34,7 +33,6 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
     """
     global _metrics_instance
     os.environ[JOB_NAME_GROUPING_ENV_KEY] = service_name
-    os.environ[TASK_CONFIG_URI_ENV_KEY] = str(task_config_uri)
     proto_utils = ProtoUtils()
     task_config: GbmlConfig = proto_utils.read_proto_from_yaml(
         uri=task_config_uri, proto_cls=GbmlConfig
@@ -63,22 +61,10 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
         return False
 
 
-def get_metrics_service_instance() -> OpsMetricPublisher:
+def get_metrics_service_instance() -> Optional[OpsMetricPublisher]:
     if _metrics_instance is None:
-        task_config_uri = os.environ.get(TASK_CONFIG_URI_ENV_KEY)
-        service_name = os.environ.get(JOB_NAME_GROUPING_ENV_KEY) or os.environ.get(
-            "GIGL_APPLIED_TASK_IDENTIFIER"
-        )
-        if task_config_uri and service_name:
-            logger.info(
-                f"Attempting to initialize metrics instance from env vars (task_config_uri={task_config_uri}, service_name={service_name})"
-            )
-            task_config_uri = UriFactory.create_uri(task_config_uri)
-            initialize_metrics(task_config_uri, service_name=service_name)
-
-    if _metrics_instance is None:
-        raise RuntimeError(
-            "Metrics instance is not initialized. Call initialize_metrics() before getting the instance."
+        logger.warning(
+            "initialize_metrics() was not called, so no metrics service instance available"
         )
 
     return _metrics_instance

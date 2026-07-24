@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from graphlearn_torch.channel import SampleMessage, ShmChannel
 
+from gigl.common.metrics.metrics_interface import OpsMetricPublisher
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 
 
@@ -21,10 +22,11 @@ class SizedShmChannel(ShmChannel):
         self._finalizer: Optional[weakref.finalize] = None
 
     def __len__(self) -> int:
+        """The number of `SampleMessage` items currently in the channel."""
         return self.qsize()
 
     def qsize(self) -> int:
-        """The number of SampleMessage items currently in the channel."""
+        """The number of `SampleMessage` items currently in the channel."""
         # ShmQueueMeta Memory Layout in Shared Memory (64-bit Architecture)
         # Reference: https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/shm_queue.h#L65
         # ==================================================================================
@@ -93,8 +95,9 @@ class MonitoredShmChannel(SizedShmChannel):
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._channel_name = channel_name
+        self._publisher: Optional[OpsMetricPublisher] = get_metrics_service_instance()
 
     def recv(self, *args, **kwargs) -> SampleMessage:
-        publisher = get_metrics_service_instance()
-        publisher.add_gauge(f"{self._channel_name}_qsize", self.qsize())
+        if self._publisher is not None:
+            self._publisher.add_gauge(f"{self._channel_name}_qsize", self.qsize())
         return super().recv(*args, **kwargs)
