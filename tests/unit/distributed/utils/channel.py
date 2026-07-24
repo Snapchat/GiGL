@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import pickle
 
 import torch
 
@@ -59,3 +60,19 @@ class TestSizedShmChannel(TestCase):
 
         _ = self.channel.recv()
         self.assertEqual(self.channel.qsize(), 0)
+
+    def test_pickling_roundtrip(self):
+        # Push a message
+        self.channel.send(self.msg_1)
+        self.assertEqual(self.channel.qsize(), 1)
+
+        # Pickle and unpickle (simulates IPC)
+        serialized = pickle.dumps(self.channel)
+        unpickled_channel = pickle.loads(serialized)
+        # Verify both instances read the exact same queue size correctly
+        self.assertEqual(unpickled_channel.qsize(), 1)
+        self.assertEqual(self.channel.qsize(), 1)
+
+        # Mutate via original channel, verify unpickled copy reflects live state
+        _ = self.channel.recv()
+        self.assertEqual(unpickled_channel.qsize(), 0)
