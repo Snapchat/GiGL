@@ -3,26 +3,18 @@ import ctypes.util
 import os
 import weakref
 from functools import cached_property
-from typing import Optional, Any
+from typing import Any, Optional
 
 from graphlearn_torch.channel import SampleMessage, ShmChannel
 
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 
-_libc_path = ctypes.util.find_library("c")
-_libc = ctypes.CDLL(_libc_path, use_errno=True)
-
-# void *shmat(int shmid, const void *shmaddr, int shmflg);
-_libc.shmat.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-_libc.shmat.restype = ctypes.c_void_p
-
-# int shmdt(const void *shmaddr);
-_libc.shmdt.argtypes = [ctypes.c_void_p]
-_libc.shmdt.restype = ctypes.c_int
-
 
 class SizedShmChannel(ShmChannel):
     """Extends ShmChannel with queue size method `qsize()` by attaching to the channels memory region and inspecting the C++ struct layout."""
+
+    # Class-level handle cached across all instances in the current process
+    _libc: Optional[ctypes.CDLL] = None
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -54,15 +46,34 @@ class SizedShmChannel(ShmChannel):
         shmid = self._queue.__getstate__()
 
         # Attach to the shared memory segment in the current process
-        ptr = _libc.shmat(shmid, None, 0)  # shmat returns (void *)(-1) on failure
+        libc = self._get_libc()
+        ptr = libc.shmat(shmid, None, 0)  # shmat returns (void *)(-1) on failure
         if ptr == ctypes.c_void_p(-1).value or ptr is None:
             err_num = ctypes.get_errno()
             error_msg = os.strerror(err_num)
             raise RuntimeError(f"shmat failed for shmid={shmid}: {error_msg}")
 
         # Register automatic cleanup when this object is GC'd in this process
-        self._finalizer = weakref.finalize(self, _libc.shmdt, ptr)
+        self._finalizer = weakref.finalize(self, libc.shmdt, ptr)
         return ptr
+
+    @classmethod
+    def _get_libc(cls) -> ctypes.CDLL:
+        if cls._libc is None:
+            libc_path = ctypes.util.find_library("c") or "libc.so.6"
+            libc = ctypes.CDLL(libc_path, use_errno=True)
+
+            # void *shmat(int shmid, const void *shmaddr, int shmflg);
+            libc.shmat.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+            libc.shmat.restype = ctypes.c_void_p
+
+            # int shmdt(const void *shmaddr);
+            libc.shmdt.argtypes = [ctypes.c_void_p]
+            libc.shmdt.restype = ctypes.c_int
+
+            cls._libc = libc
+
+        return cls._libc
 
     def __getstate__(self) -> dict[str, Any]:
         # Invalidate cached pointer and finalizer across process boundaries

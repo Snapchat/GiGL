@@ -44,9 +44,12 @@ class TestSizedShmChannel(TestCase):
         torch.testing.assert_close(recv_2, self.msg_2)
 
     def test_multiprocessing_qsize(self):
+        # Note: We use `fork` because glt.ShmChannel (from which we inherit) relies on
+        # page table duplication (fork) to inherit C++ memory maps. It does not support `spawn`.
         ctx = mp.get_context("fork")
         messages = [self.msg_1, self.msg_2]
 
+        # Start producer process
         process = ctx.Process(target=_producer_worker, args=(self.channel, messages))
         process.start()
         process.join(timeout=5)
@@ -69,6 +72,7 @@ class TestSizedShmChannel(TestCase):
         # Pickle and unpickle (simulates IPC)
         serialized = pickle.dumps(self.channel)
         unpickled_channel = pickle.loads(serialized)
+
         # Verify both instances read the exact same queue size correctly
         self.assertEqual(unpickled_channel.qsize(), 1)
         self.assertEqual(self.channel.qsize(), 1)
