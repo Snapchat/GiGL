@@ -1058,6 +1058,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
 
         with torch.no_grad():
             for encoder_layer in encoder._encoder_layers:
+                assert isinstance(encoder_layer, GraphTransformerEncoderLayer)
                 assert encoder_layer._relation_message_matrices is not None
                 encoder_layer._relation_message_matrices.normal_()
             embeddings = encoder(
@@ -1235,6 +1236,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
 
         with torch.no_grad():
             for encoder_layer in encoder._encoder_layers:
+                assert isinstance(encoder_layer, GraphTransformerEncoderLayer)
                 assert encoder_layer._relation_message_matrices is not None
                 encoder_layer._relation_message_matrices.normal_()
             embeddings = encoder(
