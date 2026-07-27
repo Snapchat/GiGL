@@ -25,6 +25,7 @@ from typing_extensions import Self
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
+from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
@@ -340,7 +341,6 @@ class PredictionExporter(GcsExporter):
         self.add_record(batched_records)
 
 
-# TODO(kmonte): We should migrate this over to `BqUtils.load_files_to_bq` once that is implemented.
 def _load_records_to_bigquery(
     gcs_folder: GcsUri,
     project_id: str,
@@ -364,16 +364,10 @@ def _load_records_to_bigquery(
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
         user to monitor and retrieve details about the job status and result. The returned job will be done if
         `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
-        `should_run_asnyc=True`.
+        `should_run_async=True`.
     """
-    start = time.perf_counter()
     logger.info(f"Loading records from {gcs_folder} to BigQuery.")
-    # Initialize the BigQuery client
-    bigquery_client = bigquery.Client(project=project_id)
-
-    # Construct dataset and table references
-    dataset_ref = bigquery_client.dataset(dataset_id)
-    table_ref = dataset_ref.table(table_id)
+    bq_utils = BqUtils(project=project_id)
 
     # Configure the load job
     job_config = bigquery.LoadJobConfig(
@@ -382,23 +376,12 @@ def _load_records_to_bigquery(
         schema=schema,
     )
 
-    load_job = bigquery_client.load_table_from_uri(
+    return bq_utils.load_files_to_bq(
         source_uris=os.path.join(gcs_folder.uri, "*.avro"),
-        destination=table_ref,
+        bq_path=bq_utils.join_path(project_id, dataset_id, table_id),
         job_config=job_config,
+        should_run_async=should_run_async,
     )
-
-    if should_run_async:
-        logger.info(
-            f"Started loading process for {dataset_id}:{table_id} with job id {load_job.job_id}, running asynchronously"
-        )
-    else:
-        load_job.result()  # Wait for the job to complete.
-        logger.info(
-            f"Loading {load_job.output_rows:,} rows into {dataset_id}:{table_id} in {time.perf_counter() - start:.2f} seconds."
-        )
-
-    return load_job
 
 
 def load_embeddings_to_bigquery(
@@ -430,7 +413,7 @@ def load_embeddings_to_bigquery(
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
         user to monitor and retrieve details about the job status and result. The returned job will be done if
         `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
-        `should_run_asnyc=True`.
+        `should_run_async=True`.
     """
     return _load_records_to_bigquery(
         gcs_folder,
@@ -471,7 +454,7 @@ def load_predictions_to_bigquery(
         LoadJob: A BigQuery LoadJob object representing the load operation, which allows
         user to monitor and retrieve details about the job status and result. The returned job will be done if
         `should_run_async=False` and will be returned immediately after creation (not necessarily complete) if
-        `should_run_asnyc=True`.
+        `should_run_async=True`.
     """
     return _load_records_to_bigquery(
         gcs_folder,
