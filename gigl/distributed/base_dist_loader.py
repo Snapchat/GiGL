@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.channel import SampleMessage, ShmChannel
 from graphlearn_torch.distributed import (
     DistLoader,
     MpDistSamplingWorkerOptions,
@@ -61,6 +61,7 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
+from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.share_memory import share_memory
 
@@ -427,22 +428,52 @@ class BaseDistLoader(DistLoader):
 
     @staticmethod
     def create_colocated_channel(
-        worker_options: MpDistSamplingWorkerOptions, channel_name: str
-    ) -> MonitoredShmChannel:
-        """Creates a MonitoredShmChannel for colocated mode.
+        worker_options: MpDistSamplingWorkerOptions,
+        *,
+        enable_channel_monitoring: bool = False,
+        channel_name: str = "",
+    ) -> ShmChannel:
+        """Creates a shared-memory channel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
+        Note: When `enable_channel_monitoring` is True, the caller is expected to have
+        already initialized the metrics service by calling
+        `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
+
         Args:
             worker_options: The colocated worker options (must already be fully configured).
-            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredShmChannel).
+            enable_channel_monitoring: Flag indicating whether to wrap the channel with metrics monitoring.
+            channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
+                Ignored if `enable_channel_monitoring` is False.
 
         Returns:
-            A MonitoredShmChannel ready to be passed to a DistSamplingProducer.
+            A ShmChannel ready to be passed to a DistSamplingProducer.
+
+        Raises:
+            RuntimeError: If `enable_channel_monitoring` is True but
+                `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`
+                was not called prior to channel creation.
         """
-        channel = MonitoredShmChannel(
-            channel_name, worker_options.channel_capacity, worker_options.channel_size
-        )
+        if enable_channel_monitoring:
+            try:
+                get_metrics_service_instance()
+            except RuntimeError as e:
+                raise RuntimeError(
+                    "Tried to create colocated channel with enable_channel_monitoring=True, "
+                    "but metrics instance was not initialized. Either call "
+                    "initialize_metrics() or set enable_channel_monitoring=False."
+                ) from e
+            channel = MonitoredShmChannel(
+                channel_name,
+                worker_options.channel_capacity,
+                worker_options.channel_size,
+            )
+        else:
+            channel = ShmChannel(
+                worker_options.channel_capacity, worker_options.channel_size
+            )
+
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
@@ -454,7 +485,9 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
-        channel_name: str,
+        *,
+        channel_name: str = "",
+        enable_channel_monitoring: bool = False,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -471,13 +504,19 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
-            channel_name: Named identifier for the channel (used as metrics prefix in MonitoredShmChannel).
+            channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
+                Ignored if `enable_channel_monitoring` is False.
+            enable_channel_monitoring: Flag indicating whether to wrap the channel with metrics monitoring.
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
             ``_init_colocated_connections``.
         """
-        channel = BaseDistLoader.create_colocated_channel(worker_options, channel_name)
+        channel = BaseDistLoader.create_colocated_channel(
+            worker_options,
+            channel_name=channel_name,
+            enable_channel_monitoring=enable_channel_monitoring,
+        )
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
             share_memory(degree_tensors)

@@ -91,6 +91,7 @@ class DistABLPLoader(BaseDistLoader):
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         non_blocking_transfers: bool = True,
+        enable_channel_monitoring: bool = False,
     ):
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -214,6 +215,8 @@ class DistABLPLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
+            enable_channel_monitoring: If True, collect metrics for the shared memory communication channel. Defaults to False.
+                If True, you must have initialized the metrics service beforehand by calling `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -365,6 +368,7 @@ class DistABLPLoader(BaseDistLoader):
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
+                enable_channel_monitoring=enable_channel_monitoring,
                 channel_name=f"ablp_channel_{runtime.rank}_of_{runtime.world_size}",
             )
 
