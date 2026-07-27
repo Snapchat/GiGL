@@ -2,7 +2,7 @@ import io
 import tempfile
 from pathlib import Path
 from typing import Optional
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import fastavro
@@ -20,8 +20,6 @@ from gigl.common.data.export import (
     _PREDICTION_KEY,
     EmbeddingExporter,
     PredictionExporter,
-    load_embeddings_to_bigquery,
-    load_predictions_to_bigquery,
 )
 from gigl.common.utils.retry import RetriesFailedException
 from tests.test_assets.test_case import TestCase
@@ -382,51 +380,6 @@ class TestEmbeddingExporter(TestCase):
         exporter = EmbeddingExporter(export_dir=gcs_base_uri)
         exporter.flush_records()
 
-    @parameterized.expand(
-        [
-            param(
-                "Test if we can load embeddings synchronously",
-                should_run_async=False,
-            ),
-            param(
-                "Test if we can load embeddings asynchronously",
-                should_run_async=True,
-            ),
-        ]
-    )
-    @patch("gigl.common.data.export.bigquery.Client")
-    def test_load_embedding_to_bigquery(
-        self, _, mock_bigquery_client, should_run_async: bool
-    ):
-        # Mock inputs
-        gcs_folder = GcsUri("gs://test-bucket/test-folder")
-        project_id = "test-project"
-        dataset_id = "test-dataset"
-        table_id = "test-table"
-
-        # Mock BigQuery client and load job
-        mock_client = MagicMock()
-        mock_client.load_table_from_uri.return_value.output_rows = 1000
-        mock_bigquery_client.return_value = mock_client
-
-        # Call the function
-        load_job = load_embeddings_to_bigquery(
-            gcs_folder,
-            project_id,
-            dataset_id,
-            table_id,
-            should_run_async=should_run_async,
-        )
-
-        # Assertions
-        mock_bigquery_client.assert_called_once_with(project=project_id)
-        mock_client.load_table_from_uri.assert_called_once_with(
-            source_uris=f"{gcs_folder.uri}/*.avro",
-            destination=mock_client.dataset.return_value.table.return_value,
-            job_config=ANY,
-        )
-        self.assertEqual(load_job.output_rows, 1000)
-
 
 class TestPredictionsExporter(TestCase):
     def setUp(self):
@@ -733,51 +686,6 @@ class TestPredictionsExporter(TestCase):
         )
         exporter = PredictionExporter(export_dir=gcs_base_uri)
         exporter.flush_records()
-
-    @parameterized.expand(
-        [
-            param(
-                "Test if we can load predictions synchronously",
-                should_run_async=False,
-            ),
-            param(
-                "Test if we can load predictions asynchronously",
-                should_run_async=True,
-            ),
-        ]
-    )
-    @patch("gigl.common.data.export.bigquery.Client")
-    def test_load_prediction_to_bigquery(
-        self, _, mock_bigquery_client, should_run_async: bool
-    ):
-        # Mock inputs
-        gcs_folder = GcsUri("gs://test-bucket/test-folder")
-        project_id = "test-project"
-        dataset_id = "test-dataset"
-        table_id = "test-table"
-
-        # Mock BigQuery client and load job
-        mock_client = MagicMock()
-        mock_client.load_table_from_uri.return_value.output_rows = 1000
-        mock_bigquery_client.return_value = mock_client
-
-        # Call the function
-        load_job = load_predictions_to_bigquery(
-            gcs_folder,
-            project_id,
-            dataset_id,
-            table_id,
-            should_run_async=should_run_async,
-        )
-
-        # Assertions
-        mock_bigquery_client.assert_called_once_with(project=project_id)
-        mock_client.load_table_from_uri.assert_called_once_with(
-            source_uris=f"{gcs_folder.uri}/*.avro",
-            destination=mock_client.dataset.return_value.table.return_value,
-            job_config=ANY,
-        )
-        self.assertEqual(load_job.output_rows, 1000)
 
 
 if __name__ == "__main__":

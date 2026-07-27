@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the deprecated `RESOURCE_CONFIG_PATH` environment variable; use `GIGL_RESOURCE_CONFIG_URI` instead by
+  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+
 ## [0.3.1] - Jun 4, 2026
 
 ### Fixed
