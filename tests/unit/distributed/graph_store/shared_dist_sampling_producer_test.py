@@ -431,16 +431,10 @@ class DistSamplingProducerTest(TestCase):
 
 
 class _BoundedBlockingChannel:
-    """Output channel with GLT ``ShmChannel``-like bounded, blocking semantics.
+    """Bounded channel fake whose sends block when the consumer stops draining.
 
-    ``send`` blocks while the buffer is full: a paused consumer never drains, so
-    its channel saturates and the sampler coroutines wedge in ``send`` -- exactly
-    the condition that must park a channel instead of blocking the shared
-    scheduler thread.
-
-    ``recv`` mirrors ``ShmChannel``: a positive ``timeout_ms`` raises
-    ``QueueTimeoutError`` on an empty channel, while a non-positive/None timeout
-    on an empty channel is a would-be production deadlock and asserts.
+    Positive receive timeouts match ``ShmChannel``; a blocking receive on an
+    empty test channel asserts instead of hanging the suite.
     """
 
     def __init__(self, capacity: int) -> None:
@@ -479,21 +473,12 @@ class _BoundedBlockingChannel:
 
 
 class _GltOrderFakeSampler:
-    """Sampler that reproduces GLT ``ConcurrentEventLoop`` submit/complete order.
+    """Reproduce GLT's semaphore, send, callback, and release ordering.
 
-    ``sample_from_nodes`` acquires a per-channel ``BoundedSemaphore`` on the
-    CALLING (scheduler) thread -- the exact point where GLT's ``add_task`` blocks
-    once ``worker_concurrency`` coroutines are already pending -- and only then
-    hands the "coroutine" to a background thread that (1) sends the result on the
-    bounded channel (blocking while the consumer is paused), (2) fires the
-    completion callback, and (3) releases the semaphore, in that order.
-
-    Firing the callback BEFORE the release mirrors ``event_loop.py`` ``on_done``
-    (``result``/``callback`` then ``self._sem.release()``), so
-    ``completed_batches`` reflects a freed slot at the same instant the real code
-    would.  The semaphore acquire on the scheduler thread means that if the
-    scheduler ever over-submits past the in-flight cap (i.e. the fix regresses),
-    the whole scheduler thread wedges here -- which the tests detect as a stall.
+    ``sample_from_nodes`` acquires the semaphore on the scheduler thread. The
+    worker thread then sends, invokes the callback, and releases the semaphore.
+    This callback-before-release order is load-bearing because completion can
+    re-enqueue a channel just before GLT makes the slot available.
     """
 
     def __init__(
@@ -521,8 +506,6 @@ class _GltOrderFakeSampler:
     ) -> None:
         with self._threads_lock:
             self.submit_count += 1
-        # Acquired on the scheduler thread: blocks here iff the scheduler
-        # over-submits past the in-flight cap (the regression this fix prevents).
         self._sem.acquire()
 
         def _coroutine() -> None:
@@ -539,14 +522,7 @@ class _GltOrderFakeSampler:
 
 
 class _CountingTaskQueue:
-    """Task queue that counts blocking vs non-blocking gets.
-
-    Lets a test distinguish a scheduler idling in Phase 3 (``get`` with a
-    timeout, ~one per ``SCHEDULER_TICK_SECS``) from one busy-spinning through the
-    phases (``get_nowait`` many times per tick, zero blocking ``get`` calls) --
-    the signature of a regression that wrongly reports progress on a park-only
-    pump cycle and pins the core at 100% CPU instead of engaging the idle tick.
-    """
+    """Count blocking and non-blocking gets to detect park-only busy-spinning."""
 
     def __init__(self) -> None:
         self._queue: queue.Queue[tuple[SharedMpCommand, object]] = queue.Queue()
@@ -569,17 +545,10 @@ class _CountingTaskQueue:
 
 
 class StallFixWorkerLoopTest(TestCase):
-    """GLT-order-faithful regressions for the wait-free scheduler stall fix.
+    """Exercise scheduler liveness with paused and active consumers.
 
-    Each drives the real ``_shared_sampling_worker_loop`` with a paused consumer
-    (its channel saturates and its coroutines wedge in ``send``, holding the
-    per-channel sampler semaphore) alongside an active consumer, and asserts the
-    active channel keeps progressing and commands keep draining -- i.e. the
-    single scheduler thread is never parked on the saturated channel.
-
-    Without the in-flight cap the scheduler blocks in ``sample_from_nodes`` on the
-    saturated channel's exhausted semaphore, so these ``event_queue.get`` calls
-    time out (the pre-fix cross-rank deadlock).
+    A paused consumer fills its channel and holds sampler slots; the shared
+    scheduler must continue serving active channels and commands.
     """
 
     @staticmethod
@@ -599,13 +568,7 @@ class StallFixWorkerLoopTest(TestCase):
     @staticmethod
     @contextlib.contextmanager
     def _draining(*channels: _BoundedBlockingChannel) -> Iterator[None]:
-        """Continuously drain the given channels for the duration of the block.
-
-        Releases any sends wedged on a full channel so the worker can always
-        reach Phase 1 and drain ``STOP``.  Without this, a reverted in-flight cap
-        would leave the non-daemon worker blocked in the sampler semaphore, so a
-        red test would hang the whole suite instead of failing cleanly.
-        """
+        """Drain channels during teardown so blocked sends cannot hang the worker."""
         stop = threading.Event()
 
         def _drain() -> None:
@@ -630,11 +593,8 @@ class StallFixWorkerLoopTest(TestCase):
         mock_create_dist_sampler: MagicMock,
     ) -> None:
         worker_concurrency = 2
-        # channel_a's consumer drains continuously so its coroutines never wedge;
-        # channel_b has NO consumer, so it saturates at capacity and its
-        # coroutines block in send -- the paused-consumer condition.  Under plain
-        # round-robin the scheduler must rotate past channel_b's saturated channel
-        # instead of parking the shared thread on it.
+        # B never drains and saturates; A drains continuously. The scheduler must
+        # keep A runnable while B is parked.
         channel_a = _BoundedBlockingChannel(capacity=4)
         channel_b = _BoundedBlockingChannel(capacity=worker_concurrency)
 
@@ -664,8 +624,6 @@ class StallFixWorkerLoopTest(TestCase):
         consumer_thread = threading.Thread(target=_consume_active, daemon=True)
         consumer_thread.start()
 
-        # create_dist_sampler picks up each channel by the ``channel`` kwarg, so
-        # channel_a's sampler sends to channel_a and channel_b's to channel_b.
         for channel_id, channel, node_len in (
             (channel_a_id, channel_a, active_batches * 2),
             (channel_b_id, channel_b, paused_batches * 2),
@@ -719,15 +677,12 @@ class StallFixWorkerLoopTest(TestCase):
         )
         worker_thread.start()
         try:
-            # Active channel completes epoch 0 despite channel B's paused
-            # consumer: the scheduler rotated past B's saturated channel instead
-            # of parking on it.  (Pre-fix: deadlock -> this get times out.)
+            # A must complete while B remains parked behind its paused consumer.
             done_epoch_0 = event_queue.get(timeout=10.0)
             self.assertEqual(done_epoch_0, (EPOCH_DONE_EVENT, channel_a_id, 0, 0))
 
-            # Commands keep draining while B stays wedged: start a SECOND active
-            # epoch AFTER B has saturated and confirm it also completes (proves
-            # Phase-1 command draining + Phase-2 pumping never parked).
+            # Starting another A epoch after B saturates verifies command
+            # draining remains live.
             task_queue.put(
                 (
                     SharedMpCommand.START_EPOCH,
@@ -741,18 +696,12 @@ class StallFixWorkerLoopTest(TestCase):
             done_epoch_1 = event_queue.get(timeout=10.0)
             self.assertEqual(done_epoch_1, (EPOCH_DONE_EVENT, channel_a_id, 1, 0))
 
-            # The paused channel never streamed to a consumer while the active
-            # channel drained two full epochs -- asymmetric progress, no
-            # head-of-line blocking.
             self.assertEqual(channel_b.total_received, 0)
             self.assertGreaterEqual(channel_a.total_received, active_batches)
 
-            # Unregister the wedged (parked) channel: draining its buffered output
-            # unblocks the stuck sends so cleanup finalizes without hanging.
             task_queue.put((SharedMpCommand.UNREGISTER_INPUT, channel_b_id))
         finally:
-            # Drain the paused channel while stopping so the worker can always
-            # reach Phase 1 to process STOP -- see ``_draining``.
+            # Release B's blocked sends before waiting for STOP.
             with self._draining(channel_b):
                 task_queue.put((SharedMpCommand.STOP, None))
                 worker_thread.join(timeout=10.0)
@@ -872,11 +821,8 @@ class StallFixWorkerLoopTest(TestCase):
         )
         worker_thread.start()
         try:
-            # The channel parks after submitting exactly capacity (completed +
-            # buffered) plus worker_concurrency (wedged in-flight) batches, and no
-            # more -- a busy-spinning or non-parking scheduler would keep climbing
-            # toward all 20 batches (or wedge the whole scheduler on the exhausted
-            # semaphore before reaching this count).
+            # B parks after capacity completed batches fill the buffer and
+            # worker_concurrency additional sends remain in flight.
             expected_parked_submits = worker_concurrency + channel_b._capacity
             deadline = time.monotonic() + 10.0
             sampler: _GltOrderFakeSampler | None = None
@@ -890,37 +836,28 @@ class StallFixWorkerLoopTest(TestCase):
             assert sampler is not None
             self.assertGreaterEqual(sampler.submit_count, expected_parked_submits)
 
-            # Give the scheduler ample time to (incorrectly) submit more or
-            # busy-spin; parked means it idles in Phase 3 instead.
+            # A park-only scheduler should enter Phase 3 rather than submit or
+            # spin. Blocking gets prove the idle wait runs; excessive
+            # non-blocking gets would indicate a busy loop.
             blocking_gets_before = task_queue.blocking_get_calls
             nowait_gets_before = task_queue.nowait_get_calls
             time.sleep(0.3)
             blocking_gets = task_queue.blocking_get_calls - blocking_gets_before
             nowait_gets = task_queue.nowait_get_calls - nowait_gets_before
 
-            # It stays put -- no submits past the cap.
             self.assertEqual(sampler.submit_count, expected_parked_submits)
             self.assertEqual(channel_b.total_received, 0)
-            # Phase 3's timed wait is engaged (>=1 blocking get over a ~0.3s /
-            # 0.05s tick window) and the loop is NOT busy-spinning: a regression
-            # that wrongly set ``made_progress`` on a park-only cycle would skip
-            # the blocking get entirely and burn thousands of ``get_nowait``
-            # calls at 100% CPU.
             self.assertGreaterEqual(blocking_gets, 1)
             self.assertLess(nowait_gets, 100)
 
-            # Unregister while parked: must drain buffered output, unblock the
-            # wedged sends, and finalize cleanup without hanging.
             task_queue.put((SharedMpCommand.UNREGISTER_INPUT, channel_b_id))
         finally:
-            # Drain the wedged channel while stopping so the worker can always
-            # reach Phase 1 to process STOP -- see ``_draining``.
+            # Release blocked sends before waiting for STOP.
             with self._draining(channel_b):
                 task_queue.put((SharedMpCommand.STOP, None))
                 worker_thread.join(timeout=10.0)
 
         self.assertFalse(worker_thread.is_alive())
-        # Every wedged coroutine was released during teardown.
         for thread in sampler._threads:
             self.assertFalse(thread.is_alive())
 
@@ -947,15 +884,7 @@ class StallFixWorkerLoopTest(TestCase):
         _mock_init_rpc: MagicMock,
         _mock_shutdown_rpc: MagicMock,
     ) -> None:
-        """A parked channel wakes and finishes its epoch once its consumer drains.
-
-        The other stall-fix tests only park a channel; none resumes it.  This
-        pins the WAKE path directly: ``_on_batch_done`` re-enqueuing the parked
-        channel is the SOLE way a paused-then-resumed channel makes progress
-        again (the pump never revisits a channel it parked).  If that re-enqueue
-        regressed, the epoch would hang after the consumer resumed and the
-        ``event_queue.get`` below would time out.
-        """
+        """Verify completion re-enqueues a parked channel after consumption resumes."""
         worker_concurrency = 2
         channel = _BoundedBlockingChannel(capacity=worker_concurrency)
         created_samplers: list[_GltOrderFakeSampler] = []
@@ -1002,8 +931,7 @@ class StallFixWorkerLoopTest(TestCase):
             )
         )
 
-        # The consumer stays paused until ``resume`` is set, so the channel
-        # saturates and parks first; only then do we resume draining.
+        # Pause the consumer until the sampler reaches its in-flight cap.
         resume = threading.Event()
         stop_consumer = threading.Event()
 
@@ -1033,9 +961,8 @@ class StallFixWorkerLoopTest(TestCase):
         )
         worker_thread.start()
         try:
-            # Wait for the channel to park at the in-flight cap: with the
-            # consumer paused, submit_count climbs to worker_concurrency
-            # (buffered) + capacity (wedged in send) and stops.
+            # The channel parks after capacity completed batches fill the buffer
+            # and worker_concurrency additional sends remain in flight.
             expected_parked_submits = worker_concurrency + channel._capacity
             deadline = time.monotonic() + 10.0
             sampler: _GltOrderFakeSampler | None = None
@@ -1048,26 +975,20 @@ class StallFixWorkerLoopTest(TestCase):
             self.assertIsNotNone(sampler)
             assert sampler is not None
 
-            # Confirm it is genuinely parked (stuck at the cap, well short of the
-            # full epoch, nothing drained) before resuming -- not merely slow.
+            # Verify the channel is parked, not merely progressing slowly.
             time.sleep(0.2)
             self.assertEqual(sampler.submit_count, expected_parked_submits)
             self.assertEqual(channel.total_received, 0)
             self.assertLess(sampler.submit_count, total_batches)
 
-            # Resume the consumer.  Draining a batch completes a wedged send,
-            # which fires the callback -> _on_batch_done increments completed and
-            # WAKES the parked channel.  Without that wake the epoch never
-            # finishes and this get times out.
+            # Draining completes a send, whose callback re-enqueues the channel.
             resume.set()
             done = event_queue.get(timeout=10.0)
             self.assertEqual(done, (EPOCH_DONE_EVENT, channel_id, 0, 0))
 
-            # The woken channel submitted every remaining batch (deterministic:
-            # EPOCH_DONE implies all batches completed, so all were submitted).
             self.assertEqual(sampler.submit_count, total_batches)
-            # EPOCH_DONE fires when the last batch is SENT (buffered); the
-            # consumer drains that tail a beat later, so poll rather than race it.
+            # EPOCH_DONE fires when the last batch is buffered; the consumer
+            # drains that tail later, so poll rather than race it.
             drain_deadline = time.monotonic() + 5.0
             while (
                 channel.total_received < total_batches
