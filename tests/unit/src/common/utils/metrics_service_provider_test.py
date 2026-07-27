@@ -61,7 +61,7 @@ class MetricsServiceProviderTest(TestCase):
         self.assertFalse(result)
         self.assertIsNone(get_metrics_service_instance())
 
-    def test_invalid_custom_class_returns_true_and_falls_back_to_nop(self) -> None:
+    def test_custom_class_not_specified_returns_true_and_falls_back_to_nop(self) -> None:
         """initialize_metrics returns False and falls back to NopMetricsPublisher when custom metrics class not provided."""
         config = gbml_config_pb2.GbmlConfig()
         uri = self._write_task_config(config)
