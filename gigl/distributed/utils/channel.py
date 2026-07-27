@@ -101,7 +101,12 @@ class MonitoredShmChannel(SizedShmChannel):
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._channel_name = f"{channel_name}_id{next(self._counter)}"
-        self._publisher: Optional[OpsMetricPublisher] = get_metrics_service_instance()
+
+        self._publisher: Optional[OpsMetricPublisher]
+        try:
+            self._publisher = get_metrics_service_instance()
+        except RuntimeError:
+            self._publisher = None
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         if self._publisher is not None:

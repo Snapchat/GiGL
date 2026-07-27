@@ -61,10 +61,10 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
         return False
 
 
-def get_metrics_service_instance() -> Optional[OpsMetricPublisher]:
+def get_metrics_service_instance() -> OpsMetricPublisher:
     if _metrics_instance is None:
-        logger.warning(
-            "initialize_metrics() was not called, so no metrics service instance available"
+        raise RuntimeError(
+            "Metrics instance is not initialized. Call initialize_metrics() before getting the instance."
         )
 
     return _metrics_instance

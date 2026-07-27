@@ -63,6 +63,5 @@ class MetricsServiceProviderTest(TestCase):
 
     def test_get_metrics_service_instance_raises_before_initialization(self) -> None:
         """get_metrics_service_instance raises RuntimeError when called before initialize_metrics."""
-        # TODO(jchmura)
         with self.assertRaises(RuntimeError):
             get_metrics_service_instance()
