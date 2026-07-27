@@ -75,7 +75,11 @@ class SizedShmChannel(ShmChannel):
     @classmethod
     def _get_libc(cls) -> ctypes.CDLL:
         if cls._libc is None:
-            libc_path = ctypes.util.find_library("c") or "libc.so.6"
+            libc_path = ctypes.util.find_library("c")
+            if libc_path is None:
+                raise RuntimeError(
+                    "Failed to locate standard C library ('libc') via ctypes.util.find_library('c')."
+                )
             libc = ctypes.CDLL(libc_path, use_errno=True)
 
             # void *shmat(int shmid, const void *shmaddr, int shmflg);
@@ -109,32 +113,22 @@ class MonitoredShmChannel(SizedShmChannel):
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._channel_name = f"{channel_name}_id{next(self._counter)}"
-
-        self._publisher: Optional[OpsMetricPublisher]
-        try:
-            self._publisher = get_metrics_service_instance()
-        except RuntimeError:
-            self._publisher = None
+        self._publisher: OpsMetricPublisher = get_metrics_service_instance()
 
     def __getstate__(self):
         # We want the metrics publisher singleton to be part of the channel state to avoid
-        # the overhead of calling get_metrics_service_instance() and try/except logic inside
-        # `recv()` (hot path). Without custom state handling, serializing the channel across
-        # processes fails with `TypeError: no default __reduce__ due to non-trivial __cinit__`.
-        # To fix this, we explicitly remove `_publisher` from the pickled state in __getstate__()
-        # and re-initialize a new publisher instance upon deserializing the channel in __setstate__().
+        # the overhead of calling get_metrics_service_instance() inside `recv()` (hot path).
+        # Without custom state handling, serializing the channel across processes fails with
+        # `TypeError: no default __reduce__ due to non-trivial __cinit__`. To fix this, we
+        # remove `_publisher` from the pickled state in __getstate__() and re-initialize a new
+        # publisher instance upon deserializing the channel in __setstate__().
         state = self.__dict__.copy()
         state["_publisher"] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-
-        self._publisher: Optional[OpsMetricPublisher]
-        try:
-            self._publisher = get_metrics_service_instance()
-        except RuntimeError:
-            self._publisher = None
+        self._publisher: OpsMetricPublisher = get_metrics_service_instance()
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         if self._publisher is not None:
