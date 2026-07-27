@@ -433,7 +433,7 @@ class BaseDistLoader(DistLoader):
         enable_channel_monitoring: bool = False,
         channel_name: str = "",
     ) -> ShmChannel:
-        """Creates a shared-memory channel for colocated mode.
+        """Creates a ShmChannel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
@@ -486,8 +486,8 @@ class BaseDistLoader(DistLoader):
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
         *,
-        channel_name: str = "",
         enable_channel_monitoring: bool = False,
+        channel_name: str = "",
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
