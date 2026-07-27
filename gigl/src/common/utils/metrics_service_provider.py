@@ -12,6 +12,7 @@ from snapchat.research.gbml.gbml_config_pb2 import GbmlConfig
 logger = Logger()
 
 _metrics_instance: Optional[OpsMetricPublisher] = None
+_WERE_METRICS_INITIALIZED: bool = False
 JOB_NAME_GROUPING_ENV_KEY = "GBML_JOB_NAME"
 
 
@@ -31,7 +32,8 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
         no-op default when no custom class is configured), ``False`` if a
         custom metrics class was specified but could not be loaded or instantiated.
     """
-    global _metrics_instance
+    global _metrics_instance, _WERE_METRICS_INITIALIZED
+    _WERE_METRICS_INITIALIZED = True
     os.environ[JOB_NAME_GROUPING_ENV_KEY] = service_name
     proto_utils = ProtoUtils()
     task_config: GbmlConfig = proto_utils.read_proto_from_yaml(
@@ -60,6 +62,10 @@ def initialize_metrics(task_config_uri: Uri, service_name: str) -> bool:
 
 
 def get_metrics_service_instance() -> Optional[OpsMetricPublisher]:
+    if not _WERE_METRICS_INITIALIZED:
+        raise RuntimeError(
+            "Metrics instance is not initialized. Call initialize_metrics() before getting the instance."
+        )
     return _metrics_instance
 
 

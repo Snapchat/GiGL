@@ -21,6 +21,7 @@ class MetricsServiceProviderTest(TestCase):
     def tearDown(self) -> None:
         self.tmp_dir.cleanup()
         metrics_service_provider._metrics_instance = self._original_metrics_instance
+        metrics_service_provider._WERE_METRICS_INITIALIZED = False
 
     def _write_task_config(self, config: gbml_config_pb2.GbmlConfig) -> LocalUri:
         uri = LocalUri.join(self.tmp_dir.name, "task_config.yaml")
@@ -61,7 +62,9 @@ class MetricsServiceProviderTest(TestCase):
         self.assertFalse(result)
         self.assertIsNone(get_metrics_service_instance())
 
-    def test_custom_class_not_specified_returns_true_and_falls_back_to_nop(self) -> None:
+    def test_custom_class_not_specified_returns_true_and_falls_back_to_nop(
+        self,
+    ) -> None:
         """initialize_metrics returns False and falls back to NopMetricsPublisher when custom metrics class not provided."""
         config = gbml_config_pb2.GbmlConfig()
         uri = self._write_task_config(config)
@@ -71,6 +74,7 @@ class MetricsServiceProviderTest(TestCase):
         self.assertTrue(result)
         self.assertIsInstance(get_metrics_service_instance(), NopMetricsPublisher)
 
-    def test_get_metrics_service_instance_returns_none_before_initialization(self) -> None:
-        """get_metrics_service_instance returns None when called before initialize_metrics."""
-        self.assertIsNone(get_metrics_service_instance())
+    def test_get_metrics_service_instance_raises_before_initialization(self) -> None:
+        """get_metrics_service_instance raises RuntimeError when called before initialize_metrics."""
+        with self.assertRaises(RuntimeError):
+            get_metrics_service_instance()
