@@ -41,9 +41,17 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 # Default path for compiled KFP pipeline
 GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
+GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+# Directories whose markdown we never format: virtualenvs, caches, build output,
+# vendored tooling, experimental sub-projects, plan docs, and agent runtime dirs.
+# .claude/skills holds SKILL.md files whose YAML frontmatter mdformat corrupts, so
+# they are excluded (the other .claude docs are still formatted).
 MD_EXCLUDE_DIRS := \
 	*/.cache \
+	*/.claude/skills \
 	*/.venv \
+	*/experimental \
 	*/tools \
 	./.claude/plans \
 	./.claude/tmp \
