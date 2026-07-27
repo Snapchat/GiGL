@@ -41,10 +41,23 @@ GIGL_TEST_DEFAULT_RESOURCE_CONFIG?=${PWD}/deployment/configs/unittest_resource_c
 # Default path for compiled KFP pipeline
 GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yaml
 
-GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-
-# Find all markdown files in the repo except for those in .venv, tools, or cmake cache directories.
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
+MD_EXCLUDE_DIRS := \
+	*/.cache \
+	*/.venv \
+	*/tools \
+	./.claude/plans \
+	./.claude/tmp \
+	./.claude/worktrees \
+	./.pytest_cache \
+	./.sdd \
+	./.superpowers \
+	./build \
+	./dist \
+	./docs/plans \
+	./docs/superpowers/plans \
+	./gh_pages_build
+MD_FILES := $(shell find . -type f -name "*.md" \
+	$(foreach dir,$(MD_EXCLUDE_DIRS),! -path "$(dir)/*"))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
