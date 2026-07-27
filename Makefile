@@ -53,12 +53,17 @@ MD_EXCLUDE_DIRS := \
 	*/.venv \
 	*/experimental \
 	*/tools \
+	./.claude/plans \
+	./.claude/tmp \
+	./.claude/worktrees \
 	./.pytest_cache \
 	./.sdd \
 	./.superpowers \
 	./build \
 	./dist \
-	./docs/plans
+	./docs/plans \
+	./docs/superpowers/plans \
+	./gh_pages_build
 MD_FILES := $(shell find . -type f -name "*.md" \
 	$(foreach dir,$(MD_EXCLUDE_DIRS),! -path "$(dir)/*"))
 GIGL_ALERT_EMAILS?=""
