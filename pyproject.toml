@@ -71,7 +71,8 @@ pyg27-torch28-cpu = [
   "torch_scatter; sys_platform != 'darwin'",
   "torch_sparse; sys_platform != 'darwin'",
   "torch_spline_conv; sys_platform != 'darwin'",
-  "torchrec ; sys_platform != 'darwin'",
+  # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see the FBGEMM/torchrec compatibility matrix: https://docs.pytorch.org/FBGEMM/general/Releases.html
+  "torchrec~=1.3.0 ; sys_platform != 'darwin'",
 ]
 pyg27-torch28-cu128 = [
   "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'",
@@ -82,7 +83,7 @@ pyg27-torch28-cu128 = [
   "torch_scatter; sys_platform != 'darwin'",
   "torch_sparse; sys_platform != 'darwin'",
   "torch_spline_conv; sys_platform != 'darwin'",
-  "torchrec ; sys_platform != 'darwin'",
+  "torchrec~=1.3.0 ; sys_platform != 'darwin'",
 
 ]
 experimental = [
