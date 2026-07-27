@@ -30,7 +30,11 @@ COPY gigl/scripts gigl/scripts
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
 COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
+COPY gigl-core/GLT_PIN.cmake gigl-core/GLT_PIN.cmake
 COPY gigl-core/README.md gigl-core/README.md
+# This image skips the GLT post-install, but dep_vars.env is copied anyway so that enabling it later
+# does not fail on a missing pin.
+COPY gigl/dep_vars.env gigl/dep_vars.env
 
 RUN bash ./requirements/install_py_deps.sh --skip-glt-post-install
 

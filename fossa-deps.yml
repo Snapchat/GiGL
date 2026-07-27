@@ -8,9 +8,13 @@ referenced-dependencies:
 - type: pypi
   name: torchaudio
   version: "2.3.1"
+# Pinned to a commit rather than a tag: GiGL depends on upstream fixes (PRs 151/153/154) that are not
+# in any release. Keep in sync with GLT_COMMIT_SHA in gigl/dep_vars.env and GIGL_GLT_COMMIT in
+# gigl-core/GLT_PIN.cmake. gigl-core also compiles against this commit's C++ headers, which are
+# fetched at build time by gigl-core/CMakeLists.txt.
 - type: git
   name: https://github.com/alibaba/graphlearn-for-pytorch
-  version: "v0.2.4"
+  version: "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9"
 - type: git
   name: https://github.com/protocolbuffers/protobuf
   version: "v3.19.6"

@@ -18,6 +18,15 @@ build-backend = "scikit_build_core.build"
 [tool.scikit-build]
 cmake.version = ">=3.18"
 build-dir     = ".cache/cmake_build"
+# .cache/ holds local build state: CMake trees, compiled objects, and the GLT source tree that
+# CMakeLists.txt fetches at configure time. None of it belongs in a source distribution — including it
+# makes the sdist ~30MB, non-reproducible (it depends on whatever was last built locally), and turns it
+# into a redistribution of third-party Apache-2.0 GLT source. A fresh build repopulates .cache/ from
+# GLT_PIN.cmake, which IS in the sdist.
+sdist.exclude = [".cache"]
+# gigl-core is published as its own wheel, so its third-party attribution has to travel with it rather
+# than living only at the repo root. Lands in the wheel's .dist-info/licenses/.
+wheel.license-files = ["THIRD_PARTY_NOTICES.md"]
 # Default editable mode is `redirect`: scikit-build-core writes compiled .so
 # files into .cache/cmake_build/ and installs an import-hook shim into
 # site-packages that resolves them. `editable.rebuild` stays off so imports
@@ -29,8 +38,20 @@ editable.rebuild = false
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "CMakeLists.txt" },
+    # The GLT pin selects which graphlearn_torch headers the extensions compile against. Without this
+    # key, bumping the pin would reuse a cached build whose compiled field offsets no longer match the
+    # installed GLT wheel's shared-memory layout -- silently wrong readings, no error. Keeping the pin
+    # inside gigl-core/ (rather than referencing ../gigl/dep_vars.env) is what makes this key work.
+    { file = "GLT_PIN.cmake" },
     { file = "core/**/*.h" },
     { file = "core/**/*.cpp" },
     { file = "core/**/*.cu" },
     { file = "core/**/*.cuh" },
+    # The Python package (re-exports in __init__.py, .pyi stubs, py.typed) ships in the same wheel as
+    # the compiled extensions. Without these keys, editing only src/ reuses a cached wheel and silently
+    # installs the previous __init__.py -- so a newly exported symbol appears to be missing even though
+    # its .so was rebuilt and installed.
+    { file = "src/**/*.py" },
+    { file = "src/**/*.pyi" },
+    { file = "src/**/py.typed" },
 ]

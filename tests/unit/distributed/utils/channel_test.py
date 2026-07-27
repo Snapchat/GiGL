@@ -63,7 +63,22 @@ class TestSizedShmChannel(TestCase):
         # Start producer process
         process = ctx.Process(target=_producer_worker, args=(channel, messages))
         process.start()
-        process.join(timeout=5)
+        try:
+            process.join(timeout=5)
+            # A hung producer must not be left running. `send` blocks when the channel is full, and a
+            # surviving non-daemon child would keep the test runner alive and could interfere with
+            # later tests in the suite.
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+                self.fail("producer process did not finish within 5s")
+            self.assertEqual(
+                process.exitcode, 0, f"producer process exited with {process.exitcode}"
+            )
+        finally:
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
 
         # Verify parent process observes updated queue size from worker process
         self.assertEqual(channel.qsize(), 2)

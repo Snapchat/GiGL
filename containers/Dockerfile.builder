@@ -67,6 +67,7 @@ COPY .python-version tmp/.python-version
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
 COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
+COPY gigl-core/GLT_PIN.cmake gigl-core/GLT_PIN.cmake
 COPY gigl-core/README.md gigl-core/README.md
 RUN  bash ./requirements/install_py_deps.sh --dev
 

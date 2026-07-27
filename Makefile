@@ -88,7 +88,12 @@ assert_yaml_configs_parse:
 # Ex. `make unit_test_py PY_TEST_FILES="eval_metrics_test.py"`
 # By default, runs all tests under tests/unit.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
-unit_test_py: clean_build_files_py build_cpp_extensions type_check
+# precondition_tests is a prerequisite (not only of the aggregate `unit_test` target) because it
+# asserts the GLT commit pin in gigl/dep_vars.env matches gigl-core/GLT_PIN.cmake. CI invokes
+# unit_test_py / unit_test_cpp individually and never the aggregate target, so without this a pin
+# mismatch would merge clean and silently compile against a different ShmQueueMeta layout than the
+# installed GLT wheel. It is a sub-second Python check.
+unit_test_py: precondition_tests clean_build_files_py build_cpp_extensions type_check
 	uv run python -m tests.unit.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
@@ -107,7 +112,9 @@ unit_test_scala: clean_build_files_scala
 # Eventually, we should look into splitting these up.
 # We run `make check_format` separately instead of as a dependent make rule so that it always runs after the actual testing.
 # We don't want to fail the tests due to non-conformant formatting during development.
-unit_test_cpp:
+# See the note on unit_test_py: the GLT pin equality check must run on every path that builds the C++
+# extensions, since CI calls these targets individually rather than via `unit_test`.
+unit_test_cpp: precondition_tests
 	$(MAKE) -C gigl-core unit_test_cpp
 
 unit_test: precondition_tests unit_test_py unit_test_scala unit_test_cpp

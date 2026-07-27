@@ -3,6 +3,28 @@
 set -e
 set -x
 
+# The GLT commit is single-sourced in gigl/dep_vars.env (static key=value, loadable by make, bash,
+# python, and sbt) so that gigl-core's C++ build can be pinned to the same commit this wheel is built
+# from. gigl-core compiles against GLT's C++ headers, and ShmQueueMeta's layout is read at runtime out
+# of a segment created by this wheel -- a mismatch silently corrupts queue-size readings rather than
+# failing. tests/config_tests/dep_vars_check.py asserts GLT_COMMIT_SHA here equals GIGL_GLT_COMMIT in
+# gigl-core/GLT_PIN.cmake, and runs in the `precondition_tests` make target.
+#
+# Resolved relative to this script so it works regardless of the caller's working directory
+# (gigl/scripts/post_install.py invokes this script by absolute path).
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+DEP_VARS_FILE="${SCRIPT_DIR}/../dep_vars.env"
+if [ ! -f "${DEP_VARS_FILE}" ]; then
+    echo "ERROR: ${DEP_VARS_FILE} not found; cannot resolve the GLT commit pin." >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "${DEP_VARS_FILE}"
+if [ -z "${GLT_COMMIT_SHA}" ]; then
+    echo "ERROR: GLT_COMMIT_SHA is not set in ${DEP_VARS_FILE}." >&2
+    exit 1
+fi
+
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
     return $?
@@ -44,9 +66,10 @@ then
     # * https://github.com/alibaba/graphlearn-for-pytorch/pull/153
     # * https://github.com/alibaba/graphlearn-for-pytorch/pull/151
     # Thus, checking out a specific commit instead of a tagged version.
+    # The commit comes from GLT_COMMIT_SHA in gigl/dep_vars.env; see the note at the top of this file.
     git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
         && cd graphlearn-for-pytorch \
-        && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
+        && git checkout "${GLT_COMMIT_SHA}" \
         && git submodule update --init \
         && bash install_dependencies.sh
     if has_cuda_driver;

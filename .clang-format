@@ -35,12 +35,13 @@ DisableFormat:   false
 FixNamespaceComments: true
 ForEachMacros:   [ foreach, Q_FOREACH, BOOST_FOREACH ]
 # Lower Priority numbers sort first (Priority 1 appears before Priority 2, etc.).
-# List order matches priority order (1 → 2 → 3); torch/pybind11 must be listed before the
-# broader '^<' rule so it is matched first.
-# Result: torch/pybind11 (1) → system/third-party (2) → project-local headers (3).
-# Add graphlearn_torch to the Priority 1 regex when GLT headers appear in the codebase.
+# List order matches priority order (1 → 2 → 3); torch/pybind11 and graphlearn_torch must be listed
+# before the broader '^<' rule so they are matched first.
+# Result: torch/pybind11/graphlearn_torch (1) → system/third-party (2) → project-local headers (3).
+# graphlearn_torch headers are quoted, not angle-bracketed (they self-include as
+# "graphlearn_torch/include/..."), so they need their own alternative in the Priority 1 regex.
 IncludeCategories:
-  - Regex:           '^<(torch|pybind11)/'
+  - Regex:           '^(<(torch|pybind11)/|"graphlearn_torch/)'
     Priority:        1
   - Regex:           '^(<|"gtest/)'
     Priority:        2
