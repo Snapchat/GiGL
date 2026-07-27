@@ -13,7 +13,15 @@ from gigl.src.common.utils.metrics_service_provider import get_metrics_service_i
 
 
 class SizedShmChannel(ShmChannel):
-    """Extends ShmChannel with queue size method `qsize()` by attaching to the channels memory region and inspecting the C++ struct layout."""
+    """Extends ShmChannel with queue size method `qsize()` by attaching to the channels memory region and inspecting the C++ struct layout.
+
+    TODO: Revisit direct memory inspection vs. custom C++ channel implementation. Current solution
+    inspects GLT's underlying C++ memory layout for simplicity, avoiding the overhead of porting GLT's
+    full C++ queue code into GiGL. Revisit and implement a native C++ channel with public size methods if:
+        (a) Deeper channel monitoring is needed (e.g., % queue filled in bytes).
+        (b) We roll a custom IPC queue for other architectural reasons.
+        (c) An upstream GLT release breaks the struct memory layout (tests should catch this).
+    """
 
     # Class-level handle cached across all instances in the current process
     _libc: Optional[ctypes.CDLL] = None
@@ -101,6 +109,26 @@ class MonitoredShmChannel(SizedShmChannel):
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._channel_name = f"{channel_name}_id{next(self._counter)}"
+
+        self._publisher: Optional[OpsMetricPublisher]
+        try:
+            self._publisher = get_metrics_service_instance()
+        except RuntimeError:
+            self._publisher = None
+
+    def __getstate__(self):
+        # We want the metrics publisher singleton to be part of the channel state to avoid
+        # the overhead of calling get_metrics_service_instance() and try/except logic inside
+        # `recv()` (hot path). Without custom state handling, serializing the channel across
+        # processes fails with `TypeError: no default __reduce__ due to non-trivial __cinit__`.
+        # To fix this, we explicitly remove `_publisher` from the pickled state in __getstate__()
+        # and re-initialize a new publisher instance upon deserializing the channel in __setstate__().
+        state = self.__dict__.copy()
+        state["_publisher"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
 
         self._publisher: Optional[OpsMetricPublisher]
         try:
