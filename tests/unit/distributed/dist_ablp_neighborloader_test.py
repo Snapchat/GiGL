@@ -417,25 +417,38 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
 
 
 def _global_pair_set(
-    node: torch.Tensor, label_dict: dict[int, torch.Tensor]
+    anchor_node: torch.Tensor,
+    label_node: torch.Tensor,
+    label_dict: dict[int, torch.Tensor],
 ) -> list[tuple[int, int]]:
-    """Convert a label dictionary to sorted global-id pairs."""
+    """Convert a label dictionary to sorted global-id pairs.
+
+    Anchors and labels are looked up in separate node maps so this works for
+    heterogeneous graphs, where the two live in different node stores. Pass the
+    same tensor twice for a homogeneous graph.
+    """
     pairs: list[tuple[int, int]] = []
     for local_anchor, local_labels in label_dict.items():
-        global_anchor = int(node[local_anchor].item())
+        global_anchor = int(anchor_node[local_anchor].item())
         for local_label in local_labels.tolist():
-            pairs.append((global_anchor, int(node[local_label].item())))
+            pairs.append((global_anchor, int(label_node[local_label].item())))
     return sorted(pairs)
 
 
 def _global_pair_set_from_edge_index(
-    node: torch.Tensor, label_edge_index: torch.Tensor
+    anchor_node: torch.Tensor,
+    label_node: torch.Tensor,
+    label_edge_index: torch.Tensor,
 ) -> list[tuple[int, int]]:
-    """Convert a label edge index to sorted global-id pairs."""
+    """Convert a label edge index to sorted global-id pairs.
+
+    Takes separate anchor and label node maps for the same reason as
+    :func:`_global_pair_set`.
+    """
     return sorted(
         (
-            int(node[local_anchor].item()),
-            int(node[local_label].item()),
+            int(anchor_node[local_anchor].item()),
+            int(label_node[local_label].item()),
         )
         for local_anchor, local_label in label_edge_index.t().tolist()
     )
@@ -469,19 +482,19 @@ def _collect_homogeneous_labels(
             assert isinstance(datum.y_positive, torch.Tensor)
             assert datum.y_positive.size(0) == 2
             positive_pairs.extend(
-                _global_pair_set_from_edge_index(node, datum.y_positive)
+                _global_pair_set_from_edge_index(node, node, datum.y_positive)
             )
         else:
-            positive_pairs.extend(_global_pair_set(node, datum.y_positive))
+            positive_pairs.extend(_global_pair_set(node, node, datum.y_positive))
         if has_negatives:
             if use_edge_index_output:
                 assert isinstance(datum.y_negative, torch.Tensor)
                 assert datum.y_negative.size(0) == 2
                 negative_pairs.extend(
-                    _global_pair_set_from_edge_index(node, datum.y_negative)
+                    _global_pair_set_from_edge_index(node, node, datum.y_negative)
                 )
             else:
-                negative_pairs.extend(_global_pair_set(node, datum.y_negative))
+                negative_pairs.extend(_global_pair_set(node, node, datum.y_negative))
         else:
             assert not hasattr(datum, "y_negative"), (
                 f"expected no negatives, got {getattr(datum, 'y_negative', None)}"
@@ -489,6 +502,87 @@ def _collect_homogeneous_labels(
     return_dict[use_edge_index_output] = (
         sorted(positive_pairs),
         sorted(negative_pairs),
+    )
+    shutdown_rpc()
+
+
+def _edge_type_key(edge_type: EdgeType) -> tuple[str, ...]:
+    """Canonical dict key for an edge type.
+
+    Label edge types reach collation as plain tuples on some paths and as
+    ``EdgeType`` on others, and the two stringify differently (``"('a', 'to',
+    'b')"`` vs ``'a-to-b'``). Normalizing to plain strings keeps keys comparable
+    across the process boundary regardless of which arrives.
+    """
+    return tuple(str(part) for part in edge_type)
+
+
+def _accumulate_heterogeneous_pairs(
+    data: HeteroData,
+    labels_by_edge_type: dict[EdgeType, Union[torch.Tensor, dict[int, torch.Tensor]]],
+    use_edge_index_output: bool,
+    into: dict[tuple[str, ...], list[tuple[int, int]]],
+) -> None:
+    """Accumulate one batch's labels as global (anchor, label) id pairs.
+
+    Anchors and supervision nodes are resolved through the node maps of the edge
+    type's src and dst stores respectively, so a label remapped against the wrong
+    node type surfaces as a wrong global id rather than passing silently.
+    """
+    anchor_index = 0
+    supervision_index = 2
+    for edge_type, labels in labels_by_edge_type.items():
+        anchor_node = data[edge_type[anchor_index]].node
+        label_node = data[edge_type[supervision_index]].node
+        if use_edge_index_output:
+            assert isinstance(labels, torch.Tensor), f"{edge_type}: {type(labels)}"
+            assert labels.size(0) == 2
+            pairs = _global_pair_set_from_edge_index(anchor_node, label_node, labels)
+        else:
+            assert not isinstance(labels, torch.Tensor), f"{edge_type}: {type(labels)}"
+            pairs = _global_pair_set(anchor_node, label_node, labels)
+        into[_edge_type_key(edge_type)].extend(pairs)
+
+
+def _collect_heterogeneous_labels(
+    _,
+    return_dict,
+    use_edge_index_output: bool,
+    dataset: DistDataset,
+    input_nodes: tuple[NodeType, torch.Tensor],
+    supervision_edge_types: list[EdgeType],
+    batch_size: int,
+):
+    """Run one loader format on a heterogeneous graph and return its label pairs.
+
+    Results are keyed by ``str(edge_type)`` so they cross the process boundary as
+    plain data.
+    """
+    create_test_process_group()
+    loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        input_nodes=input_nodes,
+        batch_size=batch_size,
+        pin_memory_device=torch.device("cpu"),
+        supervision_edge_type=supervision_edge_types,
+        use_edge_index_output=use_edge_index_output,
+    )
+    positive_pairs: dict[tuple[str, ...], list[tuple[int, int]]] = defaultdict(list)
+    negative_pairs: dict[tuple[str, ...], list[tuple[int, int]]] = defaultdict(list)
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        # Several supervision edge types keep y_positive / y_negative in their
+        # dict-of-edge-type form rather than collapsing to a bare value.
+        _accumulate_heterogeneous_pairs(
+            datum, datum.y_positive, use_edge_index_output, positive_pairs
+        )
+        _accumulate_heterogeneous_pairs(
+            datum, datum.y_negative, use_edge_index_output, negative_pairs
+        )
+    return_dict[use_edge_index_output] = (
+        {edge_type: sorted(pairs) for edge_type, pairs in positive_pairs.items()},
+        {edge_type: sorted(pairs) for edge_type, pairs in negative_pairs.items()},
     )
     shutdown_rpc()
 
@@ -719,6 +813,129 @@ class DistABLPLoaderTest(TestCase):
             )
         self.assertEqual(return_dict[False][0], return_dict[True][0])
         self.assertEqual(return_dict[False][1], return_dict[True][1])
+
+    @parameterized.expand(
+        [
+            param(
+                "edge_dir=out",
+                edge_dir="out",
+                edge_index={
+                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
+                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [13, 14]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [15, 16]]
+                    ),
+                    _A_TO_C: torch.tensor([[10, 10], [20, 21]]),
+                    message_passing_to_positive_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [22, 23]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [24, 25]]
+                    ),
+                },
+            ),
+            # edge_dir="in" stores the supervision edge types reversed, so their
+            # dst node type is the anchor type rather than the supervision type,
+            # while the label edge types reaching collation stay outward-facing.
+            # A loader that resolves supervision nodes off the former instead of
+            # the latter fails here and passes the edge_dir="out" case above.
+            param(
+                "edge_dir=in",
+                edge_dir="in",
+                edge_index={
+                    _B_TO_A: torch.tensor([[11, 12], [10, 10]]),
+                    message_passing_to_positive_label(_B_TO_A): torch.tensor(
+                        [[13, 14], [10, 10]]
+                    ),
+                    message_passing_to_negative_label(_B_TO_A): torch.tensor(
+                        [[15, 16], [10, 10]]
+                    ),
+                    _C_TO_A: torch.tensor([[20, 21], [10, 10]]),
+                    message_passing_to_positive_label(_C_TO_A): torch.tensor(
+                        [[22, 23], [10, 10]]
+                    ),
+                    message_passing_to_negative_label(_C_TO_A): torch.tensor(
+                        [[24, 25], [10, 10]]
+                    ),
+                },
+            ),
+        ]
+    )
+    def test_heterogeneous_edge_index_output_matches_dict_output(
+        self,
+        _,
+        edge_dir: Literal["in", "out"],
+        edge_index: dict[EdgeType, torch.Tensor],
+    ):
+        """Both output formats agree on a heterogeneous graph, for either edge_dir.
+
+        Anchors are node type ``a``; supervision nodes are ``b`` and ``c``. Because
+        the anchor and supervision node maps are distinct, a label remapped against
+        the wrong node type yields a wrong global id here instead of going unnoticed.
+        """
+        nodes: dict[NodeType, list[torch.Tensor]] = defaultdict(list)
+        for edge_type, edge_idx in edge_index.items():
+            nodes[edge_type[0]].append(edge_idx[0])
+            nodes[edge_type[2]].append(edge_idx[1])
+        partition_output = PartitionOutput(
+            node_partition_book={
+                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                for node_type, node_ids in nodes.items()
+            },
+            edge_partition_book={
+                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                for e_type, e_idx in edge_index.items()
+            },
+            partitioned_edge_index={
+                etype: GraphPartitionData(
+                    edge_index=idx, edge_ids=torch.arange(idx.size(1))
+                )
+                for etype, idx in edge_index.items()
+            },
+            partitioned_edge_features=None,
+            partitioned_node_features=None,
+            partitioned_negative_labels=None,
+            partitioned_positive_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir=edge_dir)
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        for use_edge_index_output in (False, True):
+            mp.spawn(
+                fn=_collect_heterogeneous_labels,
+                args=(
+                    return_dict,
+                    use_edge_index_output,
+                    dataset,
+                    (_A, torch.tensor([10])),
+                    [_A_TO_B, _A_TO_C],
+                    1,  # batch_size
+                ),
+            )
+        # Both formats resolve to the same global ids...
+        self.assertEqual(dict(return_dict[False][0]), dict(return_dict[True][0]))
+        self.assertEqual(dict(return_dict[False][1]), dict(return_dict[True][1]))
+        # ...and did so over labels that actually exist, so equality above cannot
+        # hold vacuously.
+        self.assertEqual(
+            dict(return_dict[True][0]),
+            {
+                _edge_type_key(_A_TO_B): [(10, 13), (10, 14)],
+                _edge_type_key(_A_TO_C): [(10, 22), (10, 23)],
+            },
+        )
+        self.assertEqual(
+            dict(return_dict[True][1]),
+            {
+                _edge_type_key(_A_TO_B): [(10, 15), (10, 16)],
+                _edge_type_key(_A_TO_C): [(10, 24), (10, 25)],
+            },
+        )
 
     def test_cora_supervised(self):
         create_test_process_group()

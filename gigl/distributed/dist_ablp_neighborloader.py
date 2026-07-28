@@ -802,8 +802,23 @@ class DistABLPLoader(BaseDistLoader):
         """
         local_id_to_global_id_by_node_type: dict[NodeType, torch.Tensor] = {}
         if isinstance(data, HeteroData):
-            for edge_type in self._supervision_edge_types:
-                supervision_node_type = edge_type[2]
+            # Key the map off the label edge types rather than
+            # self._supervision_edge_types: the latter is stored reversed when
+            # edge_dir="in" (see __init__), so its dst node type is the anchor
+            # type there, while label edge types always arrive in outward form.
+            # Deriving from the keys that _remap_labels_by_edge_type will look up
+            # keeps the two in step regardless of edge direction.
+            for label_edge_type, label_tensor in (
+                *positive_labels_by_label_edge_type.items(),
+                *negative_labels_by_label_edge_type.items(),
+            ):
+                # Mirror the zero-anchor skip in _remap_labels_by_edge_type. An
+                # absent node type would otherwise be auto-created as an empty
+                # store by HeteroData.__getitem__, turning a clear KeyError into
+                # an AttributeError on .node.
+                if label_tensor.size(0) == 0:
+                    continue
+                supervision_node_type = label_edge_type[2]
                 local_id_to_global_id_by_node_type[supervision_node_type] = data[
                     supervision_node_type
                 ].node
