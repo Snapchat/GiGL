@@ -34,6 +34,11 @@ RUNNING A PIPELINE:
         --notification_emails: Emails to send notification to.
             See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.
             Example: --notification_emails=user@example.com --notification_emails=user2@example.com
+        --env_vars: Environment variables baked into every GiGL-owned container at compile time
+            (every invocation of --action=run recompiles, so each run gets a fresh bake).
+            The value has to be of form: "<KEY>=<VALUE>". GiGL does not interpret the contents.
+            This argument can be repeated.
+            Example: --env_vars=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python --env_vars=FOO=bar
 
     You can alternatively run_no_compile if you have a precompiled pipeline somewhere.
     python gigl.orchestration.kubeflow.runner --action=run_no_compile ...args
@@ -48,6 +53,8 @@ RUNNING A PIPELINE:
         --pipeline_tag
         --notification_emails
         --wait
+    NOTE: --env_vars is rejected for --action=run_no_compile because env vars are baked at
+    compile time. Recompile via --action=run or --action=compile to change them.
 
 COMPILING A PIPELINE:
     A strict subset of running a pipeline,
@@ -68,6 +75,10 @@ COMPILING A PIPELINE:
             --additional_job_args=split_generator.some_other_arg='value'
             This passes additional_spark35_jar_file_uris="gs://path/to/jar" to subgraph_sampler at compile time and
             some_other_arg="value" to split_generator at compile time.
+        --env_vars: Environment variables baked into every GiGL-owned container at compile time.
+            The value has to be of form: "<KEY>=<VALUE>". GiGL does not interpret the contents.
+            This argument can be repeated.
+            Example: --env_vars=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python --env_vars=FOO=bar
 """
 
 from __future__ import annotations
@@ -170,6 +181,13 @@ def _assert_required_flags(args: argparse.Namespace) -> None:
             "Please use the run action to run a pipeline with labels."
             f"Labels provided: {args.run_labels}"
         )
+    if args.action == Action.RUN_NO_COMPILE and args.env_vars:
+        raise ValueError(
+            "--env_vars is not supported for the run_no_compile action because "
+            "environment variables are baked into the pipeline at compile time. "
+            "Recompile via --action=run or --action=compile to apply env vars. "
+            f"env_vars provided: {args.env_vars}"
+        )
 
 
 logger = Logger()
@@ -222,6 +240,22 @@ def _parse_labels(labels: list[str]) -> dict[str, str]:
         label_name, label_value = label.split("=", 1)
         result[label_name] = label_value
     logger.info(f"Parsed labels: {result}")
+    return result
+
+
+def _parse_env_vars(env_vars: list[str]) -> dict[str, str]:
+    """
+    Parse environment variables to bake into every GiGL-owned container at compile time.
+    Args:
+        env_vars list[str]: Each element is of form: "<KEY>=<VALUE>".
+            Example: ["FOO=bar", "BAZ=qux"].
+    Returns dict[str, str]: The parsed environment variables.
+    """
+    result: dict[str, str] = {}
+    for entry in env_vars:
+        name, value = entry.split("=", 1)
+        result[name] = value
+    logger.info(f"Parsed env_vars: {result}")
     return result
 
 
@@ -327,6 +361,19 @@ def _get_parser() -> argparse.ArgumentParser:
         """,
     )
     parser.add_argument(
+        "--env_vars",
+        action="append",
+        default=[],
+        help="""Environment variables baked into every GiGL-owned container at compile time, of the form:
+        --env_vars=KEY=VALUE. GiGL does not interpret the contents; the values flow opaquely to all
+        SPECED_COMPONENTS plus the GLT eligibility check and log_metrics_to_ui tasks.
+        Only applicable for run and compile actions; rejected with --action=run_no_compile because envs
+        are baked at compile time and the flag would silently do nothing in that mode.
+        KFP itself reserves a small set of names (e.g. KFP_*) and may reject those at runtime.
+        Example: --env_vars=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python --env_vars=FOO=bar
+        """,
+    )
+    parser.add_argument(
         "--notification_emails",
         action="append",
         default=[],
@@ -345,6 +392,7 @@ if __name__ == "__main__":
 
     parsed_additional_job_args = _parse_additional_job_args(args.additional_job_args)
     parsed_labels = _parse_labels(args.run_labels)
+    parsed_env_vars = _parse_env_vars(args.env_vars)
 
     # Set the default value for compiled_pipeline_path as we cannot set it in argparse as
     # for compile action this is a required flag so we cannot provide it a default value.
@@ -388,6 +436,7 @@ if __name__ == "__main__":
                 dataflow_container_image=dataflow_container_image,
                 dst_compiled_pipeline_path=compiled_pipeline_path,
                 additional_job_args=parsed_additional_job_args,
+                env_vars=parsed_env_vars,
                 tag=args.pipeline_tag,
             )
             assert path == compiled_pipeline_path, (
@@ -415,6 +464,7 @@ if __name__ == "__main__":
             dataflow_container_image=dataflow_container_image,
             dst_compiled_pipeline_path=compiled_pipeline_path,
             additional_job_args=parsed_additional_job_args,
+            env_vars=parsed_env_vars,
             tag=args.pipeline_tag,
         )
         logger.info(
