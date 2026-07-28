@@ -1,6 +1,8 @@
-______________________________________________________________________
-
-## description: Invoke Codex to do review, save findings to .claude/tmp/codex-verify/ argument-hint: "\[unstaged | staged | feature <desc> | followup <review-file> | plan <plan-file-or-desc>\]"
+---
+name: codex-verify
+description: Invoke Codex to do review, save findings to .claude/tmp/codex-verify/
+argument-hint: "[unstaged | staged | feature <desc> | followup <review-file> | plan <plan-file-or-desc>]"
+---
 
 # Codex Verify
 
