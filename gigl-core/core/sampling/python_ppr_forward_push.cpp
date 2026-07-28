@@ -8,6 +8,7 @@
 #include <torch/extension.h>
 
 #include <cstdint>
+#include <optional>
 #include <tuple>
 #include <unordered_map>
 
@@ -17,9 +18,8 @@ namespace py = pybind11;
 
 namespace gigl {
 
-// pushResiduals: a wrapper is needed solely to release the GIL during the C++ push.
-// pybind11/stl.h handles all type conversions automatically; the other methods use
-// direct member function pointers for the same reason.
+// pushResiduals receives Python-owned containers, so convert them while the GIL
+// is held and release only around the C++ state update.
 static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> neighborTensorsByEtypeId;
     // Dict iteration touches Python objects — GIL must be held here.
@@ -42,6 +42,30 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
     }
 }
 
+static std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueueWrapper(PPRForwardPush& state) {
+    std::optional<std::unordered_map<int32_t, torch::Tensor>> drained;
+    // drainQueue mutates only this PPRForwardPush instance and materializes CPU
+    // tensors for frontier node IDs. pybind converts those tensor handles back
+    // to Python tensors after return without copying the underlying storage.
+    {
+        py::gil_scoped_release release;
+        drained = state.drainQueue();
+    }
+    return drained;
+}
+
+static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+extractTopKWithResidualTopUpWrapper(PPRForwardPush& state, int32_t maxPPRNodes, bool enableResidualTopUp) {
+    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+    // Extraction walks C++ state and builds torch tensors. Returning through
+    // pybind creates Python container/wrapper objects, not tensor data copies.
+    {
+        py::gil_scoped_release release;
+        result = state.extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp);
+    }
+    return result;
+}
+
 } // namespace gigl
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
@@ -54,11 +78,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                       double,
                       std::vector<std::vector<int32_t>>,
                       std::vector<int32_t>,
-                      std::vector<torch::Tensor>>())
-        .def("drain_queue", &gigl::PPRForwardPush::drainQueue)
+                      std::vector<torch::Tensor>>(),
+             // Constructor argument conversion happens before the C++ body; the
+             // body only initializes PPR state and can run without the GIL.
+             py::call_guard<py::gil_scoped_release>())
+        .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",
-             &gigl::PPRForwardPush::extractTopKWithResidualTopUp,
+             gigl::extractTopKWithResidualTopUpWrapper,
              py::arg("max_ppr_nodes"),
              py::arg("enable_residual_topup"));
 }
