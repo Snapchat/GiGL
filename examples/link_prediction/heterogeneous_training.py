@@ -144,8 +144,7 @@ def _setup_dataloaders(
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
-        # Labels as an AnchorLabels edge-list; see the AnchorLabels class docstring.
-        use_list_output=True,
+        use_edge_index_output=True,
     )
 
     logger.info(f"---Rank {rank} finished setting up main loader")
@@ -220,22 +219,16 @@ def _compute_loss(
     # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
     # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local index for global id `50`. Note that each global id in data.node is unique.
     # TODO (mkolodner-sc): If GLT migrates towards using PyG's `.n_id` field instead of `.node`, update this code.
-    query_node_idx: torch.Tensor = torch.arange(
-        main_data[query_node_type].batch_size
-    ).to(device)
+    query_node_idx = torch.arange(main_data[query_node_type].batch_size, device=device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    # main_data.y_positive is an AnchorLabels edge-list; read the co-indexed [E]
-    # label_index and query_node_idx[anchor_index] directly. See
-    # homogeneous_training._compute_loss for why this equals the historical dict read.
-    positive_idx: torch.Tensor = main_data.y_positive.label_index.to(device)  # [E]
-    repeated_query_node_idx = query_node_idx[
-        main_data.y_positive.anchor_index.to(device)  # [E]
-    ]
+    positive_label_edge_index: torch.Tensor = main_data.y_positive
+    repeated_query_node_idx = query_node_idx[positive_label_edge_index[0]]
+    positive_idx = positive_label_edge_index[1]
     if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = main_data.y_negative.label_index.to(device)
+        hard_negative_idx: torch.Tensor = main_data.y_negative[1]
     else:
-        hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
+        hard_negative_idx = torch.empty(0, dtype=torch.long, device=device)
 
     # Use local IDs to get the corresponding embeddings in the tensors
 
