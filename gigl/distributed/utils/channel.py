@@ -113,22 +113,22 @@ class MonitoredShmChannel(SizedShmChannel):
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._channel_name = f"{channel_name}_id{next(self._counter)}"
-        self._publisher: OpsMetricPublisher = get_metrics_service_instance()
+        self._publisher: Optional[OpsMetricPublisher] = get_metrics_service_instance()
 
     def __getstate__(self):
         # We want the metrics publisher singleton to be part of the channel state to avoid
         # the overhead of calling get_metrics_service_instance() inside `recv()` (hot path).
         # Without custom state handling, serializing the channel across processes fails with
         # `TypeError: no default __reduce__ due to non-trivial __cinit__`. To fix this, we
-        # remove `_publisher` from the pickled state in __getstate__() and re-initialize a new
-        # publisher instance upon deserializing the channel in __setstate__().
+        # remove `_publisher` from the pickled state in __getstate__() and get the publisher
+        # instance again upon deserializing the channel in __setstate__().
         state = self.__dict__.copy()
         state["_publisher"] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self._publisher: OpsMetricPublisher = get_metrics_service_instance()
+        self._publisher: Optional[OpsMetricPublisher] = get_metrics_service_instance()
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         if self._publisher is not None:
