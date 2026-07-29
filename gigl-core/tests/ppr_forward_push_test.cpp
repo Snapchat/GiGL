@@ -6,6 +6,7 @@
 
 using gigl::drainTypedPPRChannelQueues;
 using gigl::extractTypedTopKWithResidualTopUp;
+using gigl::NeighborFetchMap;
 using gigl::PPRForwardPush;
 
 // Builds a single-edge-type, single-node-type PPRForwardPush.
@@ -24,11 +25,10 @@ static PPRForwardPush makeState(const std::vector<int64_t>& seeds,
 
 // Convenience wrapper: build the fetchedByEtypeId argument for pushResiduals
 // from flat vectors, keeping test call sites readable.
-static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> makeFetched(
-    int32_t edgeTypeId,
-    const std::vector<int64_t>& nodeIds,
-    const std::vector<int64_t>& flatNeighborIds,
-    const std::vector<int64_t>& counts) {
+static NeighborFetchMap makeFetched(int32_t edgeTypeId,
+                                    const std::vector<int64_t>& nodeIds,
+                                    const std::vector<int64_t>& flatNeighborIds,
+                                    const std::vector<int64_t>& counts) {
     return {{edgeTypeId,
              {torch::tensor(nodeIds, torch::kLong),
               torch::tensor(flatNeighborIds, torch::kLong),
@@ -146,8 +146,7 @@ TEST(PPRForwardPush, DrainTypedPPRChannelQueuesUnionsChannelFrontiers) {
     EXPECT_EQ(queueDrainResult.edgeTypeIdsByFetchChannel[0], std::vector<int32_t>({0}));
     EXPECT_EQ(queueDrainResult.edgeTypeIdsByFetchChannel[1], std::vector<int32_t>({0}));
 
-    ASSERT_NE(queueDrainResult.unionedNodeIdsByEdgeTypeId.find(0),
-              queueDrainResult.unionedNodeIdsByEdgeTypeId.end());
+    ASSERT_NE(queueDrainResult.unionedNodeIdsByEdgeTypeId.find(0), queueDrainResult.unionedNodeIdsByEdgeTypeId.end());
     EXPECT_EQ(tensorValues(queueDrainResult.unionedNodeIdsByEdgeTypeId.at(0)), std::unordered_set<int64_t>({0, 1}));
 }
 
@@ -164,8 +163,7 @@ TEST(PPRForwardPush, DrainTypedPPRChannelQueuesHonorsPerChannelFetchBudget) {
     ASSERT_EQ(queueDrainResult.edgeTypeIdsByFetchChannel.size(), 1);
     EXPECT_EQ(queueDrainResult.edgeTypeIdsByFetchChannel[0], std::vector<int32_t>({0}));
 
-    ASSERT_NE(queueDrainResult.unionedNodeIdsByEdgeTypeId.find(0),
-              queueDrainResult.unionedNodeIdsByEdgeTypeId.end());
+    ASSERT_NE(queueDrainResult.unionedNodeIdsByEdgeTypeId.find(0), queueDrainResult.unionedNodeIdsByEdgeTypeId.end());
     EXPECT_EQ(tensorValues(queueDrainResult.unionedNodeIdsByEdgeTypeId.at(0)), std::unordered_set<int64_t>({1}));
 }
 

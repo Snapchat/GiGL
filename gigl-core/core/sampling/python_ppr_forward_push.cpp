@@ -21,7 +21,7 @@ namespace gigl {
 // pushResiduals receives Python-owned containers, so convert them while the GIL
 // is held and release only around the C++ state update.
 static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> neighborTensorsByEtypeId;
+    NeighborFetchMap neighborTensorsByEtypeId;
     // Dict iteration touches Python objects — GIL must be held here.
     for (auto item : fetchedByEtypeId) {
         auto edgeTypeId = item.first.cast<int32_t>();
@@ -54,9 +54,10 @@ static std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueueWrapp
     return drained;
 }
 
-static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-extractTopKWithResidualTopUpWrapper(PPRForwardPush& state, int32_t maxPPRNodes, bool enableResidualTopUp) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+static PPRExtractResult extractTopKWithResidualTopUpWrapper(PPRForwardPush& state,
+                                                            int32_t maxPPRNodes,
+                                                            bool enableResidualTopUp) {
+    PPRExtractResult result;
     // Extraction walks C++ state and builds torch tensors. Returning through
     // pybind creates Python container/wrapper objects, not tensor data copies.
     {
