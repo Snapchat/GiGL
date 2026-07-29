@@ -302,6 +302,47 @@ def _assert_ppr_scores_match_reference(
             )
 
 
+def _assert_typed_ppr_edge_attrs(
+    datum: HeteroData,
+    seed_type: str,
+    node_types: list[str],
+    num_channels: int,
+) -> None:
+    """Assert typed PPR edge attributes have the expected channel layout."""
+    expected_width = 1 + (2 * num_channels)
+    for node_type in node_types:
+        ppr_edge_type = (seed_type, "ppr", node_type)
+        assert ppr_edge_type in datum.edge_types, (
+            f"Missing PPR edge type {ppr_edge_type} on HeteroData"
+        )
+        ppr_edge_index = datum[ppr_edge_type].edge_index
+        ppr_edge_attr = datum[ppr_edge_type].edge_attr
+
+        assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
+            f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        )
+        assert ppr_edge_attr.dim() == 2, (
+            f"Expected 2D typed PPR edge_attr, got {ppr_edge_attr.dim()}D"
+        )
+        assert ppr_edge_attr.size(0) == ppr_edge_index.size(1)
+        assert ppr_edge_attr.size(1) == expected_width, (
+            f"Expected typed PPR edge_attr width {expected_width}, "
+            f"got {ppr_edge_attr.size(1)}"
+        )
+
+        if ppr_edge_attr.size(0) == 0:
+            continue
+
+        best_scores = ppr_edge_attr[:, 0]
+        assert (best_scores >= 0).all()
+        assert (best_scores <= 1).all()
+        if best_scores.size(0) > 1:
+            assert (best_scores[:-1] >= best_scores[1:]).all()
+
+        channel_presence = ppr_edge_attr[:, 1 + num_channels :]
+        assert ((channel_presence == 0) | (channel_presence == 1)).all()
+
+
 # ---------------------------------------------------------------------------
 # Spawned process functions
 # ---------------------------------------------------------------------------
@@ -484,6 +525,82 @@ def _run_ppr_hetero_loader_correctness_check(
     assert batches_checked == _NUM_TEST_USERS, (
         f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
     )
+    shutdown_rpc()
+
+
+def _run_typed_ppr_loader_shape_check(_: int) -> None:
+    """Verify typed PPR runs through DistNeighborLoader into HeteroData."""
+    create_test_process_group()
+
+    dataset = create_heterogeneous_dataset(
+        edge_indices=_TEST_HETERO_EDGE_INDICES,
+        edge_dir="out",
+    )
+    node_ids = dataset.node_ids
+    assert isinstance(node_ids, dict)
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                USER_TO_STORY: 0.5,
+                STORY_TO_USER: 0.5,
+            },
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    batches_checked = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        _assert_typed_ppr_edge_attrs(
+            datum=datum,
+            seed_type=str(USER),
+            node_types=[USER, STORY],
+            num_channels=2,
+        )
+        for edge_type in datum.edge_types:
+            assert edge_type[1] == "ppr", (
+                f"Non-PPR edge type {edge_type} found in PPR sampler output"
+            )
+        batches_checked += 1
+    assert batches_checked == _NUM_TEST_USERS, (
+        f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
+    )
+
+    empty_story_loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, node_ids[USER][:1]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                STORY_TO_USER: 0.5,
+                (STORY_TO_USER,): 0.5,
+            },
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+    empty_story_datum = next(iter(empty_story_loader))
+    assert isinstance(empty_story_datum, HeteroData)
+    _assert_typed_ppr_edge_attrs(
+        datum=empty_story_datum,
+        seed_type=str(USER),
+        node_types=[USER, STORY],
+        num_channels=2,
+    )
+    empty_story_edge_attr = empty_story_datum[(str(USER), "ppr", STORY)].edge_attr
+    assert tuple(empty_story_edge_attr.shape) == (0, 5)
+
     shutdown_rpc()
 
 
@@ -813,6 +930,10 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_destination_only_node_type(self) -> None:
         """Verify PPR output includes destination-only node types."""
         mp.spawn(fn=_run_ppr_destination_only_node_type, args=())
+
+    def test_typed_ppr_sampler_loader_outputs_channel_attrs(self) -> None:
+        """Verify typed PPR runs end-to-end through the loader."""
+        mp.spawn(fn=_run_typed_ppr_loader_shape_check, args=())
 
     def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
         """Verify ABLP label edges are excluded from anchor-seed PPR walks."""
