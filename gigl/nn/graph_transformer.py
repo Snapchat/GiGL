@@ -29,9 +29,6 @@ from gigl.transforms.graph_transformer import (
     heterodata_to_graph_transformer_input,
 )
 
-_L2_NORMALIZE_EPS = 1e-6
-
-
 def _get_node_type_positional_encodings(
     data: torch_geometric.data.hetero_data.HeteroData,
     node_type: NodeType,
@@ -1200,8 +1197,7 @@ class GraphTransformerEncoder(nn.Module):
         embeddings = self._output_projection(embeddings)
 
         if self._should_l2_normalize_embedding_layer_output:
-            # Default eps=1e-12 underflows to zero in fp16 autocast.
-            embeddings = F.normalize(embeddings, p=2, dim=-1, eps=_L2_NORMALIZE_EPS)
+            embeddings = F.normalize(embeddings, p=2, dim=-1)
 
         return embeddings
 
@@ -1426,41 +1422,6 @@ class GraphTransformerEncoder(nn.Module):
 
         return attn_bias
 
-    def _readout_from_encoded_sequences(
-        self,
-        x: Tensor,
-        valid_mask: Tensor,
-    ) -> Tensor:
-        anchor = x[:, 0, :].unsqueeze(1)
-        if self._readout_mode == "anchor_only":
-            return anchor.squeeze(1)
-
-        # Historical readout: anchor token plus attention-weighted neighbors.
-        neighbors = x[:, 1:, :]
-        neighbor_valid_mask = valid_mask[:, 1:]
-        seq_minus_one = neighbors.size(1)
-
-        if seq_minus_one == 0:
-            return anchor.squeeze(1)
-
-        anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
-        if self._readout_attention is None:
-            raise ValueError("Readout attention layer is not initialized.")
-        readout_scores = self._readout_attention(
-            torch.cat([anchor_expanded, neighbors], dim=-1)
-        )
-        readout_scores = readout_scores.masked_fill(
-            ~neighbor_valid_mask.unsqueeze(-1),
-            torch.finfo(readout_scores.dtype).min,
-        )
-        readout_weights = F.softmax(readout_scores, dim=1)
-        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
-        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
-            readout_weights.dtype
-        )
-        neighbor_aggregation = (neighbors * readout_weights).sum(dim=1, keepdim=True)
-        return (anchor + neighbor_aggregation).squeeze(1)
-
     def _encode_and_readout(
         self,
         sequences: Tensor,
@@ -1494,4 +1455,41 @@ class GraphTransformerEncoder(nn.Module):
         x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)
 
-        return self._readout_from_encoded_sequences(x=x, valid_mask=valid_mask)
+        # Readout: anchor (position 0) + attention-weighted neighbor aggregation
+        anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)
+        if self._readout_mode == "anchor_only":
+            return anchor.squeeze(1)
+
+        neighbors = x[:, 1:, :]  # (batch, seq-1, hid_dim)
+        neighbor_valid_mask = valid_mask[:, 1:]
+        seq_minus_one = neighbors.size(1)
+
+        if seq_minus_one == 0:
+            return anchor.squeeze(1)
+
+        # Expand anchor to match neighbor dimension for concatenation
+        anchor_expanded = anchor.expand(-1, seq_minus_one, -1)
+
+        # Compute attention scores over neighbors
+        if self._readout_attention is None:
+            raise ValueError("Readout attention layer is not initialized.")
+        readout_scores = self._readout_attention(
+            torch.cat([anchor_expanded, neighbors], dim=-1)
+        )  # (batch, seq-1, 1)
+        readout_scores = readout_scores.masked_fill(
+            ~neighbor_valid_mask.unsqueeze(-1),
+            torch.finfo(readout_scores.dtype).min,
+        )
+        readout_weights = F.softmax(readout_scores, dim=1)  # (batch, seq-1, 1)
+        readout_weights = torch.nan_to_num(readout_weights, nan=0.0)
+        readout_weights = readout_weights * neighbor_valid_mask.unsqueeze(-1).to(
+            readout_weights.dtype
+        )
+
+        neighbor_aggregation = (neighbors * readout_weights).sum(
+            dim=1, keepdim=True
+        )  # (batch, 1, hid_dim)
+
+        output = (anchor + neighbor_aggregation).squeeze(1)  # (batch, hid_dim)
+
+        return output
