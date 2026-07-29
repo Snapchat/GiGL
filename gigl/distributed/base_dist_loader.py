@@ -455,6 +455,7 @@ class BaseDistLoader(DistLoader):
             "GIGL_ENABLE_PERF_MONITORING", ""
         ).strip().lower() in ("1", "True")
         if enable_channel_monitoring:
+            logger.info('"GIGL_ENABLE_PERF_MONITORING" is set, using MonitoredShmChannel.')
             try:
                 get_metrics_service_instance()
             except RuntimeError as e:
@@ -468,6 +469,7 @@ class BaseDistLoader(DistLoader):
                 worker_options.channel_size,
             )
         else:
+            logger.info('"GIGL_ENABLE_PERF_MONITORING" is not set, using ShmChannel.')
             channel = ShmChannel(
                 worker_options.channel_capacity, worker_options.channel_size
             )
