@@ -99,9 +99,16 @@ class TestSizedShmChannel(TestCase):
 class MonitoredShmChannelTest(TestCase):
     def setUp(self) -> None:
         self._original_metrics_instance = metrics_service_provider._metrics_instance
+        self._original_metrics_initialized = (
+            metrics_service_provider._WERE_METRICS_INITIALIZED
+        )
+        metrics_service_provider._WERE_METRICS_INITIALIZED = True
         self.mock_metrics = metrics_service_provider._metrics_instance = MagicMock()
 
     def tearDown(self) -> None:
+        metrics_service_provider._WERE_METRICS_INITIALIZED = (
+            self._original_metrics_initialized
+        )
         metrics_service_provider._metrics_instance = self._original_metrics_instance
 
     def test_recv_publishes_qsize_gauge(self) -> None:
