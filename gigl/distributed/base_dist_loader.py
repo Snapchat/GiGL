@@ -429,9 +429,8 @@ class BaseDistLoader(DistLoader):
     @staticmethod
     def create_colocated_channel(
         worker_options: MpDistSamplingWorkerOptions,
-        *,
-        enable_channel_monitoring: bool = False,
-        channel_name: str = "",
+        enable_channel_monitoring: bool,
+        channel_name: str,
     ) -> ShmChannel:
         """Creates a ShmChannel for colocated mode.
 
@@ -485,9 +484,8 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
-        *,
-        enable_channel_monitoring: bool = False,
-        channel_name: str = "",
+        enable_channel_monitoring: bool,
+        channel_name: str,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -504,9 +502,9 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
+            enable_channel_monitoring: Flag indicating whether to wrap the channel with metrics monitoring.
             channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
                 Ignored if `enable_channel_monitoring` is False.
-            enable_channel_monitoring: Flag indicating whether to wrap the channel with metrics monitoring.
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
