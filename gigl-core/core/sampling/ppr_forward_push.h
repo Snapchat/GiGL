@@ -11,6 +11,16 @@
 
 namespace gigl {
 
+// Neighbor fetch input from Python, keyed by integer edge type ID:
+//   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N].
+using NeighborFetchTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
+using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
+
+// PPR extraction output, keyed by integer node type ID:
+//   ids, weights/edge_attr, valid_counts.
+using PPRExtractTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
+using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
+
 // Per-seed, per-node-type PPR algorithm state.
 // Grouping all four tables into one struct is a logical convenience: a single
 // _state[seedIdx][nodeTypeId] access reaches all four tables for a given (seed, ntype)
@@ -33,7 +43,10 @@ struct SeedNodeTypeState {
 // which channel states still need pushResiduals(), and the unioned frontier to
 // fetch once for all channels that requested it.
 struct TypedPPRQueueDrainResult {
-    // Channels whose drainQueue() returned a value this iteration.
+    // Channels whose drainQueue() returned a value this iteration. Channel IDs
+    // are positional indices into the states/channelQuotas vectors. Python
+    // builds those vectors from typed_channel_quotas insertion order, and this
+    // function appends indices in ascending order, so the ordering is stable.
     //
     // These channels need pushResiduals(), even when no fetch budget remains.
     // In that case Python passes an empty fetch map and the channel uses its
@@ -47,8 +60,11 @@ struct TypedPPRQueueDrainResult {
     // Edge types requested by each fetch channel, aligned with fetchChannelIndices.
     std::vector<std::vector<int32_t>> edgeTypeIdsByFetchChannel;
 
-    // Unioned node frontier for one shared distributed neighbor fetch, keyed by
-    // integer edge type ID. Tensor values are int64 node IDs.
+    // Unioned node frontier for one shared distributed neighbor fetch. This is
+    // keyed by integer edge type ID, not node type ID, because neighbor fetches
+    // are edge-type scoped; node type alone would lose the relation/destination
+    // distinction for heterogeneous graphs. Tensor values are int64 source node
+    // IDs to fetch.
     std::unordered_map<int32_t, torch::Tensor> unionedNodeIdsByEdgeTypeId;
 };
 
@@ -78,11 +94,7 @@ public:
     std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueue();
 
     // Push residuals given fetched neighbor data.
-    // fetchedByEtypeId: {etype_id: (node_ids[N], flat_nbrs[sum(counts)], counts[N])}
-    // TODO: Move these repeated tensor tuple/map types into aliases in a follow-up
-    // refactor-only PR.
-    void pushResiduals(
-        const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId);
+    void pushResiduals(const NeighborFetchMap& fetchedByEtypeId);
 
     // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
     //
@@ -99,14 +111,12 @@ public:
     // it is not a global top-k over ppr_score + residual when maxPPRNodes is tight.
     // maxPPRNodes is the final per-seed cap across finalized PPR and residual
     // top-up candidates.
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
-        int32_t maxPPRNodes, bool enableResidualTopUp);
+    PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp);
 
-    friend std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-    extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
-                                      const std::vector<int32_t>& channelQuotas,
-                                      int32_t maxPPRNodes,
-                                      bool enableResidualTopUp);
+    friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
+                                                              const std::vector<int32_t>& channelQuotas,
+                                                              int32_t maxPPRNodes,
+                                                              bool enableResidualTopUp);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
@@ -194,10 +204,9 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 //   weights: double feature matrix with columns
 //            [best_calibrated_score, per-channel scores..., presence bits...].
 //   valid_counts: int64 count of selected nodes per seed.
-std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTypedTopKWithResidualTopUp(
-    const std::vector<PPRForwardPush*>& states,
-    const std::vector<int32_t>& channelQuotas,
-    int32_t maxPPRNodes,
-    bool enableResidualTopUp);
+PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
+                                                   const std::vector<int32_t>& channelQuotas,
+                                                   int32_t maxPPRNodes,
+                                                   bool enableResidualTopUp);
 
 } // namespace gigl
