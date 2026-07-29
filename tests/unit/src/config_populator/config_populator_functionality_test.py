@@ -241,6 +241,9 @@ class ConfigPopulatorUnitTest(TestCase):
             patch.object(
                 ConfigPopulator, "_ConfigPopulator__run", return_value=frozen_uri
             ),
+            # Bypass metrics init check in metrics_service_provider.get_metrics_service_instance()
+            # and supply a no-op metrics publisher directly
+            patch.object(metrics_service_provider, "_WERE_METRICS_INITIALIZED", True),
             patch.object(
                 metrics_service_provider, "_metrics_instance", NopMetricsPublisher()
             ),

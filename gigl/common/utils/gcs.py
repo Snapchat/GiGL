@@ -8,6 +8,7 @@ from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
 
 import google.cloud.exceptions as google_exceptions
 import google.cloud.storage as storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 from gigl.common import GcsUri, LocalUri
 from gigl.common.collections.itertools import batch
@@ -18,7 +19,9 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 UPLOAD_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to upload something
-DELETE_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to delete something
+# TODO: revisit lowering this -- a single batch commit deletes at most
+# _BLOB_BATCH_SIZE objects, so 2h is very generous.
+DELETE_REQUEST_TIMEOUT_S = 60 * 60 * 2  # per-request timeout for a batched GCS delete
 
 # No more than 100 calls should be included in a single batch request.
 # The total batch request payload must be less than 10MB
@@ -26,7 +29,6 @@ DELETE_RETRY_DEADLINE_S = 60 * 60 * 2  # limit of 2 hours maximum to delete some
 _BLOB_BATCH_SIZE = 80
 
 
-@retry(deadline_s=UPLOAD_RETRY_DEADLINE_S)
 def _upload_file_to_gcs(
     source_file_path: LocalUri,
     dest_gcs_path: GcsUri,
@@ -42,7 +44,10 @@ def _upload_file_to_gcs(
         local_storage_client = storage.Client(project=project)
     bucket = local_storage_client.bucket(bucket_name)
     blob = bucket.blob(destination_blob_name)
-    blob.upload_from_filename(source_file_path.uri)
+    blob.upload_from_filename(
+        source_file_path.uri,
+        retry=DEFAULT_RETRY.with_timeout(UPLOAD_RETRY_DEADLINE_S),
+    )
 
 
 def _pickling_safe_upload_file_to_gcs(
@@ -340,7 +345,7 @@ class GcsUtils:
         except Exception as e:
             logger.exception(f"Could not delete {blob.name}; {repr(e)}")
 
-    @retry(deadline_s=DELETE_RETRY_DEADLINE_S, backoff=4)
+    @retry(backoff=4)
     def delete_files_in_bucket_dir(self, gcs_path: GcsUri) -> None:
         """Deletes all files in the specified GCS path.
         If this method is unable to verify deletion of the dir, it will raise an AssertionError.
@@ -370,7 +375,7 @@ class GcsUtils:
             logger.info(f"Will delete ({len(blobs)}) gcs files")
             with self.__storage_client.batch():
                 for blob in blobs:
-                    blob.delete()
+                    blob.delete(timeout=DELETE_REQUEST_TIMEOUT_S)
 
         with ThreadPoolExecutor(max_workers=None) as executor:
             results = executor.map(__batch_delete_blobs, batched_blobs_to_delete)
