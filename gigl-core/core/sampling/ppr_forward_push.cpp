@@ -448,11 +448,15 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
 static void addTypedPPRChannelCandidates(const std::vector<std::pair<int32_t, double>>& nodesAndScores,
                                          double maxScore,
                                          std::vector<std::pair<int32_t, double>>& channelSelectionCandidates) {
+    if (nodesAndScores.empty()) {
+        return;
+    }
+    TORCH_CHECK(maxScore > 0.0,
+                "Typed PPR channel has candidates but non-positive max score ",
+                maxScore,
+                ", which indicates invalid PPR state.");
     for (const auto& [nodeId, score] : nodesAndScores) {
-        // maxScore can be 0 only for an all-zero channel view. That is not
-        // expected for normal PPR mass, but keeping the guard avoids division
-        // by zero and makes empty/degenerate channel handling harmless.
-        double calibratedScore = maxScore > 0.0 ? score / maxScore : 0.0;
+        double calibratedScore = score / maxScore;
         channelSelectionCandidates.emplace_back(nodeId, calibratedScore);
     }
 }
@@ -482,6 +486,14 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
                                                  int32_t numChannels,
                                                  std::unordered_map<int32_t, std::vector<double>>& outputScoresByNodeId,
                                                  std::vector<std::pair<int32_t, double>>& channelOutputCandidates) {
+    if (nodesAndScores.empty()) {
+        return;
+    }
+    TORCH_CHECK(maxScore > 0.0,
+                "Typed PPR output has candidates but non-positive max score ",
+                maxScore,
+                ", which indicates invalid PPR state.");
+
     // Feature width is 1 + 2C:
     //   column 0: best calibrated score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction.
@@ -489,10 +501,7 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
     //   columns [1 + C, 1 + 2C): presence bit for each channel.
     int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
     for (const auto& [nodeId, score] : nodesAndScores) {
-        // maxScore can be 0 only for an all-zero channel view. That is not
-        // expected for normal PPR mass, but keeping the guard avoids division
-        // by zero and makes empty/degenerate channel handling harmless.
-        double calibratedScore = maxScore > 0.0 ? score / maxScore : 0.0;
+        double calibratedScore = score / maxScore;
         auto scoreIter = outputScoresByNodeId.find(nodeId);
         if (scoreIter == outputScoresByNodeId.end()) {
             scoreIter = outputScoresByNodeId.emplace(nodeId, std::vector<double>(numEdgeAttrFeatures, 0.0)).first;
