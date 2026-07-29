@@ -710,12 +710,7 @@ def _build_sequence_layout_from_ppr_edges(
             "sequence_construction_method='ppr' requires homogeneous edge_attr weights."
         )
 
-    edge_features = torch.nan_to_num(
-        homo_data.edge_attr.float(),
-        nan=0.0,
-        posinf=1.0,
-        neginf=0.0,
-    ).clamp_(min=0.0, max=1.0)
+    edge_features = homo_data.edge_attr.float()
     if edge_features.dim() == 1:
         edge_features = edge_features.unsqueeze(1)
     elif edge_features.dim() != 2:
