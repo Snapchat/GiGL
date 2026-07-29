@@ -278,18 +278,20 @@ void PPRForwardPush::pushResiduals(
 static std::vector<std::pair<int32_t, double>> selectFinalizedPPRPairs(const SeedNodeTypeState& nodeTypeState,
                                                                        int32_t finalizedPPRNodeLimit) {
     const auto& scores = nodeTypeState.pprScores;
-    const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
 
-    const int32_t pprTopK = std::min(finalizedPPRNodeLimit, static_cast<int32_t>(scores.size()));
+    const int32_t numReturnedPairs = std::min(finalizedPPRNodeLimit, static_cast<int32_t>(scores.size()));
     std::vector<std::pair<int32_t, double>> selectedPairs;
-    selectedPairs.reserve(static_cast<size_t>(pprTopK));
-    if (pprTopK > 0) {
+    selectedPairs.reserve(static_cast<size_t>(numReturnedPairs));
+    if (numReturnedPairs > 0) {
         std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
-        if (pprTopK < static_cast<int32_t>(scorePairs.size())) {
-            std::nth_element(scorePairs.begin(), scorePairs.begin() + pprTopK, scorePairs.end(), higherScore);
+        if (numReturnedPairs < static_cast<int32_t>(scorePairs.size())) {
+            std::nth_element(scorePairs.begin(),
+                             scorePairs.begin() + numReturnedPairs,
+                             scorePairs.end(),
+                             [](const auto& a, const auto& b) { return a.second > b.second; });
         }
 
-        for (int32_t rankIdx = 0; rankIdx < pprTopK; ++rankIdx) {
+        for (int32_t rankIdx = 0; rankIdx < numReturnedPairs; ++rankIdx) {
             selectedPairs.emplace_back(scorePairs[rankIdx].first, scorePairs[rankIdx].second);
         }
     }
@@ -314,8 +316,7 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
     const int32_t residualTopUpBudget =
         std::max<int32_t>(0, sequenceLength - static_cast<int32_t>(selectedPairs.size()));
     if (residualTopUpBudget > 0) {
-        const auto& scores = nodeTypeState.pprScores;
-        const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
+        const std::unordered_map<int32_t, double>& pprScoresByNodeId = nodeTypeState.pprScores;
         std::unordered_set<int32_t> selectedPPRNodeIds;
         selectedPPRNodeIds.reserve(selectedPairs.size());
         for (const auto& selectedPair : selectedPairs) {
@@ -325,12 +326,15 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         std::vector<std::pair<int32_t, double>> residualPairs;
         residualPairs.reserve(nodeTypeState.residuals.size());
         for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+            // Forward push residuals are non-negative in normal operation. Pushed
+            // nodes remain in the map with zero residual, so skip drained entries
+            // and any unexpected non-positive values.
             if (residual <= 0.0 || selectedPPRNodeIds.find(nodeId) != selectedPPRNodeIds.end()) {
                 continue;
             }
 
-            auto scoreIter = scores.find(nodeId);
-            double pprScore = (scoreIter != scores.end()) ? scoreIter->second : 0.0;
+            std::unordered_map<int32_t, double>::const_iterator pprScoreIter = pprScoresByNodeId.find(nodeId);
+            double pprScore = (pprScoreIter != pprScoresByNodeId.end()) ? pprScoreIter->second : 0.0;
             double outputScore = pprScore + residual;
             residualPairs.emplace_back(nodeId, outputScore);
         }
@@ -338,8 +342,10 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
         if (residualTopK > 0) {
             if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
-                std::nth_element(
-                    residualPairs.begin(), residualPairs.begin() + residualTopK, residualPairs.end(), higherScore);
+                std::nth_element(residualPairs.begin(),
+                                 residualPairs.begin() + residualTopK,
+                                 residualPairs.end(),
+                                 [](const auto& a, const auto& b) { return a.second > b.second; });
             }
 
             for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
@@ -389,12 +395,15 @@ std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tens
                 appendResidualTopUpPairs(nodeTypeState, selectedPairs, maxPPRNodes);
             }
 
-            // Empty and singleton outputs are already ordered. Multi-row outputs can
-            // be unordered because the selection helpers use nth_element, so sort once
-            // to rank emitted rows by the score returned to callers.
+            // The selection helpers use nth_element, which selects the right rows
+            // but does not order them. Sort the selected rows once to preserve the
+            // emitted ordering contract. With residual top-up enabled, this matches
+            // the previous behavior: selected finalized and top-up rows are ordered
+            // together by emitted score, so top-up rows may interleave after selection.
             if (selectedPairs.size() > 1) {
-                const auto higherScore = [](const auto& a, const auto& b) { return a.second > b.second; };
-                std::sort(selectedPairs.begin(), selectedPairs.end(), higherScore);
+                std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
             }
 
             for (const auto& [nodeId, score] : selectedPairs) {
