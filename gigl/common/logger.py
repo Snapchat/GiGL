@@ -6,6 +6,8 @@ from typing import Any, MutableMapping, Optional
 
 from google.cloud import logging as google_cloud_logging
 
+from gigl.env.constants import GIGL_DEBUG, is_env_flag_enabled
+
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 
 
@@ -37,12 +39,17 @@ class Logger(logging.LoggerAdapter):
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
+            if is_env_flag_enabled(GIGL_DEBUG):
+                log_level = logging.DEBUG
+            else:
+                log_level = logging.INFO
+
             if os.getenv("GAE_APPLICATION") or os.environ.get(
                 "KUBERNETES_SERVICE_HOST"
             ):
                 # Google Cloud Logging
                 client = google_cloud_logging.Client()
-                client.setup_logging(log_level=logging.INFO)
+                client.setup_logging(log_level=log_level)
             else:
                 # Logging locally. Set up logging to console or file
                 if log_to_file:
@@ -61,7 +68,7 @@ class Logger(logging.LoggerAdapter):
                 )
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
+            logger.setLevel(log_level)
 
     def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> Any:
         if "extra" in kwargs:
