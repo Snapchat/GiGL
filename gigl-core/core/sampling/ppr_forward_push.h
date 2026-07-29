@@ -25,6 +25,33 @@ struct SeedNodeTypeState {
     std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
 };
 
+// Batched drain result for typed-PPR channels.
+//
+// Typed PPR keeps one PPRForwardPush state per channel.  During an iteration,
+// each channel drains its own queue, but Python should issue at most one shared
+// neighbor fetch per edge type. This struct carries both pieces of information:
+// which channel states still need pushResiduals(), and the unioned frontier to
+// fetch once for all channels that requested it.
+struct TypedPPRQueueDrainResult {
+    // Channels whose drainQueue() returned a value this iteration.
+    //
+    // These channels need pushResiduals(), even when no fetch budget remains.
+    // In that case Python passes an empty fetch map and the channel uses its
+    // existing neighbor cache / budget-exhausted behavior, matching untyped PPR.
+    std::vector<int32_t> drainedChannelIndices;
+
+    // Subset of drainedChannelIndices that still have fetch budget and at least
+    // one non-empty uncached frontier.
+    std::vector<int32_t> fetchChannelIndices;
+
+    // Edge types requested by each fetch channel, aligned with fetchChannelIndices.
+    std::vector<std::vector<int32_t>> edgeTypeIdsByFetchChannel;
+
+    // Unioned node frontier for one shared distributed neighbor fetch, keyed by
+    // integer edge type ID. Tensor values are int64 node IDs.
+    std::unordered_map<int32_t, torch::Tensor> unionedNodeIdsByEdgeTypeId;
+};
+
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
 // Hot-loop state lives here; distributed neighbor fetches are driven from Python.
 //
@@ -75,6 +102,12 @@ public:
     std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
         int32_t maxPPRNodes, bool enableResidualTopUp);
 
+    friend std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
+    extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
+                                      const std::vector<int32_t>& channelQuotas,
+                                      int32_t maxPPRNodes,
+                                      bool enableResidualTopUp);
+
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
     [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
@@ -115,5 +148,56 @@ private:
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
     std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
 };
+
+// Helper function for draining several independent channel states for one
+// typed-PPR iteration.
+//
+// This is the typed wrapper around PPRForwardPush::drainQueue(): it drains each
+// channel state, records every channel that still needs pushResiduals(), and
+// unions fetchable frontier nodes by edge type so Python can issue one shared
+// distributed neighbor fetch for duplicate channel requests.
+//
+// Inputs:
+//   states: One PPRForwardPush per typed channel. Each state is mutated by its
+//           drainQueue() call.
+//   fetchIterationCounts: Number of distributed fetches already issued for each
+//                         channel; aligned with states.
+//   maxFetchIterations: -1 means unbounded; otherwise channels at this count
+//                       still need pushResiduals() but contribute no new fetch
+//                       frontier.
+//
+// Expected output: TypedPPRQueueDrainResult, whose drainedChannelIndices are
+// the channels to push this iteration and whose unionedNodeIdsByEdgeTypeId is
+// the shared fetch request.
+TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForwardPush*>& states,
+                                                    const std::vector<int32_t>& fetchIterationCounts,
+                                                    int32_t maxFetchIterations);
+
+// Helper function for extracting and merging completed typed-PPR channel states
+// in one C++ step.
+//
+// For each channel, finalized PPR candidates feed the quota-biased base pass.
+// Residual top-up candidates are kept in a separate extended view and are used
+// only after channel quotas and cross-channel dedup leave unfilled sequence
+// slots. The typed merge calibrates scores within each channel, deduplicates
+// candidates seen through multiple channels, and emits per-node-type tensors.
+//
+// Inputs:
+//   states: Completed PPRForwardPush states, one per typed channel.
+//   channelQuotas: Per-channel finalized-PPR quotas, aligned with states.
+//   maxPPRNodes: Maximum number of deduplicated nodes to return per seed.
+//   enableResidualTopUp: Whether residual candidates may fill unfilled slots.
+//
+// Expected output: per-node-type tensors. Tuple values match
+// extractTopKWithResidualTopUp:
+//   ids: int64 node IDs, flattened across seeds.
+//   weights: double feature matrix with columns
+//            [best_calibrated_score, per-channel scores..., presence bits...].
+//   valid_counts: int64 count of selected nodes per seed.
+std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTypedTopKWithResidualTopUp(
+    const std::vector<PPRForwardPush*>& states,
+    const std::vector<int32_t>& channelQuotas,
+    int32_t maxPPRNodes,
+    bool enableResidualTopUp);
 
 } // namespace gigl
