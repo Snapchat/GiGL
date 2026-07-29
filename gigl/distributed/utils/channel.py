@@ -103,14 +103,26 @@ class SizedShmChannel(ShmChannel):
 
 
 class MonitoredShmChannel(SizedShmChannel):
-    """Monitored variant of SizedShmChannel that integrates with GiGL metrics_service and records queue size on recv() as a gauge."""
-
     # Counts instantiations of this class, per process.
     # This is needed so we can generate unique channel names for each instance within the same process.
     # NOTE: This is per-class, not per-instance.
     _counter = count(0)
 
     def __init__(self, channel_name: str, *args, **kwargs) -> None:
+        """Monitored variant of SizedShmChannel that integrates with GiGL metrics service and records queue size on recv() as a gauge.
+
+        Args:
+            channel_name: Prefix for published metrics. Must be unique across
+                processes to disambiguate channels owned by different dataloaders.
+                Multiple instances within the same process are automatically
+                disambiguated by an internally appended sequence ID (e.g., `id0`).
+            *args: Positional arguments forwarded directly to `ShmChannel`.
+            **kwargs: Keyword arguments forwarded directly to `ShmChannel`.
+
+        Example:
+            Passing `channel_name="my_channel_pid_12345"` publishes queue size for
+            the first instance as `my_channel_pid_12345_id0_qsize`.
+        """
         super().__init__(*args, **kwargs)
         self._channel_name = f"{channel_name}_id{next(self._counter)}"
 
