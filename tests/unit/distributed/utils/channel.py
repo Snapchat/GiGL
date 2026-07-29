@@ -132,3 +132,16 @@ class MonitoredShmChannelTest(TestCase):
             # Second recv, qsize gauge before dequeue should be 1
             channel.recv()
             self.mock_metrics.add_gauge.assert_called_with(metric_name, 1)
+
+    def test_recv_raises_if_metrics_instance_is_none(self) -> None:
+        channel = MonitoredShmChannel(channel_name="test_channel")
+
+        # Push a message so that a failing test does not block on recv
+        msg_1 = {"foo": torch.rand(1), "bar": torch.rand(3)}
+        channel.send(msg_1)
+
+        # We expect to throw if the metrics instance failed to correctly construct,
+        # and metrics_service_provider.get_metrics_service_instance() return None.
+        metrics_service_provider._metrics_instance = None
+        with self.assertRaises(RuntimeError):
+            channel.recv()

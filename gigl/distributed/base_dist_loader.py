@@ -8,6 +8,7 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
+import os
 import sys
 import time
 from collections import Counter
@@ -428,40 +429,38 @@ class BaseDistLoader(DistLoader):
 
     @staticmethod
     def create_colocated_channel(
-        worker_options: MpDistSamplingWorkerOptions,
-        enable_channel_monitoring: bool,
-        channel_name: str,
+        worker_options: MpDistSamplingWorkerOptions, channel_name: str
     ) -> ShmChannel:
         """Creates a ShmChannel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
-        Note: When `enable_channel_monitoring` is True, the caller is expected to have
-        already initialized the metrics service by calling
-        `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
+        Note: When "GIGL_ENABLE_PERF_MONITORING" is set, a `MonitoredShmChannel` is created and the
+        caller is expected to have already initialized the metrics service by calling
+        `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`. Otherwise, a standard
+        `ShmChannel` is created and `channel_name` is ignored.
 
         Args:
             worker_options: The colocated worker options (must already be fully configured).
-            enable_channel_monitoring: Flag indicating whether to wrap the channel with metrics monitoring.
             channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
-                Ignored if `enable_channel_monitoring` is False.
 
         Returns:
             A ShmChannel ready to be passed to a DistSamplingProducer.
 
         Raises:
-            RuntimeError: If `enable_channel_monitoring` is True but
-                `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`
-                was not called prior to channel creation.
+            RuntimeError: If "GIGL_ENABLE_PERF_MONITORING" is set but user did not previously call
+                `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
+        enable_channel_monitoring = os.environ.get(
+            "GIGL_ENABLE_PERF_MONITORING", ""
+        ).strip().lower() in ("1", "True")
         if enable_channel_monitoring:
             try:
                 get_metrics_service_instance()
             except RuntimeError as e:
                 raise RuntimeError(
-                    "Tried to create colocated channel with enable_channel_monitoring=True, "
-                    "but metrics instance was not initialized. Either call "
-                    "initialize_metrics() or set enable_channel_monitoring=False."
+                    '"GIGL_ENABLE_PERF_MONITORING" is set, which uses MonitoredShmChannel, but the metrics '
+                    'service was not initialized. Call initialize_metrics() or disable "GIGL_ENABLE_PERF_MONITORING".'
                 ) from e
             channel = MonitoredShmChannel(
                 channel_name,
@@ -484,7 +483,6 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
-        enable_channel_monitoring: bool,
         channel_name: str,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
@@ -502,9 +500,7 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
-            enable_channel_monitoring: Flag indicating whether to wrap the channel with metrics monitoring.
             channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
-                Ignored if `enable_channel_monitoring` is False.
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
@@ -513,7 +509,6 @@ class BaseDistLoader(DistLoader):
         channel = BaseDistLoader.create_colocated_channel(
             worker_options,
             channel_name=channel_name,
-            enable_channel_monitoring=enable_channel_monitoring,
         )
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor

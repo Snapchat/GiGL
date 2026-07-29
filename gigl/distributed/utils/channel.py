@@ -128,6 +128,10 @@ class MonitoredShmChannel(SizedShmChannel):
 
     def recv(self, *args, **kwargs) -> SampleMessage:
         publisher: Optional[OpsMetricPublisher] = get_metrics_service_instance()
-        if publisher is not None:
-            publisher.add_gauge(f"{self._channel_name}_qsize", self.qsize())
+        if publisher is None:
+            raise RuntimeError(
+                "Failed to record channel metrics in MonitoredShmChannel: the metric publisher "
+                "could not be retrieved. Check logs for metrics class construction errors."
+            )
+        publisher.add_gauge(f"{self._channel_name}_qsize", self.qsize())
         return super().recv(*args, **kwargs)

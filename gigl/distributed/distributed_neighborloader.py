@@ -86,7 +86,6 @@ class DistNeighborLoader(BaseDistLoader):
         with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
-        enable_channel_monitoring: bool = False,
     ):
         """
         Distributed Neighbor Loader.
@@ -169,8 +168,6 @@ class DistNeighborLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
-            enable_channel_monitoring: If True, collect metrics for the shared memory communication channel. Defaults to False.
-                If True, you must have initialized the metrics service beforehand by calling `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -281,7 +278,6 @@ class DistNeighborLoader(BaseDistLoader):
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
-                enable_channel_monitoring=enable_channel_monitoring,
                 channel_name=f"nbr_channel_{runtime.rank}_of_{runtime.world_size}",
             )
 
