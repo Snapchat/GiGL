@@ -82,26 +82,6 @@ def _build_sinusoidal_sequence_position_table(
     return position_table
 
 
-def _zero_initialize_lazy_linear_if_needed(module: nn.Module, input: Tensor) -> None:
-    """Materialize an uninitialized LazyLinear and make it initially no-op."""
-    has_uninitialized_params = getattr(module, "has_uninitialized_params", None)
-    if not callable(has_uninitialized_params) or not has_uninitialized_params():
-        return
-
-    initialize_parameters = getattr(module, "initialize_parameters", None)
-    if not callable(initialize_parameters):
-        return
-
-    initialize_parameters(input)
-    with torch.no_grad():
-        weight = getattr(module, "weight", None)
-        if isinstance(weight, nn.Parameter):
-            weight.zero_()
-        bias = getattr(module, "bias", None)
-        if isinstance(bias, nn.Parameter):
-            bias.zero_()
-
-
 # Supported activation functions for FeedForwardNetwork
 _ACTIVATION_FNS = {
     "gelu": nn.GELU,
@@ -1306,16 +1286,6 @@ class GraphTransformerEncoder(nn.Module):
                 continuous_feature_parts.append(token_input_features[attr_name])
             continuous_features = torch.cat(continuous_feature_parts, dim=-1).to(
                 sequences.dtype
-            )
-            continuous_features = torch.nan_to_num(
-                continuous_features,
-                nan=0.0,
-                posinf=1.0,
-                neginf=0.0,
-            )
-            _zero_initialize_lazy_linear_if_needed(
-                module=self._token_input_projection,
-                input=continuous_features,
             )
             token_contribution = token_contribution + (
                 self._token_input_projection(continuous_features) * valid_token_mask
