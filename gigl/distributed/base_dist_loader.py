@@ -62,6 +62,7 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
+from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.share_memory import share_memory
@@ -435,7 +436,7 @@ class BaseDistLoader(DistLoader):
 
         Creates and optionally pin-memories the shared-memory channel.
 
-        Note: When "GIGL_ENABLE_PERF_MONITORING" is set, a `MonitoredShmChannel` is created and the
+        Note: When GIGL_ENABLE_PERF_MONITORING is set, a `MonitoredShmChannel` is created and the
         caller is expected to have already initialized the metrics service by calling
         `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`. Otherwise, a standard
         `ShmChannel` is created and `channel_name` is ignored.
@@ -448,20 +449,20 @@ class BaseDistLoader(DistLoader):
             A ShmChannel ready to be passed to a DistSamplingProducer.
 
         Raises:
-            RuntimeError: If "GIGL_ENABLE_PERF_MONITORING" is set but user did not previously call
+            RuntimeError: If GIGL_ENABLE_PERF_MONITORING is set but user did not previously call
                 `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
         enable_channel_monitoring = os.environ.get(
-            "GIGL_ENABLE_PERF_MONITORING", ""
+            GIGL_ENABLE_PERF_MONITORING, ""
         ).strip().lower() in ("1", "True")
         if enable_channel_monitoring:
-            logger.info('"GIGL_ENABLE_PERF_MONITORING" is set, using MonitoredShmChannel.')
+            logger.info(f"{GIGL_ENABLE_PERF_MONITORING} set, using MonitoredShmChannel")
             try:
                 get_metrics_service_instance()
             except RuntimeError as e:
                 raise RuntimeError(
-                    '"GIGL_ENABLE_PERF_MONITORING" is set, which uses MonitoredShmChannel, but the metrics '
-                    'service was not initialized. Call initialize_metrics() or disable "GIGL_ENABLE_PERF_MONITORING".'
+                    f"{GIGL_ENABLE_PERF_MONITORING} is set, which uses MonitoredShmChannel, but the metrics "
+                    f"service was not initialized. Call initialize_metrics() or disable {GIGL_ENABLE_PERF_MONITORING}"
                 ) from e
             channel = MonitoredShmChannel(
                 channel_name,
@@ -469,7 +470,7 @@ class BaseDistLoader(DistLoader):
                 worker_options.channel_size,
             )
         else:
-            logger.info('"GIGL_ENABLE_PERF_MONITORING" is not set, using ShmChannel.')
+            logger.info(f"{GIGL_ENABLE_PERF_MONITORING} not set, using ShmChannel")
             channel = ShmChannel(
                 worker_options.channel_capacity, worker_options.channel_size
             )
