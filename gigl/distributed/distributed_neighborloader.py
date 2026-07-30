@@ -551,7 +551,7 @@ class DistNeighborLoader(BaseDistLoader):
         base_collate_start_time = time.perf_counter()
         data = super()._collate_fn(stripped_msg)
         base_collate_time = time.perf_counter() - base_collate_start_time
-        logger.debug(f"--* GLT base loader collate time: {base_collate_time}")
+        logger.debug(f"--* GLT base loader collate time: {base_collate_time:.3f}s")
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
@@ -572,7 +572,7 @@ class DistNeighborLoader(BaseDistLoader):
         )
         dequantize_time = time.perf_counter() - dequantize_start_time
         logger.debug(
-            f"--* Distributed Neighborloader dequantize time: {dequantize_time}"
+            f"--* Distributed Neighborloader dequantize time: {dequantize_time:.3f}s"
         )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
@@ -582,6 +582,6 @@ class DistNeighborLoader(BaseDistLoader):
 
         collate_time = time.perf_counter() - collate_start_time
         logger.debug(
-            f"--* Distributed Neighborloader end-to-end collate time: {collate_time}"
+            f"--* Distributed Neighborloader end-to-end collate time: {collate_time:.3f}s"
         )
         return data

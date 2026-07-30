@@ -876,7 +876,7 @@ class DistABLPLoader(BaseDistLoader):
         base_collate_start_time = time.perf_counter()
         data = super()._collate_fn(stripped_msg)
         base_collate_time = time.perf_counter() - base_collate_start_time
-        logger.debug(f"--* GLT base loader collate time: {base_collate_time}")
+        logger.debug(f"--* GLT base loader collate time: {base_collate_time:.3f}s")
 
         data = set_missing_features(
             data=data,
@@ -924,7 +924,7 @@ class DistABLPLoader(BaseDistLoader):
         )
         dequantize_time = time.perf_counter() - dequantize_start_time
         logger.debug(
-            f"--* Distributed ABLPNeighborloader dequantize time: {dequantize_time}"
+            f"--* Distributed ABLPNeighborloader dequantize time: {dequantize_time:.3f}s"
         )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
@@ -934,6 +934,6 @@ class DistABLPLoader(BaseDistLoader):
 
         collate_time = time.perf_counter() - collate_start_time
         logger.debug(
-            f"--* Distributed ABLPNeighborloader end-to-end collate time: {collate_time}"
+            f"--* Distributed ABLPNeighborloader end-to-end collate time: {collate_time:.3f}s"
         )
         return data
