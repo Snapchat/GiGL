@@ -3,14 +3,14 @@ syntax = "proto3";
 package snapchat.research.gbml;
 
 message PreprocessedMetadata{
-  message LinearQuantizationState{
+  message MultiBitQuantizationState{
     // Lower clipping bound; dequantized value for linear code 0.
     float clip_min = 1;
     // Upper clipping bound; dequantized value for max linear code.
     float clip_max = 2;
   }
 
-  message CentroidQuantizationState{
+  message SingleBitQuantizationState{
     // Mean value for negative features, produced by packed bit/code 0.
     float neg_mean = 1;
     // Mean value for positive features, produced by packed bit/code 1.
@@ -22,12 +22,12 @@ message PreprocessedMetadata{
     string packed_feature_key = 1;
     // Original feature-vector indices stored in packed_feature_key.
     repeated uint32 quantized_feature_indices = 2;
-    // 1 means centroid; 2, 4, and 8 mean linear buckets.
+    // Quantization level bit-width
     uint32 bits = 3;
     // Stats required to dequantize features for the selected bit width.
     oneof state {
-      LinearQuantizationState linear = 4;
-      CentroidQuantizationState centroid = 5;
+      MultiBitQuantizationState multi_bit = 4;
+      SingleBitQuantizationState single_bit= 5;
     }
   }
 

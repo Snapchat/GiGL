@@ -20,7 +20,7 @@ DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 class PreprocessedMetadata(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-    class LinearQuantizationState(google.protobuf.message.Message):
+    class MultiBitQuantizationState(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
         CLIP_MIN_FIELD_NUMBER: builtins.int
@@ -37,7 +37,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         ) -> None: ...
         def ClearField(self, field_name: typing_extensions.Literal["clip_max", b"clip_max", "clip_min", b"clip_min"]) -> None: ...
 
-    class CentroidQuantizationState(google.protobuf.message.Message):
+    class SingleBitQuantizationState(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
         NEG_MEAN_FIELD_NUMBER: builtins.int
@@ -60,31 +60,31 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         PACKED_FEATURE_KEY_FIELD_NUMBER: builtins.int
         QUANTIZED_FEATURE_INDICES_FIELD_NUMBER: builtins.int
         BITS_FIELD_NUMBER: builtins.int
-        LINEAR_FIELD_NUMBER: builtins.int
-        CENTROID_FIELD_NUMBER: builtins.int
+        MULTI_BIT_FIELD_NUMBER: builtins.int
+        SINGLE_BIT_FIELD_NUMBER: builtins.int
         packed_feature_key: builtins.str
         """Field in output TFRecords that stores packed uint8 features."""
         @property
         def quantized_feature_indices(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.int]:
             """Original feature-vector indices stored in packed_feature_key."""
         bits: builtins.int
-        """1 means centroid; 2, 4, and 8 mean linear buckets."""
+        """Quantization level bit-width"""
         @property
-        def linear(self) -> global___PreprocessedMetadata.LinearQuantizationState: ...
+        def multi_bit(self) -> global___PreprocessedMetadata.MultiBitQuantizationState: ...
         @property
-        def centroid(self) -> global___PreprocessedMetadata.CentroidQuantizationState: ...
+        def single_bit(self) -> global___PreprocessedMetadata.SingleBitQuantizationState: ...
         def __init__(
             self,
             *,
             packed_feature_key: builtins.str = ...,
             quantized_feature_indices: collections.abc.Iterable[builtins.int] | None = ...,
             bits: builtins.int = ...,
-            linear: global___PreprocessedMetadata.LinearQuantizationState | None = ...,
-            centroid: global___PreprocessedMetadata.CentroidQuantizationState | None = ...,
+            multi_bit: global___PreprocessedMetadata.MultiBitQuantizationState | None = ...,
+            single_bit: global___PreprocessedMetadata.SingleBitQuantizationState | None = ...,
         ) -> None: ...
-        def HasField(self, field_name: typing_extensions.Literal["centroid", b"centroid", "linear", b"linear", "state", b"state"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "centroid", b"centroid", "linear", b"linear", "packed_feature_key", b"packed_feature_key", "quantized_feature_indices", b"quantized_feature_indices", "state", b"state"]) -> None: ...
-        def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["linear", "centroid"] | None: ...
+        def HasField(self, field_name: typing_extensions.Literal["multi_bit", b"multi_bit", "single_bit", b"single_bit", "state", b"state"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "multi_bit", b"multi_bit", "packed_feature_key", b"packed_feature_key", "quantized_feature_indices", b"quantized_feature_indices", "single_bit", b"single_bit", "state", b"state"]) -> None: ...
+        def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["multi_bit", "single_bit"] | None: ...
 
     class NodeMetadataOutput(google.protobuf.message.Message):
         """Houses metadata about node TFTransform output from DataPreprocessor."""
