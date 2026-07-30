@@ -40,25 +40,6 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-# C++ PPR extraction output: flat node IDs, flat weights, and per-seed valid
-# counts. Homogeneous extraction uses tensors directly; heterogeneous extraction
-# uses dictionaries keyed by node type.
-PPRResult = tuple[
-    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-]
-# Heterogeneous-only view of PPRResult after typed PPR extraction.
-HeteroPPRResult = tuple[
-    dict[NodeType, torch.Tensor],
-    dict[NodeType, torch.Tensor],
-    dict[NodeType, torch.Tensor],
-]
-# All typed-channel traversal maps. Each channel map is indexed first by integer
-# node-type ID, then contains the integer edge-type IDs that channel may traverse
-# from that node type.
-TypedPPRChannelTraversalMaps = list[list[list[int]]]
-
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
     """Personalized PageRank (PPR) based distributed neighbor sampler.
@@ -245,7 +226,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for node_type in all_node_types
         ]
 
-        self._typed_ppr_channel_to_node_type_id_to_edge_type_ids: TypedPPRChannelTraversalMaps = []
+        self._typed_ppr_channel_to_node_type_id_to_edge_type_ids: list[
+            list[list[int]]
+        ] = []
 
     def _convert_degree_tensors_to_dict(
         self,
@@ -342,7 +325,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         ppr_state,
         device: torch.device,
-    ) -> PPRResult:
+    ) -> tuple[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    ]:
         """Extract PPR neighbors from a completed C++ Forward Push state.
 
         The C++ kernel indexes node types by compact integer IDs for speed.
@@ -401,7 +388,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ppr_states,
         typed_ppr_channel_target_counts: list[int],
         device: torch.device,
-    ) -> HeteroPPRResult:
+    ) -> tuple[
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+    ]:
         """Extract typed PPR results and move output tensors to the sampler device."""
         extracted_results = extract_typed_top_k_with_residual_top_up(
             ppr_states,
@@ -431,7 +422,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         seed_nodes: torch.Tensor,
         seed_node_type: Optional[NodeType] = None,
-    ) -> PPRResult:
+    ) -> tuple[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    ]:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
 
@@ -547,7 +542,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         seed_nodes: torch.Tensor,
         seed_node_type: NodeType,
         typed_ppr_channel_target_counts: list[int],
-    ) -> HeteroPPRResult:
+    ) -> tuple[
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+    ]:
         """Run one PPR state per typed channel and extract the merged result.
 
         Each channel receives the same seed nodes but a different edge-type
