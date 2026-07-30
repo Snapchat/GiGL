@@ -365,6 +365,7 @@ class DistABLPLoader(BaseDistLoader):
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
+                channel_name=f"ablp_channel_{runtime.rank}_of_{runtime.world_size}",
             )
 
         # Call base class — handles metadata storage and connection initialization
