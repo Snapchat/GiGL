@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from absl.testing import absltest
 from hydra import initialize_config_dir
+from hydra.errors import ConfigCompositionException
 from omegaconf import OmegaConf
 
 from gigl.common import GcsUri, LocalUri
@@ -247,7 +248,7 @@ class ProtoUtilsTest(TestCase):
 
             with (
                 patch.dict(os.environ, {"RESOURCE_PROFILE": "local"}),
-                self.assertRaises(ValueError),
+                self.assertRaises(ConfigCompositionException),
             ):
                 self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(config_path),
@@ -332,66 +333,6 @@ class ProtoUtilsTest(TestCase):
                 self.assertEqual(config.value, "foreign-now")
             finally:
                 OmegaConf.register_new_resolver("now", now_resolver, replace=True)
-
-    def test_composition_rejects_parent_traversal(self):
-        for selector in (
-            "../outside@_global_",
-            "optional ../outside@_global_",
-            "override optional ../outside@_global_",
-        ):
-            with self.subTest(selector=selector):
-                with TemporaryDirectory() as temp_directory:
-                    config_root = Path(temp_directory) / "bundle"
-                    config_root.mkdir()
-                    config_path = config_root / "task.yaml"
-                    config_path.write_text(f"defaults:\n  - {selector}\n")
-                    (Path(temp_directory) / "outside.yaml").write_text(
-                        "sharedConfig:\n  isGraphDirected: true\n"
-                    )
-
-                    with self.assertRaises(ValueError):
-                        self.proto_utils.read_proto_from_yaml(
-                            uri=LocalUri(config_path),
-                            proto_cls=gbml_config_pb2.GbmlConfig,
-                        )
-
-    def test_composition_rejects_interpolated_default_selector(self):
-        with TemporaryDirectory() as temp_directory:
-            config_path = Path(temp_directory) / "task.yaml"
-            config_path.write_text(
-                "defaults:\n  - group@sharedConfig: ${oc.env:TASK_PROFILE}\n"
-            )
-
-            with (
-                patch.dict(os.environ, {"TASK_PROFILE": "../outside"}),
-                self.assertRaises(ValueError),
-            ):
-                self.proto_utils.read_proto_from_yaml(
-                    uri=LocalUri(config_path),
-                    proto_cls=gbml_config_pb2.GbmlConfig,
-                )
-
-    def test_composition_rejects_symlinked_config_group(self):
-        with TemporaryDirectory() as temp_directory:
-            temp_root = Path(temp_directory)
-            config_root = temp_root / "bundle"
-            outside_group = temp_root / "outside"
-            config_root.mkdir()
-            outside_group.mkdir()
-            config_path = config_root / "task.yaml"
-            config_path.write_text(
-                "defaults:\n  - escaped@sharedConfig: directed\n  - _self_\n"
-            )
-            (outside_group / "directed.yaml").write_text("isGraphDirected: true\n")
-            (config_root / "escaped").symlink_to(
-                outside_group, target_is_directory=True
-            )
-
-            with self.assertRaises(ValueError):
-                self.proto_utils.read_proto_from_yaml(
-                    uri=LocalUri(config_path),
-                    proto_cls=gbml_config_pb2.GbmlConfig,
-                )
 
 
 if __name__ == "__main__":

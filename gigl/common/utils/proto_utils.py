@@ -66,8 +66,10 @@ class ProtoUtils:
             raw_data = yaml.safe_load(file)
         tfh.close()
         proto_type = proto_cls.DESCRIPTOR.full_name
-        reject_interpolations = proto_type in _DETERMINISTIC_RESOURCE_PROTO_TYPES
-        if reject_interpolations and contains_dynamic_interpolation(raw_data):
+        reject_dynamic_interpolations = (
+            proto_type in _DETERMINISTIC_RESOURCE_PROTO_TYPES
+        )
+        if reject_dynamic_interpolations and contains_dynamic_interpolation(raw_data):
             raise ValueError(
                 "Resource configs cannot contain dynamic OmegaConf resolvers because "
                 "submission and pipeline validation run in separate processes."
@@ -80,7 +82,7 @@ class ProtoUtils:
         ):
             obj_dict = compose_yaml_config(
                 uri=uri,
-                reject_interpolations=reject_interpolations,
+                reject_dynamic_interpolations=reject_dynamic_interpolations,
             )
         else:
             omega_conf_obj = OmegaConf.create(raw_data)

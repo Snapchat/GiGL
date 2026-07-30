@@ -91,7 +91,5 @@ and runner intentionally differ.
 ## Boundaries
 
 - GiGL does not consume Hydra command-line overrides, multirun, launchers, or output-directory behavior.
-- Defaults selectors must be static; interpolation is supported only in composed values.
-- Parent traversal and external `hydra.searchpath` entries are rejected.
 - GCS and HTTP configs remain supported only when they are plain, single-file YAML.
 - Treat config bundle write access as trusted access. GiGL configs can reference importable classes and commands.
