@@ -16,7 +16,7 @@ from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
 _NODE_PACKED_FEATURE_KEY = "node_packed_features"
-_CentroidAcc = tuple[float, int, float, int]
+_SingleBitAcc = tuple[float, int, float, int]
 
 
 def apply_feature_quantization_transform(
@@ -94,16 +94,17 @@ def _build_feature_quantization_stats(
     if spec.bits == 1:
         return (
             record_batches
-            | "Compute centroid quantization stats"
-            >> beam.CombineGlobally(_CentroidStatsFn(spec.feature_keys))
+            | "Compute single bit quantization stats"
+            >> beam.CombineGlobally(_SingleBitStatsFn(spec.feature_keys))
         )
     return (
         record_batches
-        | "Build linear quantization value batches"
+        | "Build multi-bit quantization value batches"
         >> beam.Map(_build_abs_feature_values, feature_keys=spec.feature_keys)
-        | "Compute linear quantization quantiles"
+        | "Compute multi-bit quantization quantiles"
         >> ApproximateQuantiles.Globally(num_quantiles=1000, input_batched=True)
-        | "Build linear quantization stats" >> beam.Map(_linear_stats_from_quantiles)
+        | "Build multi-bit quantization stats"
+        >> beam.Map(_multi_bit_stats_from_quantiles)
     )
 
 
@@ -114,9 +115,10 @@ def _quantize_record_batch(
 ) -> pa.RecordBatch:
     features = _build_feature_matrix(batch, spec.feature_keys)
     packed = quantize_ndarray(features, bits=spec.bits, stats=stats)
-    drop_keys = set(spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
     schema_names = batch.schema.names
-    keep_indices = [i for i, name in enumerate(schema_names) if name not in drop_keys]
+    keep_indices = [
+        i for i, name in enumerate(schema_names) if name not in set(spec.feature_keys)
+    ]
     arrays = [batch.column(i) for i in keep_indices]
     names = [schema_names[i] for i in keep_indices]
     arrays.append(
@@ -205,33 +207,37 @@ def _build_feature_matrix(batch: pa.RecordBatch, feature_keys: list[str]) -> np.
         values = np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float32)
         if values.ndim != 1:
             raise ValueError(
-                f"Feature quantization currently expects scalar features; "
-                f"got {key} with shape {values.shape}."
+                f"Feature quantization expects scalar features, got {key} with shape {values.shape}."
             )
         cols.append(values)
     return np.stack(cols, axis=1)
 
 
-def _linear_stats_from_quantiles(quantiles: list[float]) -> dict[str, float]:
+def _multi_bit_stats_from_quantiles(quantiles: list[float]) -> dict[str, float]:
     if not quantiles:
         raise ValueError("Cannot compute quantization stats from no values.")
     # Store symmetric clip bounds from the approximate 99.5th abs-value percentile.
     clip_max = max(float(quantiles[round(0.995 * (len(quantiles) - 1))]), 1e-5)
     stats = {"clip_min": -clip_max, "clip_max": clip_max}
-    logger.info(f"Computed Beam feature quantization stats: {stats}")
+    logger.info(f"Computed feature quantization stats: {stats}")
     return stats
 
 
-class _CentroidStatsFn(beam.CombineFn):
+class _SingleBitStatsFn(beam.CombineFn):
+    """Beam CombineFn that accumulates sums and counts across batches.
+
+    Used to derive the mean of positive and negative feature values for 1-bit quantization.
+    """
+
     def __init__(self, feature_keys: list[str]):
         self._feature_keys = feature_keys
 
-    def create_accumulator(self) -> _CentroidAcc:
+    def create_accumulator(self) -> _SingleBitAcc:
         return 0.0, 0, 0.0, 0
 
     def add_input(
-        self, accumulator: _CentroidAcc, batch: pa.RecordBatch
-    ) -> _CentroidAcc:
+        self, accumulator: _SingleBitAcc, batch: pa.RecordBatch
+    ) -> _SingleBitAcc:
         neg_sum, neg_count, pos_sum, pos_count = accumulator
         values = _build_feature_matrix(batch, self._feature_keys).reshape(-1)
         values = values[np.isfinite(values)]
@@ -244,7 +250,9 @@ class _CentroidStatsFn(beam.CombineFn):
             pos_count + int(pos.sum()),
         )
 
-    def merge_accumulators(self, accumulators: Iterable[_CentroidAcc]) -> _CentroidAcc:
+    def merge_accumulators(
+        self, accumulators: Iterable[_SingleBitAcc]
+    ) -> _SingleBitAcc:
         neg_sum = neg_count = pos_sum = pos_count = 0
         for n_sum, n_count, p_sum, p_count in accumulators:
             neg_sum += n_sum
@@ -253,7 +261,7 @@ class _CentroidStatsFn(beam.CombineFn):
             pos_count += p_count
         return neg_sum, neg_count, pos_sum, pos_count
 
-    def extract_output(self, accumulator: _CentroidAcc) -> dict[str, float]:
+    def extract_output(self, accumulator: _SingleBitAcc) -> dict[str, float]:
         neg_sum, neg_count, pos_sum, pos_count = accumulator
         stats = {
             "neg_mean": neg_sum / neg_count if neg_count else 0.0,
