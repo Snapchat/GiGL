@@ -274,20 +274,18 @@ class DataPreprocessor:
                         feature_dimension += feature_shape[0]
             return feature_dimension
 
-        feature_outputs = preprocessing_spec.features_outputs
-
         # Find and save the feature dimension if there is any
-        if feature_outputs is not None:
+        if preprocessing_spec.feature_outputs is not None:
             transformed_features_info.feature_dim_output = __get_feature_dimension_for_single_data_reference(
                 schema_path=transformed_features_info.transformed_features_schema_path,
-                feature_outputs=feature_outputs,
+                feature_outputs=preprocessing_spec.feature_outputs,
             )
 
         # Carry forward the identifier, features and label outputs from the preprocessing spec.
         transformed_features_info.identifier_output = (
             preprocessing_spec.identifier_output
         )
-        transformed_features_info.features_outputs = feature_outputs
+        transformed_features_info.features_outputs = preprocessing_spec.feature_outputs
         transformed_features_info.label_outputs = preprocessing_spec.labels_outputs
 
         if isinstance(feature_transform_pipeline_result, DataflowPipelineResult):
@@ -488,9 +486,12 @@ class DataPreprocessor:
                 node_transformed_features_info.feature_quantization_metadata_path.uri
             )
             if tf.io.gfile.exists(metadata_path):
-                logger.info(f"Adding feature quantization metadata: {metadata_path}")
+                logger.info(
+                    f"Loading feature quantization metadata from: {metadata_path}"
+                )
                 with tf.io.gfile.GFile(metadata_path) as f:
                     metadata = json.loads(f.read())
+                logger.info(f"Loaded feature quantization metadata: {metadata}")
                 bits = metadata["bits"]
                 quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
                     packed_feature_key=metadata["packed_feature_key"],
