@@ -34,24 +34,30 @@ def _build_serialized_tfrecord_entity_info(
     Returns:
         SerializedTFRecordInfo: Stored metadata for current entity
     """
+    # Default: Assume all logical features are stored unquantized on disk
     packed_feature_key = None
     packed_feature_dim = 0
     physical_feature_keys = list(preprocessed_metadata.feature_keys)
     feature_dim = preprocessed_metadata.feature_dim
+
     if isinstance(
         preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput
     ) and preprocessed_metadata.HasField("quantized_feature_metadata"):
-        quantized_metadata = preprocessed_metadata.quantized_feature_metadata
+        # Quantized columns are omitted from disk and packed into a uint8 sidecar;
+        # reset physical keys to rebuild the on-disk feature list.
         quantization_metadata = _build_feature_quantization_metadata(
-            quantized_metadata=quantized_metadata,
+            quantized_metadata=preprocessed_metadata.quantized_feature_metadata,
             feature_dim=preprocessed_metadata.feature_dim,
         )
-        packed_feature_key = quantized_metadata.packed_feature_key
+        packed_feature_key = (
+            preprocessed_metadata.quantized_feature_metadata.packed_feature_key
+        )
         packed_feature_dim = quantization_metadata.packed_feature_dim
         quantized_indices = set(quantization_metadata.quantized_feature_indices)
         feature_index = feature_spec_to_feature_index_map(
             {key: feature_spec_dict[key] for key in preprocessed_metadata.feature_keys}
         )
+        # Determine which features remain on disk vs. packed in uint8 tensor
         physical_feature_keys = []
         for key in preprocessed_metadata.feature_keys:
             key_indices = set(range(*feature_index[key]))
@@ -70,7 +76,7 @@ def _build_serialized_tfrecord_entity_info(
         physical_keys.add(packed_feature_key)
     # Only keep fields physically stored in TFRecords. Quantized features stay
     # in preprocessed_metadata.feature_keys as logical model features, but are
-    # reconstructed later from the packed uint8 sidecar.
+    # reconstructed later from the packed uint8 tensor.
     feature_spec_dict = {
         key: spec for key, spec in feature_spec_dict.items() if key in physical_keys
     }
