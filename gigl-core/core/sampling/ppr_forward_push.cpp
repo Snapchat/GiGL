@@ -434,10 +434,10 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
 // Helper function for adding one channel's extracted PPR candidates into the
 // emitted typed feature table and a selection candidate list.
 //
-// This helper owns the output view: it populates the edge_attr row for every
-// node it sees. When residual top-up is enabled, callers pass residual-aware
-// scores here so finalized and residual rows are emitted on the same
-// ppr_score + residual scale.
+// This helper writes the emitted edge_attr feature table for every node it
+// sees. When residual top-up is enabled, callers pass residual-aware scores
+// here so finalized and residual rows are emitted on the same ppr_score +
+// residual scale.
 //
 // Inputs:
 //   nodesAndScores: extracted (node_id, score) candidates for one channel.
@@ -485,8 +485,9 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         int32_t channelPresenceIndex = 1 + numChannels + channelIndex;
 
         // Record this node's score for the current channel and mark that the
-        // channel reached the node. A node may be seen multiple times in the
-        // same channel view, so keep the strongest calibrated score.
+        // channel reached the node. Current extraction emits one row per node
+        // per channel; max keeps the merge stable if a future caller ever
+        // passes duplicates.
         scoreFeatures[channelScoreIndex] = std::max(scoreFeatures[channelScoreIndex], calibratedScore);
         scoreFeatures[channelPresenceIndex] = 1.0;
 
@@ -692,8 +693,10 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                                                    int32_t maxPPRNodes,
                                                    bool enableResidualTopUp) {
     // Typed channels are constructed from the same seed batch and graph schema;
-    // only the edge-type traversal allowlist differs. Use the first state as
-    // the shared schema source for batch size and node-type count.
+    // only the edge-type traversal allowlist differs. The sampler calls typed
+    // extraction only when typed-channel target counts are configured, so at
+    // least one state exists. Use the first state as the shared schema source
+    // for batch size and node-type count.
     const auto* firstState = states.front();
     int32_t batchSize = firstState->_batchSize;
     int32_t numNodeTypes = firstState->_numNodeTypes;
@@ -735,10 +738,12 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                     appendResidualTopUpPairs(nodeTypeState, outputNodesAndScores, maxPPRNodes);
                 }
 
-                double outputMaxScore = 0.0;
-                for (const auto& nodeAndScore : outputNodesAndScores) {
-                    outputMaxScore = std::max(outputMaxScore, nodeAndScore.second);
-                }
+                auto outputMaxScoreIter =
+                    std::max_element(outputNodesAndScores.begin(),
+                                     outputNodesAndScores.end(),
+                                     [](const auto& a, const auto& b) { return a.second < b.second; });
+                double outputMaxScore =
+                    outputMaxScoreIter != outputNodesAndScores.end() ? outputMaxScoreIter->second : 0.0;
 
                 outputCandidatesByChannel[channelIndex].reserve(outputNodesAndScores.size());
                 addTypedPPRSeedFeaturesAndCandidates(outputNodesAndScores,
