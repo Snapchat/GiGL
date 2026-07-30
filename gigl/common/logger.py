@@ -6,12 +6,41 @@ from typing import Any, MutableMapping, Optional
 
 from google.cloud import logging as google_cloud_logging
 
+from gigl.env.constants import GIGL_DISABLE_CLOUD_LOGGING_ENV_KEY
+
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
+
+# Values of GIGL_DISABLE_CLOUD_LOGGING that leave cloud logging on, so that setting
+# the variable to "0" reads as "off" rather than as any-value-means-on.
+_FALSY_ENV_VALUES = frozenset({"", "0", "false"})
+
+
+def _is_cloud_logging_disabled() -> bool:
+    """Whether GIGL_DISABLE_CLOUD_LOGGING opts this process out of cloud logging.
+
+    On GKE, ``google.cloud.logging`` attaches a handler that renders every record as
+    a single-line GCP JSON envelope. Under Ray that envelope is unreadable and its
+    structured fields are dropped anyway: Ray prefixes each relayed worker line with
+    ``(RayTrainWorker pid=...)``, which makes the line invalid JSON, so Cloud Logging
+    stores it as a plain ``textPayload``. Set this variable on such processes to get
+    the console format instead.
+
+    Returns:
+        True when the variable is set to anything other than "", "0", or "false"
+        (case-insensitive).
+    """
+    value = os.environ.get(GIGL_DISABLE_CLOUD_LOGGING_ENV_KEY, "")
+    return value.lower() not in _FALSY_ENV_VALUES
 
 
 class Logger(logging.LoggerAdapter):
     """
     GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.)
+
+    On App Engine and Kubernetes, records are routed to Google Cloud Logging, which
+    renders them as GCP JSON. Set ``GIGL_DISABLE_CLOUD_LOGGING`` to fall back to the
+    console format -- see :func:`_is_cloud_logging_disabled`.
+
     Args:
         logger (Optional[logging.Logger]): A custom logger to use. If not provided, the default logger will be created.
         name (Optional[str]): The name to be used for the logger. By default uses "root".
@@ -37,9 +66,11 @@ class Logger(logging.LoggerAdapter):
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
-            if os.getenv("GAE_APPLICATION") or os.environ.get(
-                "KUBERNETES_SERVICE_HOST"
-            ):
+            is_cloud_environment = bool(
+                os.getenv("GAE_APPLICATION")
+                or os.environ.get("KUBERNETES_SERVICE_HOST")
+            )
+            if is_cloud_environment and not _is_cloud_logging_disabled():
                 # Google Cloud Logging
                 client = google_cloud_logging.Client()
                 client.setup_logging(log_level=logging.INFO)
