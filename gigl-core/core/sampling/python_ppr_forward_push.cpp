@@ -98,7 +98,7 @@ static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
 }
 
 static PPRExtractResult extractTypedTopKWithResidualTopUpWrapper(const py::sequence& states,
-                                                                 const std::vector<int32_t>& channelQuotas,
+                                                                 const std::vector<int32_t>& channelTargetCounts,
                                                                  int32_t maxPPRNodes,
                                                                  bool enableResidualTopUp) {
     std::vector<PPRForwardPush*> statePtrs;
@@ -114,7 +114,7 @@ static PPRExtractResult extractTypedTopKWithResidualTopUpWrapper(const py::seque
     PPRExtractResult result;
     {
         py::gil_scoped_release release;
-        result = extractTypedTopKWithResidualTopUp(statePtrs, channelQuotas, maxPPRNodes, enableResidualTopUp);
+        result = extractTypedTopKWithResidualTopUp(statePtrs, channelTargetCounts, maxPPRNodes, enableResidualTopUp);
     }
     return result;
 }
@@ -149,7 +149,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("extract_typed_top_k_with_residual_top_up",
           &gigl::extractTypedTopKWithResidualTopUpWrapper,
           py::arg("states"),
-          py::arg("channel_quotas"),
+          py::arg("channel_target_counts"),
           py::arg("max_ppr_nodes"),
           py::arg("enable_residual_topup"));
 }

@@ -44,9 +44,9 @@ struct SeedNodeTypeState {
 // fetch once for all channels that requested it.
 struct TypedPPRQueueDrainResult {
     // Channels whose drainQueue() returned a value this iteration. Channel IDs
-    // are positional indices into the states/channelQuotas vectors. Python
-    // builds those vectors from typed_channel_quotas insertion order, and this
-    // function appends indices in ascending order, so the ordering is stable.
+    // are positional indices into the states/channel-target vectors. Python
+    // builds those vectors from typed-channel insertion order, and this function
+    // appends indices in ascending order, so the ordering is stable.
     //
     // These channels need pushResiduals(), even when no fetch budget remains.
     // In that case Python passes an empty fetch map and the channel uses its
@@ -114,7 +114,7 @@ public:
     PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp);
 
     friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
-                                                              const std::vector<int32_t>& channelQuotas,
+                                                              const std::vector<int32_t>& channelTargetCounts,
                                                               int32_t maxPPRNodes,
                                                               bool enableResidualTopUp);
 
@@ -186,17 +186,20 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // Helper function for extracting and merging completed typed-PPR channel states
 // in one C++ step.
 //
-// For each channel, finalized PPR candidates feed the quota-biased base pass.
-// Residual top-up candidates are kept in a separate extended view and are used
-// only after channel quotas and cross-channel dedup leave unfilled sequence
-// slots. The typed merge calibrates scores within each channel, deduplicates
-// candidates seen through multiple channels, and emits per-node-type tensors.
+// For each seed/node-type, typed extraction builds one candidate view per
+// channel. When residual top-up is enabled, residual candidates are included in
+// that same view, so finalized PPR and residual top-up both obey the configured
+// channel target counts. The merge calibrates scores within each channel,
+// deduplicates candidates seen through multiple channels by attributing each
+// node to its highest-scoring channel, fills each channel target, redistributes
+// unused slots globally by score, and emits per-node-type tensors.
 //
 // Inputs:
 //   states: Completed PPRForwardPush states, one per typed channel.
-//   channelQuotas: Per-channel finalized-PPR quotas, aligned with states.
+//   channelTargetCounts: Per-channel target output counts, aligned with states.
 //   maxPPRNodes: Maximum number of deduplicated nodes to return per seed.
-//   enableResidualTopUp: Whether residual candidates may fill unfilled slots.
+//   enableResidualTopUp: Whether residual candidates may participate in target
+//                        filling alongside finalized PPR candidates.
 //
 // Expected output: per-node-type tensors. Tuple values match
 // extractTopKWithResidualTopUp:
@@ -205,7 +208,7 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 //            [best_calibrated_score, per-channel scores..., presence bits...].
 //   valid_counts: int64 count of selected nodes per seed.
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
-                                                   const std::vector<int32_t>& channelQuotas,
+                                                   const std::vector<int32_t>& channelTargetCounts,
                                                    int32_t maxPPRNodes,
                                                    bool enableResidualTopUp);
 
