@@ -413,7 +413,7 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                node_quantization_metadata=None,  # TODO: Add quantization for graph store mode
+                node_quantization_metadata=dataset.node_quantization_metadata,
                 edge_dir=dataset.fetch_edge_dir(),
             ),
             backend_key,
