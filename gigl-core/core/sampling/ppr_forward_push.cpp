@@ -486,9 +486,8 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
 
         // Record this node's score for the current channel and mark that the
         // channel reached the node. Current extraction emits one row per node
-        // per channel; max keeps the merge stable if a future caller ever
-        // passes duplicates.
-        scoreFeatures[channelScoreIndex] = std::max(scoreFeatures[channelScoreIndex], calibratedScore);
+        // per channel, so no intra-channel merge is needed here.
+        scoreFeatures[channelScoreIndex] = calibratedScore;
         scoreFeatures[channelPresenceIndex] = 1.0;
 
         // Keep a per-channel sortable candidate list so target counts can be
