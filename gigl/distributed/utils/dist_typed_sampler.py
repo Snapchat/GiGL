@@ -11,23 +11,8 @@ import math
 from collections.abc import Sequence
 from typing import Optional, Union, cast
 
-import torch
 from graphlearn_torch.typing import EdgeType, NodeType
 
-# C++ PPR extraction output: flat node IDs, flat weights, and per-seed valid
-# counts. Homogeneous extraction uses tensors directly; heterogeneous extraction
-# uses dictionaries keyed by node type.
-PPRResult = tuple[
-    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-]
-# Heterogeneous-only view of PPRResult after typed PPR extraction.
-HeteroPPRResult = tuple[
-    dict[NodeType, torch.Tensor],
-    dict[NodeType, torch.Tensor],
-    dict[NodeType, torch.Tensor],
-]
 # Public typed_channel_ratios keys can be a single edge type or a grouped
 # channel containing multiple edge types.
 TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
