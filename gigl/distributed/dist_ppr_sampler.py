@@ -76,8 +76,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     state per traversal channel. Its typed drain step unions the channel
     frontiers before the same distributed fetch, pushes results back into the
     active channel states, and then uses one typed C++ extraction step to apply
-    channel quotas, deduplicate shared candidates, and emit the final typed
-    edge-attribute features.
+    channel target counts, deduplicate shared candidates, and emit the final
+    typed edge-attribute features.
 
     The ``edge_index`` and ``edge_attr`` fields on the output Data/HeteroData
     objects are populated with PPR seed-to-neighbor relationships (not edges
@@ -167,7 +167,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        self._typed_ppr_channel_quotas: Optional[list[int]] = None
+        self._typed_ppr_channel_target_counts: Optional[list[int]] = None
 
         # Convert the public homogeneous/heterogeneous degree-tensor shape to
         # the node-type keyed form used internally by PPR.
@@ -385,13 +385,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     def _extract_typed_ppr_state_top_k(
         self,
         ppr_states,
-        typed_ppr_channel_quotas: list[int],
+        typed_ppr_channel_target_counts: list[int],
         device: torch.device,
     ) -> HeteroPPRResult:
         """Extract typed PPR results and move output tensors to the sampler device."""
         extracted_results = extract_typed_top_k_with_residual_top_up(
             ppr_states,
-            typed_ppr_channel_quotas,
+            typed_ppr_channel_target_counts,
             self._max_ppr_nodes,
             self._enable_residual_topup,
         )
@@ -532,21 +532,22 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         seed_nodes: torch.Tensor,
         seed_node_type: NodeType,
-        typed_ppr_channel_quotas: list[int],
+        typed_ppr_channel_target_counts: list[int],
     ) -> HeteroPPRResult:
         """Run one PPR state per typed channel and extract the merged result.
 
         Each channel receives the same seed nodes but a different edge-type
         traversal allowlist. Fetch frontiers are unioned across active channels
         per iteration so shared graph neighborhoods are fetched once and reused
-        by every channel that requested them. After convergence, C++ applies
-        channel quotas, residual top-up, and cross-channel deduplication in one
-        extraction step.
+        by every channel that requested them. After convergence, C++ deduplicates
+        candidates, attributes each node to its strongest channel, fills channel
+        target counts, redistributes unused slots by score, and emits typed
+        edge-attribute features in one extraction step.
 
         Args:
             seed_nodes: Global node IDs for the seed batch.
             seed_node_type: Heterogeneous node type for ``seed_nodes``.
-            typed_ppr_channel_quotas: Per-channel candidate quotas, aligned
+            typed_ppr_channel_target_counts: Per-channel target output counts, aligned
                 with ``self._typed_ppr_channel_to_node_type_id_to_edge_type_ids``.
 
         Returns:
@@ -633,7 +634,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             None,
             self._extract_typed_ppr_state_top_k,
             ppr_states,
-            typed_ppr_channel_quotas,
+            typed_ppr_channel_target_counts,
             device,
         )
 
@@ -738,8 +739,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # which is most beneficial when there are 2+ distinct seed node types
             # (e.g. cross-type supervision edges like user→story).
             seed_types = list(nodes_by_seed_type.keys())
-            typed_ppr_channel_quotas = self._typed_ppr_channel_quotas
-            if typed_ppr_channel_quotas is None:
+            typed_ppr_channel_target_counts = self._typed_ppr_channel_target_counts
+            if typed_ppr_channel_target_counts is None:
                 ppr_results = await asyncio.gather(
                     *[
                         self._compute_ppr_scores(
@@ -755,7 +756,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                         self._compute_typed_ppr_scores(
                             nodes_by_seed_type[seed_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                             seed_type,
-                            typed_ppr_channel_quotas,
+                            typed_ppr_channel_target_counts,
                         )
                         for seed_type in seed_types
                     ]
