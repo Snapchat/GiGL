@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import cast
 from unittest.mock import patch
 
 from absl.testing import absltest
@@ -11,7 +10,7 @@ from hydra import initialize_config_dir
 from hydra.errors import MissingConfigException
 from omegaconf import OmegaConf
 
-from gigl.common import GcsUri, LocalUri
+from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.utils.hydra_config import compose_yaml_config
 from gigl.common.utils.proto_utils import ProtoUtils
@@ -302,19 +301,6 @@ class ProtoUtilsTest(TestCase):
                     uri=LocalUri(config_path),
                     proto_cls=gbml_config_pb2.GbmlConfig,
                 )
-
-    def test_gcs_composition_is_not_supported(self):
-        with self.assertRaisesRegex(
-            TypeError,
-            "Hydra composition is not supported for GcsUri",
-        ):
-            self.proto_utils.compose_proto_from_yaml(
-                cast(
-                    LocalUri,
-                    GcsUri("gs://example-bucket/configs/task.yaml"),
-                ),
-                gbml_config_pb2.GbmlConfig,
-            )
 
     def test_composition_is_thread_safe(self):
         with TemporaryDirectory() as temp_directory:

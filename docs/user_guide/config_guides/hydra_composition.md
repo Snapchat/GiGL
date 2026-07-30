@@ -1,14 +1,15 @@
 # Composing task and resource configs with Hydra
 
-Local task and resource configs can use [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding
-a top-level `defaults` list. ConfigValidator composes these source configs before publishing plain YAML snapshots.
+Task and resource configs can use [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding a
+top-level `defaults` list. ConfigValidator composes every source config before publishing plain YAML snapshots.
 `ProtoUtils.read_proto_from_yaml` remains the URI-agnostic, non-composing reader; `ProtoUtils.compose_proto_from_yaml`
 is the explicit local-only composition API.
 
 ## Config root
 
 The primary file's parent directory is its Hydra config root. Composed primary files and selected fragments must use
-Hydra's `.yaml` extension. Plain legacy `.yml` files without `defaults` remain supported.
+Hydra's `.yaml` extension. Plain legacy `.yml` files remain supported by the non-composing reader, but ConfigValidator
+inputs must use `.yaml`.
 
 ```text
 configs/
@@ -21,8 +22,9 @@ configs/
 ```
 
 Keep primary files directly in the bundle root. GiGL does not search for a repository root or a directory named
-`configs`. Composition currently requires a local primary file. GCS and HTTP primaries remain supported only as plain,
-single-file YAML without a Defaults List.
+`configs`. Defaults List composition currently requires a local config bundle. ConfigValidator downloads GCS and HTTP
+primaries to a temporary local file before composing them, so remote primaries remain supported only as plain,
+single-file YAML.
 
 ## Task config example
 

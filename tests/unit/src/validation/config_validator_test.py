@@ -9,7 +9,7 @@ from absl.testing import absltest
 from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
-from gigl.common import Uri, UriFactory
+from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.validation_check.config_validator import (
     kfp_validation_checks,
@@ -435,6 +435,40 @@ class TestConfigValidationPerSGSBackends(TestCase):
         )
         self.assertEqual(materialized_task_config, task_config)
         self.assertEqual(materialized_resource_config, resource_config)
+
+    @patch("gigl.src.validation_check.config_validator.FileLoader.load_file")
+    def test_downloads_remote_configs_before_composing(self, mock_load_file) -> None:
+        task_uri = GcsUri("gs://test-configs/task.yaml")
+        resource_uri = GcsUri("gs://test-configs/resource.yaml")
+        source_configs = {
+            task_uri.uri: "shared_config:\n  is_graph_directed: true\n",
+            resource_uri.uri: (
+                "shared_resource_config:\n"
+                "  common_compute_config:\n"
+                "    project: remote-project\n"
+                "    temp_regional_assets_bucket: gs://test-temp-regional\n"
+            ),
+        }
+
+        def download_config(
+            file_uri_src,
+            file_uri_dst,
+            should_create_symlinks_if_possible,
+        ):
+            self.assertTrue(file_uri_dst.get_basename().endswith(".yaml"))
+            Path(file_uri_dst.uri).write_text(source_configs[file_uri_src.uri])
+
+        mock_load_file.side_effect = download_config
+        task_config, resource_config = resolve_configs(
+            task_config_uri=task_uri,
+            resource_config_uri=resource_uri,
+        )
+
+        self.assertTrue(task_config.shared_config.is_graph_directed)
+        self.assertEqual(
+            resource_config.shared_resource_config.common_compute_config.project,
+            "remote-project",
+        )
 
 
 if __name__ == "__main__":

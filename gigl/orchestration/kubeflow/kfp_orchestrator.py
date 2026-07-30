@@ -148,9 +148,7 @@ class KfpOrchestrator:
         )
         logger.info(f"Skipping pipeline compilation; will use {compiled_pipeline_path}")
 
-        if isinstance(
-            resource_config_uri, LocalUri
-        ) and resource_config_uri.get_basename().endswith(".yaml"):
+        if isinstance(resource_config_uri, LocalUri):
             resource_config = GiglResourceConfigWrapper(
                 ProtoUtils().compose_proto_from_yaml(
                     uri=resource_config_uri,

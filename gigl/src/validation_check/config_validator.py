@@ -1,6 +1,9 @@
 import argparse
 from pathlib import Path
-from typing import Optional
+from tempfile import NamedTemporaryFile
+from typing import Optional, Type, TypeVar
+
+from google.protobuf import message
 
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -11,6 +14,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
+from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.validation_check.libs.frozen_config_path_checks import (
     assert_preprocessed_metadata_exists,
@@ -198,6 +202,8 @@ RESOURCE_CONFIG_CHECKS_TO_SKIP_WITH_LIVE_SGS_BACKEND = [
 
 logger = Logger()
 
+T = TypeVar("T", bound=message.Message)
+
 # Map of start components to graph store compatibility checks to run
 # Only run trainer checks when starting at or before Trainer
 # Only run inferencer checks when starting at or before Inferencer
@@ -362,34 +368,41 @@ def resolve_configs(
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig]:
     """Resolve task and resource configs into self-contained protobufs."""
     proto_utils = ProtoUtils()
-    if isinstance(
-        task_config_uri, LocalUri
-    ) and task_config_uri.get_basename().endswith(".yaml"):
-        task_config = proto_utils.compose_proto_from_yaml(
-            uri=task_config_uri,
-            proto_cls=gbml_config_pb2.GbmlConfig,
-        )
-    else:
-        task_config = proto_utils.read_proto_from_yaml(
-            uri=task_config_uri,
-            proto_cls=gbml_config_pb2.GbmlConfig,
-        )
-    if isinstance(
-        resource_config_uri, LocalUri
-    ) and resource_config_uri.get_basename().endswith(".yaml"):
-        resource_config = proto_utils.compose_proto_from_yaml(
-            uri=resource_config_uri,
-            proto_cls=GiglResourceConfig,
-        )
-    else:
-        resource_config = proto_utils.read_proto_from_yaml(
-            uri=resource_config_uri,
-            proto_cls=GiglResourceConfig,
-        )
+    task_config = _compose_proto_from_uri(
+        proto_utils=proto_utils,
+        uri=task_config_uri,
+        proto_cls=gbml_config_pb2.GbmlConfig,
+    )
+    resource_config = _compose_proto_from_uri(
+        proto_utils=proto_utils,
+        uri=resource_config_uri,
+        proto_cls=GiglResourceConfig,
+    )
     resource_config.shared_resource_config.CopyFrom(
         GiglResourceConfigWrapper(resource_config).shared_resource_config
     )
     return task_config, resource_config
+
+
+def _compose_proto_from_uri(
+    proto_utils: ProtoUtils,
+    uri: Uri,
+    proto_cls: Type[T],
+) -> T:
+    if isinstance(uri, LocalUri):
+        return proto_utils.compose_proto_from_yaml(uri=uri, proto_cls=proto_cls)
+
+    with NamedTemporaryFile(suffix=".yaml") as temp_file:
+        local_uri = LocalUri(temp_file.name)
+        FileLoader().load_file(
+            file_uri_src=uri,
+            file_uri_dst=local_uri,
+            should_create_symlinks_if_possible=False,
+        )
+        return proto_utils.compose_proto_from_yaml(
+            uri=local_uri,
+            proto_cls=proto_cls,
+        )
 
 
 def kfp_validation_checks(
