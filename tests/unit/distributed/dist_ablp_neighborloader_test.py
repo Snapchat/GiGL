@@ -11,7 +11,10 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dataset_factory import build_dataset
-from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_ablp_neighborloader import (
+    DistABLPLoader,
+    _convert_graph_store_ablp_inputs,
+)
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -36,6 +39,7 @@ from gigl.types.graph import (
     to_homogeneous,
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
+from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
     create_test_process_group,
@@ -358,12 +362,13 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
             expected=expected_positive_labels[edge_type],
         )
     if expected_negative_labels is not None:
-        _assert_labels(
-            anchor_nodes=datum[edge_type[anchor_index]].node,
-            supervision_nodes=datum[edge_type[supervision_index]].node,
-            y=datum.y_negative[edge_type],
-            expected=expected_negative_labels[edge_type],
-        )
+        for edge_type, expected_labels in expected_negative_labels.items():
+            _assert_labels(
+                anchor_nodes=datum[edge_type[anchor_index]].node,
+                supervision_nodes=datum[edge_type[supervision_index]].node,
+                y=datum.y_negative[edge_type],
+                expected=expected_labels,
+            )
     else:
         assert not hasattr(datum, "y_negative")
 
@@ -595,6 +600,154 @@ class DistABLPLoaderTest(TestCase):
             # to avoid interference with subsequent tests
             torch.distributed.destroy_process_group()
         super().tearDown()
+
+    def test_convert_graph_store_inputs_with_multiple_supervision_types(self):
+        """GraphStore conversion retains plural and per-type label topology."""
+        positive_a_to_b = message_passing_to_positive_label(_A_TO_B)
+        negative_a_to_b = message_passing_to_negative_label(_A_TO_B)
+        positive_a_to_c = message_passing_to_positive_label(_A_TO_C)
+        anchors = torch.tensor([10, 11])
+        input_nodes = {
+            0: ABLPInputNodes(
+                anchor_nodes=anchors,
+                anchor_node_type=_A,
+                labels={
+                    _A_TO_B: (
+                        torch.tensor([[12], [13]]),
+                        torch.tensor([[14], [15]]),
+                    ),
+                    _A_TO_C: (torch.tensor([[20], [21]]), None),
+                },
+            )
+        }
+
+        (
+            sampler_inputs,
+            input_type,
+            supervision_edge_types,
+            positive_edge_types,
+            negative_edge_types,
+        ) = _convert_graph_store_ablp_inputs(
+            input_nodes=input_nodes,
+            num_storage_nodes=2,
+            edge_types=[
+                positive_a_to_b,
+                negative_a_to_b,
+                positive_a_to_c,
+            ],
+            edge_dir="out",
+        )
+
+        self.assertEqual(input_type, _A)
+        self.assertEqual(supervision_edge_types, [_A_TO_B, _A_TO_C])
+        self.assertEqual(positive_edge_types, [positive_a_to_b, positive_a_to_c])
+        self.assertEqual(negative_edge_types, [negative_a_to_b])
+        self.assertEqual(len(sampler_inputs), 2)
+        self.assert_tensor_equality(sampler_inputs[0].node, anchors)
+        self.assertEqual(
+            list(sampler_inputs[0].positive_label_by_edge_types),
+            [positive_a_to_b, positive_a_to_c],
+        )
+        self.assertEqual(
+            list(sampler_inputs[0].negative_label_by_edge_types),
+            [negative_a_to_b],
+        )
+        self.assertEqual(sampler_inputs[1].node.numel(), 0)
+        self.assertEqual(
+            tuple(
+                sampler_inputs[1].positive_label_by_edge_types[positive_a_to_c].shape
+            ),
+            (0, 0),
+        )
+        self.assertEqual(
+            tuple(
+                sampler_inputs[1].negative_label_by_edge_types[negative_a_to_b].shape
+            ),
+            (0, 0),
+        )
+
+    def test_convert_graph_store_inputs_rejects_malformed_schema(self):
+        """Every server entry must agree with topology and tensor schema."""
+        positive_a_to_b = message_passing_to_positive_label(_A_TO_B)
+        negative_a_to_b = message_passing_to_negative_label(_A_TO_B)
+        valid = ABLPInputNodes(
+            anchor_nodes=torch.tensor([10]),
+            anchor_node_type=_A,
+            labels={
+                _A_TO_B: (
+                    torch.tensor([[12]]),
+                    torch.tensor([[13]]),
+                )
+            },
+        )
+        cases = {
+            "out-of-range rank": {
+                1: valid,
+            },
+            "wrong anchor type": {
+                0: ABLPInputNodes(
+                    anchor_nodes=torch.tensor([10]),
+                    anchor_node_type=_B,
+                    labels=valid.labels,
+                )
+            },
+            "non-integral anchors": {
+                0: ABLPInputNodes(
+                    anchor_nodes=torch.tensor([10.0]),
+                    anchor_node_type=_A,
+                    labels=valid.labels,
+                )
+            },
+            "wrong positive rows": {
+                0: ABLPInputNodes(
+                    anchor_nodes=torch.tensor([10]),
+                    anchor_node_type=_A,
+                    labels={
+                        _A_TO_B: (
+                            torch.tensor([[12], [14]]),
+                            torch.tensor([[13]]),
+                        )
+                    },
+                )
+            },
+            "missing topology negative": {
+                0: ABLPInputNodes(
+                    anchor_nodes=torch.tensor([10]),
+                    anchor_node_type=_A,
+                    labels={_A_TO_B: (torch.tensor([[12]]), None)},
+                )
+            },
+        }
+        for name, input_nodes in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    _convert_graph_store_ablp_inputs(
+                        input_nodes=input_nodes,
+                        num_storage_nodes=1,
+                        edge_types=[positive_a_to_b, negative_a_to_b],
+                        edge_dir="out",
+                    )
+        with self.assertRaises(ValueError):
+            _convert_graph_store_ablp_inputs(
+                input_nodes={0: valid},
+                num_storage_nodes=1,
+                edge_types=[positive_a_to_b],
+                edge_dir="out",
+            )
+        with self.assertRaises(ValueError):
+            _convert_graph_store_ablp_inputs(
+                input_nodes={
+                    0: valid,
+                    1: ABLPInputNodes(
+                        anchor_nodes=torch.tensor([11]),
+                        anchor_node_type=_A,
+                        labels={_A_TO_C: (torch.tensor([[20]]), None)},
+                    ),
+                },
+                num_storage_nodes=2,
+                edge_types=[positive_a_to_b, negative_a_to_b],
+                edge_dir="out",
+            )
 
     @parameterized.expand(
         [
@@ -1190,6 +1343,45 @@ class DistABLPLoaderTest(TestCase):
                 expected_negative_labels={
                     _A_TO_B: {10: torch.tensor([15, 16])},
                     _A_TO_C: {10: torch.tensor([24, 25])},
+                },
+            ),
+            param(
+                "negative edges on only one supervision type",
+                edge_dir="out",
+                edge_index={
+                    _A_TO_B: torch.tensor([[10, 10], [11, 12]]),
+                    message_passing_to_positive_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [13, 14]]
+                    ),
+                    message_passing_to_negative_label(_A_TO_B): torch.tensor(
+                        [[10, 10], [15, 16]]
+                    ),
+                    _A_TO_C: torch.tensor([[10, 10], [20, 21]]),
+                    message_passing_to_positive_label(_A_TO_C): torch.tensor(
+                        [[10, 10], [22, 23]]
+                    ),
+                },
+                supervision_edge_types=[_A_TO_B, _A_TO_C],
+                expected_node={
+                    _A: torch.tensor([10]),
+                    _B: torch.tensor([11, 12, 13, 14, 15, 16]),
+                    _C: torch.tensor([20, 21, 22, 23]),
+                },
+                expected_batch={
+                    _A: torch.tensor([10]),
+                    _B: None,
+                    _C: None,
+                },
+                expected_edges={
+                    _A_TO_B: (torch.tensor([10, 10]), torch.tensor([11, 12])),
+                    _A_TO_C: (torch.tensor([10, 10]), torch.tensor([20, 21])),
+                },
+                expected_positive_labels={
+                    _A_TO_B: {10: torch.tensor([13, 14])},
+                    _A_TO_C: {10: torch.tensor([22, 23])},
+                },
+                expected_negative_labels={
+                    _A_TO_B: {10: torch.tensor([15, 16])},
                 },
             ),
             # https://is.gd/mO5cpW

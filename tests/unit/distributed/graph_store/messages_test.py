@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import torch
 
 from gigl.distributed.graph_store.messages import (
@@ -5,7 +7,8 @@ from gigl.distributed.graph_store.messages import (
     FetchNodesRequest,
 )
 from gigl.distributed.graph_store.sharding import ServerSlice
-from tests.test_assets.distributed.test_dataset import USER, USER_TO_STORY
+from gigl.src.common.types.graph_data import EdgeType, Relation
+from tests.test_assets.distributed.test_dataset import STORY, USER, USER_TO_STORY
 from tests.test_assets.test_case import TestCase
 
 
@@ -33,13 +36,19 @@ class TestFetchNodesRequest(TestCase):
 class TestFetchABLPInputRequest(TestCase):
     def test_construction(self) -> None:
         """Request can be constructed with required fields."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
         request = FetchABLPInputRequest(
             split="train",
             node_type=USER,
-            supervision_edge_type=USER_TO_STORY,
+            supervision_edge_types=(USER_TO_STORY, user_rates_story),
         )
         self.assertEqual(request.split, "train")
+        self.assertEqual(
+            request.supervision_edge_types, (USER_TO_STORY, user_rates_story)
+        )
         self.assertIsNone(request.server_slice)
+        with self.assertRaises(FrozenInstanceError):
+            request.split = "test"  # ty: ignore[invalid-assignment]
 
     def test_with_server_slice(self) -> None:
         """Request can include a server slice."""
@@ -49,7 +58,7 @@ class TestFetchABLPInputRequest(TestCase):
         request = FetchABLPInputRequest(
             split="train",
             node_type=USER,
-            supervision_edge_type=USER_TO_STORY,
+            supervision_edge_types=(USER_TO_STORY,),
             server_slice=server_slice,
         )
         self.assertEqual(request.server_slice, server_slice)

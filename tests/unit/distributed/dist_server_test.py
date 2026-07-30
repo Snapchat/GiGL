@@ -13,7 +13,7 @@ from gigl.distributed.graph_store.messages import (
     RegisterBackendRequest,
 )
 from gigl.distributed.graph_store.sharding import ServerSlice
-from gigl.src.common.types.graph_data import Relation
+from gigl.src.common.types.graph_data import EdgeType, Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -380,13 +380,15 @@ class TestRemoteDataset(TestCase):
 
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
-                anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+                ablp_input = server.get_ablp_input(
                     FetchABLPInputRequest(
                         split=split,
                         node_type=USER,
-                        supervision_edge_type=USER_TO_STORY,
+                        supervision_edge_types=(USER_TO_STORY,),
                     )
                 )
+                anchor_nodes = ablp_input.anchor_nodes
+                pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
 
                 # Verify anchor nodes match expected users
                 self.assert_tensor_equality(
@@ -403,6 +405,70 @@ class TestRemoteDataset(TestCase):
                 expected_negative = [negative_labels[uid] for uid in expected_user_ids]
                 assert neg_labels is not None
                 self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
+
+    def test_get_ablp_input_with_multiple_supervision_edge_types(self) -> None:
+        """One server request returns all label types with per-type negatives."""
+        create_test_process_group()
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        labels_by_edge_type: dict[
+            EdgeType,
+            tuple[dict[int, list[int]], dict[int, list[int]] | None],
+        ] = {
+            USER_TO_STORY: (
+                {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3], 4: [4]},
+                {0: [4], 1: [3], 2: [2], 3: [1], 4: [0]},
+            ),
+            user_rates_story: (
+                {0: [4], 1: [3], 2: [2], 3: [1], 4: [0]},
+                None,
+            ),
+        }
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels=labels_by_edge_type[USER_TO_STORY][0],
+            negative_labels=labels_by_edge_type[USER_TO_STORY][1],
+            train_node_ids=[0, 1, 2],
+            val_node_ids=[3],
+            test_node_ids=[4],
+            edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+            labels_by_supervision_edge_type=labels_by_edge_type,
+        )
+        server = dist_server.DistServer(dataset)
+
+        result = server.get_ablp_input(
+            FetchABLPInputRequest(
+                split="train",
+                node_type=USER,
+                supervision_edge_types=(USER_TO_STORY, user_rates_story),
+            )
+        )
+
+        self.assert_tensor_equality(result.anchor_nodes, torch.tensor([0, 1, 2]))
+        self.assertEqual(list(result.labels), [USER_TO_STORY, user_rates_story])
+        positive_to, negative_to = result.labels[USER_TO_STORY]
+        self.assert_tensor_equality(
+            positive_to, torch.tensor([[0, 1], [1, 2], [2, 3]]), dim=1
+        )
+        assert negative_to is not None
+        self.assert_tensor_equality(negative_to, torch.tensor([[4], [3], [2]]))
+        positive_rates, negative_rates = result.labels[user_rates_story]
+        self.assert_tensor_equality(positive_rates, torch.tensor([[4], [3], [2]]))
+        self.assertIsNone(negative_rates)
+
+        for supervision_edge_types in (
+            (),
+            (USER_TO_STORY, USER_TO_STORY),
+            (EdgeType(STORY, Relation("to"), USER),),
+            (EdgeType(USER, Relation("missing"), STORY),),
+        ):
+            with self.subTest(supervision_edge_types=supervision_edge_types):
+                with self.assertRaises(ValueError):
+                    server.get_ablp_input(
+                        FetchABLPInputRequest(
+                            split="train",
+                            node_type=USER,
+                            supervision_edge_types=supervision_edge_types,
+                        )
+                    )
 
     def test_get_ablp_input_with_server_slicing(self) -> None:
         """Test get_ablp_input with server slices to verify sharding."""
@@ -434,11 +500,11 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Get training input for first half
-        anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
+        ablp_input_0 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
                 server_slice=ServerSlice(
                     server_rank=0, start_numerator=0, end_numerator=1, denominator=2
                 ),
@@ -446,16 +512,20 @@ class TestRemoteDataset(TestCase):
         )
 
         # Get training input for second half
-        anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
+        ablp_input_1 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
                 server_slice=ServerSlice(
                     server_rank=0, start_numerator=1, end_numerator=2, denominator=2
                 ),
             )
         )
+        anchor_nodes_0 = ablp_input_0.anchor_nodes
+        pos_labels_0, neg_labels_0 = ablp_input_0.labels[USER_TO_STORY]
+        anchor_nodes_1 = ablp_input_1.anchor_nodes
+        pos_labels_1, neg_labels_1 = ablp_input_1.labels[USER_TO_STORY]
 
         # Train nodes [0, 1, 2, 3] should be split across ranks
         rank_0_user_ids = [0, 1]
@@ -502,7 +572,7 @@ class TestRemoteDataset(TestCase):
                 FetchABLPInputRequest(
                     split="invalid",
                     node_type=USER,
-                    supervision_edge_type=USER_TO_STORY,
+                    supervision_edge_types=(USER_TO_STORY,),
                 )
             )
 
@@ -529,13 +599,15 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+        ablp_input = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
             )
         )
+        anchor_nodes = ablp_input.anchor_nodes
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
 
         # Verify train split returns the expected users
         self.assert_tensor_equality(anchor_nodes, torch.tensor(train_user_ids))
@@ -575,11 +647,11 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+        ablp_input = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
                 server_slice=ServerSlice(
                     server_rank=0,
                     start_numerator=1,
@@ -588,6 +660,8 @@ class TestRemoteDataset(TestCase):
                 ),
             )
         )
+        anchor_nodes = ablp_input.anchor_nodes
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
 
         self.assert_tensor_equality(anchor_nodes, torch.tensor([2, 3]))
         self.assert_tensor_equality(pos_labels, torch.tensor([[2, 3], [3, 4]]), dim=1)

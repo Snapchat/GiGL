@@ -94,7 +94,8 @@ class FetchABLPInputRequest:
     Args:
         split: The split of the dataset to get ABLP input from.
         node_type: The type of anchor nodes to retrieve.
-        supervision_edge_type: The edge type used for supervision.
+        supervision_edge_types: The registered sampling-orientation edge types
+            used for supervision.
         server_slice: An optional :class:`~gigl.distributed.graph_store.sharding.ServerSlice`
             describing the fraction of this server's data to return.
             When ``None``, all of the server's data is returned.
@@ -102,16 +103,20 @@ class FetchABLPInputRequest:
     Examples:
         Fetch training ABLP input without sharding:
 
-        >>> FetchABLPInputRequest(split="train", node_type="user", supervision_edge_type=("user", "to", "item"))
+        >>> FetchABLPInputRequest(
+        ...     split="train",
+        ...     node_type="user",
+        ...     supervision_edge_types=(("user", "to", "item"),),
+        ... )
 
         Fetch with a server slice:
 
         >>> FetchABLPInputRequest(split="train", node_type="user",
-        ...     supervision_edge_type=("user", "to", "item"),
+        ...     supervision_edge_types=(("user", "to", "item"),),
         ...     server_slice=ServerSlice(0, 0, 1, 2))
     """
 
     split: Union[Literal["train", "val", "test"], str]
     node_type: NodeType
-    supervision_edge_type: EdgeType
+    supervision_edge_types: tuple[EdgeType, ...]
     server_slice: Optional[ServerSlice] = None

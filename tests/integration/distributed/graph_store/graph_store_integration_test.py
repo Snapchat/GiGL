@@ -17,6 +17,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
@@ -42,6 +43,14 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.sampling import ABLPInputNodes
+from tests.test_assets.distributed.test_dataset import (
+    DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+    STORY,
+    STORY_TO_USER,
+    USER,
+    USER_TO_STORY,
+    create_heterogeneous_dataset_for_ablp,
+)
 from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import DEFAULT_TIMEOUT_SECONDS, TestCase
 
@@ -51,6 +60,38 @@ TEST_NUM_NEIGHBORS = [2, 2]
 TEST_PIN_MEMORY_DEVICE = torch.device("cpu")
 TEST_NUM_WORKERS = 2
 TEST_WORKER_CONCURRENCY = 2
+
+USER_RATES_STORY = EdgeType(USER, Relation("rates"), STORY)
+STORY_RATES_USER = EdgeType(STORY, Relation("rates"), USER)
+
+
+def _build_multi_supervision_ablp_dataset(rank: int, world_size: int) -> DistDataset:
+    """Build a tiny incoming graph with two objectives and mixed negatives."""
+    labels_by_edge_type: dict[
+        EdgeType,
+        tuple[dict[int, list[int]], Optional[dict[int, list[int]]]],
+    ] = {
+        USER_TO_STORY: (
+            {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3], 4: [4]},
+            {0: [4], 1: [3], 2: [2], 3: [1], 4: [0]},
+        ),
+        USER_RATES_STORY: (
+            {0: [4], 1: [3], 2: [2], 3: [1], 4: [0]},
+            None,
+        ),
+    }
+    return create_heterogeneous_dataset_for_ablp(
+        positive_labels=labels_by_edge_type[USER_TO_STORY][0],
+        negative_labels=labels_by_edge_type[USER_TO_STORY][1],
+        train_node_ids=[0, 1, 2],
+        val_node_ids=[3],
+        test_node_ids=[4],
+        edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        rank=rank,
+        world_size=world_size,
+        edge_dir="in",
+        labels_by_supervision_edge_type=labels_by_edge_type,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +367,81 @@ def _run_compute_train_tests(
 
     ablp_loader.shutdown()
     random_negative_loader.shutdown()
+    shutdown_compute_process()
+
+
+def _run_compute_multi_supervision_ablp_test(
+    client_rank: int,
+    cluster_info: GraphStoreInfo,
+    node_type: Optional[NodeType],
+) -> None:
+    """Exercise plural ABLP fetch and collation through real GraphStore RPC."""
+    assert node_type == USER
+    init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+    remote_dataset = RemoteDistDataset(
+        cluster_info=cluster_info,
+        local_rank=client_rank,
+    )
+
+    inputs = remote_dataset.fetch_ablp_input(
+        split="train",
+        rank=torch.distributed.get_rank(),
+        world_size=torch.distributed.get_world_size(),
+        anchor_node_type=USER,
+        supervision_edge_type=[USER_TO_STORY, USER_RATES_STORY],
+    )
+    _assert_ablp_input(cluster_info, inputs)
+    assert len(inputs) == 1
+    server_input = inputs[0]
+    assert list(server_input.labels) == [STORY_TO_USER, STORY_RATES_USER]
+    assert_tensor_equality(server_input.anchor_nodes, torch.tensor([0, 1, 2]))
+    positive_to, negative_to = server_input.labels[STORY_TO_USER]
+    assert_tensor_equality(positive_to, torch.tensor([[0, 1], [1, 2], [2, 3]]), dim=1)
+    assert negative_to is not None
+    assert_tensor_equality(negative_to, torch.tensor([[4], [3], [2]]))
+    positive_rates, negative_rates = server_input.labels[STORY_RATES_USER]
+    assert_tensor_equality(positive_rates, torch.tensor([[4], [3], [2]]))
+    assert negative_rates is None
+
+    loader = DistABLPLoader(
+        dataset=remote_dataset,
+        num_neighbors=TEST_NUM_NEIGHBORS,
+        input_nodes=inputs,
+        pin_memory_device=TEST_PIN_MEMORY_DEVICE,
+        num_workers=TEST_NUM_WORKERS,
+        worker_concurrency=TEST_WORKER_CONCURRENCY,
+        batch_size=TEST_BATCH_SIZE,
+        use_edge_index_output=True,
+    )
+    batches = list(loader)
+    assert len(batches) == 1
+    batch = batches[0]
+    assert isinstance(batch, HeteroData)
+    assert set(batch.y_positive) == {USER_TO_STORY, USER_RATES_STORY}
+    assert set(batch.y_negative) == {USER_TO_STORY}
+
+    def _global_pairs(
+        edge_type: EdgeType, label_edge_index: torch.Tensor
+    ) -> list[tuple[int, int]]:
+        anchors = batch[edge_type.src_node_type].node[label_edge_index[0]]
+        labels = batch[edge_type.dst_node_type].node[label_edge_index[1]]
+        return sorted(zip(anchors.tolist(), labels.tolist()))
+
+    assert _global_pairs(USER_TO_STORY, batch.y_positive[USER_TO_STORY]) == sorted(
+        [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2), (2, 3)]
+    )
+    assert _global_pairs(USER_RATES_STORY, batch.y_positive[USER_RATES_STORY]) == [
+        (0, 4),
+        (1, 3),
+        (2, 2),
+    ]
+    assert _global_pairs(USER_TO_STORY, batch.y_negative[USER_TO_STORY]) == [
+        (0, 4),
+        (1, 3),
+        (2, 2),
+    ]
+
+    loader.shutdown()
     shutdown_compute_process()
 
 
@@ -718,6 +834,8 @@ class ServerProcessArgs:
         num_server_sessions: Number of sequential server sessions to run
             (e.g. one per inference node type).
         splitter: Optional splitter for node anchor link or node splitting.
+        dataset_builder: Optional programmatic dataset builder for focused
+            integration fixtures.
     """
 
     cluster_info: GraphStoreInfo
@@ -726,6 +844,7 @@ class ServerProcessArgs:
     exception_dict: MutableMapping[str, str]
     num_server_sessions: int = 1
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
+    dataset_builder: Optional[Callable[[int, int], DistDataset]] = None
 
 
 def _run_storage_main_process(args: ServerProcessArgs) -> None:
@@ -759,12 +878,15 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
         )
 
         # 2. Build the dataset
-        dataset = build_storage_dataset(
-            task_config_uri=args.task_config_uri,
-            sample_edge_direction=args.sample_edge_direction,
-            splitter=args.splitter,
-            tf_record_uri_pattern=".*tfrecord",
-        )
+        if args.dataset_builder is None:
+            dataset = build_storage_dataset(
+                task_config_uri=args.task_config_uri,
+                sample_edge_direction=args.sample_edge_direction,
+                splitter=args.splitter,
+                tf_record_uri_pattern=".*tfrecord",
+            )
+        else:
+            dataset = args.dataset_builder(storage_rank, cluster_info.num_storage_nodes)
 
         # 3. Destroy the coordination process group before spawning server
         # subprocesses. The subprocess will create its own process group on the
@@ -890,6 +1012,7 @@ class GraphStoreIntegrationTest(TestCase):
         server_splitter: Optional[
             Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]
         ] = None,
+        server_dataset_builder: Optional[Callable[[int, int], DistDataset]] = None,
         num_server_sessions: int = 1,
     ) -> None:
         """Launch a graph store integration test with the given configuration.
@@ -953,6 +1076,7 @@ class GraphStoreIntegrationTest(TestCase):
                     sample_edge_direction="in",
                     exception_dict=exception_dict,
                     splitter=server_splitter,
+                    dataset_builder=server_dataset_builder,
                     num_server_sessions=num_server_sessions,
                 )
                 server_process = ctx.Process(
@@ -998,6 +1122,24 @@ class GraphStoreIntegrationTest(TestCase):
                 sampling_direction="in",
                 should_convert_labels_to_edges=True,
             ),
+        )
+
+    def test_multiple_supervision_edge_types_training(self):
+        """Real RPC preserves two incoming objectives and mixed negatives."""
+        task_config_uri = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ].frozen_gbml_config_uri
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=1,
+            num_compute_nodes=1,
+            num_processes_per_compute=1,
+        )
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=task_config_uri,
+            compute_target=_run_compute_multi_supervision_ablp_test,
+            node_type=USER,
+            server_dataset_builder=_build_multi_supervision_ablp_dataset,
         )
 
     def test_multiple_loaders_in_graph_store(self):
