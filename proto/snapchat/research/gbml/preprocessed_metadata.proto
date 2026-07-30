@@ -20,14 +20,14 @@ message PreprocessedMetadata{
   message FeatureQuantizationMetadata{
     // Field in output TFRecords that stores packed uint8 features.
     string packed_feature_key = 1;
-    // Original feature-vector indices stored in packed_feature_key.
+    // Original feature indices stored in packed_feature_key.
     repeated uint32 quantized_feature_indices = 2;
     // Quantization level bit-width
     uint32 bits = 3;
     // Stats required to dequantize features for the selected bit width.
     oneof state {
-      MultiBitQuantizationState multi_bit = 4;
-      SingleBitQuantizationState single_bit= 5;
+      MultiBitQuantizationState multi_bit_state = 4;
+      SingleBitQuantizationState single_bit_state = 5;
     }
   }
 
@@ -51,7 +51,7 @@ message PreprocessedMetadata{
     optional uint32 feature_dim = 8;
     // Contains categorical feature vocabularies
     string transform_fn_assets_uri = 9;
-    // Optional quantized node feature sidecar metadata.
+    // Optional quantized node feature metadata.
     FeatureQuantizationMetadata quantized_feature_metadata = 10;
   }
 

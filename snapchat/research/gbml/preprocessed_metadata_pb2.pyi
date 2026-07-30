@@ -60,31 +60,31 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         PACKED_FEATURE_KEY_FIELD_NUMBER: builtins.int
         QUANTIZED_FEATURE_INDICES_FIELD_NUMBER: builtins.int
         BITS_FIELD_NUMBER: builtins.int
-        MULTI_BIT_FIELD_NUMBER: builtins.int
-        SINGLE_BIT_FIELD_NUMBER: builtins.int
+        MULTI_BIT_STATE_FIELD_NUMBER: builtins.int
+        SINGLE_BIT_STATE_FIELD_NUMBER: builtins.int
         packed_feature_key: builtins.str
         """Field in output TFRecords that stores packed uint8 features."""
         @property
         def quantized_feature_indices(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.int]:
-            """Original feature-vector indices stored in packed_feature_key."""
+            """Original feature indices stored in packed_feature_key."""
         bits: builtins.int
         """Quantization level bit-width"""
         @property
-        def multi_bit(self) -> global___PreprocessedMetadata.MultiBitQuantizationState: ...
+        def multi_bit_state(self) -> global___PreprocessedMetadata.MultiBitQuantizationState: ...
         @property
-        def single_bit(self) -> global___PreprocessedMetadata.SingleBitQuantizationState: ...
+        def single_bit_state(self) -> global___PreprocessedMetadata.SingleBitQuantizationState: ...
         def __init__(
             self,
             *,
             packed_feature_key: builtins.str = ...,
             quantized_feature_indices: collections.abc.Iterable[builtins.int] | None = ...,
             bits: builtins.int = ...,
-            multi_bit: global___PreprocessedMetadata.MultiBitQuantizationState | None = ...,
-            single_bit: global___PreprocessedMetadata.SingleBitQuantizationState | None = ...,
+            multi_bit_state: global___PreprocessedMetadata.MultiBitQuantizationState | None = ...,
+            single_bit_state: global___PreprocessedMetadata.SingleBitQuantizationState | None = ...,
         ) -> None: ...
-        def HasField(self, field_name: typing_extensions.Literal["multi_bit", b"multi_bit", "single_bit", b"single_bit", "state", b"state"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "multi_bit", b"multi_bit", "packed_feature_key", b"packed_feature_key", "quantized_feature_indices", b"quantized_feature_indices", "single_bit", b"single_bit", "state", b"state"]) -> None: ...
-        def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["multi_bit", "single_bit"] | None: ...
+        def HasField(self, field_name: typing_extensions.Literal["multi_bit_state", b"multi_bit_state", "single_bit_state", b"single_bit_state", "state", b"state"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["bits", b"bits", "multi_bit_state", b"multi_bit_state", "packed_feature_key", b"packed_feature_key", "quantized_feature_indices", b"quantized_feature_indices", "single_bit_state", b"single_bit_state", "state", b"state"]) -> None: ...
+        def WhichOneof(self, oneof_group: typing_extensions.Literal["state", b"state"]) -> typing_extensions.Literal["multi_bit_state", "single_bit_state"] | None: ...
 
     class NodeMetadataOutput(google.protobuf.message.Message):
         """Houses metadata about node TFTransform output from DataPreprocessor."""
@@ -123,7 +123,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         """Contains categorical feature vocabularies"""
         @property
         def quantized_feature_metadata(self) -> global___PreprocessedMetadata.FeatureQuantizationMetadata:
-            """Optional quantized node feature sidecar metadata."""
+            """Optional quantized node feature metadata."""
         def __init__(
             self,
             *,

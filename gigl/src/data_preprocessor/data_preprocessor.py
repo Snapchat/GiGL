@@ -498,13 +498,13 @@ class DataPreprocessor:
                     bits=bits,
                 )
                 if bits == 1:
-                    centroid = quantized_feature_metadata_pb.centroid
-                    centroid.neg_mean = metadata["neg_mean"]
-                    centroid.pos_mean = metadata["pos_mean"]
+                    single_bit_state = quantized_feature_metadata_pb.single_bit_state
+                    single_bit_state.neg_mean = metadata["neg_mean"]
+                    single_bit_state.pos_mean = metadata["pos_mean"]
                 else:
-                    linear = quantized_feature_metadata_pb.linear
-                    linear.clip_min = metadata["clip_min"]
-                    linear.clip_max = metadata["clip_max"]
+                    multi_bit_state = quantized_feature_metadata_pb.multi_bit_state
+                    multi_bit_state.clip_min = metadata["clip_min"]
+                    multi_bit_state.clip_max = metadata["clip_max"]
                 node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
                     quantized_feature_metadata_pb
                 )

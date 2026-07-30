@@ -95,7 +95,7 @@ def _build_feature_quantization_metadata(
     feature_dim: int,
 ) -> FeatureQuantizationMetadata:
     state = quantized_metadata.WhichOneof("state")
-    expected_state = "centroid" if quantized_metadata.bits == 1 else "linear"
+    expected_state = "single_bit_state" if quantized_metadata.bits == 1 else "multi_bit_state"
     if state != expected_state:
         raise ValueError(
             f"Expected {expected_state} quantization state for {quantized_metadata.bits}-bit features."
@@ -103,11 +103,11 @@ def _build_feature_quantization_metadata(
 
     neg_mean = pos_mean = clip_min = clip_max = None
     if quantized_metadata.bits == 1:
-        neg_mean = quantized_metadata.centroid.neg_mean
-        pos_mean = quantized_metadata.centroid.pos_mean
+        neg_mean = quantized_metadata.single_bit_state.neg_mean
+        pos_mean = quantized_metadata.single_bit_state.pos_mean
     else:
-        clip_min = quantized_metadata.linear.clip_min
-        clip_max = quantized_metadata.linear.clip_max
+        clip_min = quantized_metadata.multi_bit_state.clip_min
+        clip_max = quantized_metadata.multi_bit_state.clip_max
     return FeatureQuantizationMetadata(
         bits=quantized_metadata.bits,
         feature_dim=feature_dim,
