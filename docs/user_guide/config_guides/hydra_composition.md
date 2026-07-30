@@ -24,7 +24,28 @@ configs/
 Keep primary files directly in the bundle root. GiGL does not search for a repository root or a directory named
 `configs`. Local configs retain their parent as the config root so they can select sibling fragments. GCS and HTTP
 primaries are downloaded to a temporary local file before composition; relative Defaults List entries are not downloaded
-with them, so remote primaries support only single-file composition.
+with them. Remote primaries can opt into an existing local config root as described below.
+
+## Remote primary with local shared configs
+
+GCS and HTTPS primaries can select shared configs installed in the runtime image by adding a Hydra search path:
+
+```yaml
+hydra:
+  searchpath:
+    - pkg://my_project.configs
+
+defaults:
+  - shared@_global_: common
+  - _self_
+```
+
+Prefer `pkg://` roots so the same config works across machines and containers. The referenced package and its YAML files
+must be installed in every environment that composes the primary. Hydra removes its own `hydra` metadata from the
+composed mapping before GiGL parses the protobuf.
+
+GiGL does not download Defaults List entries relative to a GCS prefix or HTTPS location. Without an explicit search
+path, a remote primary is composed as a standalone file.
 
 ## Task config example
 
@@ -95,5 +116,5 @@ and runner intentionally differ.
 ## Boundaries
 
 - GiGL does not consume Hydra command-line overrides, multirun, launchers, or output-directory behavior.
-- GCS and HTTP configs support single-file composition, but cannot select sibling config fragments.
+- GiGL does not automatically download config fragments next to a GCS or HTTPS primary.
 - Treat config bundle write access as trusted access. GiGL configs can reference importable classes and commands.

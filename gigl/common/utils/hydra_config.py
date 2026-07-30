@@ -30,20 +30,10 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
         ValueError: If the result is not a mapping.
         RuntimeError: If another Hydra application owns the global context.
     """
-    primary_path = Path(uri.uri).absolute()
-    if primary_path.is_symlink():
-        # Local staging creates this symlink. Follow only that hop so a source
-        # URI that is itself a symlink keeps its filename and config root.
-        symlink_target = primary_path.readlink()
-        primary_path = (
-            symlink_target
-            if symlink_target.is_absolute()
-            else primary_path.parent / symlink_target
-        )
-    primary_name = primary_path.name
+    primary_name = uri.get_basename()
     config_name = primary_name.rsplit(".", 1)[0]
 
-    config_root = primary_path.parent
+    config_root = Path(uri.uri).absolute().parent
 
     with _COMPOSE_LOCK:
         if GlobalHydra.instance().is_initialized():

@@ -440,8 +440,20 @@ class TestConfigValidationPerSGSBackends(TestCase):
     def test_downloads_remote_configs_before_composing(self, mock_load_file) -> None:
         task_uri = GcsUri("gs://test-configs/task.yaml")
         resource_uri = GcsUri("gs://test-configs/resource.yaml")
+        search_root = Path(self._temp_dir) / "remote_shared_configs"
+        (search_root / "task").mkdir(parents=True)
+        (search_root / "task" / "base.yaml").write_text(
+            "shared_config:\n  is_graph_directed: true\n"
+        )
         source_configs = {
-            task_uri.uri: "shared_config:\n  is_graph_directed: true\n",
+            task_uri.uri: (
+                "hydra:\n"
+                "  searchpath:\n"
+                f"    - file://{search_root}\n"
+                "defaults:\n"
+                "  - task@_global_: base\n"
+                "  - _self_\n"
+            ),
             resource_uri.uri: (
                 "shared_resource_config:\n"
                 "  common_compute_config:\n"
