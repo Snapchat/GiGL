@@ -39,18 +39,20 @@ class ProtoUtils:
         tfh = self.__file_loader.load_to_temp_file(file_uri_src=uri, delete=False)
         with open(tfh.name, "r") as file:
             raw_data = yaml.safe_load(file)
-        tfh.close()
-
-        if isinstance(raw_data, dict) and "defaults" in raw_data:
-            obj_dict = compose_yaml_config(uri=uri)
-        else:
             omega_conf_obj = OmegaConf.create(raw_data)
-            obj_dict = OmegaConf.to_object(omega_conf_obj)
+        tfh.close()
+        obj_dict = OmegaConf.to_object(omega_conf_obj)
         if not isinstance(obj_dict, dict):
             raise TypeError(
                 f"ProtoUtils.read_proto_from_yaml expected a mapping at the YAML root for "
                 f"{uri}, got {type(obj_dict).__name__}."
             )
+        proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
+        return proto
+
+    def compose_proto_from_yaml(self, uri: LocalUri, proto_cls: Type[T]) -> T:
+        """Compose a local YAML config with Hydra and parse it as a protobuf."""
+        obj_dict = compose_yaml_config(uri=uri)
         proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
         return proto
 

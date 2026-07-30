@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from typing import cast
 from unittest.mock import patch
 
 from absl.testing import absltest
@@ -110,7 +111,7 @@ class ProtoUtilsTest(TestCase):
                 "isGraphDirected: true\n"
             )
 
-            task_config = self.proto_utils.read_proto_from_yaml(
+            task_config = self.proto_utils.compose_proto_from_yaml(
                 uri=LocalUri(config_root / "task.yaml"),
                 proto_cls=gbml_config_pb2.GbmlConfig,
             )
@@ -137,7 +138,7 @@ class ProtoUtilsTest(TestCase):
                 "  temp_regional_assets_bucket: gs://example-bucket\n"
             )
 
-            resource_config = self.proto_utils.read_proto_from_yaml(
+            resource_config = self.proto_utils.compose_proto_from_yaml(
                 uri=LocalUri(config_root / "resource.yaml"),
                 proto_cls=GiglResourceConfig,
             )
@@ -147,7 +148,7 @@ class ProtoUtilsTest(TestCase):
                 "example-project",
             )
 
-    def test_defaults_enable_composition_for_any_proto(self):
+    def test_can_compose_any_proto(self):
         with TemporaryDirectory() as temp_directory:
             config_root = Path(temp_directory)
             (config_root / "compute").mkdir()
@@ -159,7 +160,7 @@ class ProtoUtilsTest(TestCase):
                 "project: example-project\nregion: us-central1\n"
             )
 
-            shared_resource_config = self.proto_utils.read_proto_from_yaml(
+            shared_resource_config = self.proto_utils.compose_proto_from_yaml(
                 uri=LocalUri(config_path),
                 proto_cls=SharedResourceConfig,
             )
@@ -226,7 +227,7 @@ class ProtoUtilsTest(TestCase):
                 'run_name: "${now:%Y%m%d}"\n'
             )
 
-            resource_config = self.proto_utils.read_proto_from_yaml(
+            resource_config = self.proto_utils.compose_proto_from_yaml(
                 uri=LocalUri(config_path),
                 proto_cls=GiglResourceConfig,
             )
@@ -249,7 +250,7 @@ class ProtoUtilsTest(TestCase):
             )
 
             with patch.dict(os.environ, {"PROJECT_ID": "example-project"}):
-                resource_config = self.proto_utils.read_proto_from_yaml(
+                resource_config = self.proto_utils.compose_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
@@ -281,7 +282,7 @@ class ProtoUtilsTest(TestCase):
             )
 
             with patch.dict(os.environ, {"RESOURCE_PROFILE": "local"}):
-                resource_config = self.proto_utils.read_proto_from_yaml(
+                resource_config = self.proto_utils.compose_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
@@ -297,7 +298,7 @@ class ProtoUtilsTest(TestCase):
             config_path.write_text("defaults:\n  - _self_\n")
 
             with self.assertRaises(ValueError):
-                self.proto_utils.read_proto_from_yaml(
+                self.proto_utils.compose_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=gbml_config_pb2.GbmlConfig,
                 )
@@ -307,7 +308,13 @@ class ProtoUtilsTest(TestCase):
             TypeError,
             "Hydra composition is not supported for GcsUri",
         ):
-            compose_yaml_config(GcsUri("gs://example-bucket/configs/task.yaml"))
+            self.proto_utils.compose_proto_from_yaml(
+                cast(
+                    LocalUri,
+                    GcsUri("gs://example-bucket/configs/task.yaml"),
+                ),
+                gbml_config_pb2.GbmlConfig,
+            )
 
     def test_composition_is_thread_safe(self):
         with TemporaryDirectory() as temp_directory:
@@ -324,7 +331,7 @@ class ProtoUtilsTest(TestCase):
             def read_config(_: int) -> bool:
                 return (
                     ProtoUtils()
-                    .read_proto_from_yaml(
+                    .compose_proto_from_yaml(
                         uri=LocalUri(config_path),
                         proto_cls=gbml_config_pb2.GbmlConfig,
                     )
@@ -347,7 +354,7 @@ class ProtoUtilsTest(TestCase):
                 version_base="1.3",
             ):
                 with self.assertRaises(RuntimeError):
-                    self.proto_utils.read_proto_from_yaml(
+                    self.proto_utils.compose_proto_from_yaml(
                         uri=LocalUri(config_path),
                         proto_cls=gbml_config_pb2.GbmlConfig,
                     )

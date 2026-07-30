@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from gigl.common import GcsUri, Uri, UriFactory
+from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils, proto_to_yaml
@@ -362,14 +362,30 @@ def resolve_configs(
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig]:
     """Resolve task and resource configs into self-contained protobufs."""
     proto_utils = ProtoUtils()
-    task_config = proto_utils.read_proto_from_yaml(
-        uri=task_config_uri,
-        proto_cls=gbml_config_pb2.GbmlConfig,
-    )
-    resource_config = proto_utils.read_proto_from_yaml(
-        uri=resource_config_uri,
-        proto_cls=GiglResourceConfig,
-    )
+    if isinstance(
+        task_config_uri, LocalUri
+    ) and task_config_uri.get_basename().endswith(".yaml"):
+        task_config = proto_utils.compose_proto_from_yaml(
+            uri=task_config_uri,
+            proto_cls=gbml_config_pb2.GbmlConfig,
+        )
+    else:
+        task_config = proto_utils.read_proto_from_yaml(
+            uri=task_config_uri,
+            proto_cls=gbml_config_pb2.GbmlConfig,
+        )
+    if isinstance(
+        resource_config_uri, LocalUri
+    ) and resource_config_uri.get_basename().endswith(".yaml"):
+        resource_config = proto_utils.compose_proto_from_yaml(
+            uri=resource_config_uri,
+            proto_cls=GiglResourceConfig,
+        )
+    else:
+        resource_config = proto_utils.read_proto_from_yaml(
+            uri=resource_config_uri,
+            proto_cls=GiglResourceConfig,
+        )
     resource_config.shared_resource_config.CopyFrom(
         GiglResourceConfigWrapper(resource_config).shared_resource_config
     )

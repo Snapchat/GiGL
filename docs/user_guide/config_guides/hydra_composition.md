@@ -1,7 +1,9 @@
 # Composing task and resource configs with Hydra
 
-GiGL protobuf YAML configs can opt into [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding
-a top-level `defaults` list. Configs without `defaults` continue through the existing YAML and OmegaConf loader.
+Local task and resource configs can use [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding
+a top-level `defaults` list. ConfigValidator composes these source configs before publishing plain YAML snapshots.
+`ProtoUtils.read_proto_from_yaml` remains the URI-agnostic, non-composing reader; `ProtoUtils.compose_proto_from_yaml`
+is the explicit local-only composition API.
 
 ## Config root
 
@@ -59,10 +61,10 @@ common_compute_config:
   temp_regional_assets_bucket: gs://example-bucket
 ```
 
-Resource config is read once before pipeline submission to select the project, region, service account, and staging
-bucket. ConfigValidator resolves it again inside the pipeline, and that validation-time result becomes the resource
-config used by downstream components. Resolvers such as `now`, `git_hash`, and `oc.env` are supported; environment-based
-resolvers must be available wherever the source config is read.
+KFP submission composes a local resource source once to select the project, region, service account, and staging bucket.
+ConfigValidator composes it again inside the pipeline, and that validation-time result becomes the resource config used
+by downstream components. Resolvers such as `now`, `git_hash`, and `oc.env` are supported; environment-based resolvers
+must be available wherever the source config is composed.
 
 ## Pipeline behavior
 
