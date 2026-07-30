@@ -71,4 +71,11 @@ class Logger(logging.LoggerAdapter):
         return msg, kwargs
 
     def __getattr__(self, name: str):
-        return getattr(self._logger, name)
+        # Read ``logger`` straight from ``__dict__`` to avoid re-entering
+        # ``__getattr__`` (which only runs on failed lookups) and recursing
+        # forever before the wrapped logger is set.
+        try:
+            logger = self.__dict__["logger"]
+        except KeyError:
+            raise AttributeError(name) from None
+        return getattr(logger, name)

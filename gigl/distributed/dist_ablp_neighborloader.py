@@ -39,6 +39,7 @@ from gigl.distributed.utils.neighborloader import (
     shard_nodes_by_process,
     strip_label_edges,
 )
+from gigl.distributed.utils.sampling_errors import raise_if_sampling_error
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -366,6 +367,7 @@ class DistABLPLoader(BaseDistLoader):
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
+                channel_name=f"ablp_channel_{runtime.rank}_of_{runtime.world_size}",
             )
 
         # Call base class — handles metadata storage and connection initialization
@@ -657,8 +659,26 @@ class DistABLPLoader(BaseDistLoader):
         )
 
         # Extract supervision edge types and derive label edge types from the
-        # ABLPInputNodes.labels dict (keyed by supervision edge type).
+        # ABLPInputNodes.labels dict (keyed by supervision edge type). The caller always
+        # provides supervision edge types in outward form
+        # (anchor_node_type, relation, supervision_node_type), matching taskMetadata.
+        edge_dir = dataset.fetch_edge_dir()
         self._supervision_edge_types = list(first_input.labels.keys())
+        if not is_homogeneous_with_labeled_edge_type:
+            for supervision_edge_type in self._supervision_edge_types:
+                assert supervision_edge_type[0] == input_type, (
+                    f"Label EdgeType are currently expected to be provided in outward edge direction as tuple "
+                    f"(`anchor_node_type`,`relation`,`supervision_node_type`), got supervision edge type "
+                    f"{supervision_edge_type} with anchor node type {input_type}"
+                )
+        # When the dataset is in-sampled the stored label edges are reversed relative to the
+        # outward supervision edge, so we reverse before deriving the stored label edge types.
+        # This mirrors the colocated loader's handling in `_setup_for_colocated`.
+        if edge_dir == "in":
+            self._supervision_edge_types = [
+                reverse_edge_type(supervision_edge_type)
+                for supervision_edge_type in self._supervision_edge_types
+            ]
         has_negatives = False
         for ablp_input in input_nodes.values():
             for maybe_negative_labels in ablp_input.labels.values():
@@ -698,10 +718,17 @@ class DistABLPLoader(BaseDistLoader):
             if server_rank in input_nodes:
                 ablp_input_nodes = input_nodes[server_rank]
                 anchors = ablp_input_nodes.anchor_nodes
-                for supervision_edge_type, (
+                for raw_supervision_edge_type, (
                     positive_labels,
                     negative_labels,
                 ) in ablp_input_nodes.labels.items():
+                    # Match the edge_dir-aware reversal applied to self._supervision_edge_types
+                    # above, so the label edge type keys here agree with the empty-server branch.
+                    supervision_edge_type = (
+                        reverse_edge_type(raw_supervision_edge_type)
+                        if edge_dir == "in"
+                        else raw_supervision_edge_type
+                    )
                     positive_label_by_edge_type[
                         message_passing_to_positive_label(supervision_edge_type)
                     ] = positive_labels
@@ -745,7 +772,7 @@ class DistABLPLoader(BaseDistLoader):
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
                 node_quantization_metadata=None,  # TODO: Add quantization for graph store mode
-                edge_dir=dataset.fetch_edge_dir(),
+                edge_dir=edge_dir,
             ),
             backend_key,
         )
@@ -835,6 +862,10 @@ class DistABLPLoader(BaseDistLoader):
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        # A sampling worker that failed forwards a poison-pill message instead of
+        # a batch; surface it as a RuntimeError with the worker traceback before
+        # doing any parsing that would choke on the sentinel payload.
+        raise_if_sampling_error(msg)
         # extract_metadata separates #META. keys from the message to work
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
         # pulls out labels by prefix.
