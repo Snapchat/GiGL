@@ -95,7 +95,9 @@ def _build_feature_quantization_metadata(
     feature_dim: int,
 ) -> FeatureQuantizationMetadata:
     state = quantized_metadata.WhichOneof("state")
-    expected_state = "single_bit_state" if quantized_metadata.bits == 1 else "multi_bit_state"
+    expected_state = (
+        "single_bit_state" if quantized_metadata.bits == 1 else "multi_bit_state"
+    )
     if state != expected_state:
         raise ValueError(
             f"Expected {expected_state} quantization state for {quantized_metadata.bits}-bit features."

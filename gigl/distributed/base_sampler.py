@@ -456,6 +456,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 futs["nfeats"] = wrap_torch_future(
                     self.dist_node_feature.async_get(output.node)
                 )
+            if self.dist_node_quantized_feature is not None:
                 futs[f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"] = wrap_torch_future(
                     self.dist_node_quantized_feature.async_get(output.node)
                 )
