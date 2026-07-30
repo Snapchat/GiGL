@@ -162,10 +162,12 @@ private:
 // Helper function for draining several independent channel states for one
 // typed-PPR iteration.
 //
-// This is the typed wrapper around PPRForwardPush::drainQueue(): it drains each
-// channel state, records every channel that still needs pushResiduals(), and
-// unions fetchable frontier nodes by edge type so Python can issue one shared
-// distributed neighbor fetch for duplicate channel requests.
+// This is the typed wrapper around PPRForwardPush::drainQueue(): it drains the
+// independent channel states, records every channel that still needs
+// pushResiduals(), and unions fetchable frontier nodes by edge type so Python
+// can issue one shared distributed neighbor fetch for duplicate channel
+// requests. Channel drains may run concurrently; the result merge happens in
+// channel order to keep the returned channel-index lists deterministic.
 //
 // Inputs:
 //   states: One PPRForwardPush per typed channel. Each state is mutated by its
