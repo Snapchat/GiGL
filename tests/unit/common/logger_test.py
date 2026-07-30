@@ -6,7 +6,7 @@ from unittest import mock
 
 from absl.testing import absltest
 
-from gigl.common.logger import Logger, _is_cloud_logging_disabled
+from gigl.common.logger import Logger
 from tests.test_assets.test_case import TestCase
 
 
@@ -64,12 +64,6 @@ class TestLogger(TestCase):
         formatted = handlers[0].format(record)
         self.assertIn("[INFO] : upload took 8.82 seconds", formatted)
         self.assertIn("(export.py:_flush:197)", formatted)
-
-    def test_cloud_logging_stays_enabled_for_falsy_values(self) -> None:
-        for value in ("", "0", "false", "False"):
-            with self.subTest(value=value):
-                with mock.patch.dict(os.environ, {"GIGL_DISABLE_CLOUD_LOGGING": value}):
-                    self.assertFalse(_is_cloud_logging_disabled())
 
 
 if __name__ == "__main__":

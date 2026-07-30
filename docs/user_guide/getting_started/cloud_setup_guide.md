@@ -152,7 +152,7 @@ each one as a single-line JSON envelope. To get the plain console format instead
 export GIGL_DISABLE_CLOUD_LOGGING="1"
 ```
 
-Any value other than an empty string, `0`, or `false` disables cloud logging.
+`1` and `true` (case-insensitive) disable cloud logging; anything else leaves it on.
 
 This is worth setting on processes whose stdout is relayed by another system before it reaches Cloud Logging. Ray is the
 motivating case: it prefixes each worker line it forwards to the driver with `(RayTrainWorker pid=...)`, which makes the

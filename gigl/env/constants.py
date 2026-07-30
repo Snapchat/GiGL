@@ -25,6 +25,7 @@ GIGL_COMPONENT_ENV_KEY: Final[str] = "GIGL_COMPONENT"
 GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: Final[str] = "GIGL_BIGQUERY_QUOTA_PROJECT"
 GIGL_DISABLE_CLOUD_LOGGING_ENV_KEY: Final[str] = "GIGL_DISABLE_CLOUD_LOGGING"
 GIGL_ENABLE_PERF_MONITORING: Final[str] = "GIGL_ENABLE_PERF_MONITORING"
+GIGL_DEBUG: Final[str] = "GIGL_DEBUG"
 
 
 def read_resource_config_uri_from_env() -> Optional[str]:
@@ -34,3 +35,8 @@ def read_resource_config_uri_from_env() -> Optional[str]:
         The URI string if the variable is set, else ``None``.
     """
     return os.environ.get(GIGL_RESOURCE_CONFIG_URI_ENV_KEY)
+
+
+def is_env_flag_enabled(env_var_name: str) -> bool:
+    """Parses an environment variable and returns True iff the variable is set to '1' or 'True' (case-insensitive)."""
+    return os.environ.get(env_var_name, "").strip().lower() in ("1", "true")
