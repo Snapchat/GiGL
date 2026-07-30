@@ -3,13 +3,13 @@
 Task and resource configs can use [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding a
 top-level `defaults` list. ConfigValidator composes every source config before publishing plain YAML snapshots.
 `ProtoUtils.read_proto_from_yaml` remains the URI-agnostic, non-composing reader; `ProtoUtils.compose_proto_from_yaml`
-is the explicit local-only composition API.
+is the URI-agnostic composition API.
 
 ## Config root
 
-The primary file's parent directory is its Hydra config root. Composed primary files and selected fragments must use
-Hydra's `.yaml` extension. Plain legacy `.yml` files remain supported by the non-composing reader, but ConfigValidator
-inputs must use `.yaml`.
+The primary file's parent directory is its Hydra config root. Local composed primary files and selected fragments must
+use Hydra's `.yaml` extension. Plain legacy `.yml` files remain supported by the non-composing reader. Remote primaries
+are staged with a `.yaml` extension before composition.
 
 ```text
 configs/
@@ -22,9 +22,9 @@ configs/
 ```
 
 Keep primary files directly in the bundle root. GiGL does not search for a repository root or a directory named
-`configs`. Defaults List composition currently requires a local config bundle. ConfigValidator downloads GCS and HTTP
-primaries to a temporary local file before composing them, so remote primaries remain supported only as plain,
-single-file YAML.
+`configs`. Local configs compose in place so they can select sibling fragments. GCS and HTTP primaries are downloaded to
+a temporary local file before composition; relative Defaults List entries are not downloaded with them, so remote
+primaries support only single-file composition.
 
 ## Task config example
 
@@ -95,5 +95,5 @@ and runner intentionally differ.
 ## Boundaries
 
 - GiGL does not consume Hydra command-line overrides, multirun, launchers, or output-directory behavior.
-- GCS and HTTP configs remain supported only when they are plain, single-file YAML.
+- GCS and HTTP configs support single-file composition, but cannot select sibling config fragments.
 - Treat config bundle write access as trusted access. GiGL configs can reference importable classes and commands.

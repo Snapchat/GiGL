@@ -436,7 +436,7 @@ class TestConfigValidationPerSGSBackends(TestCase):
         self.assertEqual(materialized_task_config, task_config)
         self.assertEqual(materialized_resource_config, resource_config)
 
-    @patch("gigl.src.validation_check.config_validator.FileLoader.load_file")
+    @patch("gigl.common.utils.proto_utils.FileLoader.load_file")
     def test_downloads_remote_configs_before_composing(self, mock_load_file) -> None:
         task_uri = GcsUri("gs://test-configs/task.yaml")
         resource_uri = GcsUri("gs://test-configs/resource.yaml")

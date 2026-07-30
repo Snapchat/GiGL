@@ -50,9 +50,24 @@ class ProtoUtils:
         proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
         return proto
 
-    def compose_proto_from_yaml(self, uri: LocalUri, proto_cls: Type[T]) -> T:
-        """Compose a local YAML config with Hydra and parse it as a protobuf."""
-        obj_dict = compose_yaml_config(uri=uri)
+    def compose_proto_from_yaml(self, uri: Uri, proto_cls: Type[T]) -> T:
+        """Compose a YAML config with Hydra and parse it as a protobuf.
+
+        Remote URIs are downloaded as a single primary config; relative Defaults
+        List entries are not fetched.
+        """
+        if isinstance(uri, LocalUri):
+            local_uri = uri
+            obj_dict = compose_yaml_config(uri=local_uri)
+        else:
+            with NamedTemporaryFile(suffix=".yaml") as temp_file:
+                local_uri = LocalUri(temp_file.name)
+                self.__file_loader.load_file(
+                    file_uri_src=uri,
+                    file_uri_dst=local_uri,
+                    should_create_symlinks_if_possible=False,
+                )
+                obj_dict = compose_yaml_config(uri=local_uri)
         proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
         return proto
 
