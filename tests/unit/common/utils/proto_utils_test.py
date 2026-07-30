@@ -7,13 +7,18 @@ from unittest.mock import patch
 
 from absl.testing import absltest
 from hydra import initialize_config_dir
+from hydra.errors import MissingConfigException
+from omegaconf import OmegaConf
 
 from gigl.common import GcsUri, LocalUri
 from gigl.common.logger import Logger
 from gigl.common.utils.hydra_config import compose_yaml_config
 from gigl.common.utils.proto_utils import ProtoUtils
 from snapchat.research.gbml import gbml_config_pb2
-from snapchat.research.gbml.gigl_resource_config_pb2 import GiglResourceConfig
+from snapchat.research.gbml.gigl_resource_config_pb2 import (
+    GiglResourceConfig,
+    SharedResourceConfig,
+)
 from tests.test_assets.test_case import TestCase
 
 logger = Logger()
@@ -139,6 +144,28 @@ class ProtoUtilsTest(TestCase):
 
             self.assertEqual(
                 resource_config.shared_resource_config.common_compute_config.project,
+                "example-project",
+            )
+
+    def test_defaults_enable_composition_for_any_proto(self):
+        with TemporaryDirectory() as temp_directory:
+            config_root = Path(temp_directory)
+            (config_root / "compute").mkdir()
+            config_path = config_root / "shared_resource.yaml"
+            config_path.write_text(
+                "defaults:\n  - compute@common_compute_config: local\n  - _self_\n"
+            )
+            (config_root / "compute" / "local.yaml").write_text(
+                "project: example-project\nregion: us-central1\n"
+            )
+
+            shared_resource_config = self.proto_utils.read_proto_from_yaml(
+                uri=LocalUri(config_path),
+                proto_cls=SharedResourceConfig,
+            )
+
+            self.assertEqual(
+                shared_resource_config.common_compute_config.project,
                 "example-project",
             )
 
@@ -324,6 +351,17 @@ class ProtoUtilsTest(TestCase):
                         uri=LocalUri(config_path),
                         proto_cls=gbml_config_pb2.GbmlConfig,
                     )
+
+    def test_composition_restores_gigl_resolvers_after_failure(self):
+        with TemporaryDirectory() as temp_directory:
+            config_path = Path(temp_directory) / "task.yaml"
+            config_path.write_text("defaults:\n  - missing\n")
+
+            with self.assertRaises(MissingConfigException):
+                compose_yaml_config(LocalUri(config_path))
+
+            config = OmegaConf.create({"tomorrow": "${now:%Y-%m-%d,days+1}"})
+            self.assertRegex(config.tomorrow, r"\d{4}-\d{2}-\d{2}")
 
 
 if __name__ == "__main__":

@@ -65,8 +65,11 @@ class TestExampleNotebooks(unittest.TestCase):
         logger.info(f"Using GCS URI: {gcs_uri}")
         # Upload a self-contained snapshot rather than only the primary source
         # file, which may depend on sibling Hydra config fragments.
+        resource_config.resource_config.shared_resource_config.CopyFrom(
+            resource_config.shared_resource_config
+        )
         ProtoUtils().write_proto_to_yaml(
-            proto=resource_config.get_resolved_resource_config(),
+            proto=resource_config.resource_config,
             uri=gcs_uri,
         )
         self._notebooks = [

@@ -16,11 +16,6 @@ logger = Logger()
 
 T = TypeVar("T", bound=message.Message)
 
-_HYDRA_PROTO_TYPES = {
-    "snapchat.research.gbml.GbmlConfig",
-    "snapchat.research.gbml.GiglResourceConfig",
-}
-
 
 def proto_to_yaml(proto: message.Message) -> str:
     """Serialize a protobuf message to canonical YAML.
@@ -45,13 +40,8 @@ class ProtoUtils:
         with open(tfh.name, "r") as file:
             raw_data = yaml.safe_load(file)
         tfh.close()
-        proto_type = proto_cls.DESCRIPTOR.full_name
 
-        if (
-            isinstance(raw_data, dict)
-            and "defaults" in raw_data
-            and proto_type in _HYDRA_PROTO_TYPES
-        ):
+        if isinstance(raw_data, dict) and "defaults" in raw_data:
             obj_dict = compose_yaml_config(uri=uri)
         else:
             omega_conf_obj = OmegaConf.create(raw_data)

@@ -1,7 +1,7 @@
 # Composing task and resource configs with Hydra
 
-GiGL task and resource configs can opt into [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by
-adding a top-level `defaults` list. Configs without `defaults` continue through the existing YAML and OmegaConf loader.
+GiGL protobuf YAML configs can opt into [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding
+a top-level `defaults` list. Configs without `defaults` continue through the existing YAML and OmegaConf loader.
 
 ## Config root
 

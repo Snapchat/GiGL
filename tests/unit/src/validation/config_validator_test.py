@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import google.protobuf.message
@@ -13,6 +14,7 @@ from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.validation_check.config_validator import (
     kfp_validation_checks,
     materialize_resolved_configs,
+    resolve_configs,
 )
 from snapchat.research.gbml import (
     gbml_config_pb2,
@@ -356,30 +358,83 @@ class TestConfigValidationPerSGSBackends(TestCase):
             )
 
     @patch("gigl.src.validation_check.config_validator.GcsUtils")
-    def test_materializes_both_resolved_configs(self, mock_gcs_utils) -> None:
-        task_config = _create_valid_live_subgraph_sampling_task_config()
-        resource_config = _create_valid_live_subgraph_sampling_resource_config()
+    def test_composes_and_materializes_both_configs(self, mock_gcs_utils) -> None:
+        config_root = Path(self._temp_dir) / "composed"
+        (config_root / "task").mkdir(parents=True)
+        (config_root / "resource").mkdir()
 
+        task_config_path = config_root / "task_config.yaml"
+        task_config_path.write_text("defaults:\n  - task@_global_: base\n  - _self_\n")
+        (config_root / "task" / "base.yaml").write_text(
+            "graph_metadata:\n"
+            "  node_types: [paper]\n"
+            "shared_config:\n"
+            "  is_graph_directed: true\n"
+        )
+
+        shared_resource_config_path = config_root / "shared_resource_config.yaml"
+        shared_resource_config_path.write_text(
+            "common_compute_config:\n"
+            "  project: ${oc.env:CONFIG_VALIDATOR_TEST_PROJECT}\n"
+            "  region: us-central1\n"
+            "  temp_regional_assets_bucket: gs://test-temp-regional\n"
+        )
+        resource_config_path = config_root / "resource_config.yaml"
+        resource_config_path.write_text(
+            "defaults:\n  - resource@_global_: base\n  - _self_\n"
+        )
+        (config_root / "resource" / "base.yaml").write_text(
+            f"shared_resource_config_uri: {shared_resource_config_path}\n"
+        )
+
+        with patch.dict(
+            os.environ,
+            {"CONFIG_VALIDATOR_TEST_PROJECT": "composed-project"},
+        ):
+            task_config, resource_config = resolve_configs(
+                task_config_uri=UriFactory.create_uri(str(task_config_path)),
+                resource_config_uri=UriFactory.create_uri(str(resource_config_path)),
+            )
+
+        self.assertTrue(task_config.shared_config.is_graph_directed)
+        self.assertEqual(
+            resource_config.WhichOneof("shared_resource"),
+            "shared_resource_config",
+        )
+        self.assertEqual(
+            resource_config.shared_resource_config.common_compute_config.project,
+            "composed-project",
+        )
+
+        snapshot_directory = Path(self._temp_dir) / "snapshots"
+        snapshot_directory.mkdir()
+
+        def write_snapshot(gcs_path, content):
+            (snapshot_directory / gcs_path.get_basename()).write_text(content)
+
+        mock_gcs_utils.return_value.upload_from_string.side_effect = write_snapshot
         task_uri, resource_uri = materialize_resolved_configs(
             job_name="config-resolution-test",
             task_config=task_config,
             resource_config=resource_config,
         )
 
-        self.assertEqual(
-            task_uri.uri,
-            "gs://test-temp-regional/config-resolution-test/config_validator/"
-            "resolved_task_config.yaml",
+        self.assertEqual(task_uri.get_basename(), "resolved_task_config.yaml")
+        self.assertEqual(resource_uri.get_basename(), "resolved_resource_config.yaml")
+        materialized_task_config = self._proto_utils.read_proto_from_yaml(
+            UriFactory.create_uri(
+                str(snapshot_directory / "resolved_task_config.yaml")
+            ),
+            gbml_config_pb2.GbmlConfig,
         )
-        self.assertEqual(
-            resource_uri.uri,
-            "gs://test-temp-regional/config-resolution-test/config_validator/"
-            "resolved_resource_config.yaml",
+        materialized_resource_config = self._proto_utils.read_proto_from_yaml(
+            UriFactory.create_uri(
+                str(snapshot_directory / "resolved_resource_config.yaml")
+            ),
+            gigl_resource_config_pb2.GiglResourceConfig,
         )
-        self.assertEqual(
-            mock_gcs_utils.return_value.upload_from_string.call_count,
-            2,
-        )
+        self.assertEqual(materialized_task_config, task_config)
+        self.assertEqual(materialized_resource_config, resource_config)
 
 
 if __name__ == "__main__":

@@ -366,13 +366,13 @@ def resolve_configs(
         uri=task_config_uri,
         proto_cls=gbml_config_pb2.GbmlConfig,
     )
-    source_resource_config_wrapper = GiglResourceConfigWrapper(
-        proto_utils.read_proto_from_yaml(
-            uri=resource_config_uri,
-            proto_cls=GiglResourceConfig,
-        )
+    resource_config = proto_utils.read_proto_from_yaml(
+        uri=resource_config_uri,
+        proto_cls=GiglResourceConfig,
     )
-    resource_config = source_resource_config_wrapper.get_resolved_resource_config()
+    resource_config.shared_resource_config.CopyFrom(
+        GiglResourceConfigWrapper(resource_config).shared_resource_config
+    )
     return task_config, resource_config
 
 
