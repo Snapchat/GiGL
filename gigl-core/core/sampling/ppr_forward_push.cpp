@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <future>
 #include <optional>
 #include <tuple>
 #include <unordered_map>
@@ -163,14 +164,26 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
     // relation-specific fetches that must remain separate.
     std::unordered_map<int32_t, std::unordered_set<int64_t>> unionedSourceNodeIdsByEdgeTypeId;
 
-    // TODO: If benchmarking shows typed PPR is materially slower than regular
-    // heterogeneous PPR because of this drain loop, evaluate parallelizing
-    // channels with per-thread frontier maps and a deterministic merge into
-    // queueDrainResult.
-    for (size_t channelIndex = 0; channelIndex < states.size(); ++channelIndex) {
-        PPRForwardPush* state = states[channelIndex];
+    std::vector<std::optional<std::unordered_map<int32_t, torch::Tensor>>> frontiersByChannel;
+    frontiersByChannel.resize(states.size());
+    if (states.size() == 1) {
+        frontiersByChannel[0] = states[0]->drainQueue();
+    } else {
+        std::vector<std::future<std::optional<std::unordered_map<int32_t, torch::Tensor>>>> frontierFutures;
+        frontierFutures.reserve(states.size());
+        for (PPRForwardPush* state : states) {
+            frontierFutures.push_back(std::async(std::launch::async, [state]() { return state->drainQueue(); }));
+        }
+        for (size_t channelIndex = 0; channelIndex < frontierFutures.size(); ++channelIndex) {
+            frontiersByChannel[channelIndex] = frontierFutures[channelIndex].get();
+        }
+    }
 
-        auto channelFrontierByEdgeTypeId = state->drainQueue();
+    // Merge per-channel drain results serially in channel order so the returned
+    // channel-index lists stay deterministic while the expensive independent
+    // drainQueue() calls above can run concurrently.
+    for (size_t channelIndex = 0; channelIndex < states.size(); ++channelIndex) {
+        auto& channelFrontierByEdgeTypeId = frontiersByChannel[channelIndex];
         if (!channelFrontierByEdgeTypeId.has_value()) {
             continue;
         }
