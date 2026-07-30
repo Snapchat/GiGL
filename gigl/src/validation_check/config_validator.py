@@ -5,11 +5,7 @@ from typing import Optional
 from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
-from gigl.common.utils.proto_utils import (
-    ProtoUtils,
-    get_proto_fingerprint,
-    proto_to_yaml,
-)
+from gigl.common.utils.proto_utils import ProtoUtils, proto_to_yaml
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -363,7 +359,6 @@ def _validate_resolved_configs(
 def resolve_configs(
     task_config_uri: Uri,
     resource_config_uri: Uri,
-    bootstrap_resource_config_hash: Optional[str] = None,
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig]:
     """Resolve task and resource configs into self-contained protobufs."""
     proto_utils = ProtoUtils()
@@ -378,15 +373,6 @@ def resolve_configs(
         )
     )
     resource_config = source_resource_config_wrapper.get_resolved_resource_config()
-
-    resolved_resource_config_hash = get_proto_fingerprint(resource_config)
-    if (
-        bootstrap_resource_config_hash is not None
-        and bootstrap_resource_config_hash != resolved_resource_config_hash
-    ):
-        raise ValueError(
-            "Resource config changed between pipeline submission and validation."
-        )
     return task_config, resource_config
 
 
@@ -396,12 +382,10 @@ def kfp_validation_checks(
     start_at: str,
     resource_config_uri: Uri,
     stop_after: Optional[str] = None,
-    bootstrap_resource_config_hash: Optional[str] = None,
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig, bool]:
     task_config, resource_config = resolve_configs(
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
-        bootstrap_resource_config_hash=bootstrap_resource_config_hash,
     )
     should_use_live_sgs_backend = _validate_resolved_configs(
         job_name=job_name,
@@ -436,11 +420,11 @@ def materialize_resolved_configs(
     )
     task_config_uri = GcsUri.join(
         snapshot_root,
-        f"resolved_task_config_{get_proto_fingerprint(task_config)}.yaml",
+        "resolved_task_config.yaml",
     )
     resource_config_uri = GcsUri.join(
         snapshot_root,
-        f"resolved_resource_config_{get_proto_fingerprint(resource_config)}.yaml",
+        "resolved_resource_config.yaml",
     )
     gcs_utils = GcsUtils(project=resource_config_wrapper.project)
     gcs_utils.upload_from_string(
@@ -490,12 +474,6 @@ if __name__ == "__main__":
         help="Runtime argument for resource and env specifications of each component",
     )
     parser.add_argument(
-        "--bootstrap_resource_config_hash",
-        type=str,
-        required=True,
-        help="Resource config fingerprint computed during pipeline submission",
-    )
-    parser.add_argument(
         "--output_file_path_resolved_task_config_uri",
         type=str,
         required=True,
@@ -534,7 +512,6 @@ if __name__ == "__main__":
     task_config, resource_config = resolve_configs(
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
-        bootstrap_resource_config_hash=args.bootstrap_resource_config_hash,
     )
     (
         resolved_task_config_uri,

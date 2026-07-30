@@ -56,7 +56,6 @@ def _generate_component_task(
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     start_at: Optional[str] = None,
     stop_after: Optional[str] = None,
-    bootstrap_resource_config_hash: Optional[str] = None,
 ) -> PipelineTask:
     component_task: PipelineTask
     if component == GiGLComponents.ConfigPopulator:
@@ -70,16 +69,11 @@ def _generate_component_task(
         )
 
     elif component == GiGLComponents.ConfigValidator:
-        if bootstrap_resource_config_hash is None:
-            raise ValueError(
-                "ConfigValidator requires a bootstrap resource config hash."
-            )
         component_task = _speced_component_op_dict[component](
             job_name=job_name,
             task_config_uri=task_config_uri,
             start_at=start_at,
             resource_config_uri=resource_config_uri,
-            bootstrap_resource_config_hash=bootstrap_resource_config_hash,
             stop_after=stop_after,
             cpu_docker_uri=common_pipeline_component_configs.cpu_container_image,
             cuda_docker_uri=common_pipeline_component_configs.cuda_container_image,
@@ -150,7 +144,6 @@ def _generate_component_tasks(
     job_name: str,
     template_or_frozen_config_uri: str,
     resource_config_uri: str,
-    bootstrap_resource_config_hash: str,
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     start_at: Optional[str] = None,
     stop_after: Optional[str] = None,
@@ -162,7 +155,6 @@ def _generate_component_tasks(
         start_at=start_at,
         stop_after=stop_after,
         resource_config_uri=resource_config_uri,
-        bootstrap_resource_config_hash=bootstrap_resource_config_hash,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
     validation_check_task.set_caching_options(enable_caching=False)
@@ -267,7 +259,6 @@ def generate_pipeline(
         job_name: str,
         template_or_frozen_config_uri: str,
         resource_config_uri: str,
-        bootstrap_resource_config_hash: str,
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
         notification_emails: Optional[List[str]] = None,
@@ -280,7 +271,6 @@ def generate_pipeline(
                 job_name=job_name,
                 template_or_frozen_config_uri=template_or_frozen_config_uri,
                 resource_config_uri=resource_config_uri,
-                bootstrap_resource_config_hash=bootstrap_resource_config_hash,
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 start_at=start_at,
                 stop_after=stop_after,

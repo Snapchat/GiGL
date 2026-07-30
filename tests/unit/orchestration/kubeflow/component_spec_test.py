@@ -16,7 +16,6 @@ class ComponentSpecTest(TestCase):
     def test_config_validator_resolves_both_configs(self) -> None:
         component_spec = _read_component_spec("config_validator")
 
-        self.assertIn("name: bootstrap_resource_config_hash", component_spec)
         self.assertIn("name: resolved_task_config_uri", component_spec)
         self.assertIn("name: resolved_resource_config_uri", component_spec)
         self.assertIn("name: should_use_glt_backend", component_spec)

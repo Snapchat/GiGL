@@ -60,9 +60,9 @@ common_compute_config:
 ```
 
 Resource config is read once before pipeline submission to select the project, region, service account, and staging
-bucket. ConfigValidator resolves it again inside the pipeline and verifies that both resolutions have the same protobuf
-fingerprint. Dynamic resolvers such as `now`, `git_hash`, and `oc.env` are therefore rejected in resource configs.
-Deterministic references to another config value remain supported.
+bucket. ConfigValidator resolves it again inside the pipeline, and that validation-time result becomes the resource
+config used by downstream components. Resolvers such as `now`, `git_hash`, and `oc.env` are supported; environment-based
+resolvers must be available wherever the source config is read.
 
 ## Pipeline behavior
 

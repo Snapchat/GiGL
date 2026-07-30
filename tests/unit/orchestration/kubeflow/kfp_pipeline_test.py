@@ -25,10 +25,6 @@ class KfpPipelineTest(TestCase):
             pipeline_text = output_path.read_text()
             pipeline_spec = yaml.safe_load(pipeline_text)
 
-        self.assertIn(
-            "bootstrap_resource_config_hash",
-            pipeline_spec["root"]["inputDefinitions"]["parameters"],
-        )
         validator_task = pipeline_spec["components"]["comp-exit-handler-1"]["dag"][
             "tasks"
         ]["kfp-validation-check"]

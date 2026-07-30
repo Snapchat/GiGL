@@ -7,12 +7,9 @@ from unittest.mock import patch
 
 from absl.testing import absltest
 from hydra import initialize_config_dir
-from hydra.errors import ConfigCompositionException
-from omegaconf import OmegaConf
 
 from gigl.common import GcsUri, LocalUri
 from gigl.common.logger import Logger
-from gigl.common.omegaconf_resolvers import now_resolver
 from gigl.common.utils.hydra_config import compose_yaml_config
 from gigl.common.utils.proto_utils import ProtoUtils
 from snapchat.research.gbml import gbml_config_pb2
@@ -145,7 +142,7 @@ class ProtoUtilsTest(TestCase):
                 "example-project",
             )
 
-    def test_resource_config_rejects_interpolation(self):
+    def test_resource_config_resolves_dynamic_interpolation(self):
         with TemporaryDirectory() as temp_directory:
             config_path = Path(temp_directory) / "resource.yaml"
             config_path.write_text(
@@ -154,11 +151,16 @@ class ProtoUtilsTest(TestCase):
                 '    project: "${oc.env:PROJECT_ID}"\n'
             )
 
-            with self.assertRaises(ValueError):
-                self.proto_utils.read_proto_from_yaml(
+            with patch.dict(os.environ, {"PROJECT_ID": "example-project"}):
+                resource_config = self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
+
+            self.assertEqual(
+                resource_config.shared_resource_config.common_compute_config.project,
+                "example-project",
+            )
 
     def test_resource_config_allows_deterministic_value_interpolation(self):
         with TemporaryDirectory() as temp_directory:
@@ -207,7 +209,7 @@ class ProtoUtilsTest(TestCase):
                 "example-project",
             )
 
-    def test_resource_composition_rejects_dynamic_resolver_in_selected_file(self):
+    def test_resource_composition_resolves_dynamic_resolver_in_selected_file(self):
         with TemporaryDirectory() as temp_directory:
             config_root = Path(temp_directory)
             (config_root / "shared").mkdir()
@@ -219,13 +221,18 @@ class ProtoUtilsTest(TestCase):
                 'common_compute_config:\n  project: "${oc.env:PROJECT_ID}"\n'
             )
 
-            with self.assertRaises(ValueError):
-                self.proto_utils.read_proto_from_yaml(
+            with patch.dict(os.environ, {"PROJECT_ID": "example-project"}):
+                resource_config = self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
 
-    def test_resource_composition_rejects_dynamic_nested_default(self):
+            self.assertEqual(
+                resource_config.shared_resource_config.common_compute_config.project,
+                "example-project",
+            )
+
+    def test_resource_composition_resolves_dynamic_nested_default(self):
         with TemporaryDirectory() as temp_directory:
             config_root = Path(temp_directory)
             (config_root / "base").mkdir()
@@ -236,7 +243,7 @@ class ProtoUtilsTest(TestCase):
             )
             (config_root / "base" / "resource.yaml").write_text(
                 "defaults:\n"
-                "  - compute@shared_resource_config: "
+                "  - /compute@shared_resource_config: "
                 "${oc.env:RESOURCE_PROFILE}\n"
                 "  - _self_\n"
             )
@@ -246,14 +253,16 @@ class ProtoUtilsTest(TestCase):
                 "  region: us-central1\n"
             )
 
-            with (
-                patch.dict(os.environ, {"RESOURCE_PROFILE": "local"}),
-                self.assertRaises(ConfigCompositionException),
-            ):
-                self.proto_utils.read_proto_from_yaml(
+            with patch.dict(os.environ, {"RESOURCE_PROFILE": "local"}):
+                resource_config = self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
+
+            self.assertEqual(
+                resource_config.shared_resource_config.common_compute_config.project,
+                "example-project",
+            )
 
     def test_composed_primary_requires_yaml_extension(self):
         with TemporaryDirectory() as temp_directory:
@@ -315,24 +324,6 @@ class ProtoUtilsTest(TestCase):
                         uri=LocalUri(config_path),
                         proto_cls=gbml_config_pb2.GbmlConfig,
                     )
-
-    def test_composition_restores_foreign_omegaconf_resolver(self):
-        with TemporaryDirectory() as temp_directory:
-            config_path = Path(temp_directory) / "task.yaml"
-            config_path.write_text("defaults:\n  - _self_\n")
-            OmegaConf.register_new_resolver(
-                "now", lambda *_: "foreign-now", replace=True
-            )
-            try:
-                self.proto_utils.read_proto_from_yaml(
-                    uri=LocalUri(config_path),
-                    proto_cls=gbml_config_pb2.GbmlConfig,
-                )
-
-                config = OmegaConf.create({"value": "${now:any-format}"})
-                self.assertEqual(config.value, "foreign-now")
-            finally:
-                OmegaConf.register_new_resolver("now", now_resolver, replace=True)
 
 
 if __name__ == "__main__":

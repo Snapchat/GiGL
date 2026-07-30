@@ -1,4 +1,3 @@
-import hashlib
 from tempfile import NamedTemporaryFile
 from typing import Optional, Type, TypeVar, cast
 
@@ -10,10 +9,7 @@ from omegaconf import OmegaConf
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.omegaconf_resolvers import register_resolvers
-from gigl.common.utils.hydra_config import (
-    compose_yaml_config,
-    contains_dynamic_interpolation,
-)
+from gigl.common.utils.hydra_config import compose_yaml_config
 from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
@@ -24,22 +20,6 @@ _HYDRA_PROTO_TYPES = {
     "snapchat.research.gbml.GbmlConfig",
     "snapchat.research.gbml.GiglResourceConfig",
 }
-_DETERMINISTIC_RESOURCE_PROTO_TYPES = {
-    "snapchat.research.gbml.GiglResourceConfig",
-    "snapchat.research.gbml.SharedResourceConfig",
-}
-
-
-def get_proto_fingerprint(proto: message.Message) -> str:
-    """Return a stable SHA-256 fingerprint for a protobuf message.
-
-    Args:
-        proto: Protobuf message to fingerprint.
-
-    Returns:
-        Hexadecimal SHA-256 digest of the deterministic protobuf bytes.
-    """
-    return hashlib.sha256(proto.SerializeToString(deterministic=True)).hexdigest()
 
 
 def proto_to_yaml(proto: message.Message) -> str:
@@ -66,24 +46,13 @@ class ProtoUtils:
             raw_data = yaml.safe_load(file)
         tfh.close()
         proto_type = proto_cls.DESCRIPTOR.full_name
-        reject_dynamic_interpolations = (
-            proto_type in _DETERMINISTIC_RESOURCE_PROTO_TYPES
-        )
-        if reject_dynamic_interpolations and contains_dynamic_interpolation(raw_data):
-            raise ValueError(
-                "Resource configs cannot contain dynamic OmegaConf resolvers because "
-                "submission and pipeline validation run in separate processes."
-            )
 
         if (
             isinstance(raw_data, dict)
             and "defaults" in raw_data
             and proto_type in _HYDRA_PROTO_TYPES
         ):
-            obj_dict = compose_yaml_config(
-                uri=uri,
-                reject_dynamic_interpolations=reject_dynamic_interpolations,
-            )
+            obj_dict = compose_yaml_config(uri=uri)
         else:
             omega_conf_obj = OmegaConf.create(raw_data)
             obj_dict = OmegaConf.to_object(omega_conf_obj)

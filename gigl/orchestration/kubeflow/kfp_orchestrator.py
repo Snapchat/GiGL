@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union
 
-import yaml
 from google.cloud import aiplatform
 from kfp.compiler import Compiler
 
@@ -13,19 +12,15 @@ from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
-from gigl.common.utils.proto_utils import ProtoUtils, get_proto_fingerprint
+from gigl.env.pipelines_config import get_resource_config
 from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
-    GiglResourceConfigWrapper,
-)
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
-from snapchat.research.gbml.gigl_resource_config_pb2 import GiglResourceConfig
 
 logger = Logger()
 
@@ -41,7 +36,6 @@ DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH = LocalUri.join(
 )
 
 DEFAULT_START_AT_COMPONENT = "config_populator"
-_CONFIG_RESOLUTION_PIPELINE_PARAMETER = "bootstrap_resource_config_hash"
 
 
 class KfpOrchestrator:
@@ -147,43 +141,14 @@ class KfpOrchestrator:
         assert file_loader.does_uri_exist(compiled_pipeline_path), (
             f"Compiled pipeline path {compiled_pipeline_path} does not exist."
         )
-        compiled_pipeline_file = file_loader.load_to_temp_file(
-            file_uri_src=compiled_pipeline_path,
-            delete=True,
-            should_create_symlinks_if_possible=False,
-        )
-        with open(compiled_pipeline_file.name, "r") as file:
-            compiled_pipeline = yaml.safe_load(file)
-        compiled_pipeline_file.close()
-        pipeline_parameters = (
-            compiled_pipeline.get("root", {})
-            .get("inputDefinitions", {})
-            .get("parameters", {})
-            if isinstance(compiled_pipeline, dict)
-            else {}
-        )
-        if _CONFIG_RESOLUTION_PIPELINE_PARAMETER not in pipeline_parameters:
-            raise ValueError(
-                "The compiled pipeline predates config resolution support. "
-                "Recompile the pipeline before running it."
-            )
         logger.info(f"Skipping pipeline compilation; will use {compiled_pipeline_path}")
 
-        resource_config = GiglResourceConfigWrapper(
-            ProtoUtils().read_proto_from_yaml(
-                uri=resource_config_uri,
-                proto_cls=GiglResourceConfig,
-            )
-        )
-        resolved_resource_config = resource_config.get_resolved_resource_config()
+        resource_config = get_resource_config(resource_config_uri=resource_config_uri)
         run_keyword_args = {
             "job_name": applied_task_identifier,
             "start_at": start_at,
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
-            "bootstrap_resource_config_hash": get_proto_fingerprint(
-                resolved_resource_config
-            ),
         }
         # We need to provide *some* notification emails, other wise the cleanup component will fail.
         # Ideally, we'd be able to provide None and have it handle it, but for whatever reason
