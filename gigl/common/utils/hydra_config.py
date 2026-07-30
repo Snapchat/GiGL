@@ -17,14 +17,6 @@ from gigl.common.omegaconf_resolvers import now_resolver, register_resolvers
 _COMPOSE_LOCK = threading.RLock()
 
 
-def _register_gigl_now_resolver() -> None:
-    OmegaConf.register_new_resolver(
-        "now",
-        now_resolver,
-        replace=True,
-    )
-
-
 def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
     """Compose a YAML config with Hydra using its parent as the config root.
 
@@ -35,16 +27,23 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
         A fully composed and resolved mapping.
 
     Raises:
-        ValueError: If the primary filename is unsupported or the result is not
-            a mapping.
+        ValueError: If the result is not a mapping.
         RuntimeError: If another Hydra application owns the global context.
     """
-    primary_name = uri.get_basename()
-    if not primary_name.endswith(".yaml"):
-        raise ValueError(f"Hydra primary config must use the .yaml extension: {uri}")
+    primary_path = Path(uri.uri).absolute()
+    if primary_path.is_symlink():
+        # Local staging creates this symlink. Follow only that hop so a source
+        # URI that is itself a symlink keeps its filename and config root.
+        symlink_target = primary_path.readlink()
+        primary_path = (
+            symlink_target
+            if symlink_target.is_absolute()
+            else primary_path.parent / symlink_target
+        )
+    primary_name = primary_path.name
     config_name = primary_name.rsplit(".", 1)[0]
 
-    config_root = Path(uri.uri).absolute().parent
+    config_root = primary_path.parent
 
     with _COMPOSE_LOCK:
         if GlobalHydra.instance().is_initialized():
@@ -61,11 +60,19 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
                 # initialization. GiGL's resolver is a backward-compatible
                 # superset that also supports offsets.
                 register_resolvers()
-                _register_gigl_now_resolver()
+                OmegaConf.register_new_resolver(
+                    "now",
+                    now_resolver,
+                    replace=True,
+                )
                 composed = compose(config_name=config_name, overrides=[])
                 resolved = OmegaConf.to_container(composed, resolve=True)
         finally:
-            _register_gigl_now_resolver()
+            OmegaConf.register_new_resolver(
+                "now",
+                now_resolver,
+                replace=True,
+            )
 
     if not isinstance(resolved, dict):
         raise ValueError(

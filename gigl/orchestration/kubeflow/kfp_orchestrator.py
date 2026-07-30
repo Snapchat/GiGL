@@ -13,7 +13,6 @@ from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
 from gigl.common.utils.proto_utils import ProtoUtils
-from gigl.env.pipelines_config import get_resource_config
 from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -148,17 +147,12 @@ class KfpOrchestrator:
         )
         logger.info(f"Skipping pipeline compilation; will use {compiled_pipeline_path}")
 
-        if isinstance(resource_config_uri, LocalUri):
-            resource_config = GiglResourceConfigWrapper(
-                ProtoUtils().compose_proto_from_yaml(
-                    uri=resource_config_uri,
-                    proto_cls=GiglResourceConfig,
-                )
+        resource_config = GiglResourceConfigWrapper(
+            ProtoUtils().compose_proto_from_yaml(
+                uri=resource_config_uri,
+                proto_cls=GiglResourceConfig,
             )
-        else:
-            resource_config = get_resource_config(
-                resource_config_uri=resource_config_uri
-            )
+        )
         run_keyword_args = {
             "job_name": applied_task_identifier,
             "start_at": start_at,

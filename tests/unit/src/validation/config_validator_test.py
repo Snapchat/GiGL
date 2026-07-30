@@ -453,7 +453,6 @@ class TestConfigValidationPerSGSBackends(TestCase):
         def download_config(
             file_uri_src,
             file_uri_dst,
-            should_create_symlinks_if_possible,
         ):
             self.assertTrue(file_uri_dst.get_basename().endswith(".yaml"))
             Path(file_uri_dst.uri).write_text(source_configs[file_uri_src.uri])

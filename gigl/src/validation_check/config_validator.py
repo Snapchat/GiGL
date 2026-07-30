@@ -370,9 +370,12 @@ def resolve_configs(
         uri=resource_config_uri,
         proto_cls=GiglResourceConfig,
     )
-    resource_config.shared_resource_config.CopyFrom(
-        GiglResourceConfigWrapper(resource_config).shared_resource_config
-    )
+    if resource_config.WhichOneof("shared_resource") == "shared_resource_config_uri":
+        # Inline legacy external shared resources so the published snapshot is
+        # self-contained and downstream components never reread the source URI.
+        resource_config.shared_resource_config.CopyFrom(
+            GiglResourceConfigWrapper(resource_config).shared_resource_config
+        )
     return task_config, resource_config
 
 
@@ -413,19 +416,13 @@ def materialize_resolved_configs(
         The resolved task and resource config URIs.
     """
     resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
-    snapshot_root = GcsUri.join(
-        resource_config_wrapper.temp_assets_regional_bucket_path,
-        job_name,
-        "config_validator",
+    snapshot_root = (
+        resource_config_wrapper.temp_assets_regional_bucket_path
+        / job_name
+        / "config_validator"
     )
-    task_config_uri = GcsUri.join(
-        snapshot_root,
-        "resolved_task_config.yaml",
-    )
-    resource_config_uri = GcsUri.join(
-        snapshot_root,
-        "resolved_resource_config.yaml",
-    )
+    task_config_uri = snapshot_root / "resolved_task_config.yaml"
+    resource_config_uri = snapshot_root / "resolved_resource_config.yaml"
     gcs_utils = GcsUtils(project=resource_config_wrapper.project)
     gcs_utils.upload_from_string(
         gcs_path=task_config_uri,

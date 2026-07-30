@@ -7,9 +7,9 @@ is the URI-agnostic composition API.
 
 ## Config root
 
-The primary file's parent directory is its Hydra config root. Local composed primary files and selected fragments must
-use Hydra's `.yaml` extension. Plain legacy `.yml` files remain supported by the non-composing reader. Remote primaries
-are staged with a `.yaml` extension before composition.
+The primary file's parent directory is its Hydra config root. GiGL does not prevalidate filename extensions; Hydra 1.3
+resolves local config names with its `.yaml` convention. Remote primaries are staged with a `.yaml` extension before
+composition.
 
 ```text
 configs/
@@ -22,9 +22,9 @@ configs/
 ```
 
 Keep primary files directly in the bundle root. GiGL does not search for a repository root or a directory named
-`configs`. Local configs compose in place so they can select sibling fragments. GCS and HTTP primaries are downloaded to
-a temporary local file before composition; relative Defaults List entries are not downloaded with them, so remote
-primaries support only single-file composition.
+`configs`. Local configs retain their parent as the config root so they can select sibling fragments. GCS and HTTP
+primaries are downloaded to a temporary local file before composition; relative Defaults List entries are not downloaded
+with them, so remote primaries support only single-file composition.
 
 ## Task config example
 

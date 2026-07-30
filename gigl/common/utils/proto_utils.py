@@ -56,18 +56,13 @@ class ProtoUtils:
         Remote URIs are downloaded as a single primary config; relative Defaults
         List entries are not fetched.
         """
-        if isinstance(uri, LocalUri):
-            local_uri = uri
+        with NamedTemporaryFile(suffix=".yaml") as temp_file:
+            local_uri = LocalUri(temp_file.name)
+            self.__file_loader.load_file(
+                file_uri_src=uri,
+                file_uri_dst=local_uri,
+            )
             obj_dict = compose_yaml_config(uri=local_uri)
-        else:
-            with NamedTemporaryFile(suffix=".yaml") as temp_file:
-                local_uri = LocalUri(temp_file.name)
-                self.__file_loader.load_file(
-                    file_uri_src=uri,
-                    file_uri_dst=local_uri,
-                    should_create_symlinks_if_possible=False,
-                )
-                obj_dict = compose_yaml_config(uri=local_uri)
         proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
         return proto
 

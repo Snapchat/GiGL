@@ -291,17 +291,6 @@ class ProtoUtilsTest(TestCase):
                 "example-project",
             )
 
-    def test_composed_primary_requires_yaml_extension(self):
-        with TemporaryDirectory() as temp_directory:
-            config_path = Path(temp_directory) / "task.yml"
-            config_path.write_text("defaults:\n  - _self_\n")
-
-            with self.assertRaises(ValueError):
-                self.proto_utils.compose_proto_from_yaml(
-                    uri=LocalUri(config_path),
-                    proto_cls=gbml_config_pb2.GbmlConfig,
-                )
-
     def test_composition_is_thread_safe(self):
         with TemporaryDirectory() as temp_directory:
             config_root = Path(temp_directory)
