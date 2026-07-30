@@ -164,7 +164,9 @@ class FeatureQuantizationMetadata:
         self, device: torch.device
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return (
-            torch.tensor(self.quantized_feature_indices, dtype=torch.long, device=device),
+            torch.tensor(
+                self.quantized_feature_indices, dtype=torch.long, device=device
+            ),
             torch.tensor(self.raw_feature_indices, dtype=torch.long, device=device),
         )
 

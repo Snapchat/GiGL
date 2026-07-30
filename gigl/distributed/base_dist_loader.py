@@ -999,11 +999,7 @@ class BaseDistLoader(DistLoader):
             # the message.
             torch.cuda.current_stream().synchronize()
 
-        collate_start_time = time.perf_counter()
-        out = super()._collate_fn(msg)
-        collate_time = time.perf_counter() - collate_start_time
-        logger.info(f"--* GLT base loader collate time: {collate_time}")
-        return out
+        return super()._collate_fn(msg)
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:

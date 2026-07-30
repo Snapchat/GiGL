@@ -411,7 +411,7 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                node_quantization_metadata=None,
+                node_quantization_metadata=None,  # TODO: Add quantization for graph store mode
                 edge_dir=dataset.fetch_edge_dir(),
             ),
             backend_key,
@@ -542,7 +542,10 @@ class DistNeighborLoader(BaseDistLoader):
         # TODO (mkolodner-sc): Remove once GLT's to_hetero_data is fixed.
         collate_start_time = time.perf_counter()
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
+        base_collate_start_time = time.perf_counter()
         data = super()._collate_fn(stripped_msg)
+        base_collate_time = time.perf_counter() - base_collate_start_time
+        logger.debug(f"--* GLT base loader collate time: {base_collate_time}")
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
@@ -562,7 +565,9 @@ class DistNeighborLoader(BaseDistLoader):
             node_quantization_metadata=self._node_quantization_metadata,
         )
         dequantize_time = time.perf_counter() - dequantize_start_time
-        logger.info(f"--* Distributed Neighborloader dequantize time: {dequantize_time}")
+        logger.debug(
+            f"--* Distributed Neighborloader dequantize time: {dequantize_time}"
+        )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.
@@ -570,5 +575,7 @@ class DistNeighborLoader(BaseDistLoader):
             data[key] = value
 
         collate_time = time.perf_counter() - collate_start_time
-        logger.info(f"--* Distributed Neighborloader end-to-end collate time: {collate_time}")
+        logger.debug(
+            f"--* Distributed Neighborloader end-to-end collate time: {collate_time}"
+        )
         return data
