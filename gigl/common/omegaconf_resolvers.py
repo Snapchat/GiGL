@@ -157,23 +157,26 @@ def git_hash_resolver() -> str:
         return ""
 
 
-def register_resolvers() -> None:
+def register_resolvers(replace: bool = False) -> None:
     """Register all custom OmegaConf resolvers.
 
     This function should be called at application startup to register
     all custom resolvers with OmegaConf.
+
+    Args:
+        replace: Whether to replace resolvers registered by another library.
     """
-    if not OmegaConf.has_resolver("now"):
+    if replace or not OmegaConf.has_resolver("now"):
         logger.info("Registering OmegaConf resolver 'now'")
-        OmegaConf.register_new_resolver("now", now_resolver)
+        OmegaConf.register_new_resolver("now", now_resolver, replace=replace)
     else:
         logger.debug(
             "OmegaConf resolver 'now' already registered, skipping registration"
         )
 
-    if not OmegaConf.has_resolver("git_hash"):
+    if replace or not OmegaConf.has_resolver("git_hash"):
         logger.info("Registering OmegaConf resolver 'git_hash'")
-        OmegaConf.register_new_resolver("git_hash", git_hash_resolver)
+        OmegaConf.register_new_resolver("git_hash", git_hash_resolver, replace=replace)
     else:
         logger.debug(
             "OmegaConf resolver 'git_hash' already registered, skipping registration"

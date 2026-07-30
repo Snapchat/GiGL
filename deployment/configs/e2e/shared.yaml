@@ -1,0 +1,15 @@
+# Shared infrastructure for GiGL's end-to-end test resource configs.
+resource_labels:
+  # COMPONENT is filled by GiGL with the active pipeline component.
+  cost_resource_group_tag: dev_experiments_COMPONENT
+  cost_resource_group: gigl_platform
+common_compute_config:
+  project: "external-snap-ci-github-gigl"
+  region: "us-central1"
+  temp_assets_bucket: "gs://gigl-cicd-temp"
+  temp_regional_assets_bucket: "gs://gigl-cicd-temp"
+  perm_assets_bucket: "gs://gigl-cicd-perm"
+  temp_assets_bq_dataset_name: "gigl_temp_assets"
+  embedding_bq_dataset_name: "gigl_embeddings"
+  gcp_service_account_email: "untrusted-external-github-gigl@external-snap-ci-github-gigl.iam.gserviceaccount.com"
+  dataflow_runner: "DataflowRunner"

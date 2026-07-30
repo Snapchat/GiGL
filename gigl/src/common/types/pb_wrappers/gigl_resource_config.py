@@ -97,6 +97,22 @@ class GiglResourceConfigWrapper:
 
         return self._loaded_shared_resource_config
 
+    def get_resolved_resource_config(self) -> GiglResourceConfig:
+        """Return a self-contained resource config.
+
+        If the source config references a shared resource config URI, the
+        referenced protobuf is copied into the returned message.
+
+        Returns:
+            A new resource config with an inline shared resource config.
+        """
+        resolved_resource_config = GiglResourceConfig()
+        resolved_resource_config.CopyFrom(self.resource_config)
+        resolved_resource_config.shared_resource_config.CopyFrom(
+            self.shared_resource_config
+        )
+        return resolved_resource_config
+
     @property
     def get_resource_config_uri(self) -> str:
         parser = argparse.ArgumentParser()

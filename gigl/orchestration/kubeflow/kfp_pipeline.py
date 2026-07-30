@@ -14,9 +14,6 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
-from gigl.orchestration.kubeflow.utils.glt_backend import (
-    check_glt_backend_eligibility_component,
-)
 from gigl.orchestration.kubeflow.utils.log_metrics import log_metrics_to_ui
 from gigl.orchestration.kubeflow.utils.resource import add_task_resource_requirements
 from gigl.src.common.constants.components import GiGLComponents
@@ -59,6 +56,7 @@ def _generate_component_task(
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     start_at: Optional[str] = None,
     stop_after: Optional[str] = None,
+    bootstrap_resource_config_hash: Optional[str] = None,
 ) -> PipelineTask:
     component_task: PipelineTask
     if component == GiGLComponents.ConfigPopulator:
@@ -72,11 +70,16 @@ def _generate_component_task(
         )
 
     elif component == GiGLComponents.ConfigValidator:
+        if bootstrap_resource_config_hash is None:
+            raise ValueError(
+                "ConfigValidator requires a bootstrap resource config hash."
+            )
         component_task = _speced_component_op_dict[component](
             job_name=job_name,
             task_config_uri=task_config_uri,
             start_at=start_at,
             resource_config_uri=resource_config_uri,
+            bootstrap_resource_config_hash=bootstrap_resource_config_hash,
             stop_after=stop_after,
             cpu_docker_uri=common_pipeline_component_configs.cpu_container_image,
             cuda_docker_uri=common_pipeline_component_configs.cuda_container_image,
@@ -147,6 +150,7 @@ def _generate_component_tasks(
     job_name: str,
     template_or_frozen_config_uri: str,
     resource_config_uri: str,
+    bootstrap_resource_config_hash: str,
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     start_at: Optional[str] = None,
     stop_after: Optional[str] = None,
@@ -158,18 +162,21 @@ def _generate_component_tasks(
         start_at=start_at,
         stop_after=stop_after,
         resource_config_uri=resource_config_uri,
+        bootstrap_resource_config_hash=bootstrap_resource_config_hash,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
-    should_use_glt = check_glt_backend_eligibility_component(
-        task_config_uri=template_or_frozen_config_uri,
-        base_image=common_pipeline_component_configs.cpu_container_image,
-    )
+    validation_check_task.set_caching_options(enable_caching=False)
+    resolved_task_config_uri = validation_check_task.outputs["resolved_task_config_uri"]
+    resolved_resource_config_uri = validation_check_task.outputs[
+        "resolved_resource_config_uri"
+    ]
+    should_use_glt = validation_check_task.outputs["should_use_glt_backend"]
 
     with kfp.dsl.Condition(start_at == GiGLComponents.ConfigPopulator.value):
         config_populator_task = _create_config_populator_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             should_use_glt_runtime_param=should_use_glt,
             stop_after=stop_after,
@@ -179,8 +186,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.DataPreprocessor.value):
         data_preprocessor_task = _create_data_preprocessor_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
             should_use_glt_runtime_param=should_use_glt,
@@ -190,8 +197,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.SubgraphSampler.value):
         subgraph_sampler_task = _create_subgraph_sampler_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -200,8 +207,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.SplitGenerator.value):
         split_generator_task = _create_split_generator_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -210,8 +217,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.Trainer.value):
         trainer_task = _create_trainer_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -220,8 +227,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.Inferencer.value):
         inferencer_task = _create_inferencer_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -230,8 +237,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.PostProcessor.value):
         post_processor_task = _create_post_processor_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=resolved_task_config_uri,
+            resource_config_uri=resolved_resource_config_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
         )
         post_processor_task.after(validation_check_task)
@@ -260,6 +267,7 @@ def generate_pipeline(
         job_name: str,
         template_or_frozen_config_uri: str,
         resource_config_uri: str,
+        bootstrap_resource_config_hash: str,
         start_at: str = GiGLComponents.ConfigPopulator.value,
         stop_after: Optional[str] = None,
         notification_emails: Optional[List[str]] = None,
@@ -272,6 +280,7 @@ def generate_pipeline(
                 job_name=job_name,
                 template_or_frozen_config_uri=template_or_frozen_config_uri,
                 resource_config_uri=resource_config_uri,
+                bootstrap_resource_config_hash=bootstrap_resource_config_hash,
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 start_at=start_at,
                 stop_after=stop_after,

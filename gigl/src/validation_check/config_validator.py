@@ -1,9 +1,15 @@
 import argparse
+from pathlib import Path
 from typing import Optional
 
-from gigl.common import Uri, UriFactory
+from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.logger import Logger
-from gigl.env.pipelines_config import get_resource_config
+from gigl.common.utils.gcs import GcsUtils
+from gigl.common.utils.proto_utils import (
+    ProtoUtils,
+    get_proto_fingerprint,
+    proto_to_yaml,
+)
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
@@ -270,31 +276,29 @@ def _run_gbml_and_resource_config_compatibility_checks(
         )
 
 
-def kfp_validation_checks(
+def _validate_resolved_configs(
     job_name: str,
-    task_config_uri: Uri,
     start_at: str,
-    resource_config_uri: Uri,
+    task_config: gbml_config_pb2.GbmlConfig,
+    resource_config: GiglResourceConfig,
     stop_after: Optional[str] = None,
-) -> None:
+) -> bool:
     # check if job_name is valid
     check_if_kfp_pipeline_job_name_valid(job_name=job_name)
-    # check if start_at and stop_after aligns with live subgraph sampling backend use
-    check_pipeline_has_valid_start_and_stop_flags(
-        start_at=start_at, stop_after=stop_after, task_config_uri=task_config_uri.uri
-    )
-    gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        gbml_config_uri=task_config_uri
-    )
-
+    gbml_config_pb_wrapper = GbmlConfigPbWrapper(task_config)
     gbml_config_pb: gbml_config_pb2.GbmlConfig = gbml_config_pb_wrapper.gbml_config_pb
 
     should_use_live_sgs_backend = gbml_config_pb_wrapper.should_use_glt_backend
 
-    resource_config_wrapper: GiglResourceConfigWrapper = get_resource_config(
-        resource_config_uri=resource_config_uri
-    )
+    resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
     resource_config_pb: GiglResourceConfig = resource_config_wrapper.resource_config
+
+    # check if start_at and stop_after aligns with live subgraph sampling backend use
+    check_pipeline_has_valid_start_and_stop_flags(
+        start_at=start_at,
+        stop_after=stop_after,
+        gbml_config_wrapper=gbml_config_pb_wrapper,
+    )
     # check user defined classes and their runtime args
 
     if (
@@ -353,6 +357,107 @@ def kfp_validation_checks(
         assert_trained_model_exists(gbml_config_pb=gbml_config_pb)
 
     logger.info("[✅ SUCCESS] All checks passed successfully.")
+    return should_use_live_sgs_backend
+
+
+def resolve_configs(
+    task_config_uri: Uri,
+    resource_config_uri: Uri,
+    bootstrap_resource_config_hash: Optional[str] = None,
+) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig]:
+    """Resolve task and resource configs into self-contained protobufs."""
+    proto_utils = ProtoUtils()
+    task_config = proto_utils.read_proto_from_yaml(
+        uri=task_config_uri,
+        proto_cls=gbml_config_pb2.GbmlConfig,
+    )
+    source_resource_config_wrapper = GiglResourceConfigWrapper(
+        proto_utils.read_proto_from_yaml(
+            uri=resource_config_uri,
+            proto_cls=GiglResourceConfig,
+        )
+    )
+    resource_config = source_resource_config_wrapper.get_resolved_resource_config()
+
+    resolved_resource_config_hash = get_proto_fingerprint(resource_config)
+    if (
+        bootstrap_resource_config_hash is not None
+        and bootstrap_resource_config_hash != resolved_resource_config_hash
+    ):
+        raise ValueError(
+            "Resource config changed between pipeline submission and validation."
+        )
+    return task_config, resource_config
+
+
+def kfp_validation_checks(
+    job_name: str,
+    task_config_uri: Uri,
+    start_at: str,
+    resource_config_uri: Uri,
+    stop_after: Optional[str] = None,
+    bootstrap_resource_config_hash: Optional[str] = None,
+) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig, bool]:
+    task_config, resource_config = resolve_configs(
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        bootstrap_resource_config_hash=bootstrap_resource_config_hash,
+    )
+    should_use_live_sgs_backend = _validate_resolved_configs(
+        job_name=job_name,
+        start_at=start_at,
+        task_config=task_config,
+        resource_config=resource_config,
+        stop_after=stop_after,
+    )
+    return task_config, resource_config, should_use_live_sgs_backend
+
+
+def materialize_resolved_configs(
+    job_name: str,
+    task_config: gbml_config_pb2.GbmlConfig,
+    resource_config: GiglResourceConfig,
+) -> tuple[GcsUri, GcsUri]:
+    """Write resolved task and resource configs to stable GCS paths.
+
+    Args:
+        job_name: Unique name for the pipeline run.
+        task_config: Resolved task config protobuf.
+        resource_config: Resolved, self-contained resource config protobuf.
+
+    Returns:
+        The resolved task and resource config URIs.
+    """
+    resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
+    snapshot_root = GcsUri.join(
+        resource_config_wrapper.temp_assets_regional_bucket_path,
+        job_name,
+        "config_validator",
+    )
+    task_config_uri = GcsUri.join(
+        snapshot_root,
+        f"resolved_task_config_{get_proto_fingerprint(task_config)}.yaml",
+    )
+    resource_config_uri = GcsUri.join(
+        snapshot_root,
+        f"resolved_resource_config_{get_proto_fingerprint(resource_config)}.yaml",
+    )
+    gcs_utils = GcsUtils(project=resource_config_wrapper.project)
+    gcs_utils.upload_from_string(
+        gcs_path=task_config_uri,
+        content=proto_to_yaml(task_config),
+    )
+    gcs_utils.upload_from_string(
+        gcs_path=resource_config_uri,
+        content=proto_to_yaml(resource_config),
+    )
+    return task_config_uri, resource_config_uri
+
+
+def _write_kfp_output(path: str, value: str) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(value)
 
 
 if __name__ == "__main__":
@@ -385,6 +490,30 @@ if __name__ == "__main__":
         help="Runtime argument for resource and env specifications of each component",
     )
     parser.add_argument(
+        "--bootstrap_resource_config_hash",
+        type=str,
+        required=True,
+        help="Resource config fingerprint computed during pipeline submission",
+    )
+    parser.add_argument(
+        "--output_file_path_resolved_task_config_uri",
+        type=str,
+        required=True,
+        help="KFP output path for the resolved task config URI",
+    )
+    parser.add_argument(
+        "--output_file_path_resolved_resource_config_uri",
+        type=str,
+        required=True,
+        help="KFP output path for the resolved resource config URI",
+    )
+    parser.add_argument(
+        "--output_file_path_should_use_glt_backend",
+        type=str,
+        required=True,
+        help="KFP output path for the GLT backend decision",
+    )
+    parser.add_argument(
         "--cpu_docker_uri",
         type=str,
         default=None,
@@ -401,20 +530,49 @@ if __name__ == "__main__":
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
 
-    initialize_gigl_runtime(
-        applied_task_identifier=args.job_name,
+    check_if_kfp_pipeline_job_name_valid(job_name=args.job_name)
+    task_config, resource_config = resolve_configs(
         task_config_uri=task_config_uri,
         resource_config_uri=resource_config_uri,
+        bootstrap_resource_config_hash=args.bootstrap_resource_config_hash,
+    )
+    (
+        resolved_task_config_uri,
+        resolved_resource_config_uri,
+    ) = materialize_resolved_configs(
+        job_name=args.job_name,
+        task_config=task_config,
+        resource_config=resource_config,
+    )
+
+    # Validation imports user-defined classes. Initialize the historical runtime
+    # contract first, but point it at the authoritative resolved snapshots.
+    initialize_gigl_runtime(
+        applied_task_identifier=args.job_name,
+        task_config_uri=resolved_task_config_uri,
+        resource_config_uri=resolved_resource_config_uri,
         service_name=args.job_name,
         component=GiGLComponents.ConfigValidator,
         cpu_docker_uri=args.cpu_docker_uri,
         cuda_docker_uri=args.cuda_docker_uri,
     )
-
-    kfp_validation_checks(
+    should_use_glt_backend = _validate_resolved_configs(
         job_name=args.job_name,
-        task_config_uri=task_config_uri,
         start_at=args.start_at,
-        resource_config_uri=resource_config_uri,
+        task_config=task_config,
+        resource_config=resource_config,
         stop_after=args.stop_after,
+    )
+
+    _write_kfp_output(
+        args.output_file_path_resolved_task_config_uri,
+        resolved_task_config_uri.uri,
+    )
+    _write_kfp_output(
+        args.output_file_path_resolved_resource_config_uri,
+        resolved_resource_config_uri.uri,
+    )
+    _write_kfp_output(
+        args.output_file_path_should_use_glt_backend,
+        "true" if should_use_glt_backend else "false",
     )

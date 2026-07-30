@@ -13,6 +13,26 @@ def _read_component_spec(component_name: str) -> str:
 
 
 class ComponentSpecTest(TestCase):
+    def test_config_validator_resolves_both_configs(self) -> None:
+        component_spec = _read_component_spec("config_validator")
+
+        self.assertIn("name: bootstrap_resource_config_hash", component_spec)
+        self.assertIn("name: resolved_task_config_uri", component_spec)
+        self.assertIn("name: resolved_resource_config_uri", component_spec)
+        self.assertIn("name: should_use_glt_backend", component_spec)
+        self.assertIn(
+            "{outputPath: resolved_task_config_uri}",
+            component_spec,
+        )
+        self.assertIn(
+            "{outputPath: resolved_resource_config_uri}",
+            component_spec,
+        )
+        self.assertIn(
+            "{outputPath: should_use_glt_backend}",
+            component_spec,
+        )
+
     def test_data_preprocessor_accepts_source_image_uri_flags(self) -> None:
         component_spec = _read_component_spec("data_preprocessor")
 

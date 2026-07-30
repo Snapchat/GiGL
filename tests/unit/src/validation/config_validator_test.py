@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+from unittest.mock import patch
 
 import google.protobuf.message
 from absl.testing import absltest
@@ -8,8 +9,11 @@ from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
 from gigl.common import Uri, UriFactory
-from gigl.common.utils.proto_utils import ProtoUtils
-from gigl.src.validation_check.config_validator import kfp_validation_checks
+from gigl.common.utils.proto_utils import ProtoUtils, get_proto_fingerprint
+from gigl.src.validation_check.config_validator import (
+    kfp_validation_checks,
+    materialize_resolved_configs,
+)
 from snapchat.research.gbml import (
     gbml_config_pb2,
     gigl_resource_config_pb2,
@@ -350,6 +354,62 @@ class TestConfigValidationPerSGSBackends(TestCase):
                 start_at="config_populator",
                 resource_config_uri=self._live_resource_config_uri,
             )
+
+    def test_resource_config_bootstrap_hash_must_match(self) -> None:
+        with self.assertRaises(ValueError):
+            kfp_validation_checks(
+                job_name="resource_config_validation_test",
+                task_config_uri=self._live_task_config_uri,
+                start_at="config_populator",
+                resource_config_uri=self._live_resource_config_uri,
+                bootstrap_resource_config_hash="stale-resource-config",
+            )
+
+    def test_resource_config_bootstrap_hash_accepts_resolved_config(self) -> None:
+        resource_config = self._proto_utils.read_proto_from_yaml(
+            uri=self._live_resource_config_uri,
+            proto_cls=gigl_resource_config_pb2.GiglResourceConfig,
+        )
+
+        _, resolved_resource_config, should_use_glt_backend = kfp_validation_checks(
+            job_name="resource_config_validation_test",
+            task_config_uri=self._live_task_config_uri,
+            start_at="config_populator",
+            resource_config_uri=self._live_resource_config_uri,
+            bootstrap_resource_config_hash=get_proto_fingerprint(resource_config),
+        )
+
+        self.assertTrue(should_use_glt_backend)
+        self.assertEqual(
+            get_proto_fingerprint(resolved_resource_config),
+            get_proto_fingerprint(resource_config),
+        )
+
+    @patch("gigl.src.validation_check.config_validator.GcsUtils")
+    def test_materializes_both_resolved_configs(self, mock_gcs_utils) -> None:
+        task_config = _create_valid_live_subgraph_sampling_task_config()
+        resource_config = _create_valid_live_subgraph_sampling_resource_config()
+
+        task_uri, resource_uri = materialize_resolved_configs(
+            job_name="config-resolution-test",
+            task_config=task_config,
+            resource_config=resource_config,
+        )
+
+        self.assertTrue(
+            task_uri.uri.startswith(
+                "gs://test-temp-regional/config-resolution-test/config_validator/"
+            )
+        )
+        self.assertTrue(
+            resource_uri.uri.startswith(
+                "gs://test-temp-regional/config-resolution-test/config_validator/"
+            )
+        )
+        self.assertEqual(
+            mock_gcs_utils.return_value.upload_from_string.call_count,
+            2,
+        )
 
 
 if __name__ == "__main__":
