@@ -21,11 +21,6 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
-from gigl.distributed.utils.dist_typed_sampler import (
-    HeteroPPRResult,
-    PPRResult,
-    TypedPPRChannelTraversalMaps,
-)
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
@@ -44,6 +39,25 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     "to",
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
+
+# C++ PPR extraction output: flat node IDs, flat weights, and per-seed valid
+# counts. Homogeneous extraction uses tensors directly; heterogeneous extraction
+# uses dictionaries keyed by node type.
+PPRResult = tuple[
+    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+]
+# Heterogeneous-only view of PPRResult after typed PPR extraction.
+HeteroPPRResult = tuple[
+    dict[NodeType, torch.Tensor],
+    dict[NodeType, torch.Tensor],
+    dict[NodeType, torch.Tensor],
+]
+# All typed-channel traversal maps. Each channel map is indexed first by integer
+# node-type ID, then contains the integer edge-type IDs that channel may traverse
+# from that node type.
+TypedPPRChannelTraversalMaps = list[list[list[int]]]
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
