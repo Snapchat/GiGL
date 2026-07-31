@@ -1,5 +1,6 @@
 import unittest
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any, Literal, Optional, Union
 from unittest.mock import patch
 
@@ -1118,43 +1119,103 @@ class DistABLPLoaderTest(TestCase):
                 edge_dir="sideways",  # ty: ignore[invalid-argument-type]
             )
 
-    def test_graph_store_setup_retains_single_supervision_gate(self):
+    def test_graph_store_setup_accepts_multiple_supervision_edge_types(self):
         create_test_process_group()
         loader = DistABLPLoader.__new__(DistABLPLoader)
         loader._instance_count = 0
         loader._shutdowned = True
+        positive_a_to_b = message_passing_to_positive_label(_A_TO_B)
+        negative_a_to_b = message_passing_to_negative_label(_A_TO_B)
+        positive_a_to_c = message_passing_to_positive_label(_A_TO_C)
+        edge_types = [positive_a_to_b, negative_a_to_b, positive_a_to_c]
+        node_feature_info = object()
+        edge_feature_info = object()
         dataset = MockRemoteDistDataset(
             num_storage_nodes=1,
-            edge_types=[
-                message_passing_to_positive_label(_A_TO_B),
-                message_passing_to_positive_label(_A_TO_C),
-            ],
+            edge_types=edge_types,
+            edge_dir="out",
         )
-        with patch.object(
-            BaseDistLoader, "create_graph_store_worker_options"
-        ) as create_worker_options:
-            with self.assertRaisesRegex(
-                ValueError,
-                "Graph Store mode currently only supports a single supervision edge type",
-            ):
+        worker_options = SimpleNamespace(master_addr="127.0.0.1", master_port=12345)
+        with (
+            patch.object(
+                dataset,
+                "fetch_node_feature_info",
+                return_value=node_feature_info,
+            ) as fetch_node_feature_info,
+            patch.object(
+                dataset,
+                "fetch_edge_feature_info",
+                return_value=edge_feature_info,
+            ) as fetch_edge_feature_info,
+            patch.object(
+                dataset, "fetch_edge_types", wraps=dataset.fetch_edge_types
+            ) as fetch_edge_types,
+            patch.object(
+                dataset, "fetch_edge_dir", wraps=dataset.fetch_edge_dir
+            ) as fetch_edge_dir,
+            patch.object(
+                BaseDistLoader,
+                "create_graph_store_worker_options",
+                return_value=worker_options,
+            ) as create_worker_options,
+        ):
+            sampler_inputs, returned_worker_options, schema, backend_key = (
                 loader._setup_for_graph_store(
                     input_nodes={
                         0: ABLPInputNodes(
                             anchor_nodes=torch.tensor([1]),
                             anchor_node_type=_A,
                             labels={
-                                _A_TO_B: (torch.tensor([[2]]), None),
+                                _A_TO_B: (
+                                    torch.tensor([[2]]),
+                                    torch.tensor([[4, 5]]),
+                                ),
                                 _A_TO_C: (torch.tensor([[3]]), None),
                             },
                         )
                     },
                     dataset=dataset,
                     num_workers=1,
-                    worker_concurrency=1,
+                    worker_concurrency=2,
                     channel_size="1MB",
-                    prefetch_size=1,
+                    prefetch_size=3,
                 )
-        create_worker_options.assert_not_called()
+            )
+
+        fetch_node_feature_info.assert_called_once_with()
+        fetch_edge_feature_info.assert_called_once_with()
+        fetch_edge_types.assert_called_once_with()
+        fetch_edge_dir.assert_called_once_with()
+        create_worker_options.assert_called_once_with(
+            dataset=dataset,
+            worker_key="dist_ablp_loader_0_compute_rank_0",
+            num_workers=1,
+            worker_concurrency=2,
+            channel_size="1MB",
+            prefetch_size=3,
+        )
+        self.assertIs(returned_worker_options, worker_options)
+        self.assertEqual(backend_key, "dist_ablp_loader_0")
+
+        self.assertLen(sampler_inputs, 1)
+        sampler_input = sampler_inputs[0]
+        self.assertEqual(
+            set(sampler_input.positive_label_by_edge_types),
+            {positive_a_to_b, positive_a_to_c},
+        )
+        self.assertEqual(
+            set(sampler_input.negative_label_by_edge_types), {negative_a_to_b}
+        )
+        self.assertEqual(schema.edge_types, edge_types)
+        self.assertIs(schema.node_feature_info, node_feature_info)
+        self.assertIs(schema.edge_feature_info, edge_feature_info)
+        self.assertEqual(schema.edge_dir, "out")
+        self.assertFalse(schema.is_homogeneous_with_labeled_edge_type)
+        self.assertEqual(loader._supervision_edge_types, [_A_TO_B, _A_TO_C])
+        self.assertEqual(
+            loader._positive_label_edge_types, [positive_a_to_b, positive_a_to_c]
+        )
+        self.assertEqual(loader._negative_label_edge_types, [negative_a_to_b])
 
     @parameterized.expand(
         [

@@ -840,11 +840,6 @@ class DistABLPLoader(BaseDistLoader):
                 positive_label_edge_types,
                 negative_label_edge_types,
             ) = converted_inputs
-            if len(supervision_edge_types) != 1:
-                raise ValueError(
-                    "Graph Store mode currently only supports a single supervision "
-                    f"edge type, but received {supervision_edge_types}."
-                )
             local_schema_summary = (
                 input_type,
                 tuple(supervision_edge_types),
