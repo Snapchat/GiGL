@@ -367,12 +367,13 @@ def _run_distributed_ablp_neighbor_loader_multiple_supervision_edge_types(
             expected=expected_positive_labels[edge_type],
         )
     if expected_negative_labels is not None:
-        _assert_labels(
-            anchor_nodes=datum[edge_type[anchor_index]].node,
-            supervision_nodes=datum[edge_type[supervision_index]].node,
-            y=datum.y_negative[edge_type],
-            expected=expected_negative_labels[edge_type],
-        )
+        for edge_type, expected_labels in expected_negative_labels.items():
+            _assert_labels(
+                anchor_nodes=datum[edge_type[anchor_index]].node,
+                supervision_nodes=datum[edge_type[supervision_index]].node,
+                y=datum.y_negative[edge_type],
+                expected=expected_labels,
+            )
     else:
         assert not hasattr(datum, "y_negative")
 
@@ -1415,9 +1416,6 @@ class DistABLPLoaderTest(TestCase):
                     message_passing_to_positive_label(_A_TO_C): torch.tensor(
                         [[10, 10], [22, 23]]
                     ),
-                    message_passing_to_negative_label(_A_TO_C): torch.tensor(
-                        [[10, 10], [24, 25]]
-                    ),
                 },
             ),
             # edge_dir="in" stores the supervision edge types reversed, so their
@@ -1439,9 +1437,6 @@ class DistABLPLoaderTest(TestCase):
                     _C_TO_A: torch.tensor([[20, 21], [10, 10]]),
                     message_passing_to_positive_label(_C_TO_A): torch.tensor(
                         [[22, 23], [10, 10]]
-                    ),
-                    message_passing_to_negative_label(_C_TO_A): torch.tensor(
-                        [[24, 25], [10, 10]]
                     ),
                 },
             ),
@@ -1517,7 +1512,6 @@ class DistABLPLoaderTest(TestCase):
             dict(return_dict[True][1]),
             {
                 _edge_type_key(_A_TO_B): [(10, 15), (10, 16)],
-                _edge_type_key(_A_TO_C): [(10, 24), (10, 25)],
             },
         )
 

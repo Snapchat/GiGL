@@ -313,7 +313,9 @@ class DistABLPLoader(BaseDistLoader):
             - `y_positive`: {0: torch.tensor([1])} # 1 is the only positive label for node 0
             - `y_negative`: {0: torch.tensor([2])} # 2 is the only negative label for node 0
 
-        NOTE: both label fields will instead be `dict[EdgeType, dict[int, torch.Tensor]]` if multiple supervision edge types are provided.
+        NOTE: label fields are flattened only when exactly one supervision edge type
+        is provided. With multiple supervision types, both fields remain keyed by
+        edge type even when only one type has negative labels.
         e.g. if there are supervision edge types: (a, to, b) and (a, to, c), then the label fields could be:
             - `y_positive`: {(a, to, b): {0: torch.tensor([1])}, (a, to, c): {0: torch.tensor([2])}}
             - `y_negative`: {(a, to, b): {0: torch.tensor([3])}, (a, to, c): {0: torch.tensor([4])}}
@@ -942,6 +944,8 @@ class DistABLPLoader(BaseDistLoader):
 
         The tensor output uses ``[2, E]`` label edge indices. The compatibility
         path converts the same tensors to the deprecated ragged dictionaries.
+        Singleton supervision retains flattened output; with multiple supervision
+        types, outputs remain keyed even when only one type has negative labels.
 
         Args:
             data (Union[Data, HeteroData]): Graph to attach labels to.
@@ -1033,15 +1037,26 @@ class DistABLPLoader(BaseDistLoader):
             }
         if not output_positive_labels:
             raise ValueError("No positive labels were found in the data!")
-        elif len(output_positive_labels) == 1:
+        elif len(self._supervision_edge_types) == 1:
+            if len(output_positive_labels) != 1:
+                raise ValueError(
+                    "Expected exactly one positive output for a single "
+                    f"supervision edge type, got {list(output_positive_labels)}."
+                )
             data.y_positive = next(iter(output_positive_labels.values()))
         else:
             data.y_positive = output_positive_labels
 
-        if len(output_negative_labels) == 1:
-            data.y_negative = next(iter(output_negative_labels.values()))
-        elif len(output_negative_labels) > 0:
-            data.y_negative = output_negative_labels
+        if output_negative_labels:
+            if len(self._supervision_edge_types) == 1:
+                if len(output_negative_labels) != 1:
+                    raise ValueError(
+                        "Expected exactly one negative output for a single "
+                        f"supervision edge type, got {list(output_negative_labels)}."
+                    )
+                data.y_negative = next(iter(output_negative_labels.values()))
+            else:
+                data.y_negative = output_negative_labels
         return data
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
