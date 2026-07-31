@@ -15,6 +15,7 @@ import socket
 import sys
 import tempfile
 import time
+import zlib
 from collections import Counter
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -712,6 +713,41 @@ class BaseDistLoader(DistLoader):
             )
 
     @staticmethod
+    def derive_sampling_seed(rank: int, seed_base: Optional[int] = None) -> int:
+        """Derives a per-rank sampling seed, distinct across ranks and across runs.
+
+        Supplying *any* seed is a large performance win, not just a determinism knob.
+        GLT's ``CPURandomSampler::UniformSample`` reads
+        ``RandomSeedManager::getInstance().getSeed()`` on **every** call — once per source
+        row during neighbor sampling — and when no seed has been set that call generates
+        fresh entropy each time (~5 us). Setting a seed makes it a cheap stored-value read
+        and cuts the sampler call from ~1340 us to ~48 us (~27x). On a multi-node GPU
+        inference workload this took per-batch data loading from 47-184 ms to 21-25 ms.
+
+        Args:
+            rank: Global rank. Keeps ranks from drawing identical neighbor samples.
+            seed_base: Run-level value mixed with ``rank``. Defaults to the current Unix
+                time so successive runs differ, preserving the run-to-run variability that
+                unseeded sampling had. Pass a fixed value to reproduce a prior run.
+
+        Returns:
+            A seed in ``[0, 2**32)``. ``crc32`` is used rather than ``hash()`` because
+            Python randomizes string hashing per process, which would make the seed differ
+            between a rank's own processes and be unreproducible across runs. The range
+            also matches GLT's ``setSeed(unsigned int)`` exactly, so no masking is needed.
+        """
+        if seed_base is None:
+            seed_base = int(time.time())
+        seed = zlib.crc32(f"{seed_base}:{rank}".encode())
+        # Logged because seed_base defaults to wall-clock time: without this line a run's
+        # sampling is unreproducible after the fact.
+        logger.info(
+            f"Rank {rank} sampling seed: {seed} (seed_base={seed_base}). "
+            f"Pass seed_base to reproduce this run."
+        )
+        return seed
+
+    @staticmethod
     def create_sampling_config(
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         dataset_schema: DatasetSchema,
@@ -719,6 +755,7 @@ class BaseDistLoader(DistLoader):
         shuffle: bool = False,
         drop_last: bool = False,
         with_weight: bool = False,
+        seed: Optional[int] = None,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -736,6 +773,9 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
+            seed: Sampling RNG seed, usually from ``derive_sampling_seed()``. Leaving this
+                ``None`` is a **significant performance regression** -- see that method for
+                why. It is applied per rank: every sampling worker in a rank shares it.
 
         Returns:
             A fully configured SamplingConfig.
@@ -755,7 +795,7 @@ class BaseDistLoader(DistLoader):
             with_neg=False,
             with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
-            seed=None,
+            seed=seed,
         )
 
     @staticmethod
