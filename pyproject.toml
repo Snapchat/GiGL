@@ -269,7 +269,7 @@ include = ["gigl*", "snapchat*"]
 [tool.setuptools.package-data]
 # Include dep_vars.env from the root directory
 "gigl" = ["dep_vars.env", "**/*.yaml"]
-"gigl.scripts" = ["*.sh"]
+"gigl.scripts" = ["*.sh", "patches/*.patch"]
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"

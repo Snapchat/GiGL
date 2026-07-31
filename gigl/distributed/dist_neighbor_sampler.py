@@ -81,6 +81,10 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                         # DistPPRNeighborSampler (dist_ppr_sampler.py).
                         continue
                     req_num = self.num_neighbors[etype][i]
+                    if req_num == 0:
+                        # Zero fanout contributes no nodes or edges. Avoid routing
+                        # an empty request to every populated graph partition.
+                        continue
                     if self.edge_dir == "in":
                         srcs = src_dict.get(etype[-1], None)
                         if srcs is not None and srcs.numel() > 0:
@@ -151,6 +155,8 @@ class DistNeighborSampler(BaseDistNeighborSampler):
             num_sampled_nodes.append(srcs.size(0))
 
             for req_num in self.num_neighbors:
+                if req_num == 0:
+                    break
                 output = await self._sample_one_hop(srcs, req_num, None)
                 if output.nbr.numel() == 0:
                     break

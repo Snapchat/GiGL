@@ -3,6 +3,8 @@
 set -e
 set -x
 
+SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 is_running_on_mac() {
     [ "$(uname)" == "Darwin" ]
     return $?
@@ -47,6 +49,7 @@ then
     git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
         && cd graphlearn-for-pytorch \
         && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
+        && git apply "${SCRIPT_DIRECTORY}/patches/graphlearn_torch_random_sampler_thread_local_seed.patch" \
         && git submodule update --init \
         && bash install_dependencies.sh
     if has_cuda_driver;

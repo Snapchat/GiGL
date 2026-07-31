@@ -10,7 +10,7 @@ This script is used to install the dependencies for GIGL.
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import NoReturn, Optional
 
 
 def run_command_and_stream_stdout(cmd: str) -> Optional[int]:
@@ -34,7 +34,7 @@ def run_command_and_stream_stdout(cmd: str) -> Optional[int]:
     return return_code
 
 
-def main():
+def main() -> Optional[int]:
     """Main entry point for the post-install script."""
     print("Running GIGL post-install script...")
 
@@ -64,5 +64,10 @@ def main():
         sys.exit(1)
 
 
+def cli() -> NoReturn:
+    """Run post-install and propagate its result as the process exit code."""
+    raise SystemExit(main())
+
+
 if __name__ == "__main__":
-    main()
+    cli()
