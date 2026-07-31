@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from inspect import Parameter, signature
 from typing import Any, Final, Optional, get_type_hints
 from unittest.mock import patch
 
@@ -768,6 +769,13 @@ class TestRemoteDistDatasetABLPTransport(RemoteDistDatasetTestBase):
             get_type_hints(RemoteDistDataset.fetch_ablp_input)["supervision_edge_type"],
             Optional[EdgeType],
         )
+
+    def test_private_fetch_requires_explicit_assignments(self) -> None:
+        """Omitting assignments must not silently trigger unsharded fan-out."""
+        assignments_parameter = signature(
+            RemoteDistDataset._fetch_ablp_input
+        ).parameters["assignments"]
+        self.assertIs(assignments_parameter.default, Parameter.empty)
 
     def test_resolve_registered_supervision_edge_types(self) -> None:
         """The pure resolver preserves order and registered label topology."""

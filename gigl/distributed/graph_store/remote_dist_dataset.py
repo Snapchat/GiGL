@@ -454,7 +454,7 @@ class RemoteDistDataset:
         node_type: NodeType,
         supervision_edge_types: tuple[EdgeType, ...],
         supervision_edge_types_with_negatives: set[EdgeType],
-        assignments: Optional[dict[int, ServerSlice]] = None,
+        assignments: Optional[dict[int, ServerSlice]],
     ) -> dict[int, ABLPInputNodes]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
         # Build per-server requests
