@@ -6,6 +6,8 @@ from typing import Any, MutableMapping, Optional
 
 from google.cloud import logging as google_cloud_logging
 
+from gigl.env.constants import GIGL_DEBUG, is_env_flag_enabled
+
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 
 
@@ -19,6 +21,8 @@ class Logger(logging.LoggerAdapter):
         extra (Optional[dict[str, Any]]): Extra information to be added to the log message.
     """
 
+    _DID_ALERT_FOR_LOG_LEVEL: bool = False
+
     def __init__(
         self,
         logger: Optional[logging.Logger] = None,
@@ -26,14 +30,29 @@ class Logger(logging.LoggerAdapter):
         log_to_file: bool = False,
         extra: Optional[dict[str, Any]] = None,
     ):
+        gigl_debug = is_env_flag_enabled(GIGL_DEBUG)
+        if gigl_debug:
+            log_level = logging.DEBUG
+        else:
+            log_level = logging.INFO
+
         if logger is None:
             logger = logging.getLogger(name)
-            self._setup_logger(logger, name, log_to_file)
+            self._setup_logger(logger, name, log_to_file, log_level)
 
         super().__init__(logger, extra or {})
 
+        if not Logger._DID_ALERT_FOR_LOG_LEVEL:
+            Logger._DID_ALERT_FOR_LOG_LEVEL = True
+            level_name = logging.getLevelName(log_level)
+            self.info(f"{GIGL_DEBUG}={gigl_debug}, using log level {level_name}")
+
     def _setup_logger(
-        self, logger: logging.Logger, name: Optional[str], log_to_file: bool
+        self,
+        logger: logging.Logger,
+        name: Optional[str],
+        log_to_file: bool,
+        log_level: int,
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
@@ -42,7 +61,7 @@ class Logger(logging.LoggerAdapter):
             ):
                 # Google Cloud Logging
                 client = google_cloud_logging.Client()
-                client.setup_logging(log_level=logging.INFO)
+                client.setup_logging(log_level=log_level)
             else:
                 # Logging locally. Set up logging to console or file
                 if log_to_file:
@@ -61,7 +80,7 @@ class Logger(logging.LoggerAdapter):
                 )
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
+            logger.setLevel(log_level)
 
     def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> Any:
         if "extra" in kwargs:

@@ -8,7 +8,6 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
-import os
 import sys
 import time
 from collections import Counter
@@ -62,7 +61,7 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
-from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING
+from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING, is_env_flag_enabled
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.share_memory import share_memory
@@ -453,10 +452,7 @@ class BaseDistLoader(DistLoader):
             RuntimeError: If GIGL_ENABLE_PERF_MONITORING is set but user did not previously call
                 `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
-        enable_channel_monitoring = os.environ.get(
-            GIGL_ENABLE_PERF_MONITORING, ""
-        ).strip().lower() in ("1", "True")
-        if enable_channel_monitoring:
+        if is_env_flag_enabled(GIGL_ENABLE_PERF_MONITORING):
             logger.info(f"{GIGL_ENABLE_PERF_MONITORING} set, using MonitoredShmChannel")
             try:
                 get_metrics_service_instance()
