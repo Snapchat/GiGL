@@ -1,7 +1,7 @@
 import warnings
 from collections import abc
 from itertools import count
-from typing import Optional, Union
+from typing import Literal, Optional, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -48,8 +48,6 @@ from gigl.src.common.types.graph_data import (
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    message_passing_to_negative_label,
-    message_passing_to_positive_label,
     reverse_edge_type,
     select_label_edge_types,
 )
@@ -57,6 +55,175 @@ from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
+
+
+def _is_integral_tensor(tensor: torch.Tensor) -> bool:
+    return tensor.dtype in (
+        torch.uint8,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+    )
+
+
+def _convert_graph_store_ablp_inputs(
+    input_nodes: dict[int, ABLPInputNodes],
+    num_storage_nodes: int,
+    edge_types: Optional[list[EdgeType]],
+    edge_dir: Literal["in", "out"],
+) -> tuple[
+    list[ABLPNodeSamplerInput],
+    NodeType,
+    list[EdgeType],
+    list[EdgeType],
+    list[EdgeType],
+]:
+    if not input_nodes:
+        raise ValueError("Graph Store ABLP input_nodes must not be empty.")
+    invalid_server_ranks = [
+        rank
+        for rank in input_nodes
+        if not isinstance(rank, int) or rank < 0 or rank >= num_storage_nodes
+    ]
+    if invalid_server_ranks:
+        raise ValueError(
+            f"Graph Store server ranks must be in [0, {num_storage_nodes}), "
+            f"received {invalid_server_ranks}."
+        )
+    if edge_types is None:
+        raise ValueError("Graph Store edge types must be available for ABLP.")
+    if edge_dir not in ("in", "out"):
+        raise ValueError(f"Unexpected Graph Store edge direction: {edge_dir}.")
+
+    first_input = next(iter(input_nodes.values()))
+    input_type = first_input.anchor_node_type
+    supervision_edge_types = list(first_input.labels)
+    if not supervision_edge_types:
+        raise ValueError("Graph Store ABLP labels must not be empty.")
+
+    anchor_endpoint = 0 if edge_dir == "out" else 2
+    positive_label_edge_types: list[EdgeType] = []
+    negative_label_edge_types: list[EdgeType] = []
+    resolved_label_edge_types: dict[EdgeType, tuple[EdgeType, Optional[EdgeType]]] = {}
+    for supervision_edge_type in supervision_edge_types:
+        if supervision_edge_type[anchor_endpoint] != input_type:
+            raise ValueError(
+                f"Supervision edge type {supervision_edge_type} does not use "
+                f"anchor node type {input_type} at endpoint {anchor_endpoint}."
+            )
+        positive_edge_type, negative_edge_type = select_label_edge_types(
+            supervision_edge_type, edge_types
+        )
+        resolved_label_edge_types[supervision_edge_type] = (
+            positive_edge_type,
+            negative_edge_type,
+        )
+        positive_label_edge_types.append(positive_edge_type)
+        if negative_edge_type is not None:
+            negative_label_edge_types.append(negative_edge_type)
+
+    expected_supervision_edge_types = set(supervision_edge_types)
+    converted_inputs_by_rank: dict[int, ABLPNodeSamplerInput] = {}
+    for server_rank, ablp_input in input_nodes.items():
+        if ablp_input.anchor_node_type != input_type:
+            raise ValueError(
+                "Graph Store ABLP inputs must use one anchor node type, "
+                f"received {input_type} and {ablp_input.anchor_node_type}."
+            )
+        if set(ablp_input.labels) != expected_supervision_edge_types:
+            raise ValueError(
+                "Graph Store ABLP inputs must use the same supervision edge types."
+            )
+
+        anchors = ablp_input.anchor_nodes
+        if (
+            not isinstance(anchors, torch.Tensor)
+            or anchors.dim() != 1
+            or not _is_integral_tensor(anchors)
+        ):
+            raise ValueError(
+                "Graph Store ABLP anchor nodes must be a 1-D integral tensor."
+            )
+
+        positive_labels_by_edge_type: dict[EdgeType, torch.Tensor] = {}
+        negative_labels_by_edge_type: dict[EdgeType, torch.Tensor] = {}
+        for supervision_edge_type in supervision_edge_types:
+            positive_labels, negative_labels = ablp_input.labels[supervision_edge_type]
+            if (
+                not isinstance(positive_labels, torch.Tensor)
+                or positive_labels.dim() != 2
+                or not _is_integral_tensor(positive_labels)
+                or positive_labels.size(0) != anchors.numel()
+            ):
+                raise ValueError(
+                    "Graph Store positive labels must be a 2-D integral tensor "
+                    "with one row per anchor."
+                )
+            if negative_labels is not None and (
+                not isinstance(negative_labels, torch.Tensor)
+                or negative_labels.dim() != 2
+                or not _is_integral_tensor(negative_labels)
+                or negative_labels.size(0) != anchors.numel()
+            ):
+                raise ValueError(
+                    "Graph Store negative labels must be a 2-D integral tensor "
+                    "with one row per anchor."
+                )
+
+            positive_edge_type, negative_edge_type = resolved_label_edge_types[
+                supervision_edge_type
+            ]
+            positive_labels_by_edge_type[positive_edge_type] = positive_labels
+            if negative_edge_type is None:
+                if negative_labels is not None:
+                    raise ValueError(
+                        f"Negative labels were provided for {supervision_edge_type} "
+                        "without registered negative label topology."
+                    )
+            else:
+                if negative_labels is None:
+                    if anchors.numel() != 0:
+                        raise ValueError(
+                            f"Negative labels are required for {supervision_edge_type}."
+                        )
+                    negative_labels = torch.empty((0, 0), dtype=torch.long)
+                negative_labels_by_edge_type[negative_edge_type] = negative_labels
+
+        converted_inputs_by_rank[server_rank] = ABLPNodeSamplerInput(
+            node=anchors,
+            input_type=input_type,
+            positive_label_by_edge_types=positive_labels_by_edge_type,
+            negative_label_by_edge_types=negative_labels_by_edge_type,
+        )
+
+    input_data: list[ABLPNodeSamplerInput] = []
+    for server_rank in range(num_storage_nodes):
+        if server_rank in converted_inputs_by_rank:
+            input_data.append(converted_inputs_by_rank[server_rank])
+        else:
+            input_data.append(
+                ABLPNodeSamplerInput(
+                    node=torch.empty(0, dtype=torch.long),
+                    input_type=input_type,
+                    positive_label_by_edge_types={
+                        edge_type: torch.empty((0, 0), dtype=torch.long)
+                        for edge_type in positive_label_edge_types
+                    },
+                    negative_label_by_edge_types={
+                        edge_type: torch.empty((0, 0), dtype=torch.long)
+                        for edge_type in negative_label_edge_types
+                    },
+                )
+            )
+
+    return (
+        input_data,
+        input_type,
+        supervision_edge_types,
+        positive_label_edge_types,
+        negative_label_edge_types,
+    )
 
 
 class DistABLPLoader(BaseDistLoader):
@@ -643,6 +810,7 @@ class DistABLPLoader(BaseDistLoader):
         node_feature_info = dataset.fetch_node_feature_info()
         edge_feature_info = dataset.fetch_edge_feature_info()
         edge_types = dataset.fetch_edge_types()
+        edge_dir = cast(Literal["in", "out"], dataset.fetch_edge_dir())
         compute_rank = torch.distributed.get_rank()
         backend_key = f"dist_ablp_loader_{self._instance_count}"
         worker_key = f"{backend_key}_compute_rank_{compute_rank}"
@@ -660,47 +828,20 @@ class DistABLPLoader(BaseDistLoader):
             f"tcp://{worker_options.master_addr}:{worker_options.master_port}"
         )
 
-        # Validate server ranks
-        servers = input_nodes.keys()
-        if len(servers) > 0:
-            if (
-                max(servers) >= dataset.cluster_info.num_storage_nodes
-                or min(servers) < 0
-            ):
-                raise ValueError(
-                    f"When using Graph Store mode, the server ranks must be in range "
-                    f"[0, {dataset.cluster_info.num_storage_nodes}), "
-                    f"received inputs for servers: {list(servers)}"
-                )
-
-        # Extract node type and label edge types from the ABLPInputNodes dataclass.
-        # All entries should have the same anchor_node_type and edge type keys.
-        first_input = next(iter(input_nodes.values()))
-        input_type = first_input.anchor_node_type
+        (
+            input_data,
+            input_type,
+            self._supervision_edge_types,
+            self._positive_label_edge_types,
+            self._negative_label_edge_types,
+        ) = _convert_graph_store_ablp_inputs(
+            input_nodes=input_nodes,
+            num_storage_nodes=dataset.cluster_info.num_storage_nodes,
+            edge_types=edge_types,
+            edge_dir=edge_dir,
+        )
         is_homogeneous_with_labeled_edge_type = (
             input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
-        )
-
-        # Extract supervision edge types and derive label edge types from the
-        # ABLPInputNodes.labels dict (keyed by supervision edge type).
-        self._supervision_edge_types = list(first_input.labels.keys())
-        has_negatives = False
-        for ablp_input in input_nodes.values():
-            for maybe_negative_labels in ablp_input.labels.values():
-                if maybe_negative_labels is not None:
-                    has_negatives = True
-                    break
-
-        self._positive_label_edge_types = [
-            message_passing_to_positive_label(et) for et in self._supervision_edge_types
-        ]
-        self._negative_label_edge_types = (
-            [
-                message_passing_to_negative_label(et)
-                for et in self._supervision_edge_types
-            ]
-            if has_negatives
-            else []
         )
 
         # Graph Store mode currently only supports a single supervision edge type,
@@ -715,51 +856,13 @@ class DistABLPLoader(BaseDistLoader):
         logger.info(f"Positive label edge types: {self._positive_label_edge_types}")
         logger.info(f"Negative label edge types: {self._negative_label_edge_types}")
 
-        # Convert from ABLPInputNodes to list of ABLPNodeSamplerInput (one per server)
-        input_data: list[ABLPNodeSamplerInput] = []
-        for server_rank in range(dataset.cluster_info.num_storage_nodes):
-            positive_label_by_edge_type: dict[EdgeType, torch.Tensor] = {}
-            negative_label_by_edge_type: dict[EdgeType, torch.Tensor] = {}
-            if server_rank in input_nodes:
-                ablp_input_nodes = input_nodes[server_rank]
-                anchors = ablp_input_nodes.anchor_nodes
-                for supervision_edge_type, (
-                    positive_labels,
-                    negative_labels,
-                ) in ablp_input_nodes.labels.items():
-                    positive_label_by_edge_type[
-                        message_passing_to_positive_label(supervision_edge_type)
-                    ] = positive_labels
-                    if negative_labels is not None:
-                        negative_label_by_edge_type[
-                            message_passing_to_negative_label(supervision_edge_type)
-                        ] = negative_labels
-            else:
-                # Empty input for servers with no data for this rank
-                anchors = torch.empty(0, dtype=torch.long)
-                positive_label_by_edge_type = {
-                    et: torch.empty(0, 0, dtype=torch.long)
-                    for et in self._positive_label_edge_types
-                }
-                if has_negatives:
-                    negative_label_by_edge_type = {
-                        et: torch.empty(0, 0, dtype=torch.long)
-                        for et in self._negative_label_edge_types
-                    }
-
+        for server_rank, ablp_input in enumerate(input_data):
             logger.info(
                 f"Rank: {torch.distributed.get_rank()}! Building ABLPNodeSamplerInput for server rank: {server_rank} "
-                f"with input type: {input_type}. anchors: {anchors.shape}, "
-                f"positive_labels edge types: {list(positive_label_by_edge_type.keys())}, "
-                f"negative_labels edge types: {list(negative_label_by_edge_type.keys())}"
+                f"with input type: {input_type}. anchors: {ablp_input.node.shape}, "
+                f"positive_labels edge types: {list(ablp_input.positive_label_by_edge_types.keys())}, "
+                f"negative_labels edge types: {list(ablp_input.negative_label_by_edge_types.keys())}"
             )
-            ablp_input = ABLPNodeSamplerInput(
-                node=anchors,
-                input_type=input_type,
-                positive_label_by_edge_types=positive_label_by_edge_type,
-                negative_label_by_edge_types=negative_label_by_edge_type,
-            )
-            input_data.append(ablp_input)
 
         return (
             input_data,
@@ -769,7 +872,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                edge_dir=dataset.fetch_edge_dir(),
+                edge_dir=edge_dir,
             ),
             backend_key,
         )
