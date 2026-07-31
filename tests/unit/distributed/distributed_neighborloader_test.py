@@ -1,3 +1,4 @@
+import time
 import unittest
 from collections.abc import Mapping, MutableMapping
 
@@ -968,6 +969,98 @@ class WithEdgeDerivationTest(TestCase):
         proc.join(timeout=120)
         self.assertGreater(holder["count"], 0)
         self.assertTrue(holder["edge_ids_absent"])
+
+
+def _derive_seed_in_child(
+    _,
+    rank: int,
+    seed_base: int,
+    holder: MutableMapping,
+) -> None:
+    # Runs in a spawned interpreter, which gets its own string-hash seed. Lets the parent
+    # check that the derivation does not depend on per-process hash randomization.
+    holder["seed"] = BaseDistLoader.derive_sampling_seed(rank=rank, seed_base=seed_base)
+
+
+class SamplingSeedDerivationTest(TestCase):
+    """Covers ``derive_sampling_seed`` and the ``seed`` plumbing in ``create_sampling_config``.
+
+    An unset sampling seed is a performance regression, not just a determinism choice, so
+    these guard the properties the derivation has to hold: reproducible given a base,
+    distinct per rank, and inside the range GLT's ``setSeed(unsigned int)`` accepts.
+    """
+
+    def _schema(self) -> DatasetSchema:
+        return DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=None,
+            edge_dir="out",
+        )
+
+    def test_same_rank_and_seed_base_is_reproducible(self) -> None:
+        first = BaseDistLoader.derive_sampling_seed(rank=3, seed_base=1234)
+        second = BaseDistLoader.derive_sampling_seed(rank=3, seed_base=1234)
+        self.assertEqual(first, second)
+
+    def test_seed_is_reproducible_across_processes(self) -> None:
+        # crc32 rather than hash(): Python randomizes string hashing per process, so a
+        # hash()-based derivation would differ between a rank's own processes.
+        in_parent = BaseDistLoader.derive_sampling_seed(rank=3, seed_base=1234)
+        manager = mp.Manager()
+        holder: MutableMapping = manager.dict()
+        proc = mp.spawn(
+            fn=_derive_seed_in_child,
+            args=(3, 1234, holder),
+            join=False,
+        )
+        proc.join(timeout=120)
+        self.assertEqual(holder["seed"], in_parent)
+
+    def test_ranks_get_distinct_seeds(self) -> None:
+        # Ranks sharing a seed would draw identical neighbor samples.
+        seeds = [
+            BaseDistLoader.derive_sampling_seed(rank=rank, seed_base=1234)
+            for rank in range(128)
+        ]
+        self.assertEqual(len(set(seeds)), len(seeds))
+
+    def test_seed_is_in_uint32_range(self) -> None:
+        # GLT's RandomSeedManager::setSeed takes an unsigned int, so a value outside this
+        # range would be silently truncated.
+        for rank in (0, 1, 7, 1023, 2**31 - 1):
+            for seed_base in (0, 1234, 2**32 - 1, 2**63 - 1):
+                seed = BaseDistLoader.derive_sampling_seed(
+                    rank=rank, seed_base=seed_base
+                )
+                self.assertGreaterEqual(seed, 0)
+                self.assertLess(seed, 2**32)
+
+    def test_default_seed_base_is_wall_clock(self) -> None:
+        # Defaulting to wall-clock time is what preserves the run-to-run variability that
+        # unseeded sampling had, so successive runs do not repeat one sample draw.
+        before = int(time.time())
+        seed = BaseDistLoader.derive_sampling_seed(rank=0)
+        after = int(time.time())
+        seeds_for_window = {
+            BaseDistLoader.derive_sampling_seed(rank=0, seed_base=seed_base)
+            for seed_base in range(before, after + 1)
+        }
+        self.assertIn(seed, seeds_for_window)
+
+    def test_create_sampling_config_passes_explicit_seed_through(self) -> None:
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=self._schema(), seed=4242
+        )
+        self.assertEqual(config.seed, 4242)
+
+    def test_create_sampling_config_seed_defaults_to_none(self) -> None:
+        # The loaders are responsible for supplying a seed; the helper does not invent one.
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=self._schema()
+        )
+        self.assertIsNone(config.seed)
 
 
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess
