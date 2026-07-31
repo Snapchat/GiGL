@@ -94,24 +94,40 @@ class FetchABLPInputRequest:
     Args:
         split: The split of the dataset to get ABLP input from.
         node_type: The type of anchor nodes to retrieve.
-        supervision_edge_type: The edge type used for supervision.
+        supervision_edge_types: The edge types used for supervision.
         server_slice: An optional :class:`~gigl.distributed.graph_store.sharding.ServerSlice`
             describing the fraction of this server's data to return.
             When ``None``, all of the server's data is returned.
 
+    Raises:
+        TypeError: If ``supervision_edge_types`` is not a tuple.
+        ValueError: If ``supervision_edge_types`` is empty or contains duplicates.
+
     Examples:
         Fetch training ABLP input without sharding:
 
-        >>> FetchABLPInputRequest(split="train", node_type="user", supervision_edge_type=("user", "to", "item"))
+        >>> FetchABLPInputRequest(
+        ...     split="train",
+        ...     node_type="user",
+        ...     supervision_edge_types=(("user", "to", "item"),),
+        ... )
 
         Fetch with a server slice:
 
         >>> FetchABLPInputRequest(split="train", node_type="user",
-        ...     supervision_edge_type=("user", "to", "item"),
+        ...     supervision_edge_types=(("user", "to", "item"),),
         ...     server_slice=ServerSlice(0, 0, 1, 2))
     """
 
     split: Union[Literal["train", "val", "test"], str]
     node_type: NodeType
-    supervision_edge_type: EdgeType
+    supervision_edge_types: tuple[EdgeType, ...]
     server_slice: Optional[ServerSlice] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.supervision_edge_types, tuple):
+            raise TypeError("supervision_edge_types must be a tuple")
+        if not self.supervision_edge_types:
+            raise ValueError("supervision_edge_types must not be empty")
+        if len(set(self.supervision_edge_types)) != len(self.supervision_edge_types):
+            raise ValueError("supervision_edge_types must not contain duplicates")

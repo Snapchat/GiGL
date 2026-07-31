@@ -13,7 +13,8 @@ from gigl.distributed.graph_store.messages import (
     RegisterBackendRequest,
 )
 from gigl.distributed.graph_store.sharding import ServerSlice
-from gigl.src.common.types.graph_data import Relation
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -380,17 +381,18 @@ class TestRemoteDataset(TestCase):
 
         for split, expected_user_ids in split_to_user_ids.items():
             with self.subTest(split=split):
-                anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+                ablp_input = server.get_ablp_input(
                     FetchABLPInputRequest(
                         split=split,
                         node_type=USER,
-                        supervision_edge_type=USER_TO_STORY,
+                        supervision_edge_types=(USER_TO_STORY,),
                     )
                 )
+                pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
 
                 # Verify anchor nodes match expected users
                 self.assert_tensor_equality(
-                    anchor_nodes, torch.tensor(expected_user_ids)
+                    ablp_input.anchor_nodes, torch.tensor(expected_user_ids)
                 )
 
                 # Verify positive labels (order may vary due to CSR representation)
@@ -403,6 +405,187 @@ class TestRemoteDataset(TestCase):
                 expected_negative = [negative_labels[uid] for uid in expected_user_ids]
                 assert neg_labels is not None
                 self.assert_tensor_equality(neg_labels, torch.tensor(expected_negative))
+
+    @patch("gigl.distributed.graph_store.dist_server.get_labels_for_anchor_nodes")
+    @patch("gigl.distributed.graph_store.dist_server.select_label_edge_types")
+    def test_get_ablp_input_with_multiple_supervision_edge_types(
+        self,
+        select_label_edge_types_mock: MagicMock,
+        get_labels_for_anchor_nodes_mock: MagicMock,
+    ) -> None:
+        """One server request returns ordered labels for every edge type."""
+        user_likes_story = EdgeType(USER, Relation("likes"), STORY)
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        positive_likes = EdgeType(USER, Relation("likes_positive"), STORY)
+        negative_likes = EdgeType(USER, Relation("likes_negative"), STORY)
+        positive_rates = EdgeType(USER, Relation("rates_positive"), STORY)
+        registered_edge_types = (
+            positive_likes,
+            negative_likes,
+            positive_rates,
+        )
+        anchors = torch.tensor([4, 7])
+        likes_labels = (torch.tensor([[1], [2]]), torch.tensor([[3], [4]]))
+        rates_labels = (torch.tensor([[5], [6]]), None)
+
+        dataset = MagicMock()
+        dataset.edge_dir = "out"
+        dataset.max_labels_per_anchor_node = 3
+        dataset.get_edge_types.return_value = registered_edge_types
+        server = dist_server.DistServer(dataset)
+        select_label_edge_types_mock.side_effect = [
+            (positive_likes, negative_likes),
+            (positive_rates, None),
+        ]
+        get_labels_for_anchor_nodes_mock.side_effect = [
+            likes_labels,
+            rates_labels,
+        ]
+
+        with patch.object(
+            server, "_get_node_ids", return_value=anchors
+        ) as get_node_ids_mock:
+            result = server.get_ablp_input(
+                FetchABLPInputRequest(
+                    split="train",
+                    node_type=USER,
+                    supervision_edge_types=(user_likes_story, user_rates_story),
+                )
+            )
+
+        self.assertIsInstance(result, ABLPInputNodes)
+        self.assertIs(result.anchor_nodes, anchors)
+        self.assertEqual(result.anchor_node_type, USER)
+        self.assertEqual(list(result.labels), [user_likes_story, user_rates_story])
+        self.assertEqual(result.labels[user_likes_story], likes_labels)
+        self.assertEqual(result.labels[user_rates_story], rates_labels)
+        get_node_ids_mock.assert_called_once_with(
+            split="train", node_type=USER, server_slice=None
+        )
+        dataset.get_edge_types.assert_called_once_with()
+        self.assertEqual(select_label_edge_types_mock.call_count, 2)
+        self.assertEqual(get_labels_for_anchor_nodes_mock.call_count, 2)
+        for label_call in get_labels_for_anchor_nodes_mock.call_args_list:
+            self.assertIs(label_call.args[1], anchors)
+            self.assertEqual(
+                label_call.kwargs["max_labels_per_anchor_node"],
+                dataset.max_labels_per_anchor_node,
+            )
+
+    def test_get_ablp_input_rejects_malformed_edge_type_tuples(self) -> None:
+        """The server defends against requests that bypass dataclass validation."""
+        malformed_requests = (
+            ("non-tuple", [USER_TO_STORY], TypeError),
+            ("empty", (), ValueError),
+            ("duplicate", (USER_TO_STORY, USER_TO_STORY), ValueError),
+        )
+
+        for name, supervision_edge_types, expected_error in malformed_requests:
+            with self.subTest(name=name):
+                request = object.__new__(FetchABLPInputRequest)
+                object.__setattr__(
+                    request, "supervision_edge_types", supervision_edge_types
+                )
+                server = dist_server.DistServer(MagicMock())
+                with patch.object(server, "_get_node_ids") as get_node_ids_mock:
+                    with self.assertRaises(expected_error):
+                        server.get_ablp_input(request)
+                get_node_ids_mock.assert_not_called()
+
+    def test_get_ablp_input_rejects_invalid_edge_direction(self) -> None:
+        """Only registered incoming and outgoing directions are valid."""
+        dataset = MagicMock()
+        dataset.edge_dir = "sideways"
+        server = dist_server.DistServer(dataset)
+        request = FetchABLPInputRequest(
+            split="train",
+            node_type=USER,
+            supervision_edge_types=(USER_TO_STORY,),
+        )
+
+        with patch.object(server, "_get_node_ids") as get_node_ids_mock:
+            with self.assertRaises(ValueError):
+                server.get_ablp_input(request)
+
+        get_node_ids_mock.assert_not_called()
+
+    @patch("gigl.distributed.graph_store.dist_server.get_labels_for_anchor_nodes")
+    @patch("gigl.distributed.graph_store.dist_server.select_label_edge_types")
+    def test_get_ablp_input_validates_registered_anchor_endpoint(
+        self,
+        select_label_edge_types_mock: MagicMock,
+        get_labels_for_anchor_nodes_mock: MagicMock,
+    ) -> None:
+        """Registered edge keys must put the anchor at the direction endpoint."""
+        anchor_node_type = NodeType("anchor")
+        label_node_type = NodeType("label")
+        outward_edge_type = EdgeType(
+            anchor_node_type, Relation("supervises"), label_node_type
+        )
+        incoming_edge_type = EdgeType(
+            label_node_type, Relation("supervises"), anchor_node_type
+        )
+        positive_edge_type = EdgeType(
+            anchor_node_type, Relation("supervises_positive"), label_node_type
+        )
+        anchors = torch.tensor([0, 1])
+        positive_labels = torch.tensor([[2], [3]])
+        select_label_edge_types_mock.return_value = (positive_edge_type, None)
+        get_labels_for_anchor_nodes_mock.return_value = (positive_labels, None)
+
+        cases = (
+            ("out-accept", "out", outward_edge_type, True),
+            ("out-reject", "out", incoming_edge_type, False),
+            ("in-accept", "in", incoming_edge_type, True),
+            ("in-reject", "in", outward_edge_type, False),
+        )
+        for name, edge_dir, supervision_edge_type, should_accept in cases:
+            with self.subTest(name=name):
+                dataset = MagicMock()
+                dataset.edge_dir = edge_dir
+                dataset.max_labels_per_anchor_node = None
+                dataset.get_edge_types.return_value = (positive_edge_type,)
+                server = dist_server.DistServer(dataset)
+                request = FetchABLPInputRequest(
+                    split="train",
+                    node_type=anchor_node_type,
+                    supervision_edge_types=(supervision_edge_type,),
+                )
+
+                with patch.object(
+                    server, "_get_node_ids", return_value=anchors
+                ) as get_node_ids_mock:
+                    if should_accept:
+                        result = server.get_ablp_input(request)
+                        self.assertEqual(list(result.labels), [supervision_edge_type])
+                        get_node_ids_mock.assert_called_once()
+                    else:
+                        with self.assertRaises(ValueError):
+                            server.get_ablp_input(request)
+                        get_node_ids_mock.assert_not_called()
+
+    def test_get_ablp_input_rejects_missing_positive_topology(self) -> None:
+        """Every requested supervision type requires positive label topology."""
+        dataset = MagicMock()
+        dataset.edge_dir = "out"
+        dataset.max_labels_per_anchor_node = None
+        dataset.get_edge_types.return_value = ()
+        server = dist_server.DistServer(dataset)
+
+        with patch.object(
+            server, "_get_node_ids", return_value=torch.tensor([0])
+        ) as get_node_ids_mock:
+            with self.assertRaises(ValueError):
+                server.get_ablp_input(
+                    FetchABLPInputRequest(
+                        split="train",
+                        node_type=USER,
+                        supervision_edge_types=(USER_TO_STORY,),
+                    )
+                )
+
+        get_node_ids_mock.assert_called_once()
+        dataset.get_edge_types.assert_called_once_with()
 
     def test_get_ablp_input_with_server_slicing(self) -> None:
         """Test get_ablp_input with server slices to verify sharding."""
@@ -434,11 +617,11 @@ class TestRemoteDataset(TestCase):
         server = dist_server.DistServer(dataset)
 
         # Get training input for first half
-        anchor_nodes_0, pos_labels_0, neg_labels_0 = server.get_ablp_input(
+        ablp_input_0 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
                 server_slice=ServerSlice(
                     server_rank=0, start_numerator=0, end_numerator=1, denominator=2
                 ),
@@ -446,22 +629,28 @@ class TestRemoteDataset(TestCase):
         )
 
         # Get training input for second half
-        anchor_nodes_1, pos_labels_1, neg_labels_1 = server.get_ablp_input(
+        ablp_input_1 = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
                 server_slice=ServerSlice(
                     server_rank=0, start_numerator=1, end_numerator=2, denominator=2
                 ),
             )
         )
+        pos_labels_0, neg_labels_0 = ablp_input_0.labels[USER_TO_STORY]
+        pos_labels_1, neg_labels_1 = ablp_input_1.labels[USER_TO_STORY]
 
         # Train nodes [0, 1, 2, 3] should be split across ranks
         rank_0_user_ids = [0, 1]
         rank_1_user_ids = [2, 3]
-        self.assert_tensor_equality(anchor_nodes_0, torch.tensor(rank_0_user_ids))
-        self.assert_tensor_equality(anchor_nodes_1, torch.tensor(rank_1_user_ids))
+        self.assert_tensor_equality(
+            ablp_input_0.anchor_nodes, torch.tensor(rank_0_user_ids)
+        )
+        self.assert_tensor_equality(
+            ablp_input_1.anchor_nodes, torch.tensor(rank_1_user_ids)
+        )
 
         # Verify positive labels for each rank (order may vary due to CSR representation)
         expected_positive_0 = [positive_labels[uid] for uid in rank_0_user_ids]
@@ -502,7 +691,7 @@ class TestRemoteDataset(TestCase):
                 FetchABLPInputRequest(
                     split="invalid",
                     node_type=USER,
-                    supervision_edge_type=USER_TO_STORY,
+                    supervision_edge_types=(USER_TO_STORY,),
                 )
             )
 
@@ -529,16 +718,19 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+        ablp_input = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
             )
         )
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
 
         # Verify train split returns the expected users
-        self.assert_tensor_equality(anchor_nodes, torch.tensor(train_user_ids))
+        self.assert_tensor_equality(
+            ablp_input.anchor_nodes, torch.tensor(train_user_ids)
+        )
 
         # Positive labels should still work
         expected_positive = [positive_labels[uid] for uid in train_user_ids]
@@ -575,11 +767,11 @@ class TestRemoteDataset(TestCase):
         )
         server = dist_server.DistServer(dataset)
 
-        anchor_nodes, pos_labels, neg_labels = server.get_ablp_input(
+        ablp_input = server.get_ablp_input(
             FetchABLPInputRequest(
                 split="train",
                 node_type=USER,
-                supervision_edge_type=USER_TO_STORY,
+                supervision_edge_types=(USER_TO_STORY,),
                 server_slice=ServerSlice(
                     server_rank=0,
                     start_numerator=1,
@@ -588,11 +780,14 @@ class TestRemoteDataset(TestCase):
                 ),
             )
         )
+        pos_labels, neg_labels = ablp_input.labels[USER_TO_STORY]
 
-        self.assert_tensor_equality(anchor_nodes, torch.tensor([2, 3]))
+        self.assert_tensor_equality(ablp_input.anchor_nodes, torch.tensor([2, 3]))
         self.assert_tensor_equality(pos_labels, torch.tensor([[2, 3], [3, 4]]), dim=1)
         assert neg_labels is not None
         self.assert_tensor_equality(neg_labels, torch.tensor([[4], [0]]))
+        self.assertEqual(pos_labels.shape[0], ablp_input.anchor_nodes.shape[0])
+        self.assertEqual(neg_labels.shape[0], ablp_input.anchor_nodes.shape[0])
 
 
 def _make_sampling_config() -> SamplingConfig:

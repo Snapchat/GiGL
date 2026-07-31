@@ -96,6 +96,7 @@ from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
+from gigl.utils.sampling import ABLPInputNodes
 from gigl.utils.share_memory import share_memory
 
 SERVER_EXIT_STATUS_CHECK_INTERVAL = 5.0
@@ -542,38 +543,72 @@ class DistServer:
     def get_ablp_input(
         self,
         request: FetchABLPInputRequest,
-    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> ABLPInputNodes:
         """Get the ABLP (Anchor Based Link Prediction) input for distributed processing.
 
         Args:
             request: The ABLP fetch request, including split, node type,
-                supervision edge type, and an optional contiguous server slice.
+                registered supervision edge types, and an optional contiguous
+                server slice.
 
         Returns:
-            A tuple containing the anchor nodes for the rank, the positive labels, and the negative labels.
-            The positive labels are of shape [N, M], where N is the number of anchor nodes and M is the number of positive labels.
-            The negative labels are of shape [N, M], where N is the number of anchor nodes and M is the number of negative labels.
-            The negative labels may be None if no negative labels are available.
+            An ABLPInputNodes containing the anchors and one positive/optional
+            negative label pair for every requested supervision edge type.
 
         Raises:
-            ValueError: If the split is invalid.
+            TypeError: If supervision edge types are not provided as a tuple.
+            ValueError: If the split, edge direction, or supervision schema is
+                invalid.
         """
+        supervision_edge_types = request.supervision_edge_types
+        if not isinstance(supervision_edge_types, tuple):
+            raise TypeError("supervision_edge_types must be a tuple")
+        if not supervision_edge_types:
+            raise ValueError("supervision_edge_types must not be empty")
+        if len(set(supervision_edge_types)) != len(supervision_edge_types):
+            raise ValueError("supervision_edge_types must not contain duplicates")
+
+        edge_dir = self.dataset.edge_dir
+        if edge_dir not in ("in", "out"):
+            raise ValueError(f"Invalid edge direction {edge_dir!r}")
+        anchor_endpoint_index = 0 if edge_dir == "out" else 2
+        invalid_supervision_edge_types = [
+            edge_type
+            for edge_type in supervision_edge_types
+            if edge_type[anchor_endpoint_index] != request.node_type
+        ]
+        if invalid_supervision_edge_types:
+            raise ValueError(
+                f"For edge_dir={edge_dir!r}, registered supervision edge types "
+                f"must have anchor node type {request.node_type!r} at index "
+                f"{anchor_endpoint_index}; received invalid edge types "
+                f"{invalid_supervision_edge_types}."
+            )
+
         anchors = self._get_node_ids(
             split=request.split,
             node_type=request.node_type,
             server_slice=request.server_slice,
         )
-        positive_label_edge_type, negative_label_edge_type = select_label_edge_types(
-            request.supervision_edge_type, self.dataset.get_edge_types()
+        edge_types = self.dataset.get_edge_types()
+        labels: dict[EdgeType, tuple[torch.Tensor, Optional[torch.Tensor]]] = {}
+        for edge_type in supervision_edge_types:
+            (
+                positive_label_edge_type,
+                negative_label_edge_type,
+            ) = select_label_edge_types(edge_type, edge_types)
+            labels[edge_type] = get_labels_for_anchor_nodes(
+                self.dataset,
+                anchors,
+                positive_label_edge_type,
+                negative_label_edge_type,
+                max_labels_per_anchor_node=self.dataset.max_labels_per_anchor_node,
+            )
+        return ABLPInputNodes(
+            anchor_nodes=anchors,
+            anchor_node_type=request.node_type,
+            labels=labels,
         )
-        positive_labels, negative_labels = get_labels_for_anchor_nodes(
-            self.dataset,
-            anchors,
-            positive_label_edge_type,
-            negative_label_edge_type,
-            max_labels_per_anchor_node=self.dataset.max_labels_per_anchor_node,
-        )
-        return anchors, positive_labels, negative_labels
 
     def init_sampling_backend(self, opts: InitSamplingBackendRequest) -> int:
         """Create or reuse a shared sampling backend for one loader instance.

@@ -21,10 +21,81 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
+    reverse_edge_type,
+    select_label_edge_types,
 )
 from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
+
+
+def _resolve_registered_supervision_edge_types(
+    supervision_edge_types: tuple[EdgeType, ...],
+    anchor_node_type: NodeType,
+    edge_dir: Literal["in", "out"],
+    registered_edge_types: list[EdgeType],
+) -> tuple[
+    tuple[EdgeType, ...],
+    set[EdgeType],
+]:
+    """Resolve ABLP supervision types to registered sampling orientation.
+
+    Args:
+        supervision_edge_types: Ordered supervision types to resolve.
+        anchor_node_type: Node type of the anchor nodes.
+        edge_dir: Registered graph sampling direction.
+        registered_edge_types: Edge types registered in GraphStore.
+
+    Returns:
+        The ordered registered supervision types and the subset with negative
+        label topology.
+
+    Raises:
+        ValueError: If the direction, tuple, orientation, or registered label
+            topology is invalid.
+    """
+    if edge_dir not in ("in", "out"):
+        raise ValueError(f"Expected edge_dir to be 'in' or 'out', got {edge_dir!r}.")
+    if not supervision_edge_types:
+        raise ValueError("supervision_edge_types must not be empty.")
+    if len(set(supervision_edge_types)) != len(supervision_edge_types):
+        raise ValueError("supervision_edge_types must not contain duplicates.")
+
+    all_anchor_outward = all(
+        edge_type[0] == anchor_node_type for edge_type in supervision_edge_types
+    )
+    if edge_dir == "out":
+        if not all_anchor_outward:
+            raise ValueError(
+                "For edge_dir='out', every supervision edge type must have "
+                f"source {anchor_node_type!r}."
+            )
+        resolved_edge_types = supervision_edge_types
+    else:
+        all_legacy_incoming = all(
+            edge_type[2] == anchor_node_type for edge_type in supervision_edge_types
+        )
+        if all_anchor_outward:
+            resolved_edge_types = tuple(
+                reverse_edge_type(edge_type) for edge_type in supervision_edge_types
+            )
+        elif all_legacy_incoming:
+            resolved_edge_types = supervision_edge_types
+        else:
+            raise ValueError(
+                "For edge_dir='in', supervision edge types must uniformly be "
+                "anchor-outward or uniformly have the anchor as destination."
+            )
+
+    edge_types_with_negatives: set[EdgeType] = set()
+    for edge_type in resolved_edge_types:
+        _, negative_label_edge_type = select_label_edge_types(
+            edge_type,
+            registered_edge_types,
+        )
+        if negative_label_edge_type is not None:
+            edge_types_with_negatives.add(edge_type)
+    return resolved_edge_types, edge_types_with_negatives
 
 
 class RemoteDistDataset:
@@ -380,10 +451,11 @@ class RemoteDistDataset:
     def _fetch_ablp_input(
         self,
         split: Literal["train", "val", "test"],
-        node_type: NodeType = DEFAULT_HOMOGENEOUS_NODE_TYPE,
-        supervision_edge_type: EdgeType = DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-        assignments: Optional[dict[int, ServerSlice]] = None,
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
+        node_type: NodeType,
+        supervision_edge_types: tuple[EdgeType, ...],
+        supervision_edge_types_with_negatives: set[EdgeType],
+        assignments: Optional[dict[int, ServerSlice]],
+    ) -> dict[int, ABLPInputNodes]:
         """Fetches ABLP input from the storage nodes for the current compute node (machine)."""
         # Build per-server requests
         requests: dict[int, FetchABLPInputRequest] = {}
@@ -393,14 +465,14 @@ class RemoteDistDataset:
                 requests[server_rank] = FetchABLPInputRequest(
                     split=split,
                     node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
+                    supervision_edge_types=supervision_edge_types,
                 )
         else:
             for server_rank, server_slice in assignments.items():
                 requests[server_rank] = FetchABLPInputRequest(
                     split=split,
                     node_type=node_type,
-                    supervision_edge_type=supervision_edge_type,
+                    supervision_edge_types=supervision_edge_types,
                     server_slice=server_slice,
                 )
 
@@ -408,34 +480,35 @@ class RemoteDistDataset:
         logger.info(
             f"Fetching ABLP input (sharded={sharded}) "
             f"with node type {node_type}, split {split}, and "
-            f"supervision edge type {supervision_edge_type}. "
+            f"registered supervision edge types {supervision_edge_types}. "
             f"Requesting from servers: {sorted(requests.keys())}"
         )
 
         # Dispatch all futures
-        futures: dict[
-            int,
-            torch.futures.Future[
-                tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-            ],
-        ] = {
+        futures: dict[int, torch.futures.Future[ABLPInputNodes]] = {
             server_rank: async_request_server(
                 server_rank, DistServer.get_ablp_input, request
             )
             for server_rank, request in requests.items()
         }
 
-        def _empty_ablp_result() -> tuple[
-            torch.Tensor, torch.Tensor, Optional[torch.Tensor]
-        ]:
-            """Return an empty ABLP result tuple: (anchor_nodes, positive_labels, negative_labels)."""
-            return (
-                torch.empty(0, dtype=torch.long),
-                torch.empty((0, 0), dtype=torch.long),
-                None,
+        def _empty_ablp_result() -> ABLPInputNodes:
+            """Return schema-complete empty ABLP input for an unassigned server."""
+            return ABLPInputNodes(
+                anchor_nodes=torch.empty(0, dtype=torch.long),
+                anchor_node_type=node_type,
+                labels={
+                    edge_type: (
+                        torch.empty((0, 0), dtype=torch.long),
+                        torch.empty((0, 0), dtype=torch.long)
+                        if edge_type in supervision_edge_types_with_negatives
+                        else None,
+                    )
+                    for edge_type in supervision_edge_types
+                },
             )
 
-        # Collect results, filling empty tuples for unrequested servers
+        # Collect results, filling schema-complete inputs for unrequested servers.
         return {
             server_rank: futures[server_rank].wait()
             if server_rank in futures
@@ -488,7 +561,13 @@ class RemoteDistDataset:
             - ``negative_labels``: Optional dict mapping negative label EdgeType to a 2D tensor [N, M].
 
         Raises:
-            ValueError: If only one of ``rank`` or ``world_size`` is provided.
+            ValueError: If rank/world size or anchor/supervision type arguments
+                are not paired, or if registered direction/label topology is
+                invalid.
+
+        Note:
+            Edge direction and registered edge types are fetched once per call.
+            ABLP payloads are fetched once per selected storage server.
 
         Example:
             Suppose we have 2 storage nodes and 2 compute nodes.
@@ -552,38 +631,48 @@ class RemoteDistDataset:
         else:
             evaluated_anchor_node_type = anchor_node_type
         if supervision_edge_type is None:
-            evaluated_supervision_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+            evaluated_supervision_edge_types = (DEFAULT_HOMOGENEOUS_EDGE_TYPE,)
         else:
-            evaluated_supervision_edge_type = supervision_edge_type
+            evaluated_supervision_edge_types = (supervision_edge_type,)
         del anchor_node_type, supervision_edge_type
 
         assignments = self._compute_assignments_if_needed(
             rank=rank,
             world_size=world_size,
         )
-        raw_inputs = self._fetch_ablp_input(
+        # These two metadata lookups happen once per public fetch. ABLP payload
+        # requests remain one per selected storage server.
+        edge_dir = self.fetch_edge_dir()
+        if edge_dir == "in":
+            evaluated_edge_dir: Literal["in", "out"] = "in"
+        elif edge_dir == "out":
+            evaluated_edge_dir = "out"
+        else:
+            raise ValueError(
+                f"Expected GraphStore edge_dir to be 'in' or 'out', got {edge_dir!r}."
+            )
+        registered_edge_types = self.fetch_edge_types()
+        if registered_edge_types is None:
+            raise ValueError(
+                "ABLP GraphStore input requires registered label edge types."
+            )
+        (
+            evaluated_supervision_edge_types,
+            supervision_edge_types_with_negatives,
+        ) = _resolve_registered_supervision_edge_types(
+            supervision_edge_types=evaluated_supervision_edge_types,
+            anchor_node_type=evaluated_anchor_node_type,
+            edge_dir=evaluated_edge_dir,
+            registered_edge_types=registered_edge_types,
+        )
+
+        return self._fetch_ablp_input(
             split=split,
             node_type=evaluated_anchor_node_type,
-            supervision_edge_type=evaluated_supervision_edge_type,
+            supervision_edge_types=evaluated_supervision_edge_types,
+            supervision_edge_types_with_negatives=supervision_edge_types_with_negatives,
             assignments=assignments,
         )
-        return {
-            server_rank: ABLPInputNodes(
-                anchor_node_type=evaluated_anchor_node_type,
-                anchor_nodes=anchors,
-                labels={
-                    evaluated_supervision_edge_type: (
-                        positive_labels,
-                        negative_labels,
-                    )
-                },
-            )
-            for server_rank, (
-                anchors,
-                positive_labels,
-                negative_labels,
-            ) in raw_inputs.items()
-        }
 
     def fetch_edge_types(self) -> Optional[list[EdgeType]]:
         """Fetch the edge types from the registered dataset.
