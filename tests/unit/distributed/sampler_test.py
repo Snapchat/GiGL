@@ -407,6 +407,10 @@ class SamplingWorkerSeedTest(TestCase):
             ),
             patch("gigl.distributed.dist_sampling_producer.torch.set_num_threads"),
             patch("gigl.distributed.dist_sampling_producer.init_rpc"),
+            patch(
+                "gigl.distributed.dist_sampling_producer.uuid.uuid4",
+                return_value=SimpleNamespace(hex="0123456789abcdef0123456789abcdef"),
+            ),
             patch("gigl.distributed.dist_sampling_producer.seed_everything") as seed,
             patch(
                 "gigl.distributed.dist_sampling_producer.create_dist_sampler",
@@ -441,6 +445,7 @@ class SamplingWorkerSeedTest(TestCase):
             any(
                 "sampling_worker_seed_installed" in call.args[0]
                 and "global_sampler_id=518" in call.args[0]
+                and "attempt_id=0123456789abcdef0123456789abcdef" in call.args[0]
                 for call in log.call_args_list
             )
         )

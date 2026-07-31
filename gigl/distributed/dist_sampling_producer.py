@@ -10,6 +10,7 @@ import queue
 import socket
 import time
 import traceback
+import uuid
 from dataclasses import dataclass, field, replace
 from multiprocessing.connection import Connection
 from threading import Barrier, BrokenBarrierError
@@ -326,6 +327,7 @@ def _sampling_worker_loop(
     status_connection: Optional[Connection] = None,
 ):
     dist_sampler = None
+    worker_attempt_id = uuid.uuid4().hex
     initialization_start = time.monotonic()
     phase = "worker_group"
     try:
@@ -407,7 +409,8 @@ def _sampling_worker_loop(
                 f"worker_index={sampling_worker_seed_spec.worker_index}/"
                 f"{sampling_worker_seed_spec.workers_per_parent} "
                 f"global_sampler_id={sampling_worker_seed_spec.global_sampler_id} "
-                f"worker_seed={sampling_worker_seed_spec.worker_seed} pid={os.getpid()}"
+                f"worker_seed={sampling_worker_seed_spec.worker_seed} pid={os.getpid()} "
+                f"attempt_id={worker_attempt_id}"
             )
         dist_sampler.start_loop()
 
