@@ -1,6 +1,7 @@
 import unittest
 from collections import defaultdict
 from typing import Any, Literal, Optional, Union
+from unittest.mock import patch
 
 import torch
 import torch.multiprocessing as mp
@@ -10,6 +11,7 @@ from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import (
     DistABLPLoader,
@@ -42,8 +44,10 @@ from gigl.types.graph import (
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter
 from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.utils import (
+    MockRemoteDistDataset,
     assert_tensor_equality,
     create_test_process_group,
+    get_process_group_init_method,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -592,6 +596,63 @@ def _collect_heterogeneous_labels(
     shutdown_rpc()
 
 
+def _run_graph_store_validation_protocol(
+    rank: int,
+    init_method: str,
+    scenario: str,
+    results: Any,
+) -> None:
+    torch.distributed.init_process_group(
+        backend="gloo",
+        rank=rank,
+        world_size=2,
+        init_method=init_method,
+    )
+    try:
+        supervision_edge_type = (
+            _A_TO_C if scenario == "schema_mismatch" and rank == 1 else _A_TO_B
+        )
+        ablp_input = ABLPInputNodes(
+            anchor_nodes=torch.tensor([1]),
+            anchor_node_type=_A,
+            labels={supervision_edge_type: (torch.tensor([[2]]), None)},
+        )
+        if scenario == "malformed_payload" and rank == 1:
+            object.__setattr__(ablp_input, "anchor_nodes", [1])
+        dataset = MockRemoteDistDataset(
+            num_storage_nodes=1,
+            num_compute_nodes=2,
+            edge_types=[message_passing_to_positive_label(supervision_edge_type)],
+            edge_dir=(
+                "sideways" if scenario == "invalid_direction" and rank == 1 else "out"
+            ),
+        )
+        loader = DistABLPLoader.__new__(DistABLPLoader)
+        loader._instance_count = 0
+        loader._shutdowned = True
+        with patch.object(
+            BaseDistLoader, "create_graph_store_worker_options"
+        ) as create_worker_options:
+            try:
+                loader._setup_for_graph_store(
+                    input_nodes={0: ablp_input},
+                    dataset=dataset,
+                    num_workers=1,
+                    worker_concurrency=1,
+                    channel_size="1MB",
+                    prefetch_size=1,
+                )
+            except ValueError as error:
+                results[rank] = (str(error), create_worker_options.call_count)
+            else:
+                results[rank] = (
+                    "no validation error",
+                    create_worker_options.call_count,
+                )
+    finally:
+        torch.distributed.destroy_process_group()
+
+
 class DistABLPLoaderTest(TestCase):
     def tearDown(self):
         if torch.distributed.is_initialized():
@@ -1055,6 +1116,69 @@ class DistABLPLoaderTest(TestCase):
                 edge_types=[message_passing_to_positive_label(_A_TO_B)],
                 edge_dir="sideways",  # ty: ignore[invalid-argument-type]
             )
+
+    def test_graph_store_setup_retains_single_supervision_gate(self):
+        create_test_process_group()
+        loader = DistABLPLoader.__new__(DistABLPLoader)
+        loader._instance_count = 0
+        loader._shutdowned = True
+        dataset = MockRemoteDistDataset(
+            num_storage_nodes=1,
+            edge_types=[
+                message_passing_to_positive_label(_A_TO_B),
+                message_passing_to_positive_label(_A_TO_C),
+            ],
+        )
+        with patch.object(
+            BaseDistLoader, "create_graph_store_worker_options"
+        ) as create_worker_options:
+            with self.assertRaisesRegex(
+                ValueError,
+                "Graph Store mode currently only supports a single supervision edge type",
+            ):
+                loader._setup_for_graph_store(
+                    input_nodes={
+                        0: ABLPInputNodes(
+                            anchor_nodes=torch.tensor([1]),
+                            anchor_node_type=_A,
+                            labels={
+                                _A_TO_B: (torch.tensor([[2]]), None),
+                                _A_TO_C: (torch.tensor([[3]]), None),
+                            },
+                        )
+                    },
+                    dataset=dataset,
+                    num_workers=1,
+                    worker_concurrency=1,
+                    channel_size="1MB",
+                    prefetch_size=1,
+                )
+        create_worker_options.assert_not_called()
+
+    @parameterized.expand(
+        [
+            param("malformed peer payload", "malformed_payload", "rank 1:"),
+            param("invalid peer direction", "invalid_direction", "rank 1:"),
+            param("different peer schema", "schema_mismatch", "schemas differ"),
+        ]
+    )
+    def test_graph_store_setup_synchronizes_validation(
+        self, _: str, scenario: str, expected_error: str
+    ):
+        manager = mp.Manager()
+        results = manager.dict()
+        mp.spawn(
+            fn=_run_graph_store_validation_protocol,
+            args=(get_process_group_init_method(), scenario, results),
+            nprocs=2,
+            join=True,
+        )
+
+        self.assertLen(results, 2)
+        for rank in range(2):
+            error, worker_option_calls = results[rank]
+            self.assertIn(expected_error, error)
+            self.assertEqual(worker_option_calls, 0)
 
     @parameterized.expand(
         [

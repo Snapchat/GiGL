@@ -56,6 +56,13 @@ from gigl.utils.sampling import ABLPInputNodes
 
 logger = Logger()
 
+_GraphStoreSchemaSummary = tuple[
+    NodeType,
+    tuple[EdgeType, ...],
+    tuple[EdgeType, ...],
+    tuple[EdgeType, ...],
+]
+
 
 def _is_integral_tensor(tensor: torch.Tensor) -> bool:
     return tensor.dtype in (
@@ -807,10 +814,79 @@ class DistABLPLoader(BaseDistLoader):
             Tuple of (list[ABLPNodeSamplerInput], RemoteDistSamplingWorkerOptions,
             DatasetSchema, backend_key).
         """
+        edge_types = dataset.fetch_edge_types()
+        raw_edge_dir = dataset.fetch_edge_dir()
+        converted_inputs = None
+        local_error: Optional[str] = None
+        local_schema_summary: Optional[_GraphStoreSchemaSummary] = None
+        try:
+            if raw_edge_dir not in ("in", "out"):
+                raise ValueError(
+                    f"Unexpected Graph Store edge direction: {raw_edge_dir}."
+                )
+            edge_dir = cast(Literal["in", "out"], raw_edge_dir)
+            converted_inputs = _convert_graph_store_ablp_inputs(
+                input_nodes=input_nodes,
+                num_storage_nodes=dataset.cluster_info.num_storage_nodes,
+                edge_types=edge_types,
+                edge_dir=edge_dir,
+            )
+            (
+                _,
+                input_type,
+                supervision_edge_types,
+                positive_label_edge_types,
+                negative_label_edge_types,
+            ) = converted_inputs
+            if len(supervision_edge_types) != 1:
+                raise ValueError(
+                    "Graph Store mode currently only supports a single supervision "
+                    f"edge type, but received {supervision_edge_types}."
+                )
+            local_schema_summary = (
+                input_type,
+                tuple(supervision_edge_types),
+                tuple(positive_label_edge_types),
+                tuple(negative_label_edge_types),
+            )
+        except ValueError as error:
+            local_error = str(error)
+
+        gathered_validation: list[
+            tuple[Optional[str], Optional[_GraphStoreSchemaSummary]]
+        ] = [(None, None)] * torch.distributed.get_world_size()
+        torch.distributed.all_gather_object(
+            gathered_validation, (local_error, local_schema_summary)
+        )
+        rank_errors = [
+            f"rank {rank}: {error}"
+            for rank, (error, _) in enumerate(gathered_validation)
+            if error is not None
+        ]
+        if rank_errors:
+            raise ValueError(
+                "Graph Store ABLP validation failed across compute ranks: "
+                + "; ".join(rank_errors)
+            )
+        if any(
+            summary != gathered_validation[0][1]
+            for _, summary in gathered_validation[1:]
+        ):
+            raise ValueError(
+                "Graph Store ABLP schemas differ across compute ranks: "
+                f"{[(rank, summary) for rank, (_, summary) in enumerate(gathered_validation)]}"
+            )
+
+        assert converted_inputs is not None
+        (
+            input_data,
+            input_type,
+            self._supervision_edge_types,
+            self._positive_label_edge_types,
+            self._negative_label_edge_types,
+        ) = converted_inputs
         node_feature_info = dataset.fetch_node_feature_info()
         edge_feature_info = dataset.fetch_edge_feature_info()
-        edge_types = dataset.fetch_edge_types()
-        edge_dir = cast(Literal["in", "out"], dataset.fetch_edge_dir())
         compute_rank = torch.distributed.get_rank()
         backend_key = f"dist_ablp_loader_{self._instance_count}"
         worker_key = f"{backend_key}_compute_rank_{compute_rank}"
@@ -828,30 +904,9 @@ class DistABLPLoader(BaseDistLoader):
             f"tcp://{worker_options.master_addr}:{worker_options.master_port}"
         )
 
-        (
-            input_data,
-            input_type,
-            self._supervision_edge_types,
-            self._positive_label_edge_types,
-            self._negative_label_edge_types,
-        ) = _convert_graph_store_ablp_inputs(
-            input_nodes=input_nodes,
-            num_storage_nodes=dataset.cluster_info.num_storage_nodes,
-            edge_types=edge_types,
-            edge_dir=edge_dir,
-        )
         is_homogeneous_with_labeled_edge_type = (
             input_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
         )
-
-        # Graph Store mode currently only supports a single supervision edge type,
-        # so the labels dict must have exactly 1 entry.
-        if len(self._supervision_edge_types) != 1:
-            raise ValueError(
-                f"Graph Store mode currently only supports a single supervision edge type, "
-                f"but ABLPInputNodes.labels has {len(self._supervision_edge_types)} "
-                f"entries: {self._supervision_edge_types}"
-            )
 
         logger.info(f"Positive label edge types: {self._positive_label_edge_types}")
         logger.info(f"Negative label edge types: {self._negative_label_edge_types}")
@@ -859,7 +914,7 @@ class DistABLPLoader(BaseDistLoader):
         for server_rank, ablp_input in enumerate(input_data):
             logger.info(
                 f"Rank: {torch.distributed.get_rank()}! Building ABLPNodeSamplerInput for server rank: {server_rank} "
-                f"with input type: {input_type}. anchors: {ablp_input.node.shape}, "
+                f"with input type: {input_type}. "
                 f"positive_labels edge types: {list(ablp_input.positive_label_by_edge_types.keys())}, "
                 f"negative_labels edge types: {list(ablp_input.negative_label_by_edge_types.keys())}"
             )
