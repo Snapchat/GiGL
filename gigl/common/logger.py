@@ -69,12 +69,6 @@ class Logger(logging.LoggerAdapter):
                 os.getenv("GAE_APPLICATION")
                 or os.environ.get("KUBERNETES_SERVICE_HOST")
             )
-            # Cloud Logging's handler renders each record as a single-line GCP JSON
-            # envelope, which is a loss wherever another system reframes the line before
-            # Cloud Logging sees it: Ray relays worker output behind a
-            # "(RayTrainWorker pid=...)" prefix that makes the line invalid JSON, so it
-            # is stored as a plain textPayload and the structured fields are dropped
-            # anyway. GIGL_DISABLE_CLOUD_LOGGING selects the console format instead.
             if is_cloud_environment and not is_env_flag_enabled(
                 GIGL_DISABLE_CLOUD_LOGGING_ENV_KEY
             ):
