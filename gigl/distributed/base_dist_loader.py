@@ -8,7 +8,12 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
+import fcntl
+import os
+import secrets
+import socket
 import sys
+import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -36,14 +41,24 @@ from typing_extensions import Self
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
-from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
+from gigl.distributed.constants import (
+    DEFAULT_MASTER_DATA_BUILDING_PORT,
+    DEFAULT_MASTER_INFERENCE_PORT,
+    DEFAULT_MASTER_SAMPLING_PORT,
+)
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import (
     PPR_EDGE_INDEX_METADATA_KEY,
     PPR_WEIGHT_METADATA_KEY,
 )
-from gigl.distributed.dist_sampling_producer import DistSamplingProducer
+from gigl.distributed.dist_sampling_producer import (
+    DistSamplingProducer,
+    SamplingPortLease,
+    SamplingWorkerRpcSpec,
+    close_sampling_port_lease_with_retries,
+    resolve_isolated_sampling_worker_rpc_specs,
+)
 from gigl.distributed.graph_store.compute import async_request_server
 from gigl.distributed.graph_store.dist_server import DistServer
 from gigl.distributed.graph_store.messages import (
@@ -66,6 +81,7 @@ from gigl.utils.share_memory import share_memory
 logger = Logger()
 
 DEFAULT_NUM_CPU_THREADS = 2
+_EPHEMERAL_PORT_RANGE_PATH = "/proc/sys/net/ipv4/ip_local_port_range"
 
 
 # We don't see logs for graph store mode for whatever reason.
@@ -124,6 +140,324 @@ class BaseDistLoader(DistLoader):
         process_start_gap_seconds: Delay between each process for staggered colocated init.
             Only applies to colocated mode.
     """
+
+    @staticmethod
+    def _validate_colocated_sampling_topology_agreement(
+        *,
+        one_rpc_group_per_sampling_worker: bool,
+        use_all2all: bool,
+        num_workers: int,
+        local_world_size: int,
+        node_world_size: int,
+    ) -> None:
+        """Fail collectively if colocated ranks disagree before branching."""
+        signature = (
+            one_rpc_group_per_sampling_worker,
+            use_all2all,
+            num_workers,
+            local_world_size,
+            node_world_size,
+            DEFAULT_MASTER_SAMPLING_PORT,
+        )
+        signatures: list[Optional[tuple[bool, bool, int, int, int, int]]] = [
+            None
+        ] * torch.distributed.get_world_size()
+        torch.distributed.all_gather_object(signatures, signature)
+        mismatches = {
+            rank: observed
+            for rank, observed in enumerate(signatures)
+            if observed != signature
+        }
+        if mismatches:
+            raise ValueError(
+                "colocated sampling topology differs across parent ranks: "
+                f"local={signature}, mismatches={mismatches}"
+            )
+
+    @staticmethod
+    def _resolve_isolated_context_collectively(
+        *,
+        dataset: DistDataset,
+        local_rank: int,
+        local_world_size: int,
+        node_world_size: int,
+    ):
+        """Validate every parent context/partition identity before any child spawn."""
+        current_context = None
+        try:
+            current_context = get_context()
+            if current_context is None or not current_context.is_worker():
+                raise RuntimeError(
+                    "isolated sampling RPC groups require an initialized GLT "
+                    "worker context"
+                )
+            local_identity = {
+                "ok": True,
+                "error": "",
+                "local_rank": local_rank,
+                "context_world": current_context.world_size,
+                "context_rank": current_context.rank,
+                "context_group": current_context.group_name,
+                "data_partitions": dataset.num_partitions,
+                "data_partition": dataset.partition_idx,
+            }
+        except BaseException as error:
+            local_identity = {
+                "ok": False,
+                "error": f"{type(error).__name__}: {error}",
+                "local_rank": local_rank,
+                "context_world": None,
+                "context_rank": None,
+                "context_group": None,
+                "data_partitions": dataset.num_partitions,
+                "data_partition": dataset.partition_idx,
+            }
+
+        identities: list[Optional[dict[str, object]]] = [
+            None
+        ] * torch.distributed.get_world_size()
+        torch.distributed.all_gather_object(identities, local_identity)
+        mismatches: dict[int, object] = {}
+        expected_parent_world = node_world_size * local_world_size
+        if len(identities) != expected_parent_world:
+            mismatches[-1] = {
+                "expected_parent_world": expected_parent_world,
+                "observed_parent_world": len(identities),
+            }
+        group_names_by_local_rank: dict[int, set[object]] = {
+            rank: set() for rank in range(local_world_size)
+        }
+        for parent_rank, identity in enumerate(identities):
+            if identity is None or not identity.get("ok"):
+                mismatches[parent_rank] = identity
+                continue
+            expected_local_rank = parent_rank % local_world_size
+            expected_node_rank = parent_rank // local_world_size
+            expected = {
+                "local_rank": expected_local_rank,
+                "context_world": node_world_size,
+                "context_rank": expected_node_rank,
+                "data_partitions": node_world_size,
+                "data_partition": expected_node_rank,
+            }
+            observed = {key: identity.get(key) for key in expected}
+            if observed != expected:
+                mismatches[parent_rank] = {"expected": expected, "observed": observed}
+            group_names_by_local_rank[expected_local_rank].add(
+                identity.get("context_group")
+            )
+        inconsistent_groups = {
+            rank: names
+            for rank, names in group_names_by_local_rank.items()
+            if len(names) != 1 or None in names
+        }
+        if inconsistent_groups:
+            mismatches[-2] = {"inconsistent_context_groups": inconsistent_groups}
+        if mismatches:
+            raise RuntimeError(
+                "isolated sampling context/partition identity differs across "
+                f"parent ranks: {mismatches}"
+            )
+        assert current_context is not None and current_context.is_worker()
+        return current_context
+
+    @staticmethod
+    def _try_reserve_isolated_sampling_ports(
+        ports: list[int], *, reserve_sockets: bool
+    ) -> SamplingPortLease:
+        """Acquire process-wide leases and optional listening reservations."""
+        if not reserve_sockets:
+            return SamplingPortLease(ports=tuple(ports))
+        file_descriptors: list[int] = []
+        reservations: dict[int, socket.socket] = {}
+        try:
+            for port in ports:
+                lock_path = os.path.join(
+                    tempfile.gettempdir(),
+                    f"gigl-{os.getuid()}-sampling-port-{port}.lock",
+                )
+                flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                file_descriptor = os.open(lock_path, flags, 0o600)
+                file_descriptors.append(file_descriptor)
+                fcntl.flock(
+                    file_descriptor,
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+                if reserve_sockets:
+                    reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    reservations[port] = reservation
+                    reservation.bind(("", port))
+                    reservation.listen(1)
+            return SamplingPortLease(
+                ports=tuple(ports),
+                lock_file_descriptors=tuple(file_descriptors),
+                reservations=reservations,
+            )
+        except BaseException:
+            failed_lease = SamplingPortLease(
+                ports=tuple(ports),
+                lock_file_descriptors=tuple(file_descriptors),
+                reservations=reservations,
+            )
+            close_sampling_port_lease_with_retries(
+                failed_lease,
+                context="partial port reservation",
+            )
+            raise
+
+    @staticmethod
+    def _reserve_isolated_sampling_ports(
+        *,
+        num_workers: int,
+        local_rank: int,
+        local_world_size: int,
+        is_group_master: bool,
+    ) -> tuple[list[int], SamplingPortLease]:
+        """Collectively select and hold a collision-safe non-ephemeral block."""
+        with open(_EPHEMERAL_PORT_RANGE_PATH) as ephemeral_range_file:
+            ephemeral_lower_bound = int(
+                ephemeral_range_file.read().split(maxsplit=1)[0]
+            )
+        upper_bound = min(
+            ephemeral_lower_bound,
+            DEFAULT_MASTER_DATA_BUILDING_PORT,
+        )
+        block_width = local_world_size * num_workers
+        num_blocks = (upper_bound - DEFAULT_MASTER_SAMPLING_PORT) // block_width
+        if num_blocks <= 0:
+            raise RuntimeError(
+                "no non-ephemeral isolated sampling port block is available"
+            )
+
+        proposed_block = (
+            secrets.randbelow(num_blocks) if torch.distributed.get_rank() == 0 else None
+        )
+        proposals: list[Optional[int]] = [None] * torch.distributed.get_world_size()
+        torch.distributed.all_gather_object(proposals, proposed_block)
+        start_block = proposals[0]
+        if start_block is None:
+            raise RuntimeError("parent rank 0 did not propose a sampling port block")
+
+        last_failures: dict[int, Optional[tuple[bool, str]]] = {}
+        for block_offset in range(num_blocks):
+            block = (start_block + block_offset) % num_blocks
+            block_start = DEFAULT_MASTER_SAMPLING_PORT + block * block_width
+            local_start = block_start + local_rank * num_workers
+            ports = list(range(local_start, local_start + num_workers))
+            lease: Optional[SamplingPortLease] = None
+            try:
+                lease = BaseDistLoader._try_reserve_isolated_sampling_ports(
+                    ports,
+                    reserve_sockets=is_group_master,
+                )
+                local_result: tuple[bool, str] = (True, "")
+            except (OSError, ValueError) as error:
+                local_result = (False, f"{type(error).__name__}: {error}")
+
+            results: list[Optional[tuple[bool, str]]] = [
+                None
+            ] * torch.distributed.get_world_size()
+            try:
+                torch.distributed.all_gather_object(results, local_result)
+            except BaseException:
+                if lease is not None:
+                    close_sampling_port_lease_with_retries(
+                        lease,
+                        context="port candidate result collective",
+                    )
+                raise
+            failures = {
+                rank: result
+                for rank, result in enumerate(results)
+                if result is None or not result[0]
+            }
+            if not failures:
+                assert lease is not None
+                logger.info(
+                    "isolated_sampling_port_lease "
+                    f"block_start={block_start} local_rank={local_rank}/"
+                    f"{local_world_size} ports={ports} "
+                    f"master_reservations={sorted(lease.reservations)}"
+                )
+                return ports, lease
+            if lease is not None:
+                close_sampling_port_lease_with_retries(
+                    lease,
+                    context="collectively rejected port candidate",
+                )
+            last_failures = failures
+        raise RuntimeError(
+            "unable to reserve a collision-safe isolated sampling port block; "
+            f"last failures={last_failures}"
+        )
+
+    @staticmethod
+    def create_colocated_sampling_rpc_specs(
+        *,
+        dataset: DistDataset,
+        num_workers: int,
+        local_rank: int,
+        local_world_size: int,
+        node_world_size: int,
+        one_rpc_group_per_sampling_worker: bool,
+        use_all2all: bool,
+    ) -> tuple[
+        int,
+        Optional[tuple[SamplingWorkerRpcSpec, ...]],
+        Optional[SamplingPortLease],
+    ]:
+        """Resolve the legacy port or isolated per-child RPC specifications."""
+        BaseDistLoader._validate_colocated_sampling_topology_agreement(
+            one_rpc_group_per_sampling_worker=one_rpc_group_per_sampling_worker,
+            use_all2all=use_all2all,
+            num_workers=num_workers,
+            local_world_size=local_world_size,
+            node_world_size=node_world_size,
+        )
+        if not one_rpc_group_per_sampling_worker:
+            ports = gigl.distributed.utils.get_free_ports_from_master_node(
+                num_ports=local_world_size
+            )
+            return ports[local_rank], None, None
+        if use_all2all:
+            raise ValueError(
+                "one RPC group per sampling worker does not yet support use_all2all"
+            )
+
+        current_context = BaseDistLoader._resolve_isolated_context_collectively(
+            dataset=dataset,
+            local_rank=local_rank,
+            local_world_size=local_world_size,
+            node_world_size=node_world_size,
+        )
+        ports_for_rank, port_lease = BaseDistLoader._reserve_isolated_sampling_ports(
+            num_workers=num_workers,
+            local_rank=local_rank,
+            local_world_size=local_world_size,
+            is_group_master=current_context.rank == 0,
+        )
+        try:
+            rpc_specs = resolve_isolated_sampling_worker_rpc_specs(
+                parent_world_size=current_context.world_size,
+                parent_rank=current_context.rank,
+                parent_group_name=current_context.group_name,
+                data_num_partitions=dataset.num_partitions,
+                data_partition_idx=dataset.partition_idx,
+                num_workers=num_workers,
+                master_ports=ports_for_rank,
+            )
+        except BaseException:
+            close_sampling_port_lease_with_retries(
+                port_lease,
+                context="isolated RPC spec resolution",
+            )
+            raise
+        logger.info(
+            "isolated_sampling_rpc_plan "
+            f"local_rank={local_rank}/{local_world_size} specs={rpc_specs}"
+        )
+        return ports_for_rank[0], rpc_specs, port_lease
 
     @staticmethod
     def resolve_runtime(
@@ -452,6 +786,8 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
+        isolated_rpc_specs: Optional[tuple[SamplingWorkerRpcSpec, ...]] = None,
+        isolated_port_lease: Optional[SamplingPortLease] = None,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -497,6 +833,8 @@ class BaseDistLoader(DistLoader):
             channel=channel,
             sampler_options=sampler_options,
             degree_tensors=degree_tensors,
+            isolated_rpc_specs=isolated_rpc_specs,
+            isolated_port_lease=isolated_port_lease,
         )
 
     @staticmethod

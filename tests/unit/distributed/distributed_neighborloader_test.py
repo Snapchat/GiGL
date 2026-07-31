@@ -1,23 +1,35 @@
+import os
+import socket
+import time
 import unittest
 from collections.abc import Mapping, MutableMapping
+from types import SimpleNamespace
 from typing import cast
+from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
-from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
+from gigl.distributed.dist_sampling_producer import (
+    DistSamplingProducer,
+    SamplingPortLease,
+    SamplingWorkerRpcSpec,
+    SamplingWorkerStatus,
+)
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
+from gigl.env.distributed import DistributedContext
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
@@ -85,6 +97,242 @@ def _run_distributed_neighbor_loader(
     assert count == expected_data_count
 
     shutdown_rpc()
+
+
+def _run_isolated_distributed_neighbor_loader(
+    _,
+    dataset: DistDataset,
+    expected_data_count: int,
+):
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        num_workers=2,
+        worker_concurrency=1,
+        channel_size="64MB",
+        process_start_gap_seconds=0,
+        pin_memory_device=torch.device("cpu"),
+        one_rpc_group_per_sampling_worker=True,
+    )
+
+    seed_ids: list[int] = []
+    for datum in loader:
+        assert isinstance(datum, Data)
+        seed_ids.extend(datum.node[: datum.batch_size].tolist())
+    assert sorted(seed_ids) == list(range(expected_data_count))
+    workers = list(loader._mp_producer._workers)
+    specs = loader._mp_producer._isolated_rpc_specs
+    assert specs is not None
+    assert len({worker.pid for worker in workers}) == len(specs)
+    loader.shutdown()
+    assert all(not worker.is_alive() for worker in workers)
+    port_lease = loader._mp_producer._isolated_port_lease
+    assert port_lease is not None and port_lease._closed
+    for port in {spec.master_port for spec in specs}:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            assert probe.connect_ex(("127.0.0.1", port)) != 0
+        finally:
+            probe.close()
+    shutdown_rpc()
+
+
+def _run_two_parent_isolated_distributed_neighbor_loader(
+    rank: int,
+    dataset_port: int,
+    loader_port: int,
+    result_queue,
+) -> None:
+    dataset = run_distributed_dataset(
+        rank=rank,
+        world_size=2,
+        mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+        _port=dataset_port,
+    )
+    torch.distributed.init_process_group(
+        backend="gloo",
+        init_method=f"tcp://127.0.0.1:{loader_port}",
+        rank=rank,
+        world_size=2,
+    )
+    context = DistributedContext(
+        main_worker_ip_address="127.0.0.1",
+        global_rank=rank,
+        global_world_size=2,
+    )
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        num_workers=2,
+        batch_size=16,
+        context=context,
+        local_process_rank=0,
+        local_process_world_size=1,
+        worker_concurrency=1,
+        channel_size="64MB",
+        process_start_gap_seconds=0,
+        pin_memory_device=torch.device("cpu"),
+        one_rpc_group_per_sampling_worker=True,
+    )
+    seed_ids: list[int] = []
+    for datum in loader:
+        assert isinstance(datum, Data)
+        seed_ids.extend(datum.node[: datum.batch_size].tolist())
+
+    producer = loader._mp_producer
+    specs = producer._isolated_rpc_specs
+    assert specs is not None
+    workers = list(producer._workers)
+    result = {
+        "rank": rank,
+        "seed_ids": seed_ids,
+        "ready_workers": sorted(producer._isolated_ready_workers),
+        "mappings": [
+            {
+                "pid": worker.pid,
+                "worker_index": spec.worker_index,
+                "group_name": spec.group_name,
+                "rank": spec.rank,
+                "world_size": spec.world_size,
+                "port": spec.master_port,
+            }
+            for worker, spec in zip(workers, specs)
+        ],
+    }
+    loader.shutdown()
+    assert all(not worker.is_alive() for worker in workers)
+    port_lease = producer._isolated_port_lease
+    assert port_lease is not None and port_lease._closed
+    result["lease_closed"] = True
+    result_queue.put(result)
+
+    if rank == 0:
+        for port in {spec.master_port for spec in specs}:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                assert probe.connect_ex(("127.0.0.1", port)) != 0
+            finally:
+                probe.close()
+    torch.distributed.barrier()
+    shutdown_rpc(graceful=False)
+    torch.distributed.destroy_process_group()
+
+
+def _cross_parent_missing_rpc_member(*args) -> None:
+    worker_options = args[5]
+    rpc_spec = args[-2]
+    assert isinstance(rpc_spec, SamplingWorkerRpcSpec)
+    init_worker_group(
+        world_size=rpc_spec.world_size,
+        rank=rpc_spec.rank,
+        group_name=rpc_spec.group_name,
+    )
+    try:
+        init_rpc(
+            master_addr=worker_options.master_addr,
+            master_port=rpc_spec.master_port,
+            num_rpc_threads=1,
+            rpc_timeout=rpc_spec.world_size,
+        )
+    finally:
+        try:
+            shutdown_rpc(graceful=False)
+        except RuntimeError:
+            pass
+
+
+def _cross_parent_injected_rpc_error(*args) -> None:
+    rpc_spec = args[-2]
+    status_connection = args[-1]
+    assert isinstance(rpc_spec, SamplingWorkerRpcSpec)
+    status_connection.send(
+        SamplingWorkerStatus(
+            state="ERROR",
+            worker_index=rpc_spec.worker_index,
+            group_name=rpc_spec.group_name,
+            rank=rpc_spec.rank,
+            master_port=rpc_spec.master_port,
+            pid=os.getpid(),
+            phase="injected_remote_failure",
+            elapsed_seconds=0.0,
+            error="injected remote member failure",
+        )
+    )
+    status_connection.close()
+
+
+def _run_cross_parent_isolated_failure(
+    rank: int,
+    master_port: int,
+    result_queue,
+) -> None:
+    producer = object.__new__(DistSamplingProducer)
+    producer.sampling_config = SimpleNamespace(seed=None, shuffle=False)
+    producer.worker_options = SimpleNamespace(
+        worker_concurrency=1,
+        rpc_timeout=2.0,
+        master_addr="127.0.0.1",
+    )
+    producer.num_workers = 1
+    producer.data = object()
+    producer.sampler_input = object()
+    producer.output_channel = object()
+    producer.sampling_completed_worker_count = object()
+    producer._sampler_options = object()
+    producer._degree_tensors = None
+    producer._isolated_rpc_specs = (
+        SamplingWorkerRpcSpec(
+            worker_index=0,
+            group_name="cross_parent_failure_group",
+            world_size=2,
+            rank=rank,
+            master_port=master_port,
+        ),
+    )
+    producer._isolated_port_lease = None
+    producer._task_queues = []
+    producer._workers = []
+    producer._isolated_status_connections = []
+    producer._isolated_ready_workers = set()
+    producer._isolated_barrier = None
+    producer._isolated_resources_closed = False
+    producer._isolated_cleanup_complete = False
+    producer._shutdown = False
+    producer._get_seeds_indexes = lambda: [torch.tensor([0])]
+
+    target = (
+        _cross_parent_missing_rpc_member
+        if rank == 0
+        else _cross_parent_injected_rpc_error
+    )
+    fork_context = mp.get_context("fork")
+    start = time.monotonic()
+    error = ""
+    with (
+        mock.patch(
+            "gigl.distributed.dist_sampling_producer._sampling_worker_loop",
+            target,
+        ),
+        mock.patch(
+            "gigl.distributed.dist_sampling_producer.mp.get_context",
+            return_value=fork_context,
+        ),
+    ):
+        try:
+            producer.init()
+        except (RuntimeError, TimeoutError) as caught:
+            error = str(caught)
+    result_queue.put(
+        {
+            "rank": rank,
+            "error": error,
+            "elapsed": time.monotonic() - start,
+            "worker_count": len(producer._workers),
+            "all_dead": all(not worker.is_alive() for worker in producer._workers),
+            "resources_closed": producer._isolated_resources_closed,
+        }
+    )
 
 
 def _run_distributed_neighbor_loader_labeled_homogeneous(
@@ -453,6 +701,87 @@ class DistributedNeighborLoaderTest(TestCase):
             fn=_run_distributed_neighbor_loader,
             args=(dataset, expected_data_count),
         )
+
+    def test_isolated_sampling_worker_groups_exact_once_and_shutdown(self):
+        expected_data_count = 2708
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
+        )
+
+        mp.spawn(
+            fn=_run_isolated_distributed_neighbor_loader,
+            args=(dataset, expected_data_count),
+        )
+
+    def test_two_parent_two_partition_isolated_groups(self):
+        spawn_context = mp.get_context("spawn")
+        result_queue = spawn_context.SimpleQueue()
+        mp.spawn(
+            fn=_run_two_parent_isolated_distributed_neighbor_loader,
+            args=(get_free_port(), get_free_port(), result_queue),
+            nprocs=2,
+        )
+        results = [result_queue.get() for _ in range(2)]
+        results.sort(key=lambda result: result["rank"])
+
+        self.assertEqual(
+            sorted(seed_id for result in results for seed_id in result["seed_ids"]),
+            list(range(2708)),
+        )
+        for rank, result in enumerate(results):
+            self.assertTrue(result["lease_closed"])
+            self.assertEqual(result["ready_workers"], [0, 1])
+            self.assertEqual(
+                {mapping["worker_index"] for mapping in result["mappings"]},
+                {0, 1},
+            )
+            self.assertEqual(
+                {mapping["rank"] for mapping in result["mappings"]}, {rank}
+            )
+            self.assertEqual(
+                {mapping["world_size"] for mapping in result["mappings"]}, {2}
+            )
+            self.assertEqual(len({mapping["pid"] for mapping in result["mappings"]}), 2)
+        self.assertEqual(
+            [mapping["port"] for mapping in results[0]["mappings"]],
+            [mapping["port"] for mapping in results[1]["mappings"]],
+        )
+        self.assertEqual(
+            [mapping["group_name"] for mapping in results[0]["mappings"]],
+            [mapping["group_name"] for mapping in results[1]["mappings"]],
+        )
+
+    def test_cross_parent_startup_failure_reaps_both_sides(self):
+        spawn_context = mp.get_context("spawn")
+        result_queue = spawn_context.SimpleQueue()
+        master_port = get_free_port()
+        mp.spawn(
+            fn=_run_cross_parent_isolated_failure,
+            args=(master_port, result_queue),
+            nprocs=2,
+        )
+        results = [result_queue.get() for _ in range(2)]
+        results.sort(key=lambda result: result["rank"])
+
+        self.assertTrue(
+            "before initialization completed" in results[0]["error"]
+            or "timed out waiting" in results[0]["error"]
+        )
+        self.assertIn("injected remote member failure", results[1]["error"])
+        for result in results:
+            self.assertLess(result["elapsed"], 10)
+            self.assertEqual(result["worker_count"], 1)
+            self.assertTrue(result["all_dead"])
+            self.assertTrue(result["resources_closed"])
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.assertNotEqual(probe.connect_ex(("127.0.0.1", master_port)), 0)
+        finally:
+            probe.close()
 
     def test_infinite_distributed_neighbor_loader(self):
         dataset = run_distributed_dataset(
@@ -972,6 +1301,102 @@ class WithEdgeDerivationTest(TestCase):
 
 
 class ColocatedWorkerOptionsTest(TestCase):
+    def test_post_lease_setup_failure_closes_lease(self) -> None:
+        dataset = mock.Mock(spec=DistDataset)
+        dataset.node_ids = torch.arange(4)
+        dataset.num_partitions = 1
+        lease = mock.Mock()
+        loader = object.__new__(DistNeighborLoader)
+        loader._shutdowned = True
+
+        with (
+            mock.patch.object(
+                BaseDistLoader,
+                "initialize_colocated_sampling_worker",
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "create_colocated_sampling_rpc_specs",
+                return_value=(20000, None, lease),
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "create_colocated_worker_options",
+                side_effect=ValueError("injected worker-options failure"),
+            ),
+            self.assertRaisesRegex(ValueError, "injected worker-options failure"),
+        ):
+            loader._setup_for_colocated(
+                input_nodes=dataset.node_ids,
+                dataset=dataset,
+                local_rank=0,
+                local_world_size=1,
+                device=torch.device("cpu"),
+                master_ip_address="127.0.0.1",
+                node_rank=0,
+                node_world_size=1,
+                num_workers=2,
+                worker_concurrency=1,
+                channel_size="64MB",
+                num_cpu_threads=1,
+                num_rpc_threads=1,
+                one_rpc_group_per_sampling_worker=True,
+            )
+
+        lease.close.assert_called_once_with()
+
+    def test_post_lease_setup_and_transient_close_failure_retries_lease(self) -> None:
+        dataset = mock.Mock(spec=DistDataset)
+        dataset.node_ids = torch.arange(4)
+        dataset.num_partitions = 1
+        lease = SamplingPortLease(
+            ports=(20000,),
+            lock_file_descriptors=(10,),
+        )
+        loader = object.__new__(DistNeighborLoader)
+        loader._shutdowned = True
+
+        with (
+            mock.patch.object(
+                BaseDistLoader,
+                "initialize_colocated_sampling_worker",
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "create_colocated_sampling_rpc_specs",
+                return_value=(20000, None, lease),
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "create_colocated_worker_options",
+                side_effect=ValueError("injected worker-options failure"),
+            ),
+            mock.patch(
+                "gigl.distributed.dist_sampling_producer.os.close",
+                side_effect=[OSError("transient fd close failure"), None],
+            ) as close_fd,
+            self.assertRaisesRegex(ValueError, "injected worker-options failure"),
+        ):
+            loader._setup_for_colocated(
+                input_nodes=dataset.node_ids,
+                dataset=dataset,
+                local_rank=0,
+                local_world_size=1,
+                device=torch.device("cpu"),
+                master_ip_address="127.0.0.1",
+                node_rank=0,
+                node_world_size=1,
+                num_workers=2,
+                worker_concurrency=1,
+                channel_size="64MB",
+                num_cpu_threads=1,
+                num_rpc_threads=1,
+                one_rpc_group_per_sampling_worker=True,
+            )
+
+        self.assertTrue(lease._closed)
+        self.assertEqual(close_fd.call_count, 2)
+
     def test_loader_rejects_invalid_rpc_threads_before_setup(self) -> None:
         loader = DistNeighborLoader.__new__(DistNeighborLoader)
 
@@ -1011,6 +1436,313 @@ class ColocatedWorkerOptionsTest(TestCase):
                 **common_options,
                 num_rpc_threads=0,
             )
+
+    def test_topology_agreement_rejects_mixed_worker_counts(self) -> None:
+        def gather_mismatched(signatures, local_signature) -> None:
+            signatures[:] = [
+                local_signature,
+                (*local_signature[:2], 3, *local_signature[3:]),
+            ]
+
+        with (
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(
+                torch.distributed,
+                "all_gather_object",
+                side_effect=gather_mismatched,
+            ),
+            self.assertRaisesRegex(ValueError, "topology differs"),
+        ):
+            BaseDistLoader._validate_colocated_sampling_topology_agreement(
+                one_rpc_group_per_sampling_worker=True,
+                use_all2all=False,
+                num_workers=4,
+                local_world_size=2,
+                node_world_size=65,
+            )
+
+    def test_topology_agreement_rejects_mixed_all_to_all(self) -> None:
+        def gather_mismatched(signatures, local_signature) -> None:
+            signatures[:] = [
+                local_signature,
+                (
+                    local_signature[0],
+                    not local_signature[1],
+                    *local_signature[2:],
+                ),
+            ]
+
+        with (
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(
+                torch.distributed,
+                "all_gather_object",
+                side_effect=gather_mismatched,
+            ),
+            self.assertRaisesRegex(ValueError, "topology differs"),
+        ):
+            BaseDistLoader._validate_colocated_sampling_topology_agreement(
+                one_rpc_group_per_sampling_worker=True,
+                use_all2all=False,
+                num_workers=4,
+                local_world_size=2,
+                node_world_size=65,
+            )
+
+    def test_context_partition_validation_fails_collectively(self) -> None:
+        dataset = mock.Mock(spec=DistDataset)
+        dataset.num_partitions = 2
+        dataset.partition_idx = 0
+        context = mock.Mock()
+        context.is_worker.return_value = True
+        context.world_size = 2
+        context.rank = 0
+        context.group_name = "inference_group"
+
+        def gather(identities, local_identity) -> None:
+            identities[:] = [
+                local_identity,
+                {
+                    **local_identity,
+                    "local_rank": 0,
+                    "context_rank": 1,
+                    "data_partition": 0,
+                },
+            ]
+
+        with (
+            mock.patch(
+                "gigl.distributed.base_dist_loader.get_context",
+                return_value=context,
+            ),
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(
+                torch.distributed,
+                "all_gather_object",
+                side_effect=gather,
+            ),
+            self.assertRaisesRegex(RuntimeError, "context/partition identity"),
+        ):
+            BaseDistLoader._resolve_isolated_context_collectively(
+                dataset=dataset,
+                local_rank=0,
+                local_world_size=1,
+                node_world_size=2,
+            )
+
+    def test_default_mode_keeps_legacy_dynamic_port_path(self) -> None:
+        dataset = mock.Mock(spec=DistDataset)
+        with (
+            mock.patch.object(
+                BaseDistLoader,
+                "_validate_colocated_sampling_topology_agreement",
+            ),
+            mock.patch(
+                "gigl.distributed.base_dist_loader.gigl.distributed.utils.get_free_ports_from_master_node",
+                return_value=[24000, 24001],
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "_reserve_isolated_sampling_ports",
+            ) as reserve,
+        ):
+            port, specs, lease = BaseDistLoader.create_colocated_sampling_rpc_specs(
+                dataset=dataset,
+                num_workers=4,
+                local_rank=1,
+                local_world_size=2,
+                node_world_size=65,
+                one_rpc_group_per_sampling_worker=False,
+                use_all2all=False,
+            )
+
+        self.assertEqual(port, 24001)
+        self.assertIsNone(specs)
+        self.assertIsNone(lease)
+        reserve.assert_not_called()
+
+    def test_isolated_ports_are_nonoverlapping_by_local_rank(self) -> None:
+        dataset = mock.Mock(spec=DistDataset)
+        dataset.num_partitions = 65
+        dataset.partition_idx = 13
+        context = mock.Mock()
+        context.is_worker.return_value = True
+        context.world_size = 65
+        context.rank = 13
+        context.group_name = "inference_group"
+
+        def reserve_ports(*, num_workers, local_rank, local_world_size, **_) -> tuple:
+            start = 20000 + local_rank * num_workers
+            ports = list(range(start, start + num_workers))
+            return ports, SamplingPortLease(tuple(ports))
+
+        with (
+            mock.patch.object(
+                BaseDistLoader,
+                "_validate_colocated_sampling_topology_agreement",
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "_resolve_isolated_context_collectively",
+                return_value=context,
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "_reserve_isolated_sampling_ports",
+                side_effect=reserve_ports,
+            ),
+        ):
+            port_0, specs_0, lease_0 = (
+                BaseDistLoader.create_colocated_sampling_rpc_specs(
+                    dataset=dataset,
+                    num_workers=4,
+                    local_rank=0,
+                    local_world_size=2,
+                    node_world_size=65,
+                    one_rpc_group_per_sampling_worker=True,
+                    use_all2all=False,
+                )
+            )
+            port_1, specs_1, lease_1 = (
+                BaseDistLoader.create_colocated_sampling_rpc_specs(
+                    dataset=dataset,
+                    num_workers=4,
+                    local_rank=1,
+                    local_world_size=2,
+                    node_world_size=65,
+                    one_rpc_group_per_sampling_worker=True,
+                    use_all2all=False,
+                )
+            )
+
+        assert specs_0 is not None and specs_1 is not None
+        assert lease_0 is not None and lease_1 is not None
+        self.assertEqual(port_0, 20000)
+        self.assertEqual(port_1, 20004)
+        self.assertEqual(
+            [spec.master_port for spec in specs_0], list(range(20000, 20004))
+        )
+        self.assertEqual(
+            [spec.master_port for spec in specs_1], list(range(20004, 20008))
+        )
+        self.assertTrue(
+            {spec.master_port for spec in specs_0}.isdisjoint(
+                spec.master_port for spec in specs_1
+            )
+        )
+
+    def test_port_reservation_retries_after_any_parent_collision(self) -> None:
+        first_lease = SamplingPortLease((20000, 20001, 20002, 20003))
+        second_lease = SamplingPortLease((20008, 20009, 20010, 20011))
+        gather_results = iter(
+            [
+                [0, None],
+                [(True, ""), (False, "OSError: port occupied")],
+                [(True, ""), (True, "")],
+            ]
+        )
+
+        def gather(sequence, _) -> None:
+            sequence[:] = next(gather_results)
+
+        with (
+            mock.patch("builtins.open", mock.mock_open(read_data="32768 60999")),
+            mock.patch.object(torch.distributed, "get_rank", return_value=0),
+            mock.patch.object(torch.distributed, "get_world_size", return_value=2),
+            mock.patch.object(
+                torch.distributed,
+                "all_gather_object",
+                side_effect=gather,
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "_try_reserve_isolated_sampling_ports",
+                side_effect=[first_lease, second_lease],
+            ),
+        ):
+            ports, lease = BaseDistLoader._reserve_isolated_sampling_ports(
+                num_workers=4,
+                local_rank=0,
+                local_world_size=2,
+                is_group_master=True,
+            )
+
+        self.assertEqual(ports, list(range(20008, 20012)))
+        self.assertIs(lease, second_lease)
+        self.assertTrue(first_lease._closed)
+
+    def test_port_candidate_collective_failure_retries_and_closes_lease(
+        self,
+    ) -> None:
+        lease = SamplingPortLease(
+            ports=(20000, 20001),
+        )
+
+        def gather(sequence, local_value) -> None:
+            if local_value == 0:
+                sequence[:] = [0]
+                return
+            raise RuntimeError("injected candidate result collective failure")
+
+        with (
+            mock.patch("builtins.open", mock.mock_open(read_data="32768 60999")),
+            mock.patch(
+                "gigl.distributed.base_dist_loader.secrets.randbelow",
+                return_value=0,
+            ),
+            mock.patch.object(torch.distributed, "get_rank", return_value=0),
+            mock.patch.object(torch.distributed, "get_world_size", return_value=1),
+            mock.patch.object(
+                torch.distributed,
+                "all_gather_object",
+                side_effect=gather,
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "_try_reserve_isolated_sampling_ports",
+                return_value=lease,
+            ),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "injected candidate result collective failure",
+            ),
+        ):
+            BaseDistLoader._reserve_isolated_sampling_ports(
+                num_workers=2,
+                local_rank=0,
+                local_world_size=1,
+                is_group_master=True,
+            )
+
+        self.assertTrue(lease._closed)
+
+    def test_master_port_lease_holds_strict_listening_reservations(self) -> None:
+        reservations = [mock.Mock(), mock.Mock()]
+        with (
+            mock.patch(
+                "gigl.distributed.base_dist_loader.os.open",
+                side_effect=[10, 11],
+            ),
+            mock.patch("gigl.distributed.base_dist_loader.os.close") as close_fd,
+            mock.patch("gigl.distributed.base_dist_loader.fcntl.flock") as flock,
+            mock.patch(
+                "gigl.distributed.base_dist_loader.socket.socket",
+                side_effect=reservations,
+            ),
+        ):
+            lease = BaseDistLoader._try_reserve_isolated_sampling_ports(
+                [21000, 21001], reserve_sockets=True
+            )
+            self.assertEqual(set(lease.reservations), {21000, 21001})
+            for port, reservation in zip((21000, 21001), reservations):
+                reservation.bind.assert_called_once_with(("", port))
+                reservation.listen.assert_called_once_with(1)
+                reservation.setsockopt.assert_not_called()
+            lease.close()
+
+        self.assertEqual(flock.call_count, 2)
+        self.assertEqual(close_fd.call_count, 2)
+        self.assertTrue(all(reservation.close.called for reservation in reservations))
 
 
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess

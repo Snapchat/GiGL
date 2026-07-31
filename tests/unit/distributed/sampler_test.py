@@ -1,10 +1,15 @@
 import os
+import time
 from collections.abc import Mapping
+from threading import BrokenBarrierError
+from types import SimpleNamespace
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
-from graphlearn_torch.sampler import NodeSamplerInput
+from graphlearn_torch.channel import ChannelBase
+from graphlearn_torch.distributed import DistDataset, MpDistSamplingWorkerOptions
+from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig
 
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
@@ -12,12 +17,21 @@ from gigl.distributed.base_sampler import (
     _SamplingTimingRecorder,
     _stable_unique_preserve_order,
 )
-from gigl.distributed.dist_sampling_producer import DistSamplingProducer
+from gigl.distributed.dist_sampling_producer import (
+    DistSamplingProducer,
+    SamplingPortLease,
+    SamplingWorkerRpcSpec,
+    SamplingWorkerStatus,
+    close_sampling_port_lease_with_retries,
+    resolve_isolated_sampling_worker_rpc_specs,
+    validate_isolated_sampling_group_readiness,
+)
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
+from gigl.distributed.sampler_options import SamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from tests.test_assets.test_case import TestCase
 
@@ -29,6 +43,30 @@ _FRIEND = Relation("friend")
 _USER_BUYS_ITEM = EdgeType(_USER, _BUYS, _ITEM)
 _USER_CLICKS_ITEM = EdgeType(_USER, _CLICKS, _ITEM)
 _USER_FRIEND_USER = EdgeType(_USER, _FRIEND, _USER)
+
+
+def _send_isolated_worker_error(*args) -> None:
+    rpc_spec = args[-2]
+    status_connection = args[-1]
+    assert isinstance(rpc_spec, SamplingWorkerRpcSpec)
+    status_connection.send(
+        SamplingWorkerStatus(
+            state="ERROR",
+            worker_index=rpc_spec.worker_index,
+            group_name=rpc_spec.group_name,
+            rank=rpc_spec.rank,
+            master_port=rpc_spec.master_port,
+            pid=os.getpid(),
+            phase="injected_failure",
+            elapsed_seconds=0.0,
+            error="injected isolated worker failure",
+        )
+    )
+    status_connection.close()
+
+
+def _hang_isolated_worker(*args) -> None:
+    time.sleep(60)
 
 
 class SamplingTimingRecorderTest(TestCase):
@@ -133,6 +171,644 @@ class SamplingTimingRecorderTest(TestCase):
 
         assert payload is not None
         self.assertEqual(payload["loop_thread_busy_fraction"], 1.0)
+
+
+class IsolatedSamplingWorkerRpcSpecTest(TestCase):
+    @staticmethod
+    def _build_lifecycle_test_producer(*, rpc_timeout: float) -> DistSamplingProducer:
+        producer = object.__new__(DistSamplingProducer)
+        producer.sampling_config = SimpleNamespace(seed=None, shuffle=False)
+        producer.worker_options = SimpleNamespace(
+            worker_concurrency=1,
+            rpc_timeout=rpc_timeout,
+        )
+        producer.num_workers = 1
+        producer.data = object()
+        producer.sampler_input = object()
+        producer.output_channel = object()
+        producer.sampling_completed_worker_count = object()
+        producer._sampler_options = object()
+        producer._degree_tensors = None
+        producer._isolated_rpc_specs = (
+            SamplingWorkerRpcSpec(
+                worker_index=0,
+                group_name="isolated_test_group",
+                world_size=1,
+                rank=0,
+                master_port=20000,
+            ),
+        )
+        producer._task_queues = []
+        producer._workers = []
+        producer._isolated_status_connections = []
+        producer._isolated_ready_workers = set()
+        producer._isolated_barrier = None
+        producer._isolated_resources_closed = False
+        producer._isolated_cleanup_complete = False
+        producer._isolated_port_lease = None
+        producer._shutdown = False
+        producer._get_seeds_indexes = Mock(return_value=[torch.tensor([0])])
+        return producer
+
+    def test_resolves_one_complete_group_per_worker(self) -> None:
+        specs = resolve_isolated_sampling_worker_rpc_specs(
+            parent_world_size=65,
+            parent_rank=13,
+            parent_group_name="inference_local_rank_0",
+            data_num_partitions=65,
+            data_partition_idx=13,
+            num_workers=4,
+            master_ports=[20000, 20001, 20002, 20003],
+        )
+
+        self.assertEqual(len(specs), 4)
+        self.assertEqual([spec.worker_index for spec in specs], [0, 1, 2, 3])
+        self.assertEqual([spec.world_size for spec in specs], [65] * 4)
+        self.assertEqual([spec.rank for spec in specs], [13] * 4)
+        self.assertEqual(
+            [spec.master_port for spec in specs], [20000, 20001, 20002, 20003]
+        )
+        self.assertEqual(len({spec.group_name for spec in specs}), 4)
+
+    def test_requires_one_parent_per_partition(self) -> None:
+        with self.assertRaisesRegex(ValueError, "one parent per data partition"):
+            resolve_isolated_sampling_worker_rpc_specs(
+                parent_world_size=65,
+                parent_rank=13,
+                parent_group_name="group",
+                data_num_partitions=64,
+                data_partition_idx=13,
+                num_workers=2,
+                master_ports=[20000, 20001],
+            )
+
+    def test_requires_parent_rank_to_match_partition(self) -> None:
+        with self.assertRaisesRegex(ValueError, "parent rank to match"):
+            resolve_isolated_sampling_worker_rpc_specs(
+                parent_world_size=65,
+                parent_rank=13,
+                parent_group_name="group",
+                data_num_partitions=65,
+                data_partition_idx=12,
+                num_workers=2,
+                master_ports=[20000, 20001],
+            )
+
+    def test_rejects_wrong_or_duplicate_ports(self) -> None:
+        with self.assertRaisesRegex(ValueError, "expected 2"):
+            resolve_isolated_sampling_worker_rpc_specs(
+                parent_world_size=2,
+                parent_rank=0,
+                parent_group_name="group",
+                data_num_partitions=2,
+                data_partition_idx=0,
+                num_workers=2,
+                master_ports=[20000],
+            )
+        with self.assertRaisesRegex(ValueError, "must be distinct"):
+            resolve_isolated_sampling_worker_rpc_specs(
+                parent_world_size=2,
+                parent_rank=0,
+                parent_group_name="group",
+                data_num_partitions=2,
+                data_partition_idx=0,
+                num_workers=2,
+                master_ports=[20000, 20000],
+            )
+
+    def test_readiness_requires_exact_group_identity_and_partition_map(self) -> None:
+        spec = SamplingWorkerRpcSpec(
+            worker_index=2,
+            group_name="group_2",
+            world_size=2,
+            rank=0,
+            master_port=21002,
+        )
+        valid = {
+            "group_2_0": {
+                "worker_index": 2,
+                "rank": 0,
+                "partition": 0,
+                "port": 21002,
+            },
+            "group_2_1": {
+                "worker_index": 2,
+                "rank": 1,
+                "partition": 1,
+                "port": 21002,
+            },
+        }
+        validate_isolated_sampling_group_readiness(valid, spec)
+
+        invalid_cases = [
+            (
+                "worker names",
+                {
+                    "wrong_0": valid["group_2_0"],
+                    "wrong_1": valid["group_2_1"],
+                },
+            ),
+            (
+                "identity payloads",
+                {
+                    **valid,
+                    "group_2_1": {**valid["group_2_1"], "worker_index": 3},
+                },
+            ),
+            (
+                "identity payloads",
+                {
+                    **valid,
+                    "group_2_1": {**valid["group_2_1"], "port": 21003},
+                },
+            ),
+            (
+                "rank/partition coverage",
+                {
+                    **valid,
+                    "group_2_1": {**valid["group_2_1"], "partition": 0},
+                },
+            ),
+            (
+                "identity payloads",
+                {
+                    "group_2_0": valid["group_2_1"],
+                    "group_2_1": valid["group_2_0"],
+                },
+            ),
+        ]
+        for expected_error, readiness in invalid_cases:
+            with self.subTest(expected_error=expected_error):
+                with self.assertRaisesRegex(RuntimeError, expected_error):
+                    validate_isolated_sampling_group_readiness(readiness, spec)
+
+    def test_structured_startup_error_reaps_child_and_is_idempotent(self) -> None:
+        fork_context = torch.multiprocessing.get_context("fork")
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fork_context,
+            ),
+            patch(
+                "gigl.distributed.dist_sampling_producer._sampling_worker_loop",
+                _send_isolated_worker_error,
+            ),
+            patch(
+                "gigl.distributed.dist_sampling_producer.MP_STATUS_CHECK_INTERVAL",
+                0.1,
+            ),
+            self.assertRaisesRegex(RuntimeError, "injected isolated worker failure"),
+        ):
+            producer.init()
+
+        self.assertTrue(producer._isolated_resources_closed)
+        self.assertTrue(all(not worker.is_alive() for worker in producer._workers))
+        producer.shutdown()
+
+    def test_startup_timeout_kills_unresponsive_child(self) -> None:
+        fork_context = torch.multiprocessing.get_context("fork")
+        producer = self._build_lifecycle_test_producer(rpc_timeout=0.2)
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fork_context,
+            ),
+            patch(
+                "gigl.distributed.dist_sampling_producer._sampling_worker_loop",
+                _hang_isolated_worker,
+            ),
+            patch(
+                "gigl.distributed.dist_sampling_producer.MP_STATUS_CHECK_INTERVAL",
+                0.1,
+            ),
+            self.assertRaisesRegex(TimeoutError, "timed out waiting"),
+        ):
+            producer.init()
+
+        self.assertTrue(producer._isolated_resources_closed)
+        self.assertTrue(all(not worker.is_alive() for worker in producer._workers))
+        producer.shutdown()
+
+    def test_status_eof_before_ready_is_explicit(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        worker = Mock()
+        worker.exitcode = None
+        connection = Mock()
+        connection.poll.return_value = True
+        connection.recv.side_effect = EOFError
+        producer._workers = [worker]
+        producer._isolated_status_connections = [connection]
+
+        with self.assertRaisesRegex(RuntimeError, "closed its status pipe"):
+            producer._poll_isolated_worker_statuses()
+
+    def test_ready_status_requires_exact_parent_child_identity(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        worker = Mock()
+        worker.pid = 1234
+        worker.exitcode = None
+        connection = Mock()
+        connection.poll.side_effect = [True, False]
+        connection.recv.return_value = SamplingWorkerStatus(
+            state="READY",
+            worker_index=0,
+            group_name="wrong_group",
+            rank=0,
+            master_port=20000,
+            pid=1234,
+            phase="group_readiness",
+            elapsed_seconds=0.1,
+        )
+        producer._workers = [worker]
+        producer._isolated_status_connections = [connection]
+
+        with self.assertRaisesRegex(RuntimeError, "invalid identity"):
+            producer._poll_isolated_worker_statuses()
+
+    def test_ready_status_accepts_exact_parent_child_identity(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        worker = Mock(pid=1234, exitcode=None)
+        connection = Mock()
+        connection.poll.side_effect = [True, False]
+        connection.recv.return_value = SamplingWorkerStatus(
+            state="READY",
+            worker_index=0,
+            group_name="isolated_test_group",
+            rank=0,
+            master_port=20000,
+            pid=1234,
+            phase="group_readiness",
+            elapsed_seconds=0.1,
+        )
+        producer._workers = [worker]
+        producer._isolated_status_connections = [connection]
+
+        producer._poll_isolated_worker_statuses()
+
+        self.assertEqual(producer._isolated_ready_workers, {0})
+
+    def test_process_start_failure_closes_all_parent_resources(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        port_lease = Mock()
+        producer._isolated_port_lease = port_lease
+
+        with (
+            patch(
+                "multiprocessing.process.BaseProcess.start",
+                side_effect=OSError("injected Process.start failure"),
+            ),
+            self.assertRaisesRegex(OSError, "injected Process.start failure"),
+        ):
+            producer.init()
+
+        self.assertEqual(len(producer._workers), 1)
+        self.assertIsNone(producer._workers[0].pid)
+        self.assertTrue(producer._isolated_resources_closed)
+        port_lease.release_reservation.assert_called_once_with(20000)
+        port_lease.close.assert_called_once_with()
+
+    def test_reservation_release_failure_closes_all_parent_resources(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        fake_context = Mock()
+        fake_context.Barrier.return_value = Mock()
+        task_queue = Mock()
+        fake_context.Queue.return_value = task_queue
+        parent_connection = Mock()
+        child_connection = Mock()
+        fake_context.Pipe.return_value = (parent_connection, child_connection)
+        worker = Mock(pid=None)
+        fake_context.Process.return_value = worker
+        port_lease = Mock()
+        port_lease._closed = False
+        port_lease.release_reservation.side_effect = OSError(
+            "injected reservation release failure"
+        )
+
+        def close_lease() -> None:
+            port_lease._closed = True
+
+        port_lease.close.side_effect = close_lease
+        producer._isolated_port_lease = port_lease
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fake_context,
+            ),
+            self.assertRaisesRegex(OSError, "reservation release failure"),
+        ):
+            producer.init()
+
+        worker.start.assert_not_called()
+        child_connection.close.assert_called_once_with()
+        parent_connection.close.assert_called_once_with()
+        task_queue.close.assert_called_once_with()
+        port_lease.close.assert_called_once_with()
+        self.assertTrue(producer._isolated_cleanup_complete)
+
+    def test_port_lease_close_attempts_all_and_retries_failures(self) -> None:
+        first_reservation = Mock()
+        first_reservation.close.side_effect = [OSError("socket close failed"), None]
+        second_reservation = Mock()
+        lease = SamplingPortLease(
+            ports=(20000, 20001),
+            lock_file_descriptors=(10, 11),
+            reservations={
+                20000: first_reservation,
+                20001: second_reservation,
+            },
+        )
+
+        with patch(
+            "gigl.distributed.dist_sampling_producer.os.close",
+            side_effect=[OSError("fd close failed"), None, None],
+        ) as close_fd:
+            lease.close()
+            self.assertFalse(lease._closed)
+            self.assertEqual(set(lease.reservations), {20000})
+            self.assertEqual(lease.lock_file_descriptors, (10,))
+
+            lease.close()
+
+        self.assertTrue(lease._closed)
+        self.assertEqual(lease.reservations, {})
+        self.assertEqual(lease.lock_file_descriptors, ())
+        self.assertEqual(first_reservation.close.call_count, 2)
+        second_reservation.close.assert_called_once_with()
+        self.assertEqual(
+            [call.args[0] for call in close_fd.call_args_list], [10, 11, 10]
+        )
+
+    def test_pre_owner_lease_cleanup_retries_transient_close_failure(self) -> None:
+        lease = SamplingPortLease(
+            ports=(20000,),
+            lock_file_descriptors=(10,),
+        )
+
+        with patch(
+            "gigl.distributed.dist_sampling_producer.os.close",
+            side_effect=[OSError("transient fd close failure"), None],
+        ) as close_fd:
+            closed = close_sampling_port_lease_with_retries(
+                lease,
+                context="injected pre-owner failure",
+            )
+
+        self.assertTrue(closed)
+        self.assertTrue(lease._closed)
+        self.assertEqual(close_fd.call_count, 2)
+
+    def test_parent_resource_close_attempts_all_and_retries_failures(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        first_connection = Mock()
+        first_connection.close.side_effect = [OSError("pipe close failed"), None]
+        second_connection = Mock()
+        first_queue = Mock()
+        first_queue.close.side_effect = [OSError("queue close failed"), None]
+        second_queue = Mock()
+        port_lease = SamplingPortLease((20000,))
+        producer._isolated_status_connections = [
+            first_connection,
+            second_connection,
+        ]
+        producer._task_queues = [first_queue, second_queue]
+        producer._isolated_port_lease = port_lease
+
+        producer._close_isolated_resources()
+
+        self.assertFalse(producer._isolated_resources_closed)
+        self.assertEqual(producer._isolated_status_connections, [first_connection])
+        self.assertEqual(producer._task_queues, [first_queue])
+        self.assertTrue(port_lease._closed)
+
+        producer._close_isolated_resources()
+
+        self.assertTrue(producer._isolated_resources_closed)
+        self.assertEqual(producer._isolated_status_connections, [])
+        self.assertEqual(producer._task_queues, [])
+        self.assertEqual(first_connection.close.call_count, 2)
+        second_connection.close.assert_called_once_with()
+        self.assertEqual(first_queue.close.call_count, 2)
+        second_queue.close.assert_called_once_with()
+
+    def test_process_cleanup_continues_after_worker_operation_error(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        first_worker = Mock(pid=101)
+        first_worker.join.side_effect = [OSError("join failed"), None, None]
+        first_worker.is_alive.return_value = False
+        second_worker = Mock(pid=102)
+        second_worker.is_alive.return_value = False
+        producer._workers = [first_worker, second_worker]
+        producer._isolated_port_lease = SamplingPortLease((20000,))
+
+        with self.assertRaisesRegex(RuntimeError, "join failed"):
+            producer._cleanup_isolated_workers(graceful=False)
+
+        self.assertEqual(first_worker.join.call_count, 3)
+        self.assertEqual(second_worker.join.call_count, 3)
+        self.assertTrue(producer._isolated_resources_closed)
+
+    def test_process_cleanup_retries_live_survivor_after_resources_close(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        worker = Mock(pid=101)
+        worker.is_alive.side_effect = [True, True, True, False, False, False]
+        producer._workers = [worker]
+
+        with self.assertRaisesRegex(RuntimeError, "live child PIDs remain"):
+            producer._cleanup_isolated_workers(graceful=False)
+
+        self.assertTrue(producer._isolated_resources_closed)
+        self.assertFalse(producer._isolated_cleanup_complete)
+
+        producer._cleanup_isolated_workers(graceful=False)
+
+        self.assertTrue(producer._isolated_cleanup_complete)
+        self.assertEqual(worker.join.call_count, 6)
+
+    @staticmethod
+    def _configure_two_worker_fake_context(
+        producer: DistSamplingProducer,
+    ) -> tuple[Mock, list[str], list[Mock], Mock]:
+        producer.num_workers = 2
+        producer._isolated_rpc_specs = tuple(
+            SamplingWorkerRpcSpec(
+                worker_index=index,
+                group_name=f"isolated_test_group_{index}",
+                world_size=1,
+                rank=0,
+                master_port=20000 + index,
+            )
+            for index in range(2)
+        )
+        producer._get_seeds_indexes = Mock(
+            return_value=[torch.tensor([0]), torch.tensor([1])]
+        )
+        producer._isolated_port_lease = SamplingPortLease((20000, 20001))
+        events: list[str] = []
+        workers: list[Mock] = []
+        fake_context = Mock()
+        barrier = Mock()
+        fake_context.Barrier.return_value = barrier
+        fake_context.Queue.side_effect = [Mock(), Mock()]
+        fake_context.Pipe.side_effect = [
+            (Mock(), Mock()),
+            (Mock(), Mock()),
+        ]
+
+        def create_process(**_) -> Mock:
+            index = len(workers)
+            worker = Mock(pid=200 + index)
+            worker.exitcode = None
+            worker.is_alive.return_value = False
+            worker.start.side_effect = lambda: events.append(f"start_{index}")
+            workers.append(worker)
+            return worker
+
+        fake_context.Process.side_effect = create_process
+        return fake_context, events, workers, barrier
+
+    def test_isolated_workers_start_only_after_previous_ready(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        fake_context, events, _, _ = self._configure_two_worker_fake_context(producer)
+
+        def wait_ready(index: int) -> None:
+            events.append(f"ready_{index}")
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fake_context,
+            ),
+            patch.object(
+                producer,
+                "_wait_for_isolated_worker_ready",
+                side_effect=wait_ready,
+            ),
+            patch.object(
+                producer,
+                "_wait_for_isolated_workers_at_barrier",
+                side_effect=lambda: events.append("barrier"),
+            ),
+        ):
+            producer.init()
+
+        self.assertEqual(
+            events,
+            ["start_0", "ready_0", "start_1", "ready_1", "barrier"],
+        )
+        producer.shutdown()
+
+    def test_later_group_failure_reaps_ready_prefix(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        fake_context, events, workers, barrier = (
+            self._configure_two_worker_fake_context(producer)
+        )
+
+        def wait_ready(index: int) -> None:
+            events.append(f"ready_{index}")
+            if index == 1:
+                raise RuntimeError("injected later-group failure")
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fake_context,
+            ),
+            patch.object(
+                producer,
+                "_wait_for_isolated_worker_ready",
+                side_effect=wait_ready,
+            ),
+            self.assertRaisesRegex(RuntimeError, "injected later-group failure"),
+        ):
+            producer.init()
+
+        self.assertEqual(events, ["start_0", "ready_0", "start_1", "ready_1"])
+        barrier.abort.assert_called_once_with()
+        self.assertTrue(all(worker.join.called for worker in workers))
+        self.assertTrue(producer._isolated_resources_closed)
+
+    def test_final_barrier_failure_reaps_all_ready_workers(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        fake_context, events, workers, barrier = (
+            self._configure_two_worker_fake_context(producer)
+        )
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fake_context,
+            ),
+            patch.object(
+                producer,
+                "_wait_for_isolated_worker_ready",
+                side_effect=lambda index: events.append(f"ready_{index}"),
+            ),
+            patch.object(
+                producer,
+                "_wait_for_isolated_workers_at_barrier",
+                side_effect=BrokenBarrierError("injected final barrier failure"),
+            ),
+            self.assertRaisesRegex(
+                BrokenBarrierError, "injected final barrier failure"
+            ),
+        ):
+            producer.init()
+
+        self.assertEqual(events, ["start_0", "ready_0", "start_1", "ready_1"])
+        barrier.abort.assert_called_once_with()
+        self.assertTrue(all(worker.join.called for worker in workers))
+        self.assertTrue(producer._isolated_resources_closed)
+
+    def test_cleanup_aborts_barrier_before_closing_resources(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        barrier = Mock()
+        producer._isolated_barrier = barrier
+
+        producer._cleanup_isolated_workers(graceful=False)
+
+        barrier.abort.assert_called_once_with()
+        self.assertTrue(producer._isolated_resources_closed)
+
+    def test_isolated_mode_rejects_all_to_all(self) -> None:
+        worker_options = SimpleNamespace(
+            use_all2all=True,
+            rpc_timeout=1.0,
+        )
+        port_lease = Mock()
+
+        def initialize_base(producer, *_args) -> None:
+            producer.num_workers = 1
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.DistMpSamplingProducer.__init__",
+                new=initialize_base,
+            ),
+            self.assertRaisesRegex(ValueError, "does not yet support use_all2all"),
+        ):
+            DistSamplingProducer(
+                data=cast(DistDataset, object()),
+                sampler_input=cast(NodeSamplerInput, object()),
+                sampling_config=cast(SamplingConfig, object()),
+                worker_options=cast(MpDistSamplingWorkerOptions, worker_options),
+                channel=cast(ChannelBase, object()),
+                sampler_options=cast(SamplerOptions, object()),
+                isolated_rpc_specs=(
+                    SamplingWorkerRpcSpec(
+                        worker_index=0,
+                        group_name="group",
+                        world_size=1,
+                        rank=0,
+                        master_port=21000,
+                    ),
+                ),
+                isolated_port_lease=port_lease,
+            )
+        port_lease.close.assert_called_once_with()
 
 
 def _build_sampler_input(

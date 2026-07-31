@@ -18,7 +18,12 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_sampling_producer import DistSamplingProducer
+from gigl.distributed.dist_sampling_producer import (
+    DistSamplingProducer,
+    SamplingPortLease,
+    SamplingWorkerRpcSpec,
+    close_sampling_port_lease_with_retries,
+)
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import (
     SamplerOptions,
@@ -87,6 +92,7 @@ class DistNeighborLoader(BaseDistLoader):
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
         num_rpc_threads: Optional[int] = None,
+        one_rpc_group_per_sampling_worker: bool = False,
     ):
         """
         Distributed Neighbor Loader.
@@ -172,6 +178,9 @@ class DistNeighborLoader(BaseDistLoader):
             num_rpc_threads (Optional[int]): Number of RPC threads per colocated
                 sampling worker. Defaults to the smaller of the dataset partition
                 count and 16. Appended to preserve positional-call compatibility.
+            one_rpc_group_per_sampling_worker (bool): If true, place each
+                multiprocessing sampling worker in an independent RPC group.
+                Colocated mode only. Defaults to false for compatibility.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -186,6 +195,11 @@ class DistNeighborLoader(BaseDistLoader):
                 raise ValueError(
                     "num_rpc_threads is only supported in colocated sampling mode"
                 )
+        if one_rpc_group_per_sampling_worker and isinstance(dataset, RemoteDistDataset):
+            raise ValueError(
+                "one_rpc_group_per_sampling_worker is only supported in "
+                "colocated sampling mode"
+            )
 
         sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
@@ -226,7 +240,13 @@ class DistNeighborLoader(BaseDistLoader):
             assert isinstance(dataset, DistDataset), (
                 "When using colocated mode, dataset must be a DistDataset."
             )
-            input_data, worker_options, dataset_schema = self._setup_for_colocated(
+            (
+                input_data,
+                worker_options,
+                dataset_schema,
+                isolated_rpc_specs,
+                isolated_port_lease,
+            ) = self._setup_for_colocated(
                 input_nodes=input_nodes,
                 dataset=dataset,
                 local_rank=runtime.local_rank,
@@ -240,6 +260,7 @@ class DistNeighborLoader(BaseDistLoader):
                 channel_size=channel_size,
                 num_cpu_threads=num_cpu_threads,
                 num_rpc_threads=num_rpc_threads,
+                one_rpc_group_per_sampling_worker=one_rpc_group_per_sampling_worker,
             )
         else:
             assert isinstance(dataset, RemoteDistDataset), (
@@ -261,55 +282,83 @@ class DistNeighborLoader(BaseDistLoader):
                 prefetch_size=prefetch_size,
                 channel_size=channel_size,
             )
-
-        # Cleanup temporary process group if needed
-        if (
-            runtime.should_cleanup_distributed_context
-            and torch.distributed.is_initialized()
-        ):
-            logger.info(
-                f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
-            )
-            torch.distributed.destroy_process_group()
-
-        # Create SamplingConfig (with patched fanout)
-        sampling_config = BaseDistLoader.create_sampling_config(
-            num_neighbors=num_neighbors,
-            dataset_schema=dataset_schema,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            drop_last=drop_last,
-            with_weight=with_weight,
-        )
+            isolated_rpc_specs = None
+            isolated_port_lease = None
 
         producer: Optional[DistSamplingProducer] = None
-        if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
-            assert isinstance(dataset, DistDataset)
-            assert isinstance(worker_options, MpDistSamplingWorkerOptions)
-            producer = BaseDistLoader.create_mp_producer(
-                dataset=dataset,
-                sampler_input=input_data,
-                sampling_config=sampling_config,
-                worker_options=worker_options,
-                sampler_options=sampler_options,
+        try:
+            # Cleanup temporary process group if needed
+            if (
+                runtime.should_cleanup_distributed_context
+                and torch.distributed.is_initialized()
+            ):
+                logger.info(
+                    f"Cleaning up process group as it was initialized inside {self.__class__.__name__}.__init__."
+                )
+                torch.distributed.destroy_process_group()
+
+            # Create SamplingConfig (with patched fanout)
+            sampling_config = BaseDistLoader.create_sampling_config(
+                num_neighbors=num_neighbors,
+                dataset_schema=dataset_schema,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                drop_last=drop_last,
+                with_weight=with_weight,
             )
+
+            if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
+                assert isinstance(dataset, DistDataset)
+                assert isinstance(worker_options, MpDistSamplingWorkerOptions)
+                producer = BaseDistLoader.create_mp_producer(
+                    dataset=dataset,
+                    sampler_input=input_data,
+                    sampling_config=sampling_config,
+                    worker_options=worker_options,
+                    sampler_options=sampler_options,
+                    isolated_rpc_specs=isolated_rpc_specs,
+                    isolated_port_lease=isolated_port_lease,
+                )
+        except BaseException:
+            if isolated_port_lease is not None:
+                close_sampling_port_lease_with_retries(
+                    isolated_port_lease,
+                    context="loader setup before producer ownership",
+                )
+            raise
 
         # Call base class — handles metadata storage and connection initialization
         # (including staggered init for colocated mode).
-        super().__init__(
-            dataset=dataset,
-            sampler_input=input_data,
-            dataset_schema=dataset_schema,
-            worker_options=worker_options,
-            sampling_config=sampling_config,
-            device=device,
-            runtime=runtime,
-            producer=producer,
-            sampler_options=sampler_options,
-            backend_key=backend_key,
-            process_start_gap_seconds=process_start_gap_seconds,
-            non_blocking_transfers=non_blocking_transfers,
-        )
+        try:
+            super().__init__(
+                dataset=dataset,
+                sampler_input=input_data,
+                dataset_schema=dataset_schema,
+                worker_options=worker_options,
+                sampling_config=sampling_config,
+                device=device,
+                runtime=runtime,
+                producer=producer,
+                sampler_options=sampler_options,
+                backend_key=backend_key,
+                process_start_gap_seconds=process_start_gap_seconds,
+                non_blocking_transfers=non_blocking_transfers,
+            )
+        except BaseException:
+            try:
+                if producer is not None:
+                    producer.shutdown()
+                elif isolated_port_lease is not None:
+                    close_sampling_port_lease_with_retries(
+                        isolated_port_lease,
+                        context="loader base initialization",
+                    )
+            except BaseException:
+                logger.exception(
+                    "failed to clean up colocated sampling resources after "
+                    "loader initialization failed"
+                )
+            raise
 
     def _setup_for_graph_store(
         self,
@@ -451,7 +500,14 @@ class DistNeighborLoader(BaseDistLoader):
         channel_size: str,
         num_cpu_threads: Optional[int],
         num_rpc_threads: Optional[int],
-    ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, DatasetSchema]:
+        one_rpc_group_per_sampling_worker: bool,
+    ) -> tuple[
+        NodeSamplerInput,
+        MpDistSamplingWorkerOptions,
+        DatasetSchema,
+        Optional[tuple[SamplingWorkerRpcSpec, ...]],
+        Optional[SamplingPortLease],
+    ]:
         if input_nodes is None:
             if dataset.node_ids is None:
                 raise ValueError(
@@ -513,38 +569,58 @@ class DistNeighborLoader(BaseDistLoader):
             num_cpu_threads=num_cpu_threads,
         )
 
-        # Sets up worker options for the dataloader
-        dist_sampling_ports = gigl.distributed.utils.get_free_ports_from_master_node(
-            num_ports=local_world_size
-        )
-        dist_sampling_port_for_current_rank = dist_sampling_ports[local_rank]
-
-        worker_options = BaseDistLoader.create_colocated_worker_options(
-            dataset_num_partitions=dataset.num_partitions,
+        (
+            dist_sampling_port_for_current_rank,
+            isolated_rpc_specs,
+            isolated_port_lease,
+        ) = BaseDistLoader.create_colocated_sampling_rpc_specs(
+            dataset=dataset,
             num_workers=num_workers,
-            worker_concurrency=worker_concurrency,
-            num_rpc_threads=num_rpc_threads,
-            master_ip_address=master_ip_address,
-            master_port=dist_sampling_port_for_current_rank,
-            channel_size=channel_size,
-            pin_memory=device.type == "cuda",
+            local_rank=local_rank,
+            local_world_size=local_world_size,
+            node_world_size=node_world_size,
+            one_rpc_group_per_sampling_worker=one_rpc_group_per_sampling_worker,
+            use_all2all=False,
         )
 
-        if isinstance(dataset.graph, dict):
-            edge_types = list(dataset.graph.keys())
-        else:
-            edge_types = None
+        try:
+            worker_options = BaseDistLoader.create_colocated_worker_options(
+                dataset_num_partitions=dataset.num_partitions,
+                num_workers=num_workers,
+                worker_concurrency=worker_concurrency,
+                num_rpc_threads=num_rpc_threads,
+                master_ip_address=master_ip_address,
+                master_port=dist_sampling_port_for_current_rank,
+                channel_size=channel_size,
+                pin_memory=device.type == "cuda",
+            )
 
-        return (
-            input_data,
-            worker_options,
-            DatasetSchema(
+            if isinstance(dataset.graph, dict):
+                edge_types = list(dataset.graph.keys())
+            else:
+                edge_types = None
+
+            dataset_schema = DatasetSchema(
                 is_homogeneous_with_labeled_edge_type=is_homogeneous_with_labeled_edge_type,
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
                 edge_dir=dataset.edge_dir,
-            ),
+            )
+        except BaseException:
+            if isolated_port_lease is not None:
+                close_sampling_port_lease_with_retries(
+                    isolated_port_lease,
+                    context="colocated worker options/schema setup",
+                )
+            raise
+
+        return (
+            input_data,
+            worker_options,
+            dataset_schema,
+            isolated_rpc_specs,
+            isolated_port_lease,
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
