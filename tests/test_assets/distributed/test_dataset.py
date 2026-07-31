@@ -247,6 +247,12 @@ def create_heterogeneous_dataset_for_ablp(
     rank: int = 0,
     world_size: int = 1,
     edge_dir: Literal["in", "out"] = "out",
+    labels_by_supervision_edge_type: Optional[
+        dict[
+            EdgeType,
+            tuple[dict[int, list[int]], Optional[dict[int, list[int]]]],
+        ]
+    ] = None,
 ) -> DistDataset:
     """Create a heterogeneous test dataset for ABLP with label edges and train/val/test splits.
 
@@ -278,6 +284,9 @@ def create_heterogeneous_dataset_for_ablp(
         rank: Rank of the current process. Defaults to 0.
         world_size: Total number of processes. Defaults to 1.
         edge_dir: Edge direction ("in" or "out"). Defaults to "out".
+        labels_by_supervision_edge_type: Optional plural label schema keyed by
+            canonical anchor-outward supervision edge type. When provided, this
+            mapping is authoritative.
 
     Returns:
         A DistDataset instance with the specified configuration and splits.
@@ -295,48 +304,34 @@ def create_heterogeneous_dataset_for_ablp(
         ...     edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
         ... )
     """
-    # Set default supervision edge type
+    # Set default supervision edge type and normalize scalar labels.
     if supervision_edge_type is None:
         supervision_edge_type = EdgeType(src_node_type, Relation("to"), dst_node_type)
+    if labels_by_supervision_edge_type is None:
+        labels_by_supervision_edge_type = {
+            supervision_edge_type: (positive_labels, negative_labels)
+        }
+    if not labels_by_supervision_edge_type:
+        raise ValueError("labels_by_supervision_edge_type must not be empty")
 
-    # Validate that all split node IDs have positive labels
+    # Validate that all objectives are outward from one anchor type and that all
+    # split anchors have positives for every objective.
     all_split_node_ids = set(train_node_ids) | set(val_node_ids) | set(test_node_ids)
-    missing_nodes = all_split_node_ids - set(positive_labels.keys())
-    if missing_nodes:
-        raise ValueError(
-            f"Node IDs {missing_nodes} are in train/val/test splits but not in positive_labels"
-        )
-
-    # When edge_dir="in", the DistNodeAnchorLinkSplitter reverses the label edge type
-    # (supervision_edge_type is always provided outward, e.g. USER_TO_STORY), so the splitter
-    # looks for message_passing_to_positive_label(reverse(supervision_edge_type)) in the graph.
-    # We must store the label edges under that reversed key for the splitter and ABLP loader to
-    # find them. For edge_dir="out" no reversal is needed.
-    actual_label_supervision_edge_type = (
-        reverse_edge_type(supervision_edge_type)
-        if edge_dir == "in"
-        else supervision_edge_type
-    )
-    positive_label_edge_type = message_passing_to_positive_label(
-        actual_label_supervision_edge_type
-    )
-    negative_label_edge_type = message_passing_to_negative_label(
-        actual_label_supervision_edge_type
-    )
-
-    # Convert positive_labels dict to COO edge index
-    pos_src, pos_dst = [], []
-    for node_id, dst_ids in positive_labels.items():
-        for dst_id in dst_ids:
-            pos_src.append(node_id)
-            pos_dst.append(dst_id)
-    # For edge_dir="in", the reversed label edge type is (STORY, ..., USER), so
-    # row 0 = story IDs, row 1 = user IDs. For edge_dir="out" it's the natural direction.
-    positive_label_edge_index = (
-        torch.tensor([pos_dst, pos_src])
-        if edge_dir == "in"
-        else torch.tensor([pos_src, pos_dst])
-    )
+    anchor_node_type = next(iter(labels_by_supervision_edge_type)).src_node_type
+    for edge_type, (
+        edge_positive_labels,
+        _,
+    ) in labels_by_supervision_edge_type.items():
+        if edge_type.src_node_type != anchor_node_type:
+            raise ValueError(
+                "All supervision edge types must use the same outward anchor node "
+                f"type; got {anchor_node_type} and {edge_type.src_node_type}"
+            )
+        missing_nodes = all_split_node_ids - set(edge_positive_labels)
+        if missing_nodes:
+            raise ValueError(
+                f"Node IDs {missing_nodes} are in train/val/test splits but not in positive_labels"
+            )
 
     # Derive node counts from edge indices by collecting max node ID per node type
     node_counts: dict[NodeType, int] = {}
@@ -347,52 +342,92 @@ def create_heterogeneous_dataset_for_ablp(
         node_counts[src_type] = int(max(node_counts.get(src_type, 0), src_max))
         node_counts[dst_type] = int(max(node_counts.get(dst_type, 0), dst_max))
 
-    # Also account for nodes in positive labels
-    node_counts[src_node_type] = max(
-        node_counts.get(src_node_type, 0), max(positive_labels.keys()) + 1
-    )
-    node_counts[dst_node_type] = max(
-        node_counts.get(dst_node_type, 0),
-        max(max(stories) for stories in positive_labels.values()) + 1,
-    )
-
     # Set up edge partition books and edge indices
     edge_partition_book = {
         edge_type: torch.zeros(edge_index.shape[1], dtype=torch.int64)
         for edge_type, edge_index in edge_indices.items()
     }
-    edge_partition_book[positive_label_edge_type] = torch.zeros(
-        len(pos_src), dtype=torch.int64
-    )
 
     partitioned_edge_index = {
         edge_type: GraphPartitionData(edge_index=edge_index, edge_ids=None)
         for edge_type, edge_index in edge_indices.items()
     }
-    partitioned_edge_index[positive_label_edge_type] = GraphPartitionData(
-        edge_index=positive_label_edge_index,
-        edge_ids=None,
-    )
 
-    if negative_labels is not None:
-        # Convert negative_labels dict to COO edge index
-        neg_src, neg_dst = [], []
-        for node_id, dst_ids in negative_labels.items():
-            for dst_id in dst_ids:
-                neg_src.append(node_id)
-                neg_dst.append(dst_id)
-        negative_label_edge_index = (
-            torch.tensor([neg_dst, neg_src])
+    for outward_edge_type, (
+        edge_positive_labels,
+        edge_negative_labels,
+    ) in labels_by_supervision_edge_type.items():
+        registered_edge_type = (
+            reverse_edge_type(outward_edge_type)
             if edge_dir == "in"
-            else torch.tensor([neg_src, neg_dst])
+            else outward_edge_type
         )
-        edge_partition_book[negative_label_edge_type] = torch.zeros(
-            len(neg_src), dtype=torch.int64
+        positive_label_edge_type = message_passing_to_positive_label(
+            registered_edge_type
         )
-        partitioned_edge_index[negative_label_edge_type] = GraphPartitionData(
-            edge_index=negative_label_edge_index,
+        positive_src = [
+            anchor
+            for anchor, destination_ids in edge_positive_labels.items()
+            for _ in destination_ids
+        ]
+        positive_dst = [
+            destination
+            for destination_ids in edge_positive_labels.values()
+            for destination in destination_ids
+        ]
+        positive_label_edge_index = (
+            torch.tensor([positive_dst, positive_src], dtype=torch.int64)
+            if edge_dir == "in"
+            else torch.tensor([positive_src, positive_dst], dtype=torch.int64)
+        )
+        edge_partition_book[positive_label_edge_type] = torch.zeros(
+            len(positive_src), dtype=torch.int64
+        )
+        partitioned_edge_index[positive_label_edge_type] = GraphPartitionData(
+            edge_index=positive_label_edge_index,
             edge_ids=None,
         )
+
+        node_counts[anchor_node_type] = max(
+            node_counts.get(anchor_node_type, 0), max(edge_positive_labels) + 1
+        )
+        destination_node_type = outward_edge_type.dst_node_type
+        node_counts[destination_node_type] = max(
+            node_counts.get(destination_node_type, 0), max(positive_dst) + 1
+        )
+
+        if edge_negative_labels is not None:
+            negative_label_edge_type = message_passing_to_negative_label(
+                registered_edge_type
+            )
+            negative_src = [
+                anchor
+                for anchor, destination_ids in edge_negative_labels.items()
+                for _ in destination_ids
+            ]
+            negative_dst = [
+                destination
+                for destination_ids in edge_negative_labels.values()
+                for destination in destination_ids
+            ]
+            negative_label_edge_index = (
+                torch.tensor([negative_dst, negative_src], dtype=torch.int64)
+                if edge_dir == "in"
+                else torch.tensor([negative_src, negative_dst], dtype=torch.int64)
+            )
+            edge_partition_book[negative_label_edge_type] = torch.zeros(
+                len(negative_src), dtype=torch.int64
+            )
+            partitioned_edge_index[negative_label_edge_type] = GraphPartitionData(
+                edge_index=negative_label_edge_index,
+                edge_ids=None,
+            )
+            node_counts[anchor_node_type] = max(
+                node_counts.get(anchor_node_type, 0), max(edge_negative_labels) + 1
+            )
+            node_counts[destination_node_type] = max(
+                node_counts.get(destination_node_type, 0), max(negative_dst) + 1
+            )
 
     # Partition books filled with zeros assign all nodes to partition 0
     node_partition_book = {
@@ -424,7 +459,8 @@ def create_heterogeneous_dataset_for_ablp(
     # Calculate split ratios based on provided node IDs.
     # With identity hash (x + 1), nodes are split by their ID values:
     # - Lower IDs -> train, middle IDs -> val, higher IDs -> test
-    total_nodes = len(positive_labels)
+    first_positive_labels = next(iter(labels_by_supervision_edge_type.values()))[0]
+    total_nodes = len(first_positive_labels)
     num_val = len(val_node_ids) / total_nodes
     num_test = len(test_node_ids) / total_nodes
 
@@ -439,7 +475,7 @@ def create_heterogeneous_dataset_for_ablp(
         num_val=num_val,
         num_test=num_test,
         hash_function=_identity_hash,
-        supervision_edge_types=[supervision_edge_type],
+        supervision_edge_types=list(labels_by_supervision_edge_type),
         should_convert_labels_to_edges=True,
     )
 

@@ -4,7 +4,12 @@ import torch
 from absl.testing import absltest
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from gigl.types.graph import FeatureInfo
+from gigl.types.graph import (
+    FeatureInfo,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+    reverse_edge_type,
+)
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -188,6 +193,71 @@ class TestCreateHeterogeneousDatasetWithLabels(TestCase):
         self.assertEqual(train_node_ids[USER].shape[0], 3)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         self.assertEqual(val_node_ids[USER].shape[0], 1)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         self.assertEqual(test_node_ids[USER].shape[0], 1)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+
+    def test_incoming_plural_supervision_labels(self) -> None:
+        """Test incoming plural supervision splits and reversed label topology."""
+        create_test_process_group()
+
+        topic_node_type = NodeType("topic")
+        user_to_topic = EdgeType(USER, Relation("to"), topic_node_type)
+        story_to_user = reverse_edge_type(USER_TO_STORY)
+        topic_to_user = reverse_edge_type(user_to_topic)
+        positive_story_to_user = message_passing_to_positive_label(story_to_user)
+        negative_story_to_user = message_passing_to_negative_label(story_to_user)
+        positive_topic_to_user = message_passing_to_positive_label(topic_to_user)
+
+        dataset = create_heterogeneous_dataset_for_ablp(
+            positive_labels={},
+            train_node_ids=[0],
+            val_node_ids=[1],
+            test_node_ids=[2],
+            edge_indices={
+                story_to_user: torch.tensor([[0, 1, 2], [0, 1, 2]]),
+                topic_to_user: torch.tensor([[0, 1, 2], [0, 1, 2]]),
+            },
+            edge_dir="in",
+            labels_by_supervision_edge_type={
+                USER_TO_STORY: (
+                    {0: [4], 1: [5], 2: [6]},
+                    {0: [7], 1: [8], 2: [9]},
+                ),
+                user_to_topic: ({0: [10], 1: [11], 2: [12]}, None),
+            },
+        )
+
+        train_node_ids = dataset.train_node_ids
+        val_node_ids = dataset.val_node_ids
+        test_node_ids = dataset.test_node_ids
+        node_ids = dataset.node_ids
+        graph = dataset.graph
+        assert isinstance(train_node_ids, dict)
+        assert isinstance(val_node_ids, dict)
+        assert isinstance(test_node_ids, dict)
+        assert isinstance(node_ids, dict)
+        assert isinstance(graph, dict)
+
+        self.assert_tensor_equality(train_node_ids[USER], torch.tensor([0]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assert_tensor_equality(val_node_ids[USER], torch.tensor([1]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assert_tensor_equality(test_node_ids[USER], torch.tensor([2]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(node_ids[STORY].shape[0], 10)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        self.assertEqual(node_ids[topic_node_type].shape[0], 13)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+
+        story_positive_dst, story_positive_src, _, _ = graph[
+            positive_story_to_user
+        ].topo.to_coo()
+        story_negative_dst, story_negative_src, _, _ = graph[
+            negative_story_to_user
+        ].topo.to_coo()
+        topic_positive_dst, topic_positive_src, _, _ = graph[
+            positive_topic_to_user
+        ].topo.to_coo()
+        self.assert_tensor_equality(story_positive_dst, torch.tensor([4, 5, 6]))
+        self.assert_tensor_equality(story_positive_src, torch.tensor([0, 1, 2]))
+        self.assert_tensor_equality(story_negative_dst, torch.tensor([7, 8, 9]))
+        self.assert_tensor_equality(story_negative_src, torch.tensor([0, 1, 2]))
+        self.assert_tensor_equality(topic_positive_dst, torch.tensor([10, 11, 12]))
+        self.assert_tensor_equality(topic_positive_src, torch.tensor([0, 1, 2]))
+        self.assertNotIn(message_passing_to_negative_label(topic_to_user), graph)
 
     def test_missing_positive_labels_raises_error(self) -> None:
         """Test that missing positive labels for split nodes raises an error."""
