@@ -516,14 +516,13 @@ class RemoteDistDataset:
             for server_rank in range(self.cluster_info.num_storage_nodes)
         }
 
-    # TODO(#488) - support multiple supervision edge types
     def fetch_ablp_input(
         self,
         split: Literal["train", "val", "test"],
         rank: Optional[int] = None,
         world_size: Optional[int] = None,
         anchor_node_type: Optional[NodeType] = None,
-        supervision_edge_type: Optional[EdgeType] = None,
+        supervision_edge_type: Optional[Union[EdgeType, list[EdgeType]]] = None,
     ) -> dict[int, ABLPInputNodes]:
         """Fetch ABLP (Anchor Based Link Prediction) input from the storage nodes.
 
@@ -547,7 +546,7 @@ class RemoteDistDataset:
             anchor_node_type: The type of the anchor nodes to retrieve.
                 Must be provided for heterogeneous graphs.
                 Must be ``None`` for labeled homogeneous graphs.
-            supervision_edge_type: The edge type for supervision.
+            supervision_edge_type: One or more edge types for supervision.
                 Must be provided for heterogeneous graphs.
                 Must be ``None`` for labeled homogeneous graphs.
 
@@ -632,9 +631,26 @@ class RemoteDistDataset:
             evaluated_anchor_node_type = anchor_node_type
         if supervision_edge_type is None:
             evaluated_supervision_edge_types = (DEFAULT_HOMOGENEOUS_EDGE_TYPE,)
+        elif isinstance(supervision_edge_type, list):
+            evaluated_supervision_edge_types = tuple(supervision_edge_type)
         else:
             evaluated_supervision_edge_types = (supervision_edge_type,)
         del anchor_node_type, supervision_edge_type
+
+        if not evaluated_supervision_edge_types:
+            raise ValueError("supervision_edge_type must be a non-empty list.")
+        if len(set(evaluated_supervision_edge_types)) != len(
+            evaluated_supervision_edge_types
+        ):
+            raise ValueError("supervision_edge_type must not contain duplicates.")
+        if (
+            evaluated_anchor_node_type == DEFAULT_HOMOGENEOUS_NODE_TYPE
+            and evaluated_supervision_edge_types != (DEFAULT_HOMOGENEOUS_EDGE_TYPE,)
+        ):
+            raise ValueError(
+                "Labeled homogeneous GraphStore input supports only the default "
+                "homogeneous supervision edge type."
+            )
 
         assignments = self._compute_assignments_if_needed(
             rank=rank,

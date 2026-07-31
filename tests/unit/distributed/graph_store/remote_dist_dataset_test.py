@@ -1,7 +1,7 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from inspect import Parameter, signature
-from typing import Any, Final, Optional, get_type_hints
+from typing import Any, Final, Optional, Union, get_type_hints
 from unittest.mock import patch
 
 import torch
@@ -763,11 +763,11 @@ class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):
 class TestRemoteDistDatasetABLPTransport(RemoteDistDatasetTestBase):
     """Tests for registered-orientation ABLP client transport."""
 
-    def test_public_signature_remains_scalar(self) -> None:
-        """PR B must not expose plural supervision through the public API."""
+    def test_public_signature_accepts_scalar_or_list(self) -> None:
+        """The public API preserves scalar calls while accepting plural input."""
         self.assertEqual(
             get_type_hints(RemoteDistDataset.fetch_ablp_input)["supervision_edge_type"],
-            Optional[EdgeType],
+            Optional[Union[EdgeType, list[EdgeType]]],
         )
 
     def test_private_fetch_requires_explicit_assignments(self) -> None:
@@ -944,6 +944,172 @@ class TestRemoteDistDatasetABLPTransport(RemoteDistDatasetTestBase):
                     (registered_edge_type,),
                 )
                 self.assertEqual(list(result[0].labels), [registered_edge_type])
+
+    def test_public_plural_reverses_in_order_once_per_server(self) -> None:
+        """Canonical incoming plural input is copied and reversed in order."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        registered_edge_types = (
+            STORY_TO_USER,
+            reverse_edge_type(user_rates_story),
+        )
+        caller_edge_types = [USER_TO_STORY, user_rates_story]
+        original_caller_edge_types = list(caller_edge_types)
+        captured_requests: list[tuple[int, FetchABLPInputRequest]] = []
+
+        def async_mock(
+            server_rank: int,
+            func: Callable[..., Any],
+            request: FetchABLPInputRequest,
+        ) -> torch.futures.Future:
+            self.assertEqual(func, DistServer.get_ablp_input)
+            captured_requests.append((server_rank, request))
+            future: torch.futures.Future[ABLPInputNodes] = torch.futures.Future()
+            future.set_result(
+                ABLPInputNodes(
+                    anchor_nodes=torch.tensor([server_rank]),
+                    anchor_node_type=USER,
+                    labels={
+                        edge_type: (torch.tensor([[server_rank]]), None)
+                        for edge_type in registered_edge_types
+                    },
+                )
+            )
+            return future
+
+        def sync_mock(
+            server_rank: int,
+            func: Callable[..., Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            self.assertEqual(server_rank, 0)
+            self.assertFalse(args)
+            self.assertFalse(kwargs)
+            if func == DistServer.get_edge_dir:
+                return "in"
+            if func == DistServer.get_edge_types:
+                return [
+                    message_passing_to_positive_label(edge_type)
+                    for edge_type in registered_edge_types
+                ]
+            raise AssertionError(f"Unexpected metadata request: {func}")
+
+        cluster_info = _create_mock_graph_store_info(num_storage_nodes=2)
+        with _patch_remote_requests(async_mock, sync_mock):
+            result = RemoteDistDataset(
+                cluster_info=cluster_info, local_rank=0
+            ).fetch_ablp_input(
+                split="train",
+                anchor_node_type=USER,
+                supervision_edge_type=caller_edge_types,
+            )
+
+        self.assertEqual(caller_edge_types, original_caller_edge_types)
+        self.assertEqual([server_rank for server_rank, _ in captured_requests], [0, 1])
+        self.assertTrue(
+            all(
+                request.supervision_edge_types == registered_edge_types
+                for _, request in captured_requests
+            )
+        )
+        caller_edge_types.append(EdgeType(USER, Relation("views"), STORY))
+        self.assertTrue(
+            all(
+                request.supervision_edge_types == registered_edge_types
+                for _, request in captured_requests
+            )
+        )
+        self.assertEqual(list(result), [0, 1])
+
+        captured_requests.clear()
+        legacy_caller_edge_types = list(registered_edge_types)
+        with _patch_remote_requests(async_mock, sync_mock):
+            RemoteDistDataset(cluster_info=cluster_info, local_rank=0).fetch_ablp_input(
+                split="train",
+                anchor_node_type=USER,
+                supervision_edge_type=legacy_caller_edge_types,
+            )
+
+        self.assertEqual(legacy_caller_edge_types, list(registered_edge_types))
+        self.assertEqual([server_rank for server_rank, _ in captured_requests], [0, 1])
+        self.assertTrue(
+            all(
+                request.supervision_edge_types == registered_edge_types
+                for _, request in captured_requests
+            )
+        )
+
+    @patch("gigl.distributed.graph_store.remote_dist_dataset.async_request_server")
+    @patch("gigl.distributed.graph_store.remote_dist_dataset.request_server")
+    def test_public_plural_rejects_invalid_cardinality_before_rpc(
+        self,
+        mock_request,
+        mock_async_request,
+    ) -> None:
+        """Empty, duplicate, and homogeneous plural inputs fail before RPC."""
+        remote_dataset = RemoteDistDataset(
+            cluster_info=_create_mock_graph_store_info(),
+            local_rank=0,
+        )
+        invalid_inputs = (
+            (USER, []),
+            (USER, [USER_TO_STORY, USER_TO_STORY]),
+            (
+                DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                [
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                    EdgeType(
+                        DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                        Relation("other"),
+                        DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                    ),
+                ],
+            ),
+        )
+
+        for anchor_node_type, supervision_edge_types in invalid_inputs:
+            with self.subTest(supervision_edge_types=supervision_edge_types):
+                with self.assertRaises(ValueError):
+                    remote_dataset.fetch_ablp_input(
+                        split="train",
+                        anchor_node_type=anchor_node_type,
+                        supervision_edge_type=supervision_edge_types,
+                    )
+
+        mock_request.assert_not_called()
+        mock_async_request.assert_not_called()
+
+    @patch("gigl.distributed.graph_store.remote_dist_dataset.async_request_server")
+    @patch("gigl.distributed.graph_store.remote_dist_dataset.request_server")
+    def test_public_plural_rejects_mixed_incoming_orientation_before_dispatch(
+        self,
+        mock_request,
+        mock_async_request,
+    ) -> None:
+        """Mixed canonical and registered-incoming input never dispatches payloads."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        registered_user_rates_story = reverse_edge_type(user_rates_story)
+        mock_request.side_effect = [
+            "in",
+            [
+                message_passing_to_positive_label(STORY_TO_USER),
+                message_passing_to_positive_label(registered_user_rates_story),
+            ],
+        ]
+        remote_dataset = RemoteDistDataset(
+            cluster_info=_create_mock_graph_store_info(),
+            local_rank=0,
+        )
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_ablp_input(
+                split="train",
+                anchor_node_type=USER,
+                supervision_edge_type=[USER_TO_STORY, registered_user_rates_story],
+            )
+
+        self.assertEqual(mock_request.call_count, 2)
+        mock_async_request.assert_not_called()
 
     @patch("gigl.distributed.graph_store.remote_dist_dataset.async_request_server")
     @patch("gigl.distributed.graph_store.remote_dist_dataset.request_server")
