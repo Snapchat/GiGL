@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, Final, Optional
+from typing import Any, Final, Optional, get_type_hints
 from unittest.mock import patch
 
 import torch
@@ -15,14 +15,20 @@ from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
     FetchNodesRequest,
 )
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
+from gigl.distributed.graph_store.remote_dist_dataset import (
+    RemoteDistDataset,
+    _resolve_registered_supervision_edge_types,
+)
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.env.distributed import GraphStoreInfo
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
+    message_passing_to_negative_label,
+    message_passing_to_positive_label,
+    reverse_edge_type,
 )
 from gigl.utils.sampling import ABLPInputNodes
 from tests.test_assets.distributed.test_dataset import (
@@ -434,10 +440,14 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         )
 
     @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_fetch_ablp_input(self, mock_async_request):
+    def test_fetch_ablp_input(self, mock_async_request, mock_request):
         """Test fetch_ablp_input with train/val/test splits."""
         _create_server_with_splits()
 
@@ -502,11 +512,15 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         )
 
     @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
     def test_fetch_ablp_input_respects_max_labels_per_anchor_node(
-        self, mock_async_request
+        self, mock_async_request, mock_request
     ):
         _create_server_with_splits()
         self.assertIsNotNone(_test_server)
@@ -531,10 +545,14 @@ class TestRemoteDistDatasetWithSplits(RemoteDistDatasetTestBase):
         )
 
     @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_fetch_ablp_input_with_sharding(self, mock_async_request):
+    def test_fetch_ablp_input_with_sharding(self, mock_async_request, mock_request):
         """Test fetch_ablp_input with sharding across compute nodes."""
         _create_server_with_splits()
 
@@ -649,10 +667,16 @@ class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):
             )
 
     @patch(
+        "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+        side_effect=_mock_request_server,
+    )
+    @patch(
         "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
         side_effect=_mock_async_request_server,
     )
-    def test_fetch_ablp_input_defaults_to_homogeneous_types(self, mock_async_request):
+    def test_fetch_ablp_input_defaults_to_homogeneous_types(
+        self, mock_async_request, mock_request
+    ):
         """Test fetch_ablp_input without anchor_node_type/supervision_edge_type uses homogeneous defaults."""
         self._create_labeled_homogeneous_server()
         cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
@@ -735,6 +759,209 @@ class TestRemoteDistDatasetLabeledHomogeneous(RemoteDistDatasetTestBase):
             )
 
 
+class TestRemoteDistDatasetABLPTransport(RemoteDistDatasetTestBase):
+    """Tests for registered-orientation ABLP client transport."""
+
+    def test_public_signature_remains_scalar(self) -> None:
+        """PR B must not expose plural supervision through the public API."""
+        self.assertEqual(
+            get_type_hints(RemoteDistDataset.fetch_ablp_input)["supervision_edge_type"],
+            Optional[EdgeType],
+        )
+
+    def test_resolve_registered_supervision_edge_types(self) -> None:
+        """The pure resolver preserves order and registered label topology."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        story_rates_user = reverse_edge_type(user_rates_story)
+        self_loop = EdgeType(USER, Relation("follows"), USER)
+
+        out_registered = [
+            message_passing_to_positive_label(USER_TO_STORY),
+            message_passing_to_negative_label(USER_TO_STORY),
+            message_passing_to_positive_label(user_rates_story),
+        ]
+        resolved_out, with_negatives = _resolve_registered_supervision_edge_types(
+            (USER_TO_STORY, user_rates_story),
+            anchor_node_type=USER,
+            edge_dir="out",
+            registered_edge_types=out_registered,
+        )
+        self.assertEqual(resolved_out, (USER_TO_STORY, user_rates_story))
+        self.assertEqual(with_negatives, {USER_TO_STORY})
+
+        in_registered = [
+            message_passing_to_positive_label(STORY_TO_USER),
+            message_passing_to_positive_label(story_rates_user),
+        ]
+        resolved_canonical, _ = _resolve_registered_supervision_edge_types(
+            (USER_TO_STORY, user_rates_story),
+            anchor_node_type=USER,
+            edge_dir="in",
+            registered_edge_types=in_registered,
+        )
+        self.assertEqual(resolved_canonical, (STORY_TO_USER, story_rates_user))
+
+        resolved_legacy, _ = _resolve_registered_supervision_edge_types(
+            (STORY_TO_USER, story_rates_user),
+            anchor_node_type=USER,
+            edge_dir="in",
+            registered_edge_types=in_registered,
+        )
+        self.assertEqual(resolved_legacy, (STORY_TO_USER, story_rates_user))
+
+        resolved_self_loop, _ = _resolve_registered_supervision_edge_types(
+            (self_loop,),
+            anchor_node_type=USER,
+            edge_dir="in",
+            registered_edge_types=[
+                message_passing_to_positive_label(self_loop),
+            ],
+        )
+        self.assertEqual(resolved_self_loop, (self_loop,))
+
+    def test_resolver_rejects_invalid_inputs(self) -> None:
+        """Invalid tuples fail before any client payload dispatch."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        story_rates_user = reverse_edge_type(user_rates_story)
+        valid_registered = [
+            message_passing_to_positive_label(USER_TO_STORY),
+            message_passing_to_positive_label(STORY_TO_USER),
+            message_passing_to_positive_label(story_rates_user),
+        ]
+        with self.assertRaises(ValueError):
+            _resolve_registered_supervision_edge_types(
+                (),
+                anchor_node_type=USER,
+                edge_dir="out",
+                registered_edge_types=valid_registered,
+            )
+        with self.assertRaises(ValueError):
+            _resolve_registered_supervision_edge_types(
+                (USER_TO_STORY, USER_TO_STORY),
+                anchor_node_type=USER,
+                edge_dir="out",
+                registered_edge_types=valid_registered,
+            )
+        with self.assertRaises(ValueError):
+            _resolve_registered_supervision_edge_types(
+                (STORY_TO_USER,),
+                anchor_node_type=USER,
+                edge_dir="out",
+                registered_edge_types=valid_registered,
+            )
+        with self.assertRaises(ValueError):
+            _resolve_registered_supervision_edge_types(
+                (USER_TO_STORY, story_rates_user),
+                anchor_node_type=USER,
+                edge_dir="in",
+                registered_edge_types=valid_registered,
+            )
+        with self.assertRaises(ValueError):
+            _resolve_registered_supervision_edge_types(
+                (USER_TO_STORY,),
+                anchor_node_type=USER,
+                edge_dir="sideways",  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+                registered_edge_types=valid_registered,
+            )
+        with self.assertRaises(ValueError):
+            _resolve_registered_supervision_edge_types(
+                (USER_TO_STORY,),
+                anchor_node_type=USER,
+                edge_dir="out",
+                registered_edge_types=[],
+            )
+
+    def test_public_scalar_resolves_registered_orientation(self) -> None:
+        """Outward, canonical incoming, and legacy incoming calls use exact keys."""
+        cases = (
+            ("out", USER_TO_STORY, USER_TO_STORY),
+            ("in", USER_TO_STORY, STORY_TO_USER),
+            ("in", STORY_TO_USER, STORY_TO_USER),
+        )
+        for edge_dir, caller_edge_type, registered_edge_type in cases:
+            with self.subTest(
+                edge_dir=edge_dir,
+                caller_edge_type=caller_edge_type,
+            ):
+                captured_requests: list[FetchABLPInputRequest] = []
+
+                def async_mock(
+                    server_rank: int,
+                    func: Callable[..., Any],
+                    request: FetchABLPInputRequest,
+                ) -> torch.futures.Future:
+                    self.assertEqual(server_rank, 0)
+                    self.assertEqual(func, DistServer.get_ablp_input)
+                    captured_requests.append(request)
+                    future: torch.futures.Future[ABLPInputNodes] = (
+                        torch.futures.Future()
+                    )
+                    future.set_result(
+                        ABLPInputNodes(
+                            anchor_nodes=torch.tensor([0]),
+                            anchor_node_type=USER,
+                            labels={registered_edge_type: (torch.tensor([[1]]), None)},
+                        )
+                    )
+                    return future
+
+                def sync_mock(
+                    server_rank: int,
+                    func: Callable[..., Any],
+                    *args: Any,
+                    **kwargs: Any,
+                ) -> Any:
+                    self.assertEqual(server_rank, 0)
+                    self.assertFalse(args)
+                    self.assertFalse(kwargs)
+                    if func == DistServer.get_edge_dir:
+                        return edge_dir
+                    if func == DistServer.get_edge_types:
+                        return [message_passing_to_positive_label(registered_edge_type)]
+                    raise AssertionError(f"Unexpected metadata request: {func}")
+
+                cluster_info = _create_mock_graph_store_info(num_storage_nodes=1)
+                with _patch_remote_requests(async_mock, sync_mock):
+                    result = RemoteDistDataset(
+                        cluster_info=cluster_info, local_rank=0
+                    ).fetch_ablp_input(
+                        split="train",
+                        anchor_node_type=USER,
+                        supervision_edge_type=caller_edge_type,
+                    )
+
+                self.assertEqual(len(captured_requests), 1)
+                self.assertEqual(
+                    captured_requests[0].supervision_edge_types,
+                    (registered_edge_type,),
+                )
+                self.assertEqual(list(result[0].labels), [registered_edge_type])
+
+    @patch("gigl.distributed.graph_store.remote_dist_dataset.async_request_server")
+    @patch("gigl.distributed.graph_store.remote_dist_dataset.request_server")
+    def test_missing_registered_edge_types_skips_payload_dispatch(
+        self,
+        mock_request,
+        mock_async_request,
+    ) -> None:
+        """Missing GraphStore schema fails before an ABLP payload RPC."""
+        mock_request.side_effect = ["out", None]
+        remote_dataset = RemoteDistDataset(
+            cluster_info=_create_mock_graph_store_info(),
+            local_rank=0,
+        )
+
+        with self.assertRaises(ValueError):
+            remote_dataset.fetch_ablp_input(
+                split="train",
+                anchor_node_type=USER,
+                supervision_edge_type=USER_TO_STORY,
+            )
+
+        self.assertEqual(mock_request.call_count, 2)
+        mock_async_request.assert_not_called()
+
+
 class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
     """Tests for fetch_node_ids and fetch_ablp_input with contiguous server assignments."""
 
@@ -747,7 +974,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
 
         Args:
             server_data: Maps server_rank to the value that server should return.
-                Can be a tensor (for node ID tests) or a tuple (for ABLP tests).
+                Can be a tensor (for node ID tests) or ``ABLPInputNodes``.
             captured_requests: Optional list populated with ``(server_rank, request)``
                 tuples for later assertions.
         """
@@ -768,17 +995,30 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                     assert isinstance(response, torch.Tensor)
                     response = request.server_slice.slice_tensor(response)
             elif isinstance(request, FetchABLPInputRequest):
+                assert isinstance(response, ABLPInputNodes)
+                anchors = response.anchor_nodes
+                labels = response.labels
                 if request.server_slice is not None:
-                    anchors, positive_labels, negative_labels = response
-                    response = (
-                        request.server_slice.slice_tensor(anchors),
-                        request.server_slice.slice_tensor(positive_labels),
-                        (
-                            request.server_slice.slice_tensor(negative_labels)
-                            if negative_labels is not None
-                            else None
-                        ),
-                    )
+                    anchors = request.server_slice.slice_tensor(anchors)
+                    labels = {
+                        edge_type: (
+                            request.server_slice.slice_tensor(positive_labels),
+                            (
+                                request.server_slice.slice_tensor(negative_labels)
+                                if negative_labels is not None
+                                else None
+                            ),
+                        )
+                        for edge_type, (
+                            positive_labels,
+                            negative_labels,
+                        ) in labels.items()
+                    }
+                response = ABLPInputNodes(
+                    anchor_nodes=anchors,
+                    anchor_node_type=request.node_type,
+                    labels=labels,
+                )
             future.set_result(response)
             return future
 
@@ -788,11 +1028,17 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
     def _mock_request_server_homogeneous(
         server_rank: int, func: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> Any:
-        """Mock request_server that returns None for node/edge types (homogeneous)."""
+        """Mock homogeneous graph metadata requests."""
         if func == DistServer.get_node_types:
             return None
         if func == DistServer.get_edge_types:
-            return None
+            return [
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                message_passing_to_positive_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+                message_passing_to_negative_label(DEFAULT_HOMOGENEOUS_EDGE_TYPE),
+            ]
+        if func == DistServer.get_edge_dir:
+            return "out"
         return _mock_request_server(server_rank, func, *args, **kwargs)
 
     def test_fetch_node_ids_contiguous_even_split(self) -> None:
@@ -1026,20 +1272,187 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                 torch.tensor([0, 1, 2]),
             )
 
+    def test_plural_transport_is_one_request_per_assigned_server(self) -> None:
+        """Fractional sharding preserves every label row and dense topology."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        supervision_edge_types = (USER_TO_STORY, user_rates_story)
+        server_data: dict[int, ABLPInputNodes] = {}
+        for server_rank in range(3):
+            first_anchor = server_rank * 10
+            anchors = torch.arange(first_anchor, first_anchor + 4)
+            server_data[server_rank] = ABLPInputNodes(
+                anchor_nodes=anchors,
+                anchor_node_type=USER,
+                labels={
+                    USER_TO_STORY: (
+                        anchors.unsqueeze(1),
+                        (anchors + 100).unsqueeze(1),
+                    ),
+                    user_rates_story: ((anchors + 200).unsqueeze(1), None),
+                },
+            )
+
+        captured_requests: list[tuple[int, Any]] = []
+        async_mock = self._make_rank_aware_async_mock(
+            server_data,
+            captured_requests,
+        )
+        cluster_info = _create_mock_graph_store_info(
+            num_storage_nodes=3,
+            num_compute_nodes=2,
+        )
+        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+        assignments = remote_dataset._compute_assignments_if_needed(
+            rank=0,
+            world_size=2,
+        )
+
+        with patch(
+            "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+            side_effect=async_mock,
+        ):
+            result = remote_dataset._fetch_ablp_input(
+                split="train",
+                node_type=USER,
+                supervision_edge_types=supervision_edge_types,
+                supervision_edge_types_with_negatives={USER_TO_STORY},
+                assignments=assignments,
+            )
+
+        self.assertEqual(
+            [server_rank for server_rank, _ in captured_requests],
+            [0, 1],
+        )
+        self.assertTrue(
+            all(
+                request.supervision_edge_types == supervision_edge_types
+                for _, request in captured_requests
+            )
+        )
+        self.assertEqual(
+            captured_requests[1][1].server_slice,
+            ServerSlice(
+                server_rank=1,
+                start_numerator=0,
+                end_numerator=1,
+                denominator=2,
+            ),
+        )
+        for server_rank, expected_rows in ((0, 4), (1, 2)):
+            self.assertEqual(result[server_rank].anchor_nodes.numel(), expected_rows)
+            self.assertEqual(
+                list(result[server_rank].labels),
+                list(supervision_edge_types),
+            )
+            for positive_labels, negative_labels in result[server_rank].labels.values():
+                self.assertEqual(positive_labels.shape[0], expected_rows)
+                if negative_labels is not None:
+                    self.assertEqual(negative_labels.shape[0], expected_rows)
+
+        unassigned = result[2]
+        self.assertEqual(unassigned.anchor_nodes.numel(), 0)
+        self.assertEqual(list(unassigned.labels), list(supervision_edge_types))
+        positive_labels, negative_labels = unassigned.labels[USER_TO_STORY]
+        self.assertEqual(tuple(positive_labels.shape), (0, 0))
+        assert negative_labels is not None
+        self.assertEqual(tuple(negative_labels.shape), (0, 0))
+        rates_positive_labels, rates_negative_labels = unassigned.labels[
+            user_rates_story
+        ]
+        self.assertEqual(tuple(rates_positive_labels.shape), (0, 0))
+        self.assertIsNone(rates_negative_labels)
+
+    def test_plural_unsharded_dispatches_every_server_before_waiting(self) -> None:
+        """Unsharded plural payloads fan out once per server concurrently."""
+        user_rates_story = EdgeType(USER, Relation("rates"), STORY)
+        supervision_edge_types = (USER_TO_STORY, user_rates_story)
+        captured_requests: list[tuple[int, FetchABLPInputRequest]] = []
+        expected_server_count = 3
+
+        class DeferredResponse:
+            def __init__(self, server_rank: int):
+                self._server_rank = server_rank
+
+            def wait(self) -> ABLPInputNodes:
+                self.assert_all_dispatched()
+                anchors = torch.tensor([self._server_rank])
+                return ABLPInputNodes(
+                    anchor_nodes=anchors,
+                    anchor_node_type=USER,
+                    labels={
+                        USER_TO_STORY: (anchors.unsqueeze(1), None),
+                        user_rates_story: ((anchors + 10).unsqueeze(1), None),
+                    },
+                )
+
+            def assert_all_dispatched(self) -> None:
+                if len(captured_requests) != expected_server_count:
+                    raise AssertionError(
+                        "wait() called before all RPCs were dispatched"
+                    )
+
+        def async_mock(
+            server_rank: int,
+            func: Callable[..., Any],
+            request: FetchABLPInputRequest,
+        ) -> Any:
+            self.assertEqual(func, DistServer.get_ablp_input)
+            captured_requests.append((server_rank, request))
+            return DeferredResponse(server_rank)
+
+        remote_dataset = RemoteDistDataset(
+            cluster_info=_create_mock_graph_store_info(
+                num_storage_nodes=expected_server_count
+            ),
+            local_rank=0,
+        )
+        with patch(
+            "gigl.distributed.graph_store.remote_dist_dataset.async_request_server",
+            side_effect=async_mock,
+        ):
+            result = remote_dataset._fetch_ablp_input(
+                split="train",
+                node_type=USER,
+                supervision_edge_types=supervision_edge_types,
+                supervision_edge_types_with_negatives=set(),
+                assignments=None,
+            )
+
+        self.assertEqual(list(result), [0, 1, 2])
+        self.assertEqual(
+            [server_rank for server_rank, _ in captured_requests],
+            [0, 1, 2],
+        )
+        self.assertTrue(
+            all(
+                request.server_slice is None
+                and request.supervision_edge_types == supervision_edge_types
+                for _, request in captured_requests
+            )
+        )
+
     def test_fetch_ablp_input_contiguous_even_split(self) -> None:
         """ABLP CONTIGUOUS with 2 storage nodes and 2 compute nodes."""
-        server_data: dict[
-            int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-        ] = {
-            0: (
-                torch.tensor([0, 1, 2]),
-                torch.tensor([[0, 1], [1, 2], [2, 3]]),
-                torch.tensor([[4], [5], [6]]),
+        server_data: dict[int, ABLPInputNodes] = {
+            0: ABLPInputNodes(
+                anchor_nodes=torch.tensor([0, 1, 2]),
+                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                labels={
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
+                        torch.tensor([[0, 1], [1, 2], [2, 3]]),
+                        torch.tensor([[4], [5], [6]]),
+                    )
+                },
             ),
-            1: (
-                torch.tensor([10, 11, 12]),
-                torch.tensor([[10, 11], [11, 12], [12, 13]]),
-                torch.tensor([[14], [15], [16]]),
+            1: ABLPInputNodes(
+                anchor_nodes=torch.tensor([10, 11, 12]),
+                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                labels={
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
+                        torch.tensor([[10, 11], [11, 12], [12, 13]]),
+                        torch.tensor([[14], [15], [16]]),
+                    )
+                },
             ),
         }
         captured_requests: list[tuple[int, Any]] = []
@@ -1068,7 +1481,8 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
             self.assertEqual(ablp_1.anchor_nodes.numel(), 0)
             pos_1, neg_1 = ablp_1.labels[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
             self.assertEqual(pos_1.numel(), 0)
-            self.assertIsNone(neg_1)
+            assert neg_1 is not None
+            self.assertEqual(tuple(neg_1.shape), (0, 0))
             self.assertEqual(
                 captured_requests,
                 [
@@ -1077,7 +1491,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                         FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            supervision_edge_types=(DEFAULT_HOMOGENEOUS_EDGE_TYPE,),
                             server_slice=ServerSlice(
                                 server_rank=0,
                                 start_numerator=0,
@@ -1115,7 +1529,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                         FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            supervision_edge_types=(DEFAULT_HOMOGENEOUS_EDGE_TYPE,),
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=0,
@@ -1129,23 +1543,36 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
 
     def test_fetch_ablp_input_contiguous_fractional_split(self) -> None:
         """ABLP CONTIGUOUS with 3 storage nodes and 2 compute nodes: server 1 fractionally split."""
-        server_data: dict[
-            int, tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-        ] = {
-            0: (
-                torch.tensor([0, 1, 2, 3]),
-                torch.tensor([[0, 1], [1, 2], [2, 3], [3, 4]]),
-                torch.tensor([[10], [11], [12], [13]]),
+        server_data: dict[int, ABLPInputNodes] = {
+            0: ABLPInputNodes(
+                anchor_nodes=torch.tensor([0, 1, 2, 3]),
+                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                labels={
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
+                        torch.tensor([[0, 1], [1, 2], [2, 3], [3, 4]]),
+                        torch.tensor([[10], [11], [12], [13]]),
+                    )
+                },
             ),
-            1: (
-                torch.tensor([10, 11, 12, 13]),
-                torch.tensor([[10, 11], [11, 12], [12, 13], [13, 14]]),
-                torch.tensor([[20], [21], [22], [23]]),
+            1: ABLPInputNodes(
+                anchor_nodes=torch.tensor([10, 11, 12, 13]),
+                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                labels={
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
+                        torch.tensor([[10, 11], [11, 12], [12, 13], [13, 14]]),
+                        torch.tensor([[20], [21], [22], [23]]),
+                    )
+                },
             ),
-            2: (
-                torch.tensor([20, 21, 22, 23]),
-                torch.tensor([[20, 21], [21, 22], [22, 23], [23, 24]]),
-                torch.tensor([[30], [31], [32], [33]]),
+            2: ABLPInputNodes(
+                anchor_nodes=torch.tensor([20, 21, 22, 23]),
+                anchor_node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+                labels={
+                    DEFAULT_HOMOGENEOUS_EDGE_TYPE: (
+                        torch.tensor([[20, 21], [21, 22], [22, 23], [23, 24]]),
+                        torch.tensor([[30], [31], [32], [33]]),
+                    )
+                },
             ),
         }
         captured_requests: list[tuple[int, Any]] = []
@@ -1189,7 +1616,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                         FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            supervision_edge_types=(DEFAULT_HOMOGENEOUS_EDGE_TYPE,),
                             server_slice=ServerSlice(
                                 server_rank=0,
                                 start_numerator=0,
@@ -1203,7 +1630,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                         FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            supervision_edge_types=(DEFAULT_HOMOGENEOUS_EDGE_TYPE,),
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=0,
@@ -1250,7 +1677,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                         FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            supervision_edge_types=(DEFAULT_HOMOGENEOUS_EDGE_TYPE,),
                             server_slice=ServerSlice(
                                 server_rank=1,
                                 start_numerator=1,
@@ -1264,7 +1691,7 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
                         FetchABLPInputRequest(
                             split="train",
                             node_type=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                            supervision_edge_type=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+                            supervision_edge_types=(DEFAULT_HOMOGENEOUS_EDGE_TYPE,),
                             server_slice=ServerSlice(
                                 server_rank=2,
                                 start_numerator=0,
