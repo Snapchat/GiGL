@@ -561,8 +561,10 @@ class RemoteDistDataset:
 
         Raises:
             ValueError: If rank/world size or anchor/supervision type arguments
-                are not paired, or if registered direction/label topology is
-                invalid.
+                are not paired, if supervision types are empty or duplicated,
+                if labeled-homogeneous input has non-default or plural
+                supervision types, or if registered direction/label topology
+                is invalid.
 
         Note:
             Edge direction and registered edge types are fetched once per call.
