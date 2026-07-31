@@ -86,6 +86,7 @@ class DistNeighborLoader(BaseDistLoader):
         with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
+        num_rpc_threads: Optional[int] = None,
     ):
         """
         Distributed Neighbor Loader.
@@ -168,11 +169,23 @@ class DistNeighborLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
+            num_rpc_threads (Optional[int]): Number of RPC threads per colocated
+                sampling worker. Defaults to the smaller of the dataset partition
+                count and 16. Appended to preserve positional-call compatibility.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
+        if num_rpc_threads is not None:
+            if num_rpc_threads <= 0:
+                raise ValueError(
+                    f"num_rpc_threads must be positive, received {num_rpc_threads}"
+                )
+            if isinstance(dataset, RemoteDistDataset):
+                raise ValueError(
+                    "num_rpc_threads is only supported in colocated sampling mode"
+                )
 
         sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
@@ -226,6 +239,7 @@ class DistNeighborLoader(BaseDistLoader):
                 worker_concurrency=worker_concurrency,
                 channel_size=channel_size,
                 num_cpu_threads=num_cpu_threads,
+                num_rpc_threads=num_rpc_threads,
             )
         else:
             assert isinstance(dataset, RemoteDistDataset), (
@@ -436,6 +450,7 @@ class DistNeighborLoader(BaseDistLoader):
         worker_concurrency: int,
         channel_size: str,
         num_cpu_threads: Optional[int],
+        num_rpc_threads: Optional[int],
     ) -> tuple[NodeSamplerInput, MpDistSamplingWorkerOptions, DatasetSchema]:
         if input_nodes is None:
             if dataset.node_ids is None:
@@ -508,6 +523,7 @@ class DistNeighborLoader(BaseDistLoader):
             dataset_num_partitions=dataset.num_partitions,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,
+            num_rpc_threads=num_rpc_threads,
             master_ip_address=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
             channel_size=channel_size,

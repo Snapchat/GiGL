@@ -1,3 +1,4 @@
+import os
 import queue
 import threading
 from collections.abc import Callable
@@ -149,6 +150,22 @@ class DistSamplingProducerTest(TestCase):
             _compute_worker_seeds_ranges(input_len=7, batch_size=2, num_workers=3),
             [(0, 2), (2, 4), (4, 7)],
         )
+
+    def test_init_backend_rejects_invalid_timing_before_setup(self) -> None:
+        backend = cast(SharedDistSamplingBackend, object())
+
+        with (
+            patch.dict(
+                os.environ,
+                {"GIGL_SAMPLER_TIMING_LOG_EVERY_N": "invalid"},
+                clear=False,
+            ),
+            self.assertRaisesRegex(
+                ValueError,
+                "GIGL_SAMPLER_TIMING_LOG_EVERY_N must be a non-negative integer",
+            ),
+        ):
+            SharedDistSamplingBackend.init_backend(backend)
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.get_context")
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.mp.get_context")

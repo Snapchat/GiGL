@@ -97,6 +97,7 @@ from graphlearn_torch.typing import NodeType
 from torch._C import _set_worker_signal_handlers
 
 from gigl.common.logger import Logger
+from gigl.distributed.base_sampler import _get_sampler_timing_log_every_n
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import (
     SamplerInput,
@@ -907,6 +908,12 @@ class SharedDistSamplingBackend:
         Raises:
             RuntimeError: If no GLT server context is active.
         """
+        # Parse timing configuration before spawning workers. If this is invalid,
+        # failing in a REGISTER_INPUT handler would kill a worker only after the
+        # compute side believes registration succeeded, leaving it waiting on a
+        # dead worker.
+        _get_sampler_timing_log_every_n()
+
         with self._lock:
             if self._initialized:
                 return

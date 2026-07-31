@@ -559,6 +559,7 @@ class BaseDistLoader(DistLoader):
         dataset_num_partitions: int,
         num_workers: int,
         worker_concurrency: int,
+        num_rpc_threads: Optional[int] = None,
         master_ip_address: str,
         master_port: int,
         channel_size: str,
@@ -570,6 +571,7 @@ class BaseDistLoader(DistLoader):
             dataset_num_partitions: Number of graph partitions in the colocated dataset.
             num_workers: Number of sampling worker processes.
             worker_concurrency: Max sampling concurrency per worker.
+            num_rpc_threads: RPC worker threads per sampling process. Defaults to at most 16.
             master_ip_address: Master node IP address used by GLT RPC.
             master_port: Port for the GLT sampling worker group.
             channel_size: Shared-memory channel size.
@@ -578,6 +580,16 @@ class BaseDistLoader(DistLoader):
         Returns:
             Fully configured worker options for colocated sampling.
         """
+        resolved_num_rpc_threads = (
+            min(dataset_num_partitions, 16)
+            if num_rpc_threads is None
+            else num_rpc_threads
+        )
+        if resolved_num_rpc_threads <= 0:
+            raise ValueError(
+                f"num_rpc_threads must be positive, got {resolved_num_rpc_threads}"
+            )
+
         return MpDistSamplingWorkerOptions(
             num_workers=num_workers,
             worker_devices=[torch.device("cpu") for _ in range(num_workers)],
@@ -590,9 +602,7 @@ class BaseDistLoader(DistLoader):
             # use different master ports.
             master_addr=master_ip_address,
             master_port=master_port,
-            # Load testing shows that when num_rpc_threads exceed 16, the performance
-            # will degrade.
-            num_rpc_threads=min(dataset_num_partitions, 16),
+            num_rpc_threads=resolved_num_rpc_threads,
             rpc_timeout=600,
             channel_size=channel_size,
             pin_memory=pin_memory,

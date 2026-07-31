@@ -37,6 +37,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
+from gigl.distributed.base_sampler import _get_sampler_timing_log_every_n
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import create_dist_sampler
 
@@ -190,6 +191,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # Fail in the parent before creating a barrier. A worker-side config
+        # error before ``barrier.wait()`` would otherwise strand this process.
+        _get_sampler_timing_log_every_n()
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:

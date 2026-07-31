@@ -562,6 +562,7 @@ class DistABLPLoader(BaseDistLoader):
             dataset_num_partitions=dataset.num_partitions,
             num_workers=num_workers,
             worker_concurrency=worker_concurrency,
+            num_rpc_threads=None,
             master_ip_address=master_ip_address,
             master_port=dist_sampling_port_for_current_rank,
             channel_size=channel_size,

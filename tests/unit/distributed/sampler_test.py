@@ -1,4 +1,7 @@
+import os
 from collections.abc import Mapping
+from typing import cast
+from unittest.mock import patch
 
 import torch
 from graphlearn_torch.sampler import NodeSamplerInput
@@ -6,8 +9,10 @@ from graphlearn_torch.sampler import NodeSamplerInput
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
     SampleLoopInputs,
+    _SamplingTimingRecorder,
     _stable_unique_preserve_order,
 )
+from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
@@ -24,6 +29,110 @@ _FRIEND = Relation("friend")
 _USER_BUYS_ITEM = EdgeType(_USER, _BUYS, _ITEM)
 _USER_CLICKS_ITEM = EdgeType(_USER, _CLICKS, _ITEM)
 _USER_FRIEND_USER = EdgeType(_USER, _FRIEND, _USER)
+
+
+class SamplingTimingRecorderTest(TestCase):
+    def test_invalid_interval_fails_in_parent_before_worker_start(self) -> None:
+        for value in ("invalid", "-1"):
+            with self.subTest(value=value):
+                with (
+                    patch.dict(
+                        os.environ,
+                        {"GIGL_SAMPLER_TIMING_LOG_EVERY_N": value},
+                    ),
+                    self.assertRaisesRegex(ValueError, "must be"),
+                ):
+                    DistSamplingProducer.init(cast(DistSamplingProducer, object()))
+
+    def test_emits_complete_windows_and_resets_stage_totals(self) -> None:
+        recorder = _SamplingTimingRecorder(log_every_n=2)
+        with (
+            patch(
+                "gigl.distributed.base_sampler.time.perf_counter",
+                side_effect=[10.0, 14.0, 14.0, 20.0, 20.0],
+            ),
+            patch(
+                "gigl.distributed.base_sampler.time.thread_time",
+                side_effect=[4.0, 7.0, 7.0, 10.0, 10.0],
+            ),
+        ):
+            recorder.begin_loop_observation()
+            recorder.record_admission(0.01)
+            self.assertIsNone(
+                recorder.record_completed(
+                    sample_await_seconds=0.1,
+                    collate_seconds=0.02,
+                    channel_send_seconds=0.03,
+                )
+            )
+            recorder.record_admission(0.02)
+            payload = recorder.record_completed(
+                sample_await_seconds=0.2,
+                collate_seconds=0.04,
+                channel_send_seconds=0.06,
+            )
+
+            self.assertIsNotNone(payload)
+            assert payload is not None
+            self.assertEqual(payload["completed_batches"], 2)
+            self.assertEqual(payload["window_batches"], 2)
+            self.assertEqual(payload["admission_events"], 2)
+            self.assertEqual(payload["admission_blocked_s"], 0.03)
+            self.assertEqual(payload["sample_await_s"], 0.3)
+            self.assertEqual(payload["collate_s"], 0.06)
+            self.assertEqual(payload["channel_send_blocked_s"], 0.09)
+            self.assertEqual(payload["loop_wall_s"], 4.0)
+            self.assertEqual(payload["loop_thread_cpu_s"], 3.0)
+            self.assertEqual(payload["loop_thread_busy_fraction"], 0.75)
+            self.assertEqual(payload["admission_blocked_ms_per_event"], 15.0)
+            self.assertEqual(payload["sample_await_ms_per_batch"], 150.0)
+            self.assertEqual(payload["collate_ms_per_batch"], 30.0)
+            self.assertEqual(payload["channel_send_blocked_ms_per_batch"], 45.0)
+
+            recorder.record_admission(0.04)
+            self.assertIsNone(
+                recorder.record_completed(
+                    sample_await_seconds=0.4,
+                    collate_seconds=0.08,
+                    channel_send_seconds=0.12,
+                )
+            )
+            recorder.record_admission(0.06)
+            next_payload = recorder.record_completed(
+                sample_await_seconds=0.6,
+                collate_seconds=0.12,
+                channel_send_seconds=0.18,
+            )
+        self.assertIsNotNone(next_payload)
+        assert next_payload is not None
+        self.assertEqual(next_payload["completed_batches"], 4)
+        self.assertEqual(next_payload["admission_blocked_s"], 0.1)
+        self.assertEqual(next_payload["sample_await_s"], 1.0)
+        self.assertEqual(next_payload["loop_wall_s"], 6.0)
+        self.assertEqual(next_payload["loop_thread_cpu_s"], 3.0)
+        self.assertEqual(next_payload["loop_thread_busy_fraction"], 0.5)
+
+    def test_busy_fraction_is_clamped_for_skewed_clocks(self) -> None:
+        recorder = _SamplingTimingRecorder(log_every_n=1)
+        with (
+            patch(
+                "gigl.distributed.base_sampler.time.perf_counter",
+                side_effect=[10.0, 11.0, 11.0],
+            ),
+            patch(
+                "gigl.distributed.base_sampler.time.thread_time",
+                side_effect=[4.0, 6.0, 6.0],
+            ),
+        ):
+            recorder.begin_loop_observation()
+            payload = recorder.record_completed(
+                sample_await_seconds=0.1,
+                collate_seconds=0.02,
+                channel_send_seconds=0.03,
+            )
+
+        assert payload is not None
+        self.assertEqual(payload["loop_thread_busy_fraction"], 1.0)
 
 
 def _build_sampler_input(

@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping, MutableMapping
+from typing import cast
 
 import torch
 import torch.multiprocessing as mp
@@ -968,6 +969,48 @@ class WithEdgeDerivationTest(TestCase):
         proc.join(timeout=120)
         self.assertGreater(holder["count"], 0)
         self.assertTrue(holder["edge_ids_absent"])
+
+
+class ColocatedWorkerOptionsTest(TestCase):
+    def test_loader_rejects_invalid_rpc_threads_before_setup(self) -> None:
+        loader = DistNeighborLoader.__new__(DistNeighborLoader)
+
+        with self.assertRaisesRegex(
+            ValueError, "num_rpc_threads must be positive, received 0"
+        ):
+            loader.__init__(
+                dataset=cast(DistDataset, object()),
+                num_neighbors=[1],
+                num_rpc_threads=0,
+            )
+
+    def test_rpc_thread_default_override_and_validation(self) -> None:
+        common_options = {
+            "dataset_num_partitions": 65,
+            "num_workers": 4,
+            "worker_concurrency": 2,
+            "master_ip_address": "127.0.0.1",
+            "master_port": 12345,
+            "channel_size": "2GB",
+            "pin_memory": False,
+        }
+
+        default_options = BaseDistLoader.create_colocated_worker_options(
+            **common_options,
+            num_rpc_threads=None,
+        )
+        overridden_options = BaseDistLoader.create_colocated_worker_options(
+            **common_options,
+            num_rpc_threads=8,
+        )
+
+        self.assertEqual(default_options.num_rpc_threads, 16)
+        self.assertEqual(overridden_options.num_rpc_threads, 8)
+        with self.assertRaises(ValueError):
+            BaseDistLoader.create_colocated_worker_options(
+                **common_options,
+                num_rpc_threads=0,
+            )
 
 
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess

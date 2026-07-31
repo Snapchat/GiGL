@@ -1,8 +1,14 @@
 import asyncio
+import json
+import os
+import socket
+import time
 import traceback
 from collections import defaultdict
+from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Optional, Union
+from threading import Lock
+from typing import Any, Callable, Coroutine, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -30,6 +36,131 @@ from gigl.distributed.utils.sampling_errors import (
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
+
+_SAMPLER_TIMING_ENV_VAR = "GIGL_SAMPLER_TIMING_LOG_EVERY_N"
+
+
+def _get_sampler_timing_log_every_n() -> int:
+    """Parses and validates the opt-in sampler timing interval."""
+    raw_timing_interval = os.environ.get(_SAMPLER_TIMING_ENV_VAR, "0")
+    try:
+        timing_interval = int(raw_timing_interval)
+    except ValueError as error:
+        raise ValueError(
+            f"{_SAMPLER_TIMING_ENV_VAR} must be a non-negative integer, "
+            f"got {raw_timing_interval!r}"
+        ) from error
+    if timing_interval < 0:
+        raise ValueError(
+            f"{_SAMPLER_TIMING_ENV_VAR} must be non-negative, got {timing_interval}"
+        )
+    return timing_interval
+
+
+class _SamplingTimingRecorder:
+    """Aggregates sampler stage time without logging in the hot path."""
+
+    def __init__(self, log_every_n: int) -> None:
+        if log_every_n <= 0:
+            raise ValueError(f"log_every_n must be positive, got {log_every_n}")
+        self._log_every_n = log_every_n
+        self._lock = Lock()
+        self._total_completed_batches = 0
+        self._admission_events = 0
+        self._admission_blocked_seconds = 0.0
+        self._sample_await_seconds = 0.0
+        self._collate_seconds = 0.0
+        self._channel_send_seconds = 0.0
+        self._loop_wall_start: Optional[float] = None
+        self._loop_thread_cpu_start: Optional[float] = None
+
+    def begin_loop_observation(self) -> None:
+        """Starts the event-loop thread utilization window once."""
+        with self._lock:
+            if self._loop_wall_start is not None:
+                return
+            self._loop_wall_start = time.perf_counter()
+            self._loop_thread_cpu_start = time.thread_time()
+
+    def record_admission(self, blocked_seconds: float) -> None:
+        """Records one wait for an event-loop concurrency slot."""
+        with self._lock:
+            self._admission_events += 1
+            self._admission_blocked_seconds += blocked_seconds
+
+    def record_completed(
+        self,
+        *,
+        sample_await_seconds: float,
+        collate_seconds: float,
+        channel_send_seconds: float,
+    ) -> Optional[dict[str, Union[int, float]]]:
+        """Records one completed batch and returns a full-window payload."""
+        with self._lock:
+            self._total_completed_batches += 1
+            self._sample_await_seconds += sample_await_seconds
+            self._collate_seconds += collate_seconds
+            self._channel_send_seconds += channel_send_seconds
+            if self._total_completed_batches % self._log_every_n:
+                return None
+
+            # Read CPU before wall at the end, complementing wall-before-CPU
+            # at the start. This nests the CPU interval inside the wall interval.
+            loop_thread_cpu_now = time.thread_time()
+            loop_wall_now = time.perf_counter()
+            if self._loop_wall_start is None:
+                self._loop_wall_start = loop_wall_now
+                self._loop_thread_cpu_start = loop_thread_cpu_now
+            window_batches = self._log_every_n
+            admission_events = self._admission_events
+            loop_wall_seconds = max(loop_wall_now - self._loop_wall_start, 0.0)
+            assert self._loop_thread_cpu_start is not None
+            loop_thread_cpu_seconds = max(
+                loop_thread_cpu_now - self._loop_thread_cpu_start, 0.0
+            )
+            loop_thread_busy_fraction = min(
+                loop_thread_cpu_seconds / loop_wall_seconds
+                if loop_wall_seconds
+                else 0.0,
+                1.0,
+            )
+            payload: dict[str, Union[int, float]] = {
+                "completed_batches": self._total_completed_batches,
+                "window_batches": window_batches,
+                "admission_events": admission_events,
+                "admission_blocked_s": round(self._admission_blocked_seconds, 6),
+                "sample_await_s": round(self._sample_await_seconds, 6),
+                "collate_s": round(self._collate_seconds, 6),
+                "channel_send_blocked_s": round(self._channel_send_seconds, 6),
+                "loop_wall_s": round(loop_wall_seconds, 6),
+                "loop_thread_cpu_s": round(loop_thread_cpu_seconds, 6),
+                "loop_thread_busy_fraction": round(loop_thread_busy_fraction, 6),
+                "admission_blocked_ms_per_event": round(
+                    self._admission_blocked_seconds / max(admission_events, 1) * 1000,
+                    3,
+                ),
+                "sample_await_ms_per_batch": round(
+                    self._sample_await_seconds / window_batches * 1000,
+                    3,
+                ),
+                "collate_ms_per_batch": round(
+                    self._collate_seconds / window_batches * 1000,
+                    3,
+                ),
+                "channel_send_blocked_ms_per_batch": round(
+                    self._channel_send_seconds / window_batches * 1000,
+                    3,
+                ),
+            }
+            self._admission_events = 0
+            self._admission_blocked_seconds = 0.0
+            self._sample_await_seconds = 0.0
+            self._collate_seconds = 0.0
+            self._channel_send_seconds = 0.0
+            # Establish a fresh wall-before-CPU pair for the next window.
+            self._loop_wall_start = time.perf_counter()
+            self._loop_thread_cpu_start = time.thread_time()
+            return payload
 
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
@@ -112,6 +243,38 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         """
         super().__init__(*args, **kwargs)
         self._sampling_error_sent: bool = False
+        timing_interval = _get_sampler_timing_log_every_n()
+        self._sampling_timing_recorder = (
+            _SamplingTimingRecorder(timing_interval) if timing_interval else None
+        )
+
+    def add_task(
+        self,
+        coro: Coroutine[Any, Any, Optional[SampleMessage]],
+        callback: Optional[Callable[[Optional[SampleMessage]], Any]] = None,
+    ) -> None:
+        """Schedules sampling and measures time blocked on the concurrency limit."""
+        recorder = getattr(self, "_sampling_timing_recorder", None)
+        if recorder is None:
+            super().add_task(coro, callback)
+            return
+
+        admission_start = time.perf_counter()
+        self._sem.acquire()
+        recorder.record_admission(time.perf_counter() - admission_start)
+
+        def on_done(future: Future[Optional[SampleMessage]]) -> None:
+            try:
+                result = future.result()
+                if callback is not None:
+                    callback(result)
+            except Exception as error:
+                logger.error(f"coroutine task failed: {error}")
+            finally:
+                self._sem.release()
+
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        future.add_done_callback(on_done)
 
     def _prepare_sample_loop_inputs(
         self,
@@ -243,9 +406,25 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         (in channel mode) so the consumer raises promptly, or re-raise (in
         channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
+        recorder = getattr(self, "_sampling_timing_recorder", None)
+        if recorder is not None:
+            # This coroutine runs on GLT's single sampling event-loop thread.
+            # thread_time() therefore measures the serialized producer resource
+            # directly, including work performed by all concurrent coroutines.
+            recorder.begin_loop_observation()
         try:
-            sampler_output = await async_func(*args, **kwargs)
-            res = await self._collate_fn(sampler_output)
+            if recorder is None:
+                sampler_output = await async_func(*args, **kwargs)
+                res = await self._collate_fn(sampler_output)
+                sample_await_seconds = 0.0
+                collate_seconds = 0.0
+            else:
+                sample_start = time.perf_counter()
+                sampler_output = await async_func(*args, **kwargs)
+                sample_await_seconds = time.perf_counter() - sample_start
+                collate_start = time.perf_counter()
+                res = await self._collate_fn(sampler_output)
+                collate_seconds = time.perf_counter() - collate_start
         except Exception:
             logger.exception(
                 "Sampling coroutine failed; forwarding error to the loader."
@@ -266,10 +445,37 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     )
                 return None
             raise  # channel-less mode: propagates via run_task / torch RPC
+        channel_send_seconds = 0.0
         if self.channel is None:
-            return res
-        self.channel.send(res)
-        return None
+            result = res
+        elif recorder is None:
+            self.channel.send(res)
+            result = None
+        else:
+            send_start = time.perf_counter()
+            self.channel.send(res)
+            channel_send_seconds = time.perf_counter() - send_start
+            result = None
+
+        if recorder is not None:
+            timing_payload = recorder.record_completed(
+                sample_await_seconds=sample_await_seconds,
+                collate_seconds=collate_seconds,
+                channel_send_seconds=channel_send_seconds,
+            )
+            if timing_payload is not None:
+                timing_payload.update(
+                    {
+                        "hostname": socket.gethostname(),
+                        "process_id": os.getpid(),
+                        "concurrency": self.concurrency,
+                        "torch_num_threads": torch.get_num_threads(),
+                    }
+                )
+                logger.info(
+                    f"GIGL_SAMPLER_TIMING {json.dumps(timing_payload, sort_keys=True)}"
+                )
+        return result
 
     async def _collate_fn(
         self,
