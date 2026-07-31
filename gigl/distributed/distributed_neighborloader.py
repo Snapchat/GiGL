@@ -19,6 +19,7 @@ from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_sampling_producer import (
+    UINT32_MODULUS,
     DistSamplingProducer,
     SamplingPortLease,
     SamplingWorkerRpcSpec,
@@ -93,6 +94,7 @@ class DistNeighborLoader(BaseDistLoader):
         non_blocking_transfers: bool = True,
         num_rpc_threads: Optional[int] = None,
         one_rpc_group_per_sampling_worker: bool = False,
+        sampling_run_seed: Optional[int] = None,
     ):
         """
         Distributed Neighbor Loader.
@@ -181,6 +183,11 @@ class DistNeighborLoader(BaseDistLoader):
             one_rpc_group_per_sampling_worker (bool): If true, place each
                 multiprocessing sampling worker in an independent RPC group.
                 Colocated mode only. Defaults to false for compatibility.
+            sampling_run_seed (Optional[int]): One explicit uint32 seed for the
+                whole colocated run. Each sampling subprocess receives a distinct,
+                deterministic seed derived from this value and its parent global
+                rank plus local worker index. Defaults to ``None`` to preserve the
+                existing unseeded behavior.
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -199,6 +206,22 @@ class DistNeighborLoader(BaseDistLoader):
             raise ValueError(
                 "one_rpc_group_per_sampling_worker is only supported in "
                 "colocated sampling mode"
+            )
+        if sampling_run_seed is not None:
+            if isinstance(sampling_run_seed, bool) or not isinstance(
+                sampling_run_seed, int
+            ):
+                raise TypeError(
+                    "sampling_run_seed must be an integer uint32, got "
+                    f"{sampling_run_seed!r}"
+                )
+            if sampling_run_seed not in range(UINT32_MODULUS):
+                raise ValueError(
+                    f"sampling_run_seed must be uint32, got {sampling_run_seed}"
+                )
+        if sampling_run_seed is not None and isinstance(dataset, RemoteDistDataset):
+            raise ValueError(
+                "sampling_run_seed is only supported in colocated sampling mode"
             )
 
         sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
@@ -305,7 +328,7 @@ class DistNeighborLoader(BaseDistLoader):
                 shuffle=shuffle,
                 drop_last=drop_last,
                 with_weight=with_weight,
-                seed=BaseDistLoader.derive_sampling_seed(rank=runtime.rank),
+                seed=None,
             )
 
             if self._sampling_cluster_setup == SamplingClusterSetup.COLOCATED:
@@ -319,6 +342,9 @@ class DistNeighborLoader(BaseDistLoader):
                     sampler_options=sampler_options,
                     isolated_rpc_specs=isolated_rpc_specs,
                     isolated_port_lease=isolated_port_lease,
+                    sampling_run_seed=sampling_run_seed,
+                    parent_global_rank=runtime.rank,
+                    parent_world_size=runtime.world_size,
                 )
         except BaseException:
             if isolated_port_lease is not None:

@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 import torch
 from graphlearn_torch.channel import ChannelBase
 from graphlearn_torch.distributed import DistDataset, MpDistSamplingWorkerOptions
+from graphlearn_torch.distributed.dist_sampling_producer import MpCommand
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig
 
 from gigl.distributed.base_sampler import (
@@ -21,8 +22,11 @@ from gigl.distributed.dist_sampling_producer import (
     DistSamplingProducer,
     SamplingPortLease,
     SamplingWorkerRpcSpec,
+    SamplingWorkerSeedSpec,
     SamplingWorkerStatus,
+    _sampling_worker_loop,
     close_sampling_port_lease_with_retries,
+    derive_sampling_worker_seed,
     resolve_isolated_sampling_worker_rpc_specs,
     validate_isolated_sampling_group_readiness,
 )
@@ -173,6 +177,340 @@ class SamplingTimingRecorderTest(TestCase):
         self.assertEqual(payload["loop_thread_busy_fraction"], 1.0)
 
 
+class SamplingWorkerSeedTest(TestCase):
+    @staticmethod
+    def _sampling_config() -> SamplingConfig:
+        return SamplingConfig(
+            sampling_type=Mock(),
+            num_neighbors=[10],
+            batch_size=32,
+            shuffle=False,
+            drop_last=False,
+            with_edge=False,
+            collect_features=True,
+            with_neg=False,
+            with_weight=False,
+            edge_dir="in",
+            seed=None,
+        )
+
+    def test_full_p4w2_world_has_520_unique_replayable_seeds(self) -> None:
+        def seed_map(run_seed: int) -> dict[int, int]:
+            observed: dict[int, int] = {}
+            for parent_global_rank in range(260):
+                for worker_index in range(2):
+                    seed, global_sampler_id = derive_sampling_worker_seed(
+                        run_seed=run_seed,
+                        parent_global_rank=parent_global_rank,
+                        parent_world_size=260,
+                        worker_index=worker_index,
+                        workers_per_parent=2,
+                    )
+                    observed[global_sampler_id] = seed
+            return observed
+
+        first = seed_map(0xA5A5A5A5)
+        replay = seed_map(0xA5A5A5A5)
+        different_run = seed_map(0xA5A5A5A6)
+
+        self.assertEqual(first, replay)
+        self.assertNotEqual(first, different_run)
+        self.assertEqual(set(first), set(range(520)))
+        self.assertEqual(len(set(first.values())), 520)
+        self.assertEqual(len(set(different_run.values())), 520)
+
+    def test_wraparound_remains_unique(self) -> None:
+        observed = {
+            derive_sampling_worker_seed(
+                run_seed=(1 << 32) - 1,
+                parent_global_rank=parent_rank,
+                parent_world_size=2,
+                worker_index=worker_index,
+                workers_per_parent=2,
+            )[0]
+            for parent_rank in range(2)
+            for worker_index in range(2)
+        }
+        self.assertEqual(observed, {(1 << 32) - 1, 0, 1, 2})
+
+    def test_rejects_invalid_seed_identity(self) -> None:
+        valid = dict(
+            run_seed=1,
+            parent_global_rank=0,
+            parent_world_size=1,
+            worker_index=0,
+            workers_per_parent=1,
+        )
+        invalid = (
+            ({**valid, "run_seed": -1}, "uint32"),
+            ({**valid, "run_seed": 1 << 32}, "uint32"),
+            ({**valid, "parent_global_rank": 1}, "parent_global_rank"),
+            ({**valid, "parent_world_size": 0}, "parent_world_size"),
+            ({**valid, "worker_index": 1}, "worker_index"),
+            ({**valid, "workers_per_parent": 0}, "workers_per_parent"),
+        )
+        for kwargs, message in invalid:
+            with (
+                self.subTest(kwargs=kwargs),
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                derive_sampling_worker_seed(**kwargs)
+
+        for field_name in valid:
+            for value in (True, 1.5):
+                with (
+                    self.subTest(field_name=field_name, value=value),
+                    self.assertRaisesRegex(TypeError, "must be integers"),
+                ):
+                    derive_sampling_worker_seed(
+                        **{**valid, field_name: cast(int, value)}
+                    )
+
+        with self.assertRaisesRegex(ValueError, "cannot exceed the uint32"):
+            derive_sampling_worker_seed(
+                **{
+                    **valid,
+                    "parent_world_size": (1 << 32) + 1,
+                    "workers_per_parent": 1,
+                }
+            )
+
+    def test_global_identity_does_not_reuse_four_rpc_cohort_ranks(self) -> None:
+        rpc_worker_ranks = [
+            local_parent_rank * 2 + worker_index
+            for _local_gpu_rank in range(4)
+            for local_parent_rank in range(65)
+            for worker_index in range(2)
+        ]
+        global_sampler_ids = [
+            derive_sampling_worker_seed(
+                run_seed=0,
+                parent_global_rank=global_parent_rank,
+                parent_world_size=260,
+                worker_index=worker_index,
+                workers_per_parent=2,
+            )[1]
+            for global_parent_rank in range(260)
+            for worker_index in range(2)
+        ]
+
+        self.assertEqual(len(set(rpc_worker_ranks)), 130)
+        self.assertEqual(len(rpc_worker_ranks), 520)
+        self.assertEqual(global_sampler_ids, list(range(520)))
+
+    def test_clones_template_config_per_child_without_mutation(self) -> None:
+        producer = object.__new__(DistSamplingProducer)
+        producer.sampling_config = self._sampling_config()
+        producer.num_workers = 2
+        producer._sampling_run_seed = 100
+        producer._parent_global_rank = 259
+        producer._parent_world_size = 260
+
+        worker_zero, worker_zero_spec = producer._sampling_config_for_worker(0)
+        worker_one, worker_one_spec = producer._sampling_config_for_worker(1)
+
+        self.assertIsNone(producer.sampling_config.seed)
+        self.assertIsNot(worker_zero, producer.sampling_config)
+        self.assertIsNot(worker_one, producer.sampling_config)
+        self.assertIsNot(worker_zero, worker_one)
+        self.assertEqual(worker_zero.seed, 618)
+        self.assertEqual(worker_one.seed, 619)
+        assert worker_zero_spec is not None and worker_one_spec is not None
+        self.assertEqual(worker_zero_spec.global_sampler_id, 518)
+        self.assertEqual(worker_one_spec.global_sampler_id, 519)
+
+    def test_no_run_seed_preserves_the_template_config(self) -> None:
+        producer = object.__new__(DistSamplingProducer)
+        producer.sampling_config = self._sampling_config()
+        producer._sampling_run_seed = None
+
+        worker_config, seed_spec = producer._sampling_config_for_worker(0)
+        self.assertIs(worker_config, producer.sampling_config)
+        self.assertIsNone(seed_spec)
+
+    def test_shared_spawn_receives_distinct_child_configs(self) -> None:
+        producer = object.__new__(DistSamplingProducer)
+        producer.sampling_config = self._sampling_config()
+        producer.worker_options = SimpleNamespace(worker_concurrency=1)
+        producer.num_workers = 2
+        producer.data = object()
+        producer.sampler_input = object()
+        producer.output_channel = object()
+        producer.sampling_completed_worker_count = object()
+        producer._sampler_options = object()
+        producer._degree_tensors = None
+        producer._sampling_run_seed = 100
+        producer._parent_global_rank = 259
+        producer._parent_world_size = 260
+        producer._isolated_rpc_specs = None
+        producer._task_queues = []
+        producer._workers = []
+        producer._get_seeds_indexes = Mock(
+            return_value=[torch.tensor([0]), torch.tensor([1])]
+        )
+        fake_context = Mock()
+        fake_context.Barrier.return_value = Mock()
+        fake_context.Queue.side_effect = [Mock(), Mock()]
+        fake_context.Process.side_effect = [Mock(), Mock()]
+
+        with patch(
+            "gigl.distributed.dist_sampling_producer.mp.get_context",
+            return_value=fake_context,
+        ):
+            producer.init()
+
+        child_configs = [
+            call.kwargs["args"][4] for call in fake_context.Process.call_args_list
+        ]
+        seed_specs = [
+            call.kwargs["args"][-1] for call in fake_context.Process.call_args_list
+        ]
+        self.assertIsNone(producer.sampling_config.seed)
+        self.assertEqual([config.seed for config in child_configs], [618, 619])
+        self.assertIsNot(child_configs[0], child_configs[1])
+        self.assertEqual(
+            [spec.global_sampler_id for spec in seed_specs if spec is not None],
+            [518, 519],
+        )
+
+    def test_child_confirms_seed_after_sampler_construction(self) -> None:
+        sampling_config = self._sampling_config()
+        sampling_config.seed = 618
+        seed_spec = SamplingWorkerSeedSpec(
+            run_seed=100,
+            parent_global_rank=259,
+            parent_world_size=260,
+            worker_index=0,
+            workers_per_parent=2,
+            global_sampler_id=518,
+            worker_seed=618,
+        )
+        data = SimpleNamespace(num_partitions=1)
+        worker_options = SimpleNamespace(
+            worker_world_size=1,
+            worker_ranks=[0],
+            use_all2all=False,
+            num_rpc_threads=1,
+            worker_devices=[torch.device("cpu")],
+            master_addr="127.0.0.1",
+            master_port=20000,
+            rpc_timeout=1.0,
+        )
+        task_queue = Mock()
+        task_queue.get.return_value = (MpCommand.STOP, None)
+        dist_sampler = Mock()
+
+        with (
+            patch("gigl.distributed.dist_sampling_producer.init_worker_group"),
+            patch(
+                "gigl.distributed.dist_sampling_producer._set_worker_signal_handlers"
+            ),
+            patch("gigl.distributed.dist_sampling_producer.torch.set_num_threads"),
+            patch("gigl.distributed.dist_sampling_producer.init_rpc"),
+            patch("gigl.distributed.dist_sampling_producer.seed_everything") as seed,
+            patch(
+                "gigl.distributed.dist_sampling_producer.create_dist_sampler",
+                return_value=dist_sampler,
+            ) as create_sampler,
+            patch("gigl.distributed.dist_sampling_producer.shutdown_rpc"),
+            patch("gigl.distributed.dist_sampling_producer.logger.info") as log,
+        ):
+            _sampling_worker_loop(
+                rank=0,
+                data=cast(DistDataset, data),
+                sampler_input=cast(NodeSamplerInput, object()),
+                unshuffled_index=None,
+                sampling_config=sampling_config,
+                worker_options=cast(MpDistSamplingWorkerOptions, worker_options),
+                channel=cast(ChannelBase, object()),
+                task_queue=task_queue,
+                sampling_completed_worker_count=object(),
+                mp_barrier=Mock(),
+                sampler_options=cast(SamplerOptions, object()),
+                degree_tensors=None,
+                sampling_worker_seed_spec=seed_spec,
+            )
+
+        seed.assert_called_once_with(618)
+        self.assertIs(
+            create_sampler.call_args.kwargs["sampling_config"], sampling_config
+        )
+        dist_sampler.start_loop.assert_called_once_with()
+        dist_sampler.shutdown_loop.assert_called_once_with()
+        self.assertTrue(
+            any(
+                "sampling_worker_seed_installed" in call.args[0]
+                and "global_sampler_id=518" in call.args[0]
+                for call in log.call_args_list
+            )
+        )
+
+    def test_child_does_not_claim_seed_installation_when_factory_raises(self) -> None:
+        sampling_config = self._sampling_config()
+        sampling_config.seed = 618
+        seed_spec = SamplingWorkerSeedSpec(
+            run_seed=100,
+            parent_global_rank=259,
+            parent_world_size=260,
+            worker_index=0,
+            workers_per_parent=2,
+            global_sampler_id=518,
+            worker_seed=618,
+        )
+        data = SimpleNamespace(num_partitions=1)
+        worker_options = SimpleNamespace(
+            worker_world_size=1,
+            worker_ranks=[0],
+            use_all2all=False,
+            num_rpc_threads=1,
+            worker_devices=[torch.device("cpu")],
+            master_addr="127.0.0.1",
+            master_port=20000,
+            rpc_timeout=1.0,
+        )
+
+        with (
+            patch("gigl.distributed.dist_sampling_producer.init_worker_group"),
+            patch(
+                "gigl.distributed.dist_sampling_producer._set_worker_signal_handlers"
+            ),
+            patch("gigl.distributed.dist_sampling_producer.torch.set_num_threads"),
+            patch("gigl.distributed.dist_sampling_producer.init_rpc"),
+            patch("gigl.distributed.dist_sampling_producer.seed_everything"),
+            patch(
+                "gigl.distributed.dist_sampling_producer.create_dist_sampler",
+                side_effect=RuntimeError("injected sampler construction failure"),
+            ),
+            patch("gigl.distributed.dist_sampling_producer.shutdown_rpc"),
+            patch("gigl.distributed.dist_sampling_producer.logger.info") as log,
+            self.assertRaisesRegex(
+                RuntimeError, "injected sampler construction failure"
+            ),
+        ):
+            _sampling_worker_loop(
+                rank=0,
+                data=cast(DistDataset, data),
+                sampler_input=cast(NodeSamplerInput, object()),
+                unshuffled_index=None,
+                sampling_config=sampling_config,
+                worker_options=cast(MpDistSamplingWorkerOptions, worker_options),
+                channel=cast(ChannelBase, object()),
+                task_queue=Mock(),
+                sampling_completed_worker_count=object(),
+                mp_barrier=Mock(),
+                sampler_options=cast(SamplerOptions, object()),
+                degree_tensors=None,
+                sampling_worker_seed_spec=seed_spec,
+            )
+
+        self.assertFalse(
+            any(
+                "sampling_worker_seed_installed" in call.args[0]
+                for call in log.call_args_list
+            )
+        )
+
+
 class IsolatedSamplingWorkerRpcSpecTest(TestCase):
     @staticmethod
     def _build_lifecycle_test_producer(*, rpc_timeout: float) -> DistSamplingProducer:
@@ -189,6 +527,9 @@ class IsolatedSamplingWorkerRpcSpecTest(TestCase):
         producer.sampling_completed_worker_count = object()
         producer._sampler_options = object()
         producer._degree_tensors = None
+        producer._sampling_run_seed = None
+        producer._parent_global_rank = None
+        producer._parent_world_size = None
         producer._isolated_rpc_specs = (
             SamplingWorkerRpcSpec(
                 worker_index=0,
@@ -730,6 +1071,41 @@ class IsolatedSamplingWorkerRpcSpecTest(TestCase):
         barrier.abort.assert_called_once_with()
         self.assertTrue(all(worker.join.called for worker in workers))
         self.assertTrue(producer._isolated_resources_closed)
+
+    def test_isolated_spawn_receives_distinct_child_configs(self) -> None:
+        producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)
+        producer.sampling_config = SamplingWorkerSeedTest._sampling_config()
+        producer._sampling_run_seed = 100
+        producer._parent_global_rank = 259
+        producer._parent_world_size = 260
+        fake_context, _, _, _ = self._configure_two_worker_fake_context(producer)
+
+        with (
+            patch(
+                "gigl.distributed.dist_sampling_producer.mp.get_context",
+                return_value=fake_context,
+            ),
+            patch.object(producer, "_wait_for_isolated_worker_ready"),
+            patch.object(producer, "_wait_for_isolated_workers_at_barrier"),
+        ):
+            producer.init()
+
+        child_configs = [
+            call.kwargs["args"][4] for call in fake_context.Process.call_args_list
+        ]
+        seed_specs = [
+            call.kwargs["args"][-3] for call in fake_context.Process.call_args_list
+        ]
+        self.assertIsNone(producer.sampling_config.seed)
+        self.assertEqual([config.seed for config in child_configs], [618, 619])
+        self.assertIsNot(child_configs[0], child_configs[1])
+        self.assertTrue(
+            all(isinstance(spec, SamplingWorkerSeedSpec) for spec in seed_specs)
+        )
+        self.assertEqual(
+            [spec.global_sampler_id for spec in seed_specs],
+            [518, 519],
+        )
 
     def test_final_barrier_failure_reaps_all_ready_workers(self) -> None:
         producer = self._build_lifecycle_test_producer(rpc_timeout=1.0)

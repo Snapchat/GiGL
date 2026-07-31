@@ -10,7 +10,7 @@ import queue
 import socket
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from multiprocessing.connection import Connection
 from threading import Barrier, BrokenBarrierError
 from typing import Optional, Union, cast
@@ -51,6 +51,62 @@ from gigl.distributed.utils.dist_sampler import create_dist_sampler
 logger = Logger()
 
 SAMPLING_PORT_LEASE_CLOSE_ATTEMPTS = 3
+UINT32_MODULUS = 1 << 32
+
+
+def derive_sampling_worker_seed(
+    *,
+    run_seed: int,
+    parent_global_rank: int,
+    parent_world_size: int,
+    worker_index: int,
+    workers_per_parent: int,
+) -> tuple[int, int]:
+    """Return a collision-free uint32 seed and stable global sampler id.
+
+    ``run_seed`` is one explicit, persisted value for the whole run.  The global
+    sampler id uses the parent inference rank rather than an RPC-group rank because
+    colocated local-rank cohorts have independent RPC groups whose ranks repeat.
+    Addition modulo ``2**32`` is a permutation, so distinct sampler ids remain
+    distinct for every supported run.
+    """
+    values = {
+        "run_seed": run_seed,
+        "parent_global_rank": parent_global_rank,
+        "parent_world_size": parent_world_size,
+        "worker_index": worker_index,
+        "workers_per_parent": workers_per_parent,
+    }
+    if any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in values.values()
+    ):
+        raise TypeError(f"sampling seed identity values must be integers, got {values}")
+    if run_seed not in range(UINT32_MODULUS):
+        raise ValueError(f"run_seed must be uint32, got {run_seed}")
+    if parent_world_size <= 0:
+        raise ValueError(f"parent_world_size must be positive, got {parent_world_size}")
+    if parent_global_rank not in range(parent_world_size):
+        raise ValueError(
+            "parent_global_rank must be in "
+            f"[0, {parent_world_size}), got {parent_global_rank}"
+        )
+    if workers_per_parent <= 0:
+        raise ValueError(
+            f"workers_per_parent must be positive, got {workers_per_parent}"
+        )
+    if worker_index not in range(workers_per_parent):
+        raise ValueError(
+            f"worker_index must be in [0, {workers_per_parent}), got {worker_index}"
+        )
+    sampler_world_size = parent_world_size * workers_per_parent
+    if sampler_world_size > UINT32_MODULUS:
+        raise ValueError(
+            "sampling worker world cannot exceed the uint32 seed space, got "
+            f"{sampler_world_size}"
+        )
+    global_sampler_id = parent_global_rank * workers_per_parent + worker_index
+    return (run_seed + global_sampler_id) % UINT32_MODULUS, global_sampler_id
 
 
 @dataclass(frozen=True)
@@ -62,6 +118,19 @@ class SamplingWorkerRpcSpec:
     world_size: int
     rank: int
     master_port: int
+
+
+@dataclass(frozen=True)
+class SamplingWorkerSeedSpec:
+    """Stable run and subprocess identity for one installed sampler seed."""
+
+    run_seed: int
+    parent_global_rank: int
+    parent_world_size: int
+    worker_index: int
+    workers_per_parent: int
+    global_sampler_id: int
+    worker_seed: int
 
 
 @dataclass(frozen=True)
@@ -252,6 +321,7 @@ def _sampling_worker_loop(
     mp_barrier: Barrier,
     sampler_options: SamplerOptions,
     degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
+    sampling_worker_seed_spec: Optional[SamplingWorkerSeedSpec] = None,
     rpc_spec: Optional[SamplingWorkerRpcSpec] = None,
     status_connection: Optional[Connection] = None,
 ):
@@ -322,6 +392,23 @@ def _sampling_worker_loop(
             degree_tensors=degree_tensors,
             current_device=current_device,
         )
+        if sampling_worker_seed_spec is not None:
+            if sampling_config.seed != sampling_worker_seed_spec.worker_seed:
+                raise RuntimeError(
+                    "sampling worker seed/config mismatch: "
+                    f"spec={sampling_worker_seed_spec} "
+                    f"config_seed={sampling_config.seed}"
+                )
+            logger.info(
+                "sampling_worker_seed_installed "
+                f"run_seed={sampling_worker_seed_spec.run_seed} "
+                f"parent_global_rank={sampling_worker_seed_spec.parent_global_rank}/"
+                f"{sampling_worker_seed_spec.parent_world_size} "
+                f"worker_index={sampling_worker_seed_spec.worker_index}/"
+                f"{sampling_worker_seed_spec.workers_per_parent} "
+                f"global_sampler_id={sampling_worker_seed_spec.global_sampler_id} "
+                f"worker_seed={sampling_worker_seed_spec.worker_seed} pid={os.getpid()}"
+            )
         dist_sampler.start_loop()
 
         unshuffled_index_loader: Optional[DataLoader]
@@ -470,6 +557,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
         ] = None,
         isolated_rpc_specs: Optional[tuple[SamplingWorkerRpcSpec, ...]] = None,
         isolated_port_lease: Optional[SamplingPortLease] = None,
+        sampling_run_seed: Optional[int] = None,
+        parent_global_rank: Optional[int] = None,
+        parent_world_size: Optional[int] = None,
     ):
         self._isolated_port_lease = isolated_port_lease
         try:
@@ -479,6 +569,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
             self._sampler_options = sampler_options
             self._degree_tensors = degree_tensors
             self._isolated_rpc_specs = isolated_rpc_specs
+            self._sampling_run_seed = sampling_run_seed
+            self._parent_global_rank = parent_global_rank
+            self._parent_world_size = parent_world_size
             self._isolated_status_connections: list[Connection] = []
             self._isolated_ready_workers: set[int] = set()
             self._isolated_barrier: Optional[Barrier] = None
@@ -501,6 +594,24 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     )
             elif isolated_port_lease is not None:
                 raise ValueError("an isolated port lease requires isolated RPC specs")
+            if sampling_run_seed is not None:
+                if sampling_config.seed is not None:
+                    raise ValueError(
+                        "sampling_run_seed cannot be combined with a pre-seeded "
+                        "SamplingConfig"
+                    )
+                if parent_global_rank is None or parent_world_size is None:
+                    raise ValueError(
+                        "sampling_run_seed requires parent_global_rank and "
+                        "parent_world_size"
+                    )
+                derive_sampling_worker_seed(
+                    run_seed=sampling_run_seed,
+                    parent_global_rank=parent_global_rank,
+                    parent_world_size=parent_world_size,
+                    worker_index=0,
+                    workers_per_parent=self.num_workers,
+                )
         except BaseException:
             if isolated_port_lease is not None:
                 close_sampling_port_lease_with_retries(
@@ -508,6 +619,39 @@ class DistSamplingProducer(DistMpSamplingProducer):
                     context="DistSamplingProducer.__init__",
                 )
             raise
+
+    def _sampling_config_for_worker(
+        self, worker_index: int
+    ) -> tuple[SamplingConfig, Optional[SamplingWorkerSeedSpec]]:
+        if self._sampling_run_seed is None:
+            return self.sampling_config, None
+        assert self._parent_global_rank is not None
+        assert self._parent_world_size is not None
+        worker_seed, global_sampler_id = derive_sampling_worker_seed(
+            run_seed=self._sampling_run_seed,
+            parent_global_rank=self._parent_global_rank,
+            parent_world_size=self._parent_world_size,
+            worker_index=worker_index,
+            workers_per_parent=self.num_workers,
+        )
+        seed_spec = SamplingWorkerSeedSpec(
+            run_seed=self._sampling_run_seed,
+            parent_global_rank=self._parent_global_rank,
+            parent_world_size=self._parent_world_size,
+            worker_index=worker_index,
+            workers_per_parent=self.num_workers,
+            global_sampler_id=global_sampler_id,
+            worker_seed=worker_seed,
+        )
+        logger.info(
+            "sampling_worker_seed_plan "
+            f"run_seed={self._sampling_run_seed} "
+            f"parent_global_rank={self._parent_global_rank}/"
+            f"{self._parent_world_size} worker_index={worker_index}/"
+            f"{self.num_workers} global_sampler_id={global_sampler_id} "
+            f"worker_seed={worker_seed}"
+        )
+        return replace(self.sampling_config, seed=worker_seed), seed_spec
 
     def _close_isolated_resources(self) -> None:
         if self._isolated_resources_closed:
@@ -729,6 +873,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
         barrier = mp_context.Barrier(self.num_workers + 1)
         if self._isolated_rpc_specs is None:
             for rank in range(self.num_workers):
+                worker_sampling_config, worker_seed_spec = (
+                    self._sampling_config_for_worker(rank)
+                )
                 task_queue = mp_context.Queue(
                     self.num_workers * self.worker_options.worker_concurrency
                 )
@@ -740,7 +887,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                         self.data,
                         self.sampler_input,
                         unshuffled_indexes[rank],
-                        self.sampling_config,
+                        worker_sampling_config,
                         self.worker_options,
                         self.output_channel,
                         task_queue,
@@ -748,6 +895,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                         barrier,
                         self._sampler_options,
                         self._degree_tensors,
+                        worker_seed_spec,
                     ),
                 )
                 worker.daemon = True
@@ -759,6 +907,9 @@ class DistSamplingProducer(DistMpSamplingProducer):
         self._isolated_barrier = barrier
         try:
             for rank, rpc_spec in enumerate(self._isolated_rpc_specs):
+                worker_sampling_config, worker_seed_spec = (
+                    self._sampling_config_for_worker(rank)
+                )
                 task_queue = mp_context.Queue(
                     self.num_workers * self.worker_options.worker_concurrency
                 )
@@ -773,7 +924,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                             self.data,
                             self.sampler_input,
                             unshuffled_indexes[rank],
-                            self.sampling_config,
+                            worker_sampling_config,
                             self.worker_options,
                             self.output_channel,
                             task_queue,
@@ -781,6 +932,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
                             barrier,
                             self._sampler_options,
                             self._degree_tensors,
+                            worker_seed_spec,
                             rpc_spec,
                             child_connection,
                         ),

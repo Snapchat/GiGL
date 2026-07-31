@@ -281,6 +281,9 @@ def _run_cross_parent_isolated_failure(
     producer.sampling_completed_worker_count = object()
     producer._sampler_options = object()
     producer._degree_tensors = None
+    producer._sampling_run_seed = None
+    producer._parent_global_rank = None
+    producer._parent_world_size = None
     producer._isolated_rpc_specs = (
         SamplingWorkerRpcSpec(
             worker_index=0,
@@ -1408,6 +1411,121 @@ class ColocatedWorkerOptionsTest(TestCase):
                 num_neighbors=[1],
                 num_rpc_threads=0,
             )
+
+    def test_loader_rejects_invalid_sampling_seed_before_setup(self) -> None:
+        invalid_values = (-1, 1 << 32)
+        for value in invalid_values:
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "must be uint32"),
+            ):
+                DistNeighborLoader.__init__(
+                    DistNeighborLoader.__new__(DistNeighborLoader),
+                    dataset=cast(DistDataset, object()),
+                    num_neighbors=[1],
+                    sampling_run_seed=value,
+                )
+
+        for value in (True, "1"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(TypeError, "integer uint32"),
+            ):
+                DistNeighborLoader.__init__(
+                    DistNeighborLoader.__new__(DistNeighborLoader),
+                    dataset=cast(DistDataset, object()),
+                    num_neighbors=[1],
+                    sampling_run_seed=cast(int, value),
+                )
+
+    def test_loader_forwards_seed_and_global_parent_identity(self) -> None:
+        dataset = object.__new__(DistDataset)
+        runtime = SimpleNamespace(
+            rank=259,
+            world_size=260,
+            local_rank=3,
+            local_world_size=4,
+            node_rank=64,
+            node_world_size=65,
+            master_ip_address="127.0.0.1",
+            should_cleanup_distributed_context=False,
+        )
+        worker_options = BaseDistLoader.create_colocated_worker_options(
+            dataset_num_partitions=65,
+            num_workers=2,
+            worker_concurrency=1,
+            num_rpc_threads=1,
+            master_ip_address="127.0.0.1",
+            master_port=20000,
+            channel_size="64MB",
+            pin_memory=False,
+        )
+        sampling_config = mock.Mock(seed=None)
+        producer = mock.Mock(spec=DistSamplingProducer)
+
+        with (
+            mock.patch.object(BaseDistLoader, "resolve_runtime", return_value=runtime),
+            mock.patch.object(BaseDistLoader, "validate_for_weighted_sampling"),
+            mock.patch.object(
+                DistNeighborLoader,
+                "_setup_for_colocated",
+                return_value=(
+                    mock.Mock(),
+                    worker_options,
+                    mock.Mock(spec=DatasetSchema),
+                    None,
+                    None,
+                ),
+            ),
+            mock.patch.object(
+                BaseDistLoader,
+                "create_sampling_config",
+                return_value=sampling_config,
+            ),
+            mock.patch.object(
+                BaseDistLoader, "create_mp_producer", return_value=producer
+            ) as create_producer,
+            mock.patch.object(BaseDistLoader, "__init__", return_value=None),
+            mock.patch(
+                "gigl.distributed.distributed_neighborloader.resolve_sampler_options",
+                return_value=mock.Mock(),
+            ),
+            mock.patch(
+                "gigl.distributed.distributed_neighborloader.gigl.distributed.utils.get_available_device",
+                return_value=torch.device("cpu"),
+            ),
+        ):
+            DistNeighborLoader(
+                dataset=dataset,
+                num_neighbors=[1],
+                sampling_run_seed=0xA5A5A5A5,
+                process_start_gap_seconds=0,
+            )
+
+        self.assertEqual(
+            create_producer.call_args.kwargs["sampling_run_seed"], 0xA5A5A5A5
+        )
+        self.assertEqual(create_producer.call_args.kwargs["parent_global_rank"], 259)
+        self.assertEqual(create_producer.call_args.kwargs["parent_world_size"], 260)
+        self.assertIsNone(sampling_config.seed)
+
+    def test_graph_store_seed_rejected_before_runtime_or_backend_setup(self) -> None:
+        remote_dataset = MockRemoteDistDataset(num_storage_nodes=1)
+        with (
+            mock.patch.object(BaseDistLoader, "resolve_runtime") as resolve_runtime,
+            mock.patch.object(
+                DistNeighborLoader, "_setup_for_graph_store"
+            ) as setup_graph_store,
+            self.assertRaisesRegex(ValueError, "only supported in colocated"),
+        ):
+            DistNeighborLoader(
+                dataset=remote_dataset,
+                num_neighbors=[1],
+                sampling_run_seed=1,
+            )
+
+        resolve_runtime.assert_not_called()
+        setup_graph_store.assert_not_called()
 
     def test_rpc_thread_default_override_and_validation(self) -> None:
         common_options = {

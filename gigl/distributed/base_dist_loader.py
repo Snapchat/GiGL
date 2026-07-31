@@ -15,7 +15,6 @@ import socket
 import sys
 import tempfile
 import time
-import zlib
 from collections import Counter
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -713,41 +712,6 @@ class BaseDistLoader(DistLoader):
             )
 
     @staticmethod
-    def derive_sampling_seed(rank: int, seed_base: Optional[int] = None) -> int:
-        """Derives a per-rank sampling seed, distinct across ranks and across runs.
-
-        Supplying *any* seed is a large performance win, not just a determinism knob.
-        GLT's ``CPURandomSampler::UniformSample`` reads
-        ``RandomSeedManager::getInstance().getSeed()`` on **every** call — once per source
-        row during neighbor sampling — and when no seed has been set that call generates
-        fresh entropy each time (~5 us). Setting a seed makes it a cheap stored-value read
-        and cuts the sampler call from ~1340 us to ~48 us (~27x). On a multi-node GPU
-        inference workload this took per-batch data loading from 47-184 ms to 21-25 ms.
-
-        Args:
-            rank: Global rank. Keeps ranks from drawing identical neighbor samples.
-            seed_base: Run-level value mixed with ``rank``. Defaults to the current Unix
-                time so successive runs differ, preserving the run-to-run variability that
-                unseeded sampling had. Pass a fixed value to reproduce a prior run.
-
-        Returns:
-            A seed in ``[0, 2**32)``. ``crc32`` is used rather than ``hash()`` because
-            Python randomizes string hashing per process, which would make the seed differ
-            between a rank's own processes and be unreproducible across runs. The range
-            also matches GLT's ``setSeed(unsigned int)`` exactly, so no masking is needed.
-        """
-        if seed_base is None:
-            seed_base = int(time.time())
-        seed = zlib.crc32(f"{seed_base}:{rank}".encode())
-        # Logged because seed_base defaults to wall-clock time: without this line a run's
-        # sampling is unreproducible after the fact.
-        logger.info(
-            f"Rank {rank} sampling seed: {seed} (seed_base={seed_base}). "
-            f"Pass seed_base to reproduce this run."
-        )
-        return seed
-
-    @staticmethod
     def create_sampling_config(
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         dataset_schema: DatasetSchema,
@@ -773,9 +737,9 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
-            seed: Sampling RNG seed, usually from ``derive_sampling_seed()``. Leaving this
-                ``None`` is a **significant performance regression** -- see that method for
-                why. It is applied per rank: every sampling worker in a rank shares it.
+            seed: Optional seed installed directly in this sampling config. Colocated
+                callers that need a distinct deterministic seed per subprocess should
+                instead pass ``sampling_run_seed`` to ``create_mp_producer``.
 
         Returns:
             A fully configured SamplingConfig.
@@ -828,6 +792,9 @@ class BaseDistLoader(DistLoader):
         sampler_options: SamplerOptions,
         isolated_rpc_specs: Optional[tuple[SamplingWorkerRpcSpec, ...]] = None,
         isolated_port_lease: Optional[SamplingPortLease] = None,
+        sampling_run_seed: Optional[int] = None,
+        parent_global_rank: Optional[int] = None,
+        parent_world_size: Optional[int] = None,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -844,6 +811,11 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
+            sampling_run_seed: Optional uint32 run seed. Requires the parent's
+                global rank and world size; the producer derives one collision-free
+                seed per sampling subprocess.
+            parent_global_rank: Global inference-parent rank, not an RPC-group rank.
+            parent_world_size: Number of inference-parent ranks in the run.
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
@@ -875,6 +847,9 @@ class BaseDistLoader(DistLoader):
             degree_tensors=degree_tensors,
             isolated_rpc_specs=isolated_rpc_specs,
             isolated_port_lease=isolated_port_lease,
+            sampling_run_seed=sampling_run_seed,
+            parent_global_rank=parent_global_rank,
+            parent_world_size=parent_world_size,
         )
 
     @staticmethod

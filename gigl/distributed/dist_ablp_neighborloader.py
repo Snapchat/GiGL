@@ -353,7 +353,7 @@ class DistABLPLoader(BaseDistLoader):
             shuffle=shuffle,
             drop_last=drop_last,
             with_weight=with_weight,
-            seed=BaseDistLoader.derive_sampling_seed(rank=runtime.rank),
+            seed=None,
         )
 
         producer: Optional[DistSamplingProducer] = None
