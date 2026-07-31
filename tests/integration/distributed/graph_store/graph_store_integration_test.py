@@ -61,6 +61,8 @@ TEST_NUM_NEIGHBORS = [2, 2]
 TEST_PIN_MEMORY_DEVICE = torch.device("cpu")
 TEST_NUM_WORKERS = 2
 TEST_WORKER_CONCURRENCY = 2
+CHILD_CLEANUP_GRACE_SECONDS = 5.0
+CLIENT_PROCESS_OUTER_MARGIN_SECONDS = 60.0
 
 USER_RATES_STORY = EdgeType(USER, Relation("rates"), STORY)
 STORY_RATES_USER = EdgeType(STORY, Relation("rates"), USER)
@@ -829,7 +831,7 @@ class ClientProcessArgs:
         compute_target: The function each subprocess runs (e.g. _run_compute_tests).
         compute_target_extra_args: Extra positional args appended after the common
             (client_rank, cluster_info, node_type) args.
-        child_join_timeout_seconds: Maximum time to wait for each compute child.
+        child_join_timeout_seconds: Shared maximum time to wait for compute children.
     """
 
     client_rank: int
@@ -869,37 +871,68 @@ def _client_compute_process(args: ClientProcessArgs) -> None:
         failures: list[str] = []
         cleaned_children: list[str] = []
         alive_after_cleanup: list[str] = []
+        cleanup_actions: dict[int, list[str]] = {}
+
+        def _join_started_processes_with_shared_deadline() -> None:
+            cleanup_deadline = time.monotonic() + min(
+                CHILD_CLEANUP_GRACE_SECONDS,
+                args.child_join_timeout_seconds,
+            )
+            for _, started_process in started_processes:
+                started_process.join(max(0.0, cleanup_deadline - time.monotonic()))
+
         try:
             for child_rank, client_process in client_processes:
-                client_process.start()
+                try:
+                    client_process.start()
+                except Exception as error:
+                    failures.append(
+                        f"client_rank={args.client_rank}, child_rank={child_rank}, "
+                        f"name={client_process.name}, pid={client_process.pid}, "
+                        f"start_error={type(error).__name__}: {error}"
+                    )
+                    break
                 started_processes.append((child_rank, client_process))
-            for child_rank, client_process in started_processes:
-                client_process.join(args.child_join_timeout_seconds)
-                child_diagnostic = (
-                    f"client_rank={args.client_rank}, child_rank={child_rank}, "
-                    f"name={client_process.name}, pid={client_process.pid}"
-                )
-                if client_process.is_alive():
-                    failures.append(
-                        f"{child_diagnostic}, "
-                        f"timeout_seconds={args.child_join_timeout_seconds}"
+            if not failures:
+                # Children start concurrently and share one monitoring budget so
+                # the timeout cannot multiply with the number of children.
+                monitoring_deadline = time.monotonic() + args.child_join_timeout_seconds
+                for child_rank, client_process in started_processes:
+                    client_process.join(
+                        max(0.0, monitoring_deadline - time.monotonic())
                     )
-                elif client_process.exitcode != 0:
-                    failures.append(
-                        f"{child_diagnostic}, exit_code={client_process.exitcode}"
+                    child_diagnostic = (
+                        f"client_rank={args.client_rank}, child_rank={child_rank}, "
+                        f"name={client_process.name}, pid={client_process.pid}"
                     )
+                    if client_process.is_alive():
+                        failures.append(
+                            f"{child_diagnostic}, "
+                            f"timeout_seconds={args.child_join_timeout_seconds}"
+                        )
+                        break
+                    if client_process.exitcode != 0:
+                        failures.append(
+                            f"{child_diagnostic}, exit_code={client_process.exitcode}"
+                        )
+                        break
         finally:
-            for _, client_process in started_processes:
+            for child_rank, client_process in started_processes:
+                cleanup_actions[child_rank] = []
                 if client_process.is_alive():
                     client_process.terminate()
+                    cleanup_actions[child_rank].append("terminate")
+            _join_started_processes_with_shared_deadline()
             for child_rank, client_process in started_processes:
-                client_process.join(args.child_join_timeout_seconds)
                 if client_process.is_alive():
                     client_process.kill()
-                    client_process.join(args.child_join_timeout_seconds)
+                    cleanup_actions[child_rank].append("kill")
+            _join_started_processes_with_shared_deadline()
+            for child_rank, client_process in started_processes:
                 cleaned_children.append(
                     f"child_rank={child_rank}, name={client_process.name}, "
-                    f"pid={client_process.pid}, exit_code={client_process.exitcode}"
+                    f"pid={client_process.pid}, exit_code={client_process.exitcode}, "
+                    f"cleanup_actions={cleanup_actions[child_rank]}"
                 )
                 if client_process.is_alive():
                     alive_after_cleanup.append(client_process.name)
@@ -1179,13 +1212,27 @@ class GraphStoreIntegrationTest(TestCase):
                 server_process.start()
                 launched_processes.append(server_process)
 
-        self.assert_all_processes_succeed(launched_processes, exception_dict)
+        self.assert_all_processes_succeed(
+            launched_processes,
+            exception_dict,
+            # Leave room beyond the default child deadline for client-process
+            # spawn/import plus the bounded terminate/kill cleanup phases.
+            timeout_seconds=(
+                DEFAULT_TIMEOUT_SECONDS + CLIENT_PROCESS_OUTER_MARGIN_SECONDS
+            ),
+        )
 
     def _assert_compute_child_failure_is_reported(
         self,
         failure_mode: Literal["nonzero", "timeout"],
     ) -> None:
         """Assert nested compute failures stop the client and clean every child."""
+        if failure_mode == "nonzero":
+            child_join_timeout_seconds = 60.0
+            outer_join_timeout_seconds = 75.0
+        else:
+            child_join_timeout_seconds = 10.0
+            outer_join_timeout_seconds = 45.0
         readiness_file = tempfile.NamedTemporaryFile(delete=False)
         self.addCleanup(readiness_file.close)
         cluster_info = GraphStoreInfo(
@@ -1212,7 +1259,7 @@ class GraphStoreIntegrationTest(TestCase):
                 exception_dict=exception_dict,
                 compute_target=_run_compute_child_failure_regression,
                 compute_target_extra_args=(failure_mode,),
-                child_join_timeout_seconds=15.0,
+                child_join_timeout_seconds=child_join_timeout_seconds,
             )
             with mock.patch.dict(
                 os.environ,
@@ -1225,7 +1272,7 @@ class GraphStoreIntegrationTest(TestCase):
                     name="client_0",
                 )
                 client_process.start()
-                client_process.join(60.0)
+                client_process.join(outer_join_timeout_seconds)
             if client_process.is_alive():
                 client_process.terminate()
                 client_process.join()
@@ -1233,25 +1280,36 @@ class GraphStoreIntegrationTest(TestCase):
             self.assertNotEqual(client_process.exitcode, 0)
             self.assertEqual(set(exception_dict), {"client_0"})
             diagnostic = exception_dict["client_0"]
-            self.assertIn("client_rank=0", diagnostic)
-            self.assertIn("child_rank=0", diagnostic)
-            self.assertRegex(
-                diagnostic,
-                r"name=client_0_compute_0, pid=\d+",
+            runtime_error = diagnostic.rsplit("RuntimeError: ", maxsplit=1)[-1]
+            primary_failure, separator, cleanup_diagnostic = runtime_error.partition(
+                "; cleaned_children="
             )
-            self.assertIn(
-                "exit_code=" if failure_mode == "nonzero" else "timeout_seconds=15.0",
-                diagnostic,
-            )
+            self.assertEqual(separator, "; cleaned_children=")
+            if failure_mode == "nonzero":
+                self.assertRegex(
+                    primary_failure,
+                    r"^client_rank=0, child_rank=0, "
+                    r"name=client_0_compute_0, pid=\d+, exit_code=1$",
+                )
+                self.assertNotIn("timeout_seconds=", primary_failure)
+            else:
+                self.assertRegex(
+                    primary_failure,
+                    r"^client_rank=0, child_rank=0, "
+                    r"name=client_0_compute_0, pid=\d+, timeout_seconds=10.0$",
+                )
+                self.assertNotIn("exit_code=", primary_failure)
             self.assertRegex(
-                diagnostic,
+                cleanup_diagnostic,
                 r"child_rank=0, name=client_0_compute_0, pid=\d+",
             )
             self.assertRegex(
-                diagnostic,
-                r"child_rank=1, name=client_0_compute_1, pid=\d+",
+                cleanup_diagnostic,
+                r"child_rank=1, name=client_0_compute_1, pid=\d+, "
+                r"exit_code=-(?:9|15), cleanup_actions="
+                r"\['terminate'(?:, 'kill')?\]",
             )
-            self.assertIn("alive_after_cleanup=[]", diagnostic)
+            self.assertIn("alive_after_cleanup=[]", cleanup_diagnostic)
 
     def test_compute_child_nonzero_cleans_up_sibling(self) -> None:
         """A nonzero nested child must fail its client and clean its sibling."""
