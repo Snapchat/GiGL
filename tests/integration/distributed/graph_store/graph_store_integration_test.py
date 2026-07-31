@@ -2,6 +2,7 @@ import multiprocessing.context as py_mp_context
 import os
 import socket
 import tempfile
+import time
 import traceback
 import unittest
 from collections.abc import Callable, MutableMapping
@@ -17,6 +18,7 @@ from torch_geometric.data import Data, HeteroData
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.graph_store.compute import (
     init_compute_process,
@@ -42,6 +44,14 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
 )
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.sampling import ABLPInputNodes
+from tests.test_assets.distributed.test_dataset import (
+    DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+    STORY,
+    STORY_TO_USER,
+    USER,
+    USER_TO_STORY,
+    create_heterogeneous_dataset_for_ablp,
+)
 from tests.test_assets.distributed.utils import assert_tensor_equality
 from tests.test_assets.test_case import DEFAULT_TIMEOUT_SECONDS, TestCase
 
@@ -51,6 +61,41 @@ TEST_NUM_NEIGHBORS = [2, 2]
 TEST_PIN_MEMORY_DEVICE = torch.device("cpu")
 TEST_NUM_WORKERS = 2
 TEST_WORKER_CONCURRENCY = 2
+
+USER_RATES_STORY = EdgeType(USER, Relation("rates"), STORY)
+STORY_RATES_USER = EdgeType(STORY, Relation("rates"), USER)
+
+
+def _build_multi_supervision_ablp_dataset(
+    rank: int,
+    world_size: int,
+) -> DistDataset:
+    """Build a tiny incoming graph with two objectives and mixed negatives."""
+    labels_by_edge_type: dict[
+        EdgeType,
+        tuple[dict[int, list[int]], Optional[dict[int, list[int]]]],
+    ] = {
+        USER_TO_STORY: (
+            {0: [0, 1], 1: [1, 2], 2: [2, 3], 3: [3], 4: [4]},
+            {0: [4], 1: [3], 2: [2], 3: [1], 4: [0]},
+        ),
+        USER_RATES_STORY: (
+            {0: [4], 1: [3], 2: [2], 3: [1], 4: [0]},
+            None,
+        ),
+    }
+    return create_heterogeneous_dataset_for_ablp(
+        positive_labels=labels_by_edge_type[USER_TO_STORY][0],
+        negative_labels=labels_by_edge_type[USER_TO_STORY][1],
+        train_node_ids=[0, 1, 2],
+        val_node_ids=[3],
+        test_node_ids=[4],
+        edge_indices=DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+        rank=rank,
+        world_size=world_size,
+        edge_dir="in",
+        labels_by_supervision_edge_type=labels_by_edge_type,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +372,112 @@ def _run_compute_train_tests(
     ablp_loader.shutdown()
     random_negative_loader.shutdown()
     shutdown_compute_process()
+
+
+def _run_compute_multi_supervision_ablp_test(
+    client_rank: int,
+    cluster_info: GraphStoreInfo,
+    node_type: Optional[NodeType],
+) -> None:
+    """Exercise plural ABLP fetch and collation through real GraphStore RPC."""
+    assert node_type == USER
+    compute_initialized = False
+    loader: Optional[DistABLPLoader] = None
+    primary_failure = False
+    try:
+        init_compute_process(client_rank, cluster_info, compute_world_backend="gloo")
+        compute_initialized = True
+        remote_dataset = RemoteDistDataset(
+            cluster_info=cluster_info,
+            local_rank=client_rank,
+        )
+
+        inputs = remote_dataset.fetch_ablp_input(
+            split="train",
+            rank=torch.distributed.get_rank(),
+            world_size=torch.distributed.get_world_size(),
+            anchor_node_type=USER,
+            supervision_edge_type=[USER_TO_STORY, USER_RATES_STORY],
+        )
+        _assert_ablp_input(cluster_info, inputs)
+        assert len(inputs) == 1
+        server_input = inputs[0]
+        assert list(server_input.labels) == [STORY_TO_USER, STORY_RATES_USER]
+        assert_tensor_equality(server_input.anchor_nodes, torch.tensor([0, 1, 2]))
+        positive_to, negative_to = server_input.labels[STORY_TO_USER]
+        assert_tensor_equality(
+            positive_to,
+            torch.tensor([[0, 1], [1, 2], [2, 3]]),
+        )
+        assert negative_to is not None
+        assert_tensor_equality(negative_to, torch.tensor([[4], [3], [2]]))
+        positive_rates, negative_rates = server_input.labels[STORY_RATES_USER]
+        assert_tensor_equality(positive_rates, torch.tensor([[4], [3], [2]]))
+        assert negative_rates is None
+
+        loader = DistABLPLoader(
+            dataset=remote_dataset,
+            num_neighbors=TEST_NUM_NEIGHBORS,
+            input_nodes=inputs,
+            pin_memory_device=TEST_PIN_MEMORY_DEVICE,
+            num_workers=TEST_NUM_WORKERS,
+            worker_concurrency=TEST_WORKER_CONCURRENCY,
+            batch_size=TEST_BATCH_SIZE,
+            use_edge_index_output=True,
+        )
+        batches = list(loader)
+        assert len(batches) == 1
+        batch = batches[0]
+        assert isinstance(batch, HeteroData)
+        assert set(batch.y_positive) == {USER_TO_STORY, USER_RATES_STORY}
+        assert set(batch.y_negative) == {USER_TO_STORY}
+
+        def _global_pairs(
+            edge_type: EdgeType,
+            label_edge_index: torch.Tensor,
+        ) -> list[tuple[int, int]]:
+            anchors = batch[edge_type.src_node_type].node[label_edge_index[0]]
+            labels = batch[edge_type.dst_node_type].node[label_edge_index[1]]
+            return sorted(zip(anchors.tolist(), labels.tolist()))
+
+        assert _global_pairs(USER_TO_STORY, batch.y_positive[USER_TO_STORY]) == sorted(
+            [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2), (2, 3)]
+        )
+        assert _global_pairs(USER_RATES_STORY, batch.y_positive[USER_RATES_STORY]) == [
+            (0, 4),
+            (1, 3),
+            (2, 2),
+        ]
+        assert _global_pairs(USER_TO_STORY, batch.y_negative[USER_TO_STORY]) == [
+            (0, 4),
+            (1, 3),
+            (2, 2),
+        ]
+    except BaseException:
+        primary_failure = True
+        raise
+    finally:
+        cleanup_errors: list[str] = []
+        if loader is not None:
+            try:
+                loader.shutdown()
+            except Exception:
+                cleanup_errors.append(
+                    f"loader shutdown failed:\n{traceback.format_exc()}"
+                )
+        if compute_initialized:
+            try:
+                shutdown_compute_process()
+            except Exception:
+                cleanup_errors.append(
+                    f"compute shutdown failed:\n{traceback.format_exc()}"
+                )
+        if cleanup_errors:
+            cleanup_message = "\n".join(cleanup_errors)
+            if primary_failure:
+                logger.error(f"Cleanup after primary failure:\n{cleanup_message}")
+            else:
+                raise RuntimeError(cleanup_message)
 
 
 def _run_compute_multiple_loaders_test(
@@ -648,6 +799,19 @@ def _run_compute_tests(
     shutdown_compute_process()
 
 
+def _run_compute_child_failure_regression(
+    child_rank: int,
+    cluster_info: GraphStoreInfo,
+    node_type: Optional[NodeType],
+    failure_mode: Literal["nonzero", "timeout"],
+) -> None:
+    """Keep children alive except for rank zero in the nonzero regression."""
+    del cluster_info, node_type
+    if child_rank == 0 and failure_mode == "nonzero":
+        raise RuntimeError("deterministic compute child failure")
+    time.sleep(60.0)
+
+
 # ---------------------------------------------------------------------------
 # Client / server process wrappers
 # ---------------------------------------------------------------------------
@@ -665,6 +829,7 @@ class ClientProcessArgs:
         compute_target: The function each subprocess runs (e.g. _run_compute_tests).
         compute_target_extra_args: Extra positional args appended after the common
             (client_rank, cluster_info, node_type) args.
+        child_join_timeout_seconds: Maximum time to wait for each compute child.
     """
 
     client_rank: int
@@ -673,6 +838,7 @@ class ClientProcessArgs:
     exception_dict: MutableMapping[str, str]
     compute_target: Callable[..., None]
     compute_target_extra_args: tuple[Any, ...] = ()
+    child_join_timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 
 
 def _client_compute_process(args: ClientProcessArgs) -> None:
@@ -685,22 +851,64 @@ def _client_compute_process(args: ClientProcessArgs) -> None:
             f"OS rank: {os.environ['RANK']}, OS world size: {os.environ['WORLD_SIZE']}"
         )
         mp_context = torch.multiprocessing.get_context("spawn")
-        client_processes: list[py_mp_context.SpawnProcess] = []
-        for i in range(args.cluster_info.num_processes_per_compute):
+        client_processes: list[tuple[int, py_mp_context.SpawnProcess]] = []
+        for child_rank in range(args.cluster_info.num_processes_per_compute):
             client_process = mp_context.Process(
                 target=args.compute_target,
                 args=[
-                    i,
+                    child_rank,
                     args.cluster_info,
                     args.node_type,
                     *args.compute_target_extra_args,
                 ],
+                name=f"client_{args.client_rank}_compute_{child_rank}",
             )
-            client_processes.append(client_process)
-        for client_process in client_processes:
-            client_process.start()
-        for client_process in client_processes:
-            client_process.join(DEFAULT_TIMEOUT_SECONDS)
+            client_processes.append((child_rank, client_process))
+
+        started_processes: list[tuple[int, py_mp_context.SpawnProcess]] = []
+        failures: list[str] = []
+        cleaned_children: list[str] = []
+        alive_after_cleanup: list[str] = []
+        try:
+            for child_rank, client_process in client_processes:
+                client_process.start()
+                started_processes.append((child_rank, client_process))
+            for child_rank, client_process in started_processes:
+                client_process.join(args.child_join_timeout_seconds)
+                child_diagnostic = (
+                    f"client_rank={args.client_rank}, child_rank={child_rank}, "
+                    f"name={client_process.name}, pid={client_process.pid}"
+                )
+                if client_process.is_alive():
+                    failures.append(
+                        f"{child_diagnostic}, "
+                        f"timeout_seconds={args.child_join_timeout_seconds}"
+                    )
+                elif client_process.exitcode != 0:
+                    failures.append(
+                        f"{child_diagnostic}, exit_code={client_process.exitcode}"
+                    )
+        finally:
+            for _, client_process in started_processes:
+                if client_process.is_alive():
+                    client_process.terminate()
+            for child_rank, client_process in started_processes:
+                client_process.join(args.child_join_timeout_seconds)
+                if client_process.is_alive():
+                    client_process.kill()
+                    client_process.join(args.child_join_timeout_seconds)
+                cleaned_children.append(
+                    f"child_rank={child_rank}, name={client_process.name}, "
+                    f"pid={client_process.pid}, exit_code={client_process.exitcode}"
+                )
+                if client_process.is_alive():
+                    alive_after_cleanup.append(client_process.name)
+
+        if failures:
+            raise RuntimeError(
+                f"{failures[0]}; cleaned_children={cleaned_children}; "
+                f"alive_after_cleanup={alive_after_cleanup}"
+            )
     except Exception:
         args.exception_dict[process_name] = traceback.format_exc()
         raise
@@ -718,6 +926,8 @@ class ServerProcessArgs:
         num_server_sessions: Number of sequential server sessions to run
             (e.g. one per inference node type).
         splitter: Optional splitter for node anchor link or node splitting.
+        dataset_builder: Optional programmatic dataset builder for focused
+            integration fixtures.
     """
 
     cluster_info: GraphStoreInfo
@@ -726,6 +936,7 @@ class ServerProcessArgs:
     exception_dict: MutableMapping[str, str]
     num_server_sessions: int = 1
     splitter: Optional[Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]] = None
+    dataset_builder: Optional[Callable[[int, int], DistDataset]] = None
 
 
 def _run_storage_main_process(args: ServerProcessArgs) -> None:
@@ -759,12 +970,15 @@ def _run_storage_main_process(args: ServerProcessArgs) -> None:
         )
 
         # 2. Build the dataset
-        dataset = build_storage_dataset(
-            task_config_uri=args.task_config_uri,
-            sample_edge_direction=args.sample_edge_direction,
-            splitter=args.splitter,
-            tf_record_uri_pattern=".*tfrecord",
-        )
+        if args.dataset_builder is None:
+            dataset = build_storage_dataset(
+                task_config_uri=args.task_config_uri,
+                sample_edge_direction=args.sample_edge_direction,
+                splitter=args.splitter,
+                tf_record_uri_pattern=".*tfrecord",
+            )
+        else:
+            dataset = args.dataset_builder(storage_rank, cluster_info.num_storage_nodes)
 
         # 3. Destroy the coordination process group before spawning server
         # subprocesses. The subprocess will create its own process group on the
@@ -890,6 +1104,7 @@ class GraphStoreIntegrationTest(TestCase):
         server_splitter: Optional[
             Union[DistNodeAnchorLinkSplitter, DistNodeSplitter]
         ] = None,
+        dataset_builder: Optional[Callable[[int, int], DistDataset]] = None,
         num_server_sessions: int = 1,
     ) -> None:
         """Launch a graph store integration test with the given configuration.
@@ -953,6 +1168,7 @@ class GraphStoreIntegrationTest(TestCase):
                     sample_edge_direction="in",
                     exception_dict=exception_dict,
                     splitter=server_splitter,
+                    dataset_builder=dataset_builder,
                     num_server_sessions=num_server_sessions,
                 )
                 server_process = ctx.Process(
@@ -964,6 +1180,104 @@ class GraphStoreIntegrationTest(TestCase):
                 launched_processes.append(server_process)
 
         self.assert_all_processes_succeed(launched_processes, exception_dict)
+
+    def _assert_compute_child_failure_is_reported(
+        self,
+        failure_mode: Literal["nonzero", "timeout"],
+    ) -> None:
+        """Assert nested compute failures stop the client and clean every child."""
+        readiness_file = tempfile.NamedTemporaryFile(delete=False)
+        self.addCleanup(readiness_file.close)
+        cluster_info = GraphStoreInfo(
+            num_storage_nodes=1,
+            num_compute_nodes=1,
+            num_processes_per_compute=2,
+            cluster_master_ip="127.0.0.1",
+            storage_cluster_master_ip="127.0.0.1",
+            compute_cluster_master_ip="127.0.0.1",
+            cluster_master_port=1,
+            storage_cluster_master_port=2,
+            compute_cluster_master_port=3,
+            rpc_master_port=4,
+            rpc_wait_port=5,
+            readiness_uri=UriFactory.create_uri(readiness_file.name),
+        )
+        ctx = mp.get_context("spawn")
+        with ctx.Manager() as manager:
+            exception_dict = manager.dict()
+            args = ClientProcessArgs(
+                client_rank=0,
+                cluster_info=cluster_info,
+                node_type=None,
+                exception_dict=exception_dict,
+                compute_target=_run_compute_child_failure_regression,
+                compute_target_extra_args=(failure_mode,),
+                child_join_timeout_seconds=15.0,
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"RANK": "0", "WORLD_SIZE": "1"},
+                clear=False,
+            ):
+                client_process = ctx.Process(
+                    target=_client_compute_process,
+                    args=(args,),
+                    name="client_0",
+                )
+                client_process.start()
+                client_process.join(60.0)
+            if client_process.is_alive():
+                client_process.terminate()
+                client_process.join()
+
+            self.assertNotEqual(client_process.exitcode, 0)
+            self.assertEqual(set(exception_dict), {"client_0"})
+            diagnostic = exception_dict["client_0"]
+            self.assertIn("client_rank=0", diagnostic)
+            self.assertIn("child_rank=0", diagnostic)
+            self.assertRegex(
+                diagnostic,
+                r"name=client_0_compute_0, pid=\d+",
+            )
+            self.assertIn(
+                "exit_code=" if failure_mode == "nonzero" else "timeout_seconds=15.0",
+                diagnostic,
+            )
+            self.assertRegex(
+                diagnostic,
+                r"child_rank=0, name=client_0_compute_0, pid=\d+",
+            )
+            self.assertRegex(
+                diagnostic,
+                r"child_rank=1, name=client_0_compute_1, pid=\d+",
+            )
+            self.assertIn("alive_after_cleanup=[]", diagnostic)
+
+    def test_compute_child_nonzero_cleans_up_sibling(self) -> None:
+        """A nonzero nested child must fail its client and clean its sibling."""
+        self._assert_compute_child_failure_is_reported("nonzero")
+
+    def test_compute_child_timeout_cleans_up_sibling(self) -> None:
+        """A timed-out nested child must fail its client and clean its sibling."""
+        self._assert_compute_child_failure_is_reported("timeout")
+
+    def test_multiple_supervision_edge_types_training(self) -> None:
+        """Real RPC preserves two incoming objectives and mixed negatives."""
+        task_config_uri = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ].frozen_gbml_config_uri
+        cluster_info = self._create_cluster_info(
+            num_storage_nodes=1,
+            num_compute_nodes=1,
+            num_processes_per_compute=1,
+        )
+        self._launch_graph_store_test(
+            cluster_info=cluster_info,
+            task_config_uri=task_config_uri,
+            compute_target=_run_compute_multi_supervision_ablp_test,
+            node_type=USER,
+            dataset_builder=_build_multi_supervision_ablp_dataset,
+        )
 
     def test_graph_store_homogeneous(self):
         # Simulating two server machine, two compute machines.
