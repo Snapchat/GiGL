@@ -8,9 +8,9 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
+import random
 import sys
 import time
-import zlib
 from collections import Counter
 from dataclasses import dataclass
 from typing import Optional, Union
@@ -381,60 +381,6 @@ class BaseDistLoader(DistLoader):
                 "Weight-proportional residual propagation for PPR is planned but not implemented."
             )
 
-    # TODO(kmonte): Drop this workaround if GLT ever hoists the getSeed() call out of
-    # CPURandomSampler::UniformSample and into the engine initializer, so the unseeded
-    # path stops paying per-row entropy. Until then a seed has to be supplied to keep
-    # sampling off that path.
-    @staticmethod
-    def derive_sampling_seed(rank: int, seed_base: Optional[int] = None) -> int:
-        """Derives a per-rank sampling seed, distinct across ranks and across runs.
-
-        Supplying *any* seed is a large performance win, not just a determinism knob.
-        GLT's ``CPURandomSampler::UniformSample`` reads
-        ``RandomSeedManager::getInstance().getSeed()`` on **every** call, and the call
-        happens once per source row of a batch:
-
-        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L144
-        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L165
-
-        The ``std::mt19937`` it feeds is ``thread_local static``, so after the first call the
-        read is discarded -- but it still runs. Unseeded, ``getSeed()`` constructs a
-        ``std::random_device`` and draws from it, about 5 us of real work per source row for
-        a value that is thrown away:
-
-        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/common.h#L48-L56
-
-        For the production use case we see up to 7x speed up, and 29x speedup in local
-        testing.
-
-        Args:
-            rank: Global rank. Keeps ranks from drawing identical neighbor samples.
-            seed_base: Run-level value mixed with ``rank``. Defaults to the current Unix
-                time so successive runs differ, preserving the run-to-run variability that
-                unseeded sampling had. Pass a fixed value to reproduce a prior run.
-
-        Returns:
-            A seed in ``[0, 2**32)``.
-
-            ``crc32`` is used rather than ``hash()`` because Python randomizes string
-            hashing per process, which would make the seed differ between a rank's own
-            processes and be unreproducible across runs.
-
-        Example:
-            >>> BaseDistLoader.derive_sampling_seed(rank=0, seed_base=1234)
-            1737058971
-        """
-        if seed_base is None:
-            seed_base = int(time.time())
-        seed = zlib.crc32(f"{seed_base}:{rank}".encode())
-        # Logged because seed_base defaults to wall-clock time: without this line a run's
-        # sampling is unreproducible after the fact.
-        logger.info(
-            f"Rank {rank} sampling seed: {seed} (seed_base={seed_base}). "
-            f"Pass seed_base to reproduce this run."
-        )
-        return seed
-
     @staticmethod
     def create_sampling_config(
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
@@ -461,12 +407,35 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
-            seed: Sampling RNG seed, usually from ``derive_sampling_seed()``. Leaving this
-                ``None`` is a **significant performance regression** -- see that method for
-                why. It is applied per rank: every sampling worker in a rank shares it.
+            seed: Sampling RNG seed. Defaults to a fresh random ``uint32``, which is
+                what you want; pass a value only to pin sampling deliberately. A seed
+                **must** be set for performance reasons -- see below.
 
         Returns:
             A fully configured SamplingConfig.
+
+        Note:
+            Setting ``seed`` is a large performance win, not just a determinism knob.
+            GLT's ``CPURandomSampler::UniformSample`` reads
+            ``RandomSeedManager::getInstance().getSeed()`` on **every** call, and that call
+            happens once per source row of a batch:
+
+            - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L144
+            - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L165
+
+            The ``std::mt19937`` it feeds is ``thread_local static``, so after the first call
+            the read is discarded -- but it still runs. With no seed set, ``getSeed()``
+            constructs a ``std::random_device`` and draws from it, about 5 us of real work per
+            source row for a value that is thrown away:
+
+            - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/common.h#L48-L56
+
+            For the production use case we see up to 7x speed up, and 29x speedup in local
+            testing.
+
+            TODO(kmonte): Drop this workaround if GLT ever hoists the ``getSeed()`` call out
+            of ``CPURandomSampler::UniformSample`` and into the engine initializer, so the
+            unseeded path stops paying per-row entropy.
         """
         num_neighbors = patch_fanout_for_sampling(
             edge_types=dataset_schema.edge_types,
@@ -483,7 +452,7 @@ class BaseDistLoader(DistLoader):
             with_neg=False,
             with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
-            seed=seed,
+            seed=seed if seed is not None else random.getrandbits(32),
         )
 
     @staticmethod

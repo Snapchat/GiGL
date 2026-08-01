@@ -1,4 +1,3 @@
-import time
 import unittest
 from collections.abc import Mapping, MutableMapping
 
@@ -971,26 +970,16 @@ class WithEdgeDerivationTest(TestCase):
         self.assertTrue(holder["edge_ids_absent"])
 
 
-def _derive_seed_in_child(
-    _,
-    rank: int,
-    seed_base: int,
-    holder: MutableMapping,
-) -> None:
-    # Runs in a spawned interpreter, which gets its own string-hash seed. Lets the parent
-    # check that the derivation does not depend on per-process hash randomization.
-    holder["seed"] = BaseDistLoader.derive_sampling_seed(rank=rank, seed_base=seed_base)
+class SamplingSeedTest(TestCase):
+    """Covers the sampling seed that ``create_sampling_config`` puts on ``SamplingConfig``.
 
-
-class SamplingSeedDerivationTest(TestCase):
-    """Covers ``derive_sampling_seed`` and the ``seed`` plumbing in ``create_sampling_config``.
-
-    An unset sampling seed is a performance regression, not just a determinism choice, so
-    these guard the properties the derivation has to hold: reproducible given a base,
-    distinct per rank, and inside the range GLT's ``setSeed(unsigned int)`` accepts.
+    A seed must always be present: an unset seed sends GLT down a path that gathers fresh
+    entropy once per source row (see ``create_sampling_config``), so ``seed is None`` is a
+    performance bug, not a neutral default.
     """
 
-    def _schema(self) -> DatasetSchema:
+    @staticmethod
+    def _schema() -> DatasetSchema:
         return DatasetSchema(
             is_homogeneous_with_labeled_edge_type=False,
             edge_types=None,
@@ -999,102 +988,45 @@ class SamplingSeedDerivationTest(TestCase):
             edge_dir="out",
         )
 
-    def test_same_rank_and_seed_base_is_reproducible(self) -> None:
-        first = BaseDistLoader.derive_sampling_seed(rank=3, seed_base=1234)
-        second = BaseDistLoader.derive_sampling_seed(rank=3, seed_base=1234)
-        self.assertEqual(first, second)
-
-    def test_seed_is_reproducible_across_processes(self) -> None:
-        # crc32 rather than hash(): Python randomizes string hashing per process, so a
-        # hash()-based derivation would differ between a rank's own processes.
-        in_parent = BaseDistLoader.derive_sampling_seed(rank=3, seed_base=1234)
-        manager = mp.Manager()
-        holder: MutableMapping = manager.dict()
-        proc = mp.spawn(
-            fn=_derive_seed_in_child,
-            args=(3, 1234, holder),
-            join=False,
-        )
-        proc.join(timeout=120)
-        self.assertEqual(holder["seed"], in_parent)
-
-    def test_ranks_get_distinct_seeds(self) -> None:
-        # Ranks sharing a seed would draw identical neighbor samples.
-        seeds = [
-            BaseDistLoader.derive_sampling_seed(rank=rank, seed_base=1234)
-            for rank in range(128)
-        ]
-        self.assertEqual(len(set(seeds)), len(seeds))
-
-    def test_seed_is_in_uint32_range(self) -> None:
-        # GLT's RandomSeedManager::setSeed takes an unsigned int, so a value outside this
-        # range would be silently truncated.
-        for rank in (0, 1, 7, 1023, 2**31 - 1):
-            for seed_base in (0, 1234, 2**32 - 1, 2**63 - 1):
-                seed = BaseDistLoader.derive_sampling_seed(
-                    rank=rank, seed_base=seed_base
-                )
-                self.assertGreaterEqual(seed, 0)
-                self.assertLess(seed, 2**32)
-
-    def test_default_seed_base_is_wall_clock(self) -> None:
-        # Defaulting to wall-clock time is what preserves the run-to-run variability that
-        # unseeded sampling had, so successive runs do not repeat one sample draw.
-        before = int(time.time())
-        seed = BaseDistLoader.derive_sampling_seed(rank=0)
-        after = int(time.time())
-        seeds_for_window = {
-            BaseDistLoader.derive_sampling_seed(rank=0, seed_base=seed_base)
-            for seed_base in range(before, after + 1)
-        }
-        self.assertIn(seed, seeds_for_window)
-
-    def test_create_sampling_config_passes_explicit_seed_through(self) -> None:
-        config = BaseDistLoader.create_sampling_config(
-            num_neighbors=[2, 2], dataset_schema=self._schema(), seed=4242
-        )
-        self.assertEqual(config.seed, 4242)
-
-    def test_create_sampling_config_seed_defaults_to_none(self) -> None:
-        # The loaders are responsible for supplying a seed; the helper does not invent one.
+    def test_seed_is_always_set(self) -> None:
         config = BaseDistLoader.create_sampling_config(
             num_neighbors=[2, 2], dataset_schema=self._schema()
         )
-        self.assertIsNone(config.seed)
+        self.assertIsNotNone(config.seed)
 
+    def test_seed_is_in_uint32_range(self) -> None:
+        # GLT's RandomSeedManager::setSeed takes an unsigned int, so anything outside
+        # [0, 2**32) would be rejected or silently truncated at the pybind boundary.
+        for _ in range(64):
+            config = BaseDistLoader.create_sampling_config(
+                num_neighbors=[2, 2], dataset_schema=self._schema()
+            )
+            self.assertGreaterEqual(config.seed, 0)
+            self.assertLess(config.seed, 2**32)
 
-# NOTE on the test strategy: GiGL loaders always sample via the multiprocess
-# producer, which spawns worker subprocesses with a *fresh* interpreter
-# (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
-# loader process therefore never reaches the sampler running in that subprocess, so we
-# cannot inject a synthetic failure by mocking the sampler. Instead we reproduce a real
-# sampler failure end-to-end: a heterogeneous dataset with edge features on only a
-# subset of its message-passing edge types. When the featureless type is reached during
-# sampling, its feature lookup raises `KeyError` inside the sampling coroutine — the exact
-# swallowed-exception case this change surfaces. Without the change this hangs forever, so
-# the test uses a bounded join.
+    def test_seeds_differ_across_calls(self) -> None:
+        # Each rank builds its own loader, so distinct-per-call is what keeps distinct ranks
+        # from drawing identical neighbor samples.
+        seeds = {
+            BaseDistLoader.create_sampling_config(
+                num_neighbors=[2, 2], dataset_schema=self._schema()
+            ).seed
+            for _ in range(32)
+        }
+        self.assertGreater(len(seeds), 30)
 
+    def test_explicit_seed_is_used_verbatim(self) -> None:
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=self._schema(), seed=123456789
+        )
+        self.assertEqual(config.seed, 123456789)
 
-def _run_partial_edge_feature_coverage_raises(
-    _,
-    dataset: DistDataset,
-    error_holder,
-):
-    create_test_process_group()
-    assert isinstance(dataset.node_ids, Mapping)
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type]
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
-    )
-    try:
-        for _datum in loader:
-            pass
-    except RuntimeError as e:
-        error_holder["msg"] = str(e)
-    finally:
-        shutdown_rpc()
+    def test_explicit_seed_zero_is_honored(self) -> None:
+        # Zero is a legitimate seed and must not be treated as "unset" by a falsy check.
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=self._schema(), seed=0
+        )
+        self.assertEqual(config.seed, 0)
 
 
 class TestSamplingErrorPropagation(TestCase):
