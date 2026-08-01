@@ -381,23 +381,31 @@ class BaseDistLoader(DistLoader):
                 "Weight-proportional residual propagation for PPR is planned but not implemented."
             )
 
+    # TODO(kmonte): Drop this workaround if GLT ever hoists the getSeed() call out of
+    # CPURandomSampler::UniformSample and into the engine initializer, so the unseeded
+    # path stops paying per-row entropy. Until then a seed has to be supplied to keep
+    # sampling off that path.
     @staticmethod
     def derive_sampling_seed(rank: int, seed_base: Optional[int] = None) -> int:
         """Derives a per-rank sampling seed, distinct across ranks and across runs.
 
         Supplying *any* seed is a large performance win, not just a determinism knob.
-        GLT's ``CPURandomSampler::UniformSample`` (``csrc/cpu/random_sampler.cc:144,165``)
-        reads ``RandomSeedManager::getInstance().getSeed()`` on **every** call, and the call
-        happens once per source row of a batch.
+        GLT's ``CPURandomSampler::UniformSample`` reads
+        ``RandomSeedManager::getInstance().getSeed()`` on **every** call, and the call
+        happens once per source row of a batch:
+
+        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L144
+        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L165
 
         The ``std::mt19937`` it feeds is ``thread_local static``, so after the first call the
-        read is discarded -- but it still runs. Unseeded, ``getSeed()``
-        (``include/common.h:48-56``) constructs a ``std::random_device`` and draws from it,
-        about 5 us of real work per source row for a value that is thrown away.
+        read is discarded -- but it still runs. Unseeded, ``getSeed()`` constructs a
+        ``std::random_device`` and draws from it, about 5 us of real work per source row for
+        a value that is thrown away:
 
-        Measured on an unmodified GLT build, setting any seed took the sampler call from
-        ~1450 us to ~50 us (~29x) with byte-identical neighbor output. In a multi-node GPU
-        inference workload it took per-batch data loading from 47-184 ms to 21-25 ms.
+        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/common.h#L48-L56
+
+        For the production use case we see up to 7x speed up, and 29x speedup in local
+        testing.
 
         Args:
             rank: Global rank. Keeps ranks from drawing identical neighbor samples.
@@ -411,9 +419,6 @@ class BaseDistLoader(DistLoader):
             ``crc32`` is used rather than ``hash()`` because Python randomizes string
             hashing per process, which would make the seed differ between a rank's own
             processes and be unreproducible across runs.
-
-            The ``crc32`` range is exactly ``uint32``, matching GLT's
-            ``setSeed(unsigned int)``, so no masking is needed.
 
         Example:
             >>> BaseDistLoader.derive_sampling_seed(rank=0, seed_base=1234)
