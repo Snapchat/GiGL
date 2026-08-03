@@ -8,6 +8,8 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureQuantizationIndexTensors,
+    FeatureQuantizationMetadata,
     LoadedGraphTensors,
     is_label_edge_type,
     label_edge_type_to_message_passing_edge_type,
@@ -83,6 +85,95 @@ class GraphTypesTyest(TestCase):
     def test_from_heterogeneous_invalid(self, _, input_value):
         with self.assertRaises(ValueError):
             to_homogeneous(input_value)
+
+    def test_feature_quantization_metadata_counts_quantized_features(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=2, feature_dim=6, quantized_feature_indices=(1, 3, 4)
+        )
+
+        self.assertEqual(metadata.quantized_feature_dim, 3)
+
+    def test_feature_quantization_metadata_defaults_to_no_quantized_features(
+        self,
+    ) -> None:
+        metadata = FeatureQuantizationMetadata(bits=8, feature_dim=3)
+
+        self.assertEqual(metadata.quantized_feature_indices, ())
+        self.assertEqual(metadata.quantized_feature_dim, 0)
+        self.assertEqual(metadata.packed_feature_dim, 0)
+        self.assertEqual(metadata.raw_feature_indices, (0, 1, 2))
+        self.assertEqual(metadata.raw_feature_dim, 3)
+
+    def test_feature_quantization_metadata_packed_dim_without_padding(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=2, feature_dim=4, quantized_feature_indices=(0, 1, 2, 3)
+        )
+
+        self.assertEqual(metadata.packed_feature_dim, 1)
+
+    def test_feature_quantization_metadata_packed_dim_with_padding(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=2, feature_dim=5, quantized_feature_indices=(0, 1, 2, 3, 4)
+        )
+
+        self.assertEqual(metadata.packed_feature_dim, 2)
+
+    def test_feature_quantization_metadata_raw_feature_indices(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=4, feature_dim=6, quantized_feature_indices=(0, 2, 5)
+        )
+
+        self.assertEqual(metadata.raw_feature_indices, (1, 3, 4))
+
+    def test_feature_quantization_metadata_raw_feature_dim(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=4, feature_dim=6, quantized_feature_indices=(0, 2, 5)
+        )
+
+        self.assertEqual(metadata.raw_feature_dim, 3)
+
+    def test_feature_quantization_metadata_scatter_index_tensors(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=4, feature_dim=6, quantized_feature_indices=(0, 2, 5)
+        )
+
+        index_tensors = metadata.scatter_index_tensors(torch.device("cpu"))
+
+        self.assertIsInstance(index_tensors, FeatureQuantizationIndexTensors)
+        self.assertEqual(index_tensors.quantized.device, torch.device("cpu"))
+        self.assertEqual(index_tensors.raw.device, torch.device("cpu"))
+        self.assertEqual(index_tensors.quantized.dtype, torch.long)
+        self.assertEqual(index_tensors.raw.dtype, torch.long)
+        torch.testing.assert_close(
+            index_tensors.quantized, torch.tensor([0, 2, 5], dtype=torch.long)
+        )
+        torch.testing.assert_close(
+            index_tensors.raw, torch.tensor([1, 3, 4], dtype=torch.long)
+        )
+
+    def test_feature_quantization_metadata_rejects_invalid_bit_width(self) -> None:
+        with self.assertRaises(ValueError):
+            FeatureQuantizationMetadata(
+                bits=3, feature_dim=2, quantized_feature_indices=(0, 1)
+            )
+
+    def test_feature_quantization_metadata_rejects_negative_index(self) -> None:
+        with self.assertRaises(ValueError):
+            FeatureQuantizationMetadata(
+                bits=2, feature_dim=2, quantized_feature_indices=(-1, 1)
+            )
+
+    def test_feature_quantization_metadata_rejects_index_at_feature_dim(self) -> None:
+        with self.assertRaises(ValueError):
+            FeatureQuantizationMetadata(
+                bits=2, feature_dim=2, quantized_feature_indices=(0, 2)
+            )
+
+    def test_feature_quantization_metadata_rejects_duplicate_indices(self) -> None:
+        with self.assertRaises(ValueError):
+            FeatureQuantizationMetadata(
+                bits=2, feature_dim=3, quantized_feature_indices=(0, 1, 1)
+            )
 
     @parameterized.expand(
         [

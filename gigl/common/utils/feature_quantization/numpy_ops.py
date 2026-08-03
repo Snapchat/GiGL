@@ -1,3 +1,10 @@
+"""NumPy feature quantization helpers for preprocessing.
+
+Quantization runs in the data preprocessor, where feature data is stored as CPU
+arrays and torch is not available. Dequantization lives in torch_ops.py because
+the dataloader collate path operates on torch tensors that may already be on GPU.
+"""
+
 from collections.abc import Mapping
 
 import numpy as np

@@ -1,3 +1,10 @@
+"""Torch feature dequantization helpers for dataloader collation.
+
+Quantization lives in numpy_ops.py because preprocessing works with CPU arrays
+in an environment without torch. Dequantization runs in the dataloader collate
+path, where packed feature data is already represented as torch tensors.
+"""
+
 import torch
 
 from gigl.types.graph import FeatureQuantizationMetadata
