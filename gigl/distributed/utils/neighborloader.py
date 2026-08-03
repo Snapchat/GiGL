@@ -1,6 +1,7 @@
 """Utils for Neighbor loaders."""
 
 import ast
+import time
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -345,6 +346,7 @@ def materialize_quantized_node_features(
     """Materialize packed quantized node features into PyG node feature tensors."""
     if node_quantization_metadata is None:
         return data, metadata
+    materialize_start_time = time.perf_counter()
 
     def materialize(
         store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
@@ -387,6 +389,10 @@ def materialize_quantized_node_features(
                 f"Missing packed quantized node features in metadata key {metadata_key}."
             )
         materialize(data, packed_features, quantization_metadata)
+        materialize_time = time.perf_counter() - materialize_start_time
+        logger.debug(
+            f"Quantized node feature materialization time: {materialize_time:.3f}s"
+        )
         return data, metadata
 
     assert isinstance(node_quantization_metadata, dict), (
@@ -401,6 +407,10 @@ def materialize_quantized_node_features(
         if packed_features is None:
             continue
         materialize(data[node_type], packed_features, quantization_metadata)
+    materialize_time = time.perf_counter() - materialize_start_time
+    logger.debug(
+        f"Quantized node feature materialization time: {materialize_time:.3f}s"
+    )
     return data, metadata
 
 
