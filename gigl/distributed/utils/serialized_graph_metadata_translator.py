@@ -101,23 +101,25 @@ def _build_feature_quantization_metadata(
     feature_dim: int,
 ) -> FeatureQuantizationMetadata:
     state = quantized_metadata.WhichOneof("state")
-    expected_state = (
-        "single_bit_state" if quantized_metadata.bits == 1 else "multi_bit_state"
-    )
-    if state != expected_state:
-        raise ValueError(
-            f"Expected {expected_state} quantization state for {quantized_metadata.bits}-bit features."
-        )
 
     neg_mean = pos_mean = clip_min = clip_max = None
-    if quantized_metadata.bits == 1:
+    if state == "single_bit_state":
+        bits = 1
         neg_mean = quantized_metadata.single_bit_state.neg_mean
         pos_mean = quantized_metadata.single_bit_state.pos_mean
-    else:
+    elif state == "multi_bit_state":
+        bits = quantized_metadata.multi_bit_state.bits
+        if bits not in (2, 4, 8):
+            raise ValueError(
+                f"multi_bit_state.bits must be one of (2, 4, 8), got {bits}."
+            )
         clip_min = quantized_metadata.multi_bit_state.clip_min
         clip_max = quantized_metadata.multi_bit_state.clip_max
+    else:
+        raise ValueError("Expected quantization state to be set.")
+
     return FeatureQuantizationMetadata(
-        bits=quantized_metadata.bits,
+        bits=bits,
         feature_dim=feature_dim,
         quantized_feature_indices=tuple(quantized_metadata.quantized_feature_indices),
         clip_min=clip_min,

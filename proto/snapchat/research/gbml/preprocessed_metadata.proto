@@ -8,6 +8,8 @@ message PreprocessedMetadata{
     float clip_min = 1;
     // Upper clipping bound; dequantized value for max linear code.
     float clip_max = 2;
+    // Quantization level bit-width
+    uint32 bits = 3;
   }
 
   message SingleBitQuantizationState{
@@ -22,8 +24,6 @@ message PreprocessedMetadata{
     string packed_feature_key = 1;
     // Original feature indices stored in packed_feature_key.
     repeated uint32 quantized_feature_indices = 2;
-    // Quantization level bit-width
-    uint32 bits = 3;
     // Stats required to dequantize features for the selected bit width.
     oneof state {
       MultiBitQuantizationState multi_bit_state = 4;

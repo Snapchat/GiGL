@@ -496,7 +496,6 @@ class DataPreprocessor:
                 quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
                     packed_feature_key=metadata["packed_feature_key"],
                     quantized_feature_indices=metadata["quantized_feature_indices"],
-                    bits=bits,
                 )
                 if bits == 1:
                     single_bit_state = quantized_feature_metadata_pb.single_bit_state
@@ -504,6 +503,7 @@ class DataPreprocessor:
                     single_bit_state.pos_mean = metadata["pos_mean"]
                 else:
                     multi_bit_state = quantized_feature_metadata_pb.multi_bit_state
+                    multi_bit_state.bits = bits
                     multi_bit_state.clip_min = metadata["clip_min"]
                     multi_bit_state.clip_max = metadata["clip_max"]
                 node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
