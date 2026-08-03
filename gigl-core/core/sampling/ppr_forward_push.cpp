@@ -333,7 +333,7 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
                 continue;
             }
 
-            std::unordered_map<int32_t, double>::const_iterator pprScoreIter = pprScoresByNodeId.find(nodeId);
+            const auto pprScoreIter = pprScoresByNodeId.find(nodeId);
             double pprScore = (pprScoreIter != pprScoresByNodeId.end()) ? pprScoreIter->second : 0.0;
             double outputScore = pprScore + residual;
             residualPairs.emplace_back(nodeId, outputScore);
