@@ -32,6 +32,5 @@ def drain_typed_ppr_channel_queues(
 def extract_typed_top_k_with_residual_top_up(
     states: Sequence[PPRForwardPush],
     channel_target_counts: Sequence[int],
-    max_ppr_nodes: int,
     enable_residual_topup: bool,
 ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...

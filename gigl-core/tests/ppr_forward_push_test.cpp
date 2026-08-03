@@ -179,7 +179,6 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
                                                     /*channelTargetCounts=*/{2, 1},
-                                                    /*maxPPRNodes=*/3,
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
@@ -221,7 +220,6 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
                                                     /*channelTargetCounts=*/{1, 1},
-                                                    /*maxPPRNodes=*/2,
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
@@ -255,7 +253,6 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel},
                                                     /*channelTargetCounts=*/{2},
-                                                    /*maxPPRNodes=*/2,
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
@@ -286,7 +283,6 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
                                                     /*channelTargetCounts=*/{2, 1},
-                                                    /*maxPPRNodes=*/3,
                                                     /*enableResidualTopUp=*/false);
 
     ASSERT_NE(result.find(0), result.end());

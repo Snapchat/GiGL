@@ -397,7 +397,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         extracted_results = extract_typed_top_k_with_residual_top_up(
             ppr_states,
             typed_ppr_channel_target_counts,
-            self._max_ppr_nodes,
             self._enable_residual_topup,
         )
         node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}

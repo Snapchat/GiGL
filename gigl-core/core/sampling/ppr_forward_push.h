@@ -115,7 +115,6 @@ public:
 
     friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                               const std::vector<int32_t>& channelTargetCounts,
-                                                              int32_t maxPPRNodes,
                                                               bool enableResidualTopUp);
 
 private:
@@ -199,7 +198,8 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // Inputs:
 //   states: Completed PPRForwardPush states, one per typed channel.
 //   channelTargetCounts: Per-channel target output counts, aligned with states.
-//   maxPPRNodes: Maximum number of deduplicated nodes to return per seed.
+//                        Their sum is the maximum number of deduplicated nodes
+//                        to return per seed.
 //   enableResidualTopUp: Whether residual candidates may participate in target
 //                        filling alongside finalized PPR candidates.
 //
@@ -211,7 +211,6 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 //   valid_counts: int64 count of selected nodes per seed.
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
-                                                   int32_t maxPPRNodes,
                                                    bool enableResidualTopUp);
 
 } // namespace gigl
