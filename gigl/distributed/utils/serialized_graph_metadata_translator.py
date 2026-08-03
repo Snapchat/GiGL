@@ -109,10 +109,6 @@ def _build_feature_quantization_metadata(
         pos_mean = quantized_metadata.single_bit_state.pos_mean
     elif state == "multi_bit_state":
         bits = quantized_metadata.multi_bit_state.bits
-        if bits not in (2, 4, 8):
-            raise ValueError(
-                f"multi_bit_state.bits must be one of (2, 4, 8), got {bits}."
-            )
         clip_min = quantized_metadata.multi_bit_state.clip_min
         clip_max = quantized_metadata.multi_bit_state.clip_max
     else:
