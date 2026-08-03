@@ -1000,6 +1000,39 @@ class SamplingSeedTest(TestCase):
         )
         self.assertEqual(config.seed, 123456789)
 
+# NOTE on the test strategy: GiGL loaders always sample via the multiprocess
+# producer, which spawns worker subprocesses with a *fresh* interpreter
+# (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
+# loader process therefore never reaches the sampler running in that subprocess, so we
+# cannot inject a synthetic failure by mocking the sampler. Instead we reproduce a real
+# sampler failure end-to-end: a heterogeneous dataset with edge features on only a
+# subset of its message-passing edge types. When the featureless type is reached during
+# sampling, its feature lookup raises `KeyError` inside the sampling coroutine — the exact
+# swallowed-exception case this change surfaces. Without the change this hangs forever, so
+# the test uses a bounded join.
+
+
+def _run_partial_edge_feature_coverage_raises(
+    _,
+    dataset: DistDataset,
+    error_holder,
+):
+    create_test_process_group()
+    assert isinstance(dataset.node_ids, Mapping)
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, dataset.node_ids[_USER]),  # ty: ignore[invalid-argument-type]
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    try:
+        for _datum in loader:
+            pass
+    except RuntimeError as e:
+        error_holder["msg"] = str(e)
+    finally:
+        shutdown_rpc()
+
 
 class TestSamplingErrorPropagation(TestCase):
     def _build_partial_edge_feature_dataset(self) -> DistDataset:
