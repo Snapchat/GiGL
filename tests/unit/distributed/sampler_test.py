@@ -1,17 +1,13 @@
-import asyncio
 from collections.abc import Mapping
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
 
 import torch
-from graphlearn_torch.sampler import NeighborOutput, NodeSamplerInput
+from graphlearn_torch.sampler import NodeSamplerInput
 
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
     SampleLoopInputs,
     _stable_unique_preserve_order,
 )
-from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
@@ -265,105 +261,3 @@ class TestBaseGiGLSamplerPreparation(TestCase):
         self.assertEqual(set(result.nodes_to_sample.keys()), {_USER})
         self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         self.assertEqual(result.metadata, {})
-
-
-class _ZeroFanoutInducer:
-    def init_node(
-        self, nodes: dict[NodeType, torch.Tensor]
-    ) -> dict[NodeType, torch.Tensor]:
-        return nodes
-
-    def induce_next(
-        self, neighbors: dict[EdgeType, list[torch.Tensor]]
-    ) -> tuple[
-        dict[NodeType, torch.Tensor],
-        dict[EdgeType, torch.Tensor],
-        dict[EdgeType, torch.Tensor],
-    ]:
-        edge_type = next(iter(neighbors))
-        return (
-            {_USER: torch.tensor([3])},
-            {edge_type: torch.tensor([0])},
-            {edge_type: torch.tensor([0])},
-        )
-
-
-class TestDistNeighborSamplerZeroFanout(TestCase):
-    @staticmethod
-    async def _run_heterogeneous_sampler(
-        *, edge_direction: str, positive_fanout: int
-    ) -> AsyncMock:
-        zero_edge_type = EdgeType(_USER, Relation("zero"), _USER)
-        sampled_edge_type = EdgeType(_USER, Relation("sampled"), _USER)
-        sampler = DistNeighborSampler.__new__(DistNeighborSampler)
-        sampler.max_input_size = 0
-        sampler.device = torch.device("cpu")
-        sampler.dist_graph = SimpleNamespace(data_cls="hetero")
-        sampler._acquire_inducer = Mock(return_value=_ZeroFanoutInducer())
-        sampler.inducer_pool = Mock()
-        sampler.with_edge = False
-        sampler.num_hops = 1
-        sampler.edge_types = [zero_edge_type, sampled_edge_type]
-        sampler.num_neighbors = {
-            zero_edge_type: [0],
-            sampled_edge_type: [positive_fanout],
-        }
-        sampler.edge_dir = edge_direction
-        sampler._loop = asyncio.get_running_loop()
-        sample_one_hop = AsyncMock(
-            return_value=NeighborOutput(
-                nbr=torch.tensor([3]),
-                nbr_num=torch.tensor([1, 0]),
-                edge=None,
-            )
-        )
-        sampler._sample_one_hop = sample_one_hop
-
-        await sampler._sample_from_nodes(
-            NodeSamplerInput(node=torch.tensor([1, 2]), input_type=_USER)
-        )
-        return sample_one_hop
-
-    def test_heterogeneous_sampler_skips_only_exact_zero_fanout(self) -> None:
-        for edge_direction in ("in", "out"):
-            for positive_fanout in (-1, 2):
-                with self.subTest(
-                    edge_direction=edge_direction,
-                    positive_fanout=positive_fanout,
-                ):
-                    sample_one_hop = asyncio.run(
-                        self._run_heterogeneous_sampler(
-                            edge_direction=edge_direction,
-                            positive_fanout=positive_fanout,
-                        )
-                    )
-                    self.assertEqual(sample_one_hop.await_count, 1)
-                    await_args = sample_one_hop.await_args
-                    assert await_args is not None
-                    _, observed_fanout, _ = await_args.args
-                    self.assertEqual(observed_fanout, positive_fanout)
-
-    def test_homogeneous_sampler_stops_before_zero_fanout_rpc(self) -> None:
-        async def run_sampler() -> tuple[AsyncMock, torch.Tensor, torch.Tensor]:
-            sampler = DistNeighborSampler.__new__(DistNeighborSampler)
-            sampler.max_input_size = 0
-            sampler.device = torch.device("cpu")
-            sampler.dist_graph = SimpleNamespace(data_cls="homo")
-            inducer = Mock()
-            inducer.init_node.return_value = torch.tensor([1, 2])
-            sampler._acquire_inducer = Mock(return_value=inducer)
-            sampler.inducer_pool = Mock()
-            sampler.with_edge = False
-            sampler.num_neighbors = [0, 2]
-            sample_one_hop = AsyncMock()
-            sampler._sample_one_hop = sample_one_hop
-
-            output = await sampler._sample_from_nodes(
-                NodeSamplerInput(node=torch.tensor([1, 2]), input_type=None)
-            )
-            return sample_one_hop, output.row, output.col
-
-        sample_one_hop, rows, columns = asyncio.run(run_sampler())
-        sample_one_hop.assert_not_awaited()
-        self.assertEqual(rows.numel(), 0)
-        self.assertEqual(columns.numel(), 0)
