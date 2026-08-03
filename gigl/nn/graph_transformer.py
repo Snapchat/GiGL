@@ -648,12 +648,39 @@ class GraphTransformerEncoderLayer(nn.Module):
         if anchor_valid_mask is not None:
             anchor = anchor * anchor_valid_mask.unsqueeze(-1).to(anchor.dtype)
 
+        if (
+            self.training
+            and pairwise_relation_indices is not None
+            and pairwise_relation_indices.numel() > 0
+            and anchor_relation_indices is not None
+            and anchor_relation_indices.numel() == 0
+        ):
+            anchor = anchor + self._zero_relation_parameter_dependency(anchor)
+
         residual_anchor = anchor
         anchor = residual_anchor + self._ffn(self._ffn_norm(anchor))
         if anchor_valid_mask is not None:
             anchor = anchor * anchor_valid_mask.unsqueeze(-1).to(anchor.dtype)
 
         return anchor
+
+    def _zero_relation_parameter_dependency(self, reference: Tensor) -> Tensor:
+        """Keep relation parameters in the training graph after anchor filtering."""
+        zero_dependency = reference.new_zeros(())
+        relation_parameters = [
+            self._relation_attention_matrices,
+            self._relation_hgt_attention_matrices,
+            self._relation_hgt_attention_priors,
+            self._relation_message_matrices,
+            self._relation_message_attention_matrices,
+            self._relation_message_attention_priors,
+        ]
+        for parameter in relation_parameters:
+            if parameter is not None:
+                zero_dependency = zero_dependency + (
+                    parameter.reshape(-1)[0].to(dtype=reference.dtype) * 0.0
+                )
+        return zero_dependency
 
     def _run_attention(
         self,
@@ -1974,9 +2001,7 @@ class GraphTransformerEncoder(nn.Module):
 
         encoder_layers = self._encoder_layers
         use_anchor_only_final_layer = (
-            self._readout_mode == "anchor_only"
-            and not self.training
-            and len(encoder_layers) > 0
+            self._readout_mode == "anchor_only" and len(encoder_layers) > 0
         )
         num_full_sequence_layers = len(encoder_layers) - int(
             use_anchor_only_final_layer

@@ -1,5 +1,6 @@
 """Tests for GraphTransformerEncoder."""
 
+import copy
 from typing import Literal, cast
 
 import torch
@@ -600,6 +601,187 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                     torch.allclose(actual, expected, atol=1e-6, rtol=1e-5),
                     f"relation_attention_mode={relation_attention_mode}",
                 )
+
+    def test_anchor_only_training_matches_full_sequence_gradients(self) -> None:
+        """Anchor specialization preserves training outputs and gradients."""
+        valid_mask = torch.tensor(
+            [[True, True, True, False], [True, True, False, False]]
+        )
+        relation_indices = _pairwise_relation_indices(
+            [
+                (0, 0, 1, 0),
+                (0, 0, 2, 0),
+                (0, 1, 2, 0),
+                (1, 0, 1, 0),
+                (1, 1, 0, 0),
+            ]
+        )
+        relation_modes = [
+            ("none", "none"),
+            ("none", "edge_type_linear"),
+            ("none", "edge_type_attention"),
+            ("edge_type_bilinear", "none"),
+            ("edge_type_hgt", "edge_type_attention"),
+        ]
+
+        for num_layers in [1, 2]:
+            for relation_attention_mode, relation_message_mode in relation_modes:
+                with self.subTest(
+                    num_layers=num_layers,
+                    relation_attention_mode=relation_attention_mode,
+                    relation_message_mode=relation_message_mode,
+                ):
+                    torch.manual_seed(0)
+                    encoder = self._create_encoder(
+                        num_layers=num_layers,
+                        readout_mode="anchor_only",
+                        relation_attention_mode=relation_attention_mode,
+                        relation_message_mode=relation_message_mode,
+                    )
+                    with torch.no_grad():
+                        for encoder_layer in encoder._encoder_layers:
+                            relation_parameters = [
+                                encoder_layer._relation_attention_matrices,
+                                encoder_layer._relation_hgt_attention_matrices,
+                                encoder_layer._relation_hgt_attention_priors,
+                                encoder_layer._relation_message_matrices,
+                            ]
+                            for relation_parameter in relation_parameters:
+                                if relation_parameter is not None:
+                                    assert isinstance(relation_parameter, Tensor)
+                                    relation_parameter.normal_()
+
+                    full_encoder = copy.deepcopy(encoder).train()
+                    optimized_encoder = copy.deepcopy(encoder).train()
+                    torch.manual_seed(1)
+                    full_sequences = torch.randn(2, 4, 8, requires_grad=True)
+                    optimized_sequences = (
+                        full_sequences.detach().clone().requires_grad_()
+                    )
+                    full_attn_bias = (0.1 * torch.randn(2, 2, 4, 4)).requires_grad_()
+                    optimized_attn_bias = (
+                        full_attn_bias.detach().clone().requires_grad_()
+                    )
+
+                    expected = _full_sequence_anchor_reference(
+                        encoder=full_encoder,
+                        sequences=full_sequences,
+                        valid_mask=valid_mask,
+                        attn_bias=full_attn_bias,
+                        pairwise_relation_indices=relation_indices,
+                    )
+                    actual = optimized_encoder._encode_and_readout(
+                        sequences=optimized_sequences,
+                        valid_mask=valid_mask,
+                        attn_bias=optimized_attn_bias,
+                        pairwise_relation_indices=relation_indices,
+                    )
+                    upstream_gradient = torch.randn_like(expected)
+                    expected.backward(upstream_gradient)
+                    actual.backward(upstream_gradient)
+
+                    torch.testing.assert_close(actual, expected)
+                    torch.testing.assert_close(
+                        optimized_sequences.grad,
+                        full_sequences.grad,
+                    )
+                    torch.testing.assert_close(
+                        optimized_attn_bias.grad,
+                        full_attn_bias.grad,
+                    )
+                    assert optimized_sequences.grad is not None
+                    self.assertGreater(
+                        optimized_sequences.grad[:, 1:, :].abs().sum().item(),
+                        0.0,
+                    )
+
+                    full_parameters = dict(full_encoder.named_parameters())
+                    optimized_parameters = dict(optimized_encoder.named_parameters())
+                    self.assertEqual(
+                        full_parameters.keys(), optimized_parameters.keys()
+                    )
+                    for name, full_parameter in full_parameters.items():
+                        optimized_parameter = optimized_parameters[name]
+                        self.assertEqual(
+                            optimized_parameter.grad is None,
+                            full_parameter.grad is None,
+                            name,
+                        )
+                        if full_parameter.grad is not None:
+                            torch.testing.assert_close(
+                                optimized_parameter.grad,
+                                full_parameter.grad,
+                                msg=lambda message, name=name: f"{name}: {message}",
+                            )
+
+    def test_anchor_only_training_preserves_zero_relation_gradients(self) -> None:
+        """Filtered non-anchor relations remain visible to DDP and optimizers."""
+        valid_mask = torch.tensor(
+            [[True, True, True, False], [True, True, False, False]]
+        )
+        relation_indices = _pairwise_relation_indices(
+            [
+                (0, 1, 2, 0),
+                (0, 2, 1, 0),
+                (1, 1, 0, 0),
+            ]
+        )
+        relation_modes = [
+            ("none", "edge_type_linear"),
+            ("none", "edge_type_attention"),
+            ("edge_type_bilinear", "none"),
+            ("edge_type_hgt", "edge_type_attention"),
+        ]
+
+        for relation_attention_mode, relation_message_mode in relation_modes:
+            with self.subTest(
+                relation_attention_mode=relation_attention_mode,
+                relation_message_mode=relation_message_mode,
+            ):
+                torch.manual_seed(0)
+                encoder = self._create_encoder(
+                    num_layers=1,
+                    readout_mode="anchor_only",
+                    relation_attention_mode=relation_attention_mode,
+                    relation_message_mode=relation_message_mode,
+                )
+                full_encoder = copy.deepcopy(encoder).train()
+                optimized_encoder = copy.deepcopy(encoder).train()
+                torch.manual_seed(1)
+                full_sequences = torch.randn(2, 4, 8, requires_grad=True)
+                optimized_sequences = full_sequences.detach().clone().requires_grad_()
+
+                expected = _full_sequence_anchor_reference(
+                    encoder=full_encoder,
+                    sequences=full_sequences,
+                    valid_mask=valid_mask,
+                    pairwise_relation_indices=relation_indices,
+                )
+                actual = optimized_encoder._encode_and_readout(
+                    sequences=optimized_sequences,
+                    valid_mask=valid_mask,
+                    pairwise_relation_indices=relation_indices,
+                )
+                upstream_gradient = torch.randn_like(expected)
+                expected.backward(upstream_gradient)
+                actual.backward(upstream_gradient)
+
+                torch.testing.assert_close(actual, expected)
+                full_parameters = dict(full_encoder.named_parameters())
+                optimized_parameters = dict(optimized_encoder.named_parameters())
+                for name, full_parameter in full_parameters.items():
+                    optimized_parameter = optimized_parameters[name]
+                    self.assertEqual(
+                        optimized_parameter.grad is None,
+                        full_parameter.grad is None,
+                        name,
+                    )
+                    if full_parameter.grad is not None:
+                        torch.testing.assert_close(
+                            optimized_parameter.grad,
+                            full_parameter.grad,
+                            msg=lambda message, name=name: f"{name}: {message}",
+                        )
 
     def test_additive_mode_matches_base_encoder_when_node_pe_projection_is_zero(
         self,
