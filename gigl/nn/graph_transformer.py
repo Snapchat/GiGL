@@ -533,6 +533,133 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         return x
 
+    def forward_anchor_only(
+        self,
+        x: Tensor,
+        attn_bias: Optional[Tensor] = None,
+        valid_mask: Optional[Tensor] = None,
+        pairwise_relation_indices: Optional[Tensor] = None,
+    ) -> Tensor:
+        """Compute the final layer output for the anchor token only.
+
+        Keys and values still cover the complete sequence because every token
+        can contribute to the anchor. Query-side attention, relation messages,
+        output projection, and feed-forward work are restricted to position
+        zero because later token outputs cannot affect the anchor.
+
+        Args:
+            x: Input tensor of shape ``(batch, seq, model_dim)``.
+            attn_bias: Optional attention bias broadcastable to
+                ``(batch, num_heads, seq, seq)``.
+            valid_mask: Optional boolean tensor of shape ``(batch, seq)``.
+            pairwise_relation_indices: Optional sparse relation coordinates
+                shaped ``(num_relation_edges, 4)``.
+
+        Returns:
+            Anchor output of shape ``(batch, 1, model_dim)``.
+
+        Raises:
+            ValueError: If relation-aware attention is enabled. Its square
+                query/key bias construction requires the full layer path.
+        """
+        if self._relation_attention_mode != "none":
+            raise ValueError(
+                "Anchor-only final-layer execution does not support "
+                "relation-aware attention."
+            )
+
+        batch_size, seq_len, model_dim = x.shape
+        anchor_valid_mask = valid_mask[:, :1] if valid_mask is not None else None
+        residual_anchor = x[:, :1, :]
+        x_norm = self._attention_norm(x)
+
+        query = self._query_projection(x_norm[:, :1, :])
+        key = self._key_projection(x_norm)
+        value = self._value_projection(x_norm)
+
+        query = query.view(batch_size, 1, self._num_heads, self._head_dim).transpose(
+            1, 2
+        )
+        key = key.view(batch_size, seq_len, self._num_heads, self._head_dim).transpose(
+            1, 2
+        )
+        value = value.view(
+            batch_size, seq_len, self._num_heads, self._head_dim
+        ).transpose(1, 2)
+
+        anchor_attn_bias = attn_bias
+        if anchor_attn_bias is not None and anchor_attn_bias.size(-2) == seq_len:
+            anchor_attn_bias = anchor_attn_bias[..., :1, :]
+        attention_output = self._run_attention(
+            query=query,
+            key=key,
+            value=value,
+            attn_bias=anchor_attn_bias,
+            pairwise_relation_indices=pairwise_relation_indices,
+        )
+        attention_output = attention_output.transpose(1, 2).reshape(
+            batch_size, 1, model_dim
+        )
+        attention_output = self._dropout(self._output_projection(attention_output))
+        anchor = residual_anchor + attention_output
+
+        anchor_relation_indices = pairwise_relation_indices
+        if self._relation_message_mode != "none":
+            if pairwise_relation_indices is None:
+                raise ValueError(
+                    "pairwise_relation_indices is required when "
+                    "relation_message_mode is relation-aware."
+                )
+            if (
+                pairwise_relation_indices.dim() != 2
+                or pairwise_relation_indices.size(-1) != 4
+            ):
+                raise ValueError(
+                    "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+                )
+            if pairwise_relation_indices.numel() > 0:
+                relation_indices = pairwise_relation_indices[:, 3]
+                if (
+                    relation_indices.min().item() < 0
+                    or relation_indices.max().item() >= self._num_relations
+                ):
+                    raise ValueError(
+                        "pairwise_relation_indices contains relation ids outside "
+                        f"[0, {self._num_relations})."
+                    )
+            anchor_relation_indices = pairwise_relation_indices[
+                pairwise_relation_indices[:, 1] == 0
+            ]
+        if self._relation_message_mode == "edge_type_attention":
+            anchor = anchor + self._dropout(
+                self._compute_relation_attention_messages(
+                    x_norm=x_norm,
+                    query=query,
+                    key=key,
+                    pairwise_relation_indices=anchor_relation_indices,
+                    batch_size=batch_size,
+                    seq_len=1,
+                )
+            )
+        elif self._relation_message_mode != "none":
+            anchor = anchor + self._dropout(
+                self._compute_relation_messages(
+                    x_norm=x_norm,
+                    pairwise_relation_indices=anchor_relation_indices,
+                    batch_size=batch_size,
+                    seq_len=1,
+                )
+            )
+        if anchor_valid_mask is not None:
+            anchor = anchor * anchor_valid_mask.unsqueeze(-1).to(anchor.dtype)
+
+        residual_anchor = anchor
+        anchor = residual_anchor + self._ffn(self._ffn_norm(anchor))
+        if anchor_valid_mask is not None:
+            anchor = anchor * anchor_valid_mask.unsqueeze(-1).to(anchor.dtype)
+
+        return anchor
+
     def _run_attention(
         self,
         query: Tensor,
@@ -1849,13 +1976,45 @@ class GraphTransformerEncoder(nn.Module):
         """
         x = sequences * valid_mask.unsqueeze(-1).to(sequences.dtype)
 
-        for encoder_layer in self._encoder_layers:
+        encoder_layers = self._encoder_layers
+        use_anchor_only_final_layer = (
+            self._readout_mode == "anchor_only"
+            and not self.training
+            and len(encoder_layers) > 0
+            and encoder_layers[-1]._relation_attention_mode == "none"
+        )
+        num_full_sequence_layers = len(encoder_layers) - int(
+            use_anchor_only_final_layer
+        )
+        for layer_index in range(num_full_sequence_layers):
+            encoder_layer = encoder_layers[layer_index]
+            if not isinstance(encoder_layer, GraphTransformerEncoderLayer):
+                raise TypeError(
+                    "Graph transformer encoder contains an unexpected layer type."
+                )
             x = encoder_layer(
                 x,
                 attn_bias=attn_bias,
                 pairwise_relation_indices=pairwise_relation_indices,
                 valid_mask=valid_mask,
             )
+
+        if use_anchor_only_final_layer:
+            final_encoder_layer = encoder_layers[-1]
+            if not isinstance(final_encoder_layer, GraphTransformerEncoderLayer):
+                raise TypeError(
+                    "Graph transformer encoder contains an unexpected layer type."
+                )
+            x = final_encoder_layer.forward_anchor_only(
+                x,
+                attn_bias=attn_bias,
+                pairwise_relation_indices=pairwise_relation_indices,
+                valid_mask=valid_mask,
+            )
+            anchor_valid_mask = valid_mask[:, :1]
+            x = self._final_norm(x)
+            x = x * anchor_valid_mask.unsqueeze(-1).to(x.dtype)
+            return x.squeeze(1)
 
         x = self._final_norm(x)
         x = x * valid_mask.unsqueeze(-1).to(x.dtype)
