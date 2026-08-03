@@ -389,24 +389,20 @@ def materialize_quantized_node_features(
                 f"Missing packed quantized node features in metadata key {metadata_key}."
             )
         materialize(data, packed_features, quantization_metadata)
-        materialize_time = time.perf_counter() - materialize_start_time
-        logger.debug(
-            f"Quantized node feature materialization time: {materialize_time:.3f}s"
+    else:
+        assert isinstance(node_quantization_metadata, dict), (
+            "Expected per-node-type quantization metadata for heterogeneous data."
         )
-        return data, metadata
+        node_quantization_metadata = cast(
+            dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
+        )
+        for node_type, quantization_metadata in node_quantization_metadata.items():
+            metadata_key = f"{NODE_PACKED_FEATURES_METADATA_KEY}.{node_type}"
+            packed_features = metadata.pop(metadata_key, None)
+            if packed_features is None:
+                continue
+            materialize(data[node_type], packed_features, quantization_metadata)
 
-    assert isinstance(node_quantization_metadata, dict), (
-        "Expected per-node-type quantization metadata for heterogeneous data."
-    )
-    node_quantization_metadata = cast(
-        dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
-    )
-    for node_type, quantization_metadata in node_quantization_metadata.items():
-        metadata_key = f"{NODE_PACKED_FEATURES_METADATA_KEY}.{node_type}"
-        packed_features = metadata.pop(metadata_key, None)
-        if packed_features is None:
-            continue
-        materialize(data[node_type], packed_features, quantization_metadata)
     materialize_time = time.perf_counter() - materialize_start_time
     logger.debug(
         f"Quantized node feature materialization time: {materialize_time:.3f}s"
