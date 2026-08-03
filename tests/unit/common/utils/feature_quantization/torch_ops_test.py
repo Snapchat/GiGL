@@ -16,11 +16,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             neg_mean=-1.5,
             pos_mean=2.5,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[170]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(
             actual,
             torch.tensor([[2.5, -1.5, 2.5, -1.5, 2.5, -1.5, 2.5, -1.5]]),
@@ -36,11 +34,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             neg_mean=-1.5,
             pos_mean=2.5,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[168]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[2.5, -1.5, 2.5, -1.5, 2.5]]))
 
     def test_dequantize_torch_tensor_two_bit_unpacks_ascending_codes(self) -> None:
@@ -53,11 +49,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=3.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[27]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[0.0, 1.0, 2.0, 3.0]]))
 
     def test_dequantize_torch_tensor_two_bit_unpacks_descending_codes(self) -> None:
@@ -70,11 +64,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=3.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[228]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[3.0, 2.0, 1.0, 0.0]]))
 
     def test_dequantize_torch_tensor_two_bit_trims_padded_codes(self) -> None:
@@ -87,11 +79,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=3.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[27, 64]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[0.0, 1.0, 2.0, 3.0, 1.0]]))
 
     def test_dequantize_torch_tensor_four_bit_unpacks_ascending_codes(self) -> None:
@@ -104,11 +94,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=15.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[15]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[0.0, 15.0]]))
 
     def test_dequantize_torch_tensor_four_bit_unpacks_descending_codes(self) -> None:
@@ -121,11 +109,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=15.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[240]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[15.0, 0.0]]))
 
     def test_dequantize_torch_tensor_four_bit_trims_padded_codes(self) -> None:
@@ -138,11 +124,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=15.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[15, 128]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[0.0, 15.0, 8.0]]))
 
     def test_dequantize_torch_tensor_eight_bit_reads_one_code_per_column(self) -> None:
@@ -154,11 +138,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=255.0,
         )
-
         actual = dequantize_torch_tensor(
             torch.tensor([[0, 128, 255]], dtype=torch.uint8), metadata=metadata
         )
-
         torch.testing.assert_close(actual, torch.tensor([[0.0, 128.0, 255.0]]))
 
     def test_dequantize_torch_tensor_rejects_wrong_packed_feature_dim(self) -> None:
@@ -171,7 +153,6 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=3.0,
         )
-
         with self.assertRaises(ValueError):
             dequantize_torch_tensor(
                 torch.tensor([[27]], dtype=torch.uint8), metadata=metadata
@@ -184,7 +165,6 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             quantized_feature_indices=(0, 1),
             pos_mean=1.0,
         )
-
         with self.assertRaises(ValueError):
             dequantize_torch_tensor(
                 torch.tensor([[128]], dtype=torch.uint8), metadata=metadata
@@ -197,7 +177,6 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             quantized_feature_indices=(0, 1),
             neg_mean=-1.0,
         )
-
         with self.assertRaises(ValueError):
             dequantize_torch_tensor(
                 torch.tensor([[128]], dtype=torch.uint8), metadata=metadata
@@ -210,7 +189,6 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             quantized_feature_indices=(0, 1),
             clip_max=1.0,
         )
-
         with self.assertRaises(ValueError):
             dequantize_torch_tensor(
                 torch.tensor([[15]], dtype=torch.uint8), metadata=metadata
@@ -223,7 +201,6 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             quantized_feature_indices=(0, 1),
             clip_min=0.0,
         )
-
         with self.assertRaises(ValueError):
             dequantize_torch_tensor(
                 torch.tensor([[15]], dtype=torch.uint8), metadata=metadata

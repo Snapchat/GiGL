@@ -90,7 +90,6 @@ class GraphTypesTyest(TestCase):
         metadata = FeatureQuantizationMetadata(
             bits=2, feature_dim=6, quantized_feature_indices=(1, 3, 4)
         )
-
         self.assertEqual(metadata.quantized_feature_dim, 3)
 
     def test_feature_quantization_metadata_defaults_to_no_quantized_features(
@@ -108,35 +107,30 @@ class GraphTypesTyest(TestCase):
         metadata = FeatureQuantizationMetadata(
             bits=2, feature_dim=4, quantized_feature_indices=(0, 1, 2, 3)
         )
-
         self.assertEqual(metadata.packed_feature_dim, 1)
 
     def test_feature_quantization_metadata_packed_dim_with_padding(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=2, feature_dim=5, quantized_feature_indices=(0, 1, 2, 3, 4)
         )
-
         self.assertEqual(metadata.packed_feature_dim, 2)
 
     def test_feature_quantization_metadata_raw_feature_indices(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=4, feature_dim=6, quantized_feature_indices=(0, 2, 5)
         )
-
         self.assertEqual(metadata.raw_feature_indices, (1, 3, 4))
 
     def test_feature_quantization_metadata_raw_feature_dim(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=4, feature_dim=6, quantized_feature_indices=(0, 2, 5)
         )
-
         self.assertEqual(metadata.raw_feature_dim, 3)
 
     def test_feature_quantization_metadata_scatter_index_tensors(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=4, feature_dim=6, quantized_feature_indices=(0, 2, 5)
         )
-
         index_tensors = metadata.scatter_index_tensors(torch.device("cpu"))
 
         self.assertIsInstance(index_tensors, FeatureQuantizationIndexTensors)
