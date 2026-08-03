@@ -6,7 +6,11 @@ from typing import Any, MutableMapping, Optional
 
 from google.cloud import logging as google_cloud_logging
 
-from gigl.env.constants import GIGL_DEBUG, is_env_flag_enabled
+from gigl.env.constants import (
+    GIGL_DEBUG,
+    GIGL_DISABLE_CLOUD_LOGGING_ENV_KEY,
+    is_env_flag_enabled,
+)
 
 _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 
@@ -14,6 +18,11 @@ _BASE_LOG_FILE_PATH = "/tmp/research/gbml/logs"
 class Logger(logging.LoggerAdapter):
     """
     GiGL's custom logger class used for local and cloud logging (VertexAI, Dataflow, etc.)
+
+    On App Engine and Kubernetes, records are routed to Google Cloud Logging, which
+    renders them as GCP JSON. Set ``GIGL_DISABLE_CLOUD_LOGGING`` to fall back to the
+    console format.
+
     Args:
         logger (Optional[logging.Logger]): A custom logger to use. If not provided, the default logger will be created.
         name (Optional[str]): The name to be used for the logger. By default uses "root".
@@ -56,8 +65,12 @@ class Logger(logging.LoggerAdapter):
     ) -> None:
         handler: logging.Handler
         if not logger.handlers:
-            if os.getenv("GAE_APPLICATION") or os.environ.get(
-                "KUBERNETES_SERVICE_HOST"
+            is_cloud_environment = bool(
+                os.getenv("GAE_APPLICATION")
+                or os.environ.get("KUBERNETES_SERVICE_HOST")
+            )
+            if is_cloud_environment and not is_env_flag_enabled(
+                GIGL_DISABLE_CLOUD_LOGGING_ENV_KEY
             ):
                 # Google Cloud Logging
                 client = google_cloud_logging.Client()
