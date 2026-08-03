@@ -22,10 +22,11 @@ from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.utils.dist_typed_sampler import (
-    MaxPPRNodes,
+    TypedPPRChannelKey,
     TypedPPRChannelTraversalMaps,
     build_edge_type_channel_group_edge_type_ids,
-    parse_typed_channel_target_groups,
+    compute_typed_channel_target_counts,
+    parse_typed_channel_ratio_groups,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
@@ -113,22 +114,62 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           ``[best_calibrated_score, calibrated_channel_scores..., channel_presence_bits...]``.
           Typed-PPR scores are calibrated within each channel/seed pool and
           globally ranked by the best calibrated score. Channel columns follow
-          the insertion order of the typed ``max_ppr_nodes`` mapping. Column 0
-          is the scalar best score for consumers that need a single PPR weight.
+          the insertion order of ``typed_channel_ratios``. Column 0 is the
+          scalar best score for consumers that need a single PPR weight.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
                keep samples closer to seeds. Typical values: 0.15-0.25.
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
-        max_ppr_nodes: PPR output sequence specification. Pass an integer to
-            run regular untyped PPR and return up to that many nodes per seed.
-            Pass a mapping from typed channel key to integer target count to
-            run typed PPR; the sum of target counts is the per-seed output cap.
+        max_ppr_nodes: Maximum number of nodes to return per seed. If finalized
+            PPR scores produce fewer than this cap and residual top-up is
+            enabled, discovered residual candidates fill the remaining slots
+            with score ``ppr_score + residual``. Returned nodes are sorted by
+            emitted score, but residual candidates do not displace finalized
+            PPR nodes when finalized scores already fill the cap.
         enable_residual_topup: Whether to include residual candidates discovered
-            during Forward Push when fewer than the requested ``max_ppr_nodes``
-            output slots have finalized PPR scores.
+            during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
+            scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
+        typed_channel_ratios: Optional target proportions for typed PPR
+            traversal channels. If not provided, PPR uses the regular untyped
+            path: each state may traverse all eligible edge types for the
+            current node type and emits scalar PPR scores without channel
+            attribution.
+            Keys may be either a single canonical edge type
+            ``(src_type, relation, dst_type)`` or a tuple of canonical edge
+            types. Each key defines one traversal channel whose PPR state may
+            traverse only those exact edge types.
+            Values are positive ratios that must sum to ``1.0``. The sampler
+            converts ratios to per-channel target counts from ``max_ppr_nodes``.
+            Finalized PPR candidates and residual top-up candidates both obey
+            these target counts. If the same node appears in multiple channels,
+            it is attributed to the channel where it has the highest calibrated
+            score. If sparse channels or duplicate nodes leave unused target
+            slots, the remaining slots are redistributed globally by score so
+            the returned sequence can still fill up to ``max_ppr_nodes``.
+            Example::
+
+                typed_channel_ratios = {
+                    ("user", "views", "item"): 0.6,
+                    (
+                        ("user", "likes", "item"),
+                        ("user", "shares", "item"),
+                    ): 0.4,
+                }
+
+            With ``max_ppr_nodes=200``, this example targets 120 nodes
+            attributed to the views channel and 80 nodes attributed to the
+            grouped likes/shares channel. The views channel traverses only
+            ``("user", "views", "item")`` edges. The grouped likes/shares
+            channel traverses either likes or shares edges in one PPR state.
+            Both finalized PPR rows and residual top-up rows fill those same
+            targets. The targets are best-effort rather than strict per-seed
+            guarantees: if a channel cannot provide enough unique candidates,
+            unused slots are filled by the remaining highest-scoring candidates
+            from any channel.
+
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
             by NodeType. The colocated and graph-store loader paths retrieve
@@ -141,15 +182,21 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         *args,
         alpha: float = 0.5,
         eps: float = 1e-4,
-        max_ppr_nodes: MaxPPRNodes = 50,
+        max_ppr_nodes: int = 50,
         enable_residual_topup: bool = True,
         num_neighbors_per_hop: int = 100_000,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
+        typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._alpha = alpha
+        if isinstance(max_ppr_nodes, bool) or max_ppr_nodes < 0:
+            raise ValueError(
+                f"max_ppr_nodes must be non-negative, got {max_ppr_nodes}."
+            )
+        self._max_ppr_nodes = max_ppr_nodes
         self._enable_residual_topup = enable_residual_topup
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
@@ -186,33 +233,21 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        typed_channel_groups: Optional[list[tuple[EdgeType, ...]]] = None
-        self._typed_ppr_channel_target_counts: Optional[list[int]] = None
-        if isinstance(max_ppr_nodes, bool):
-            raise ValueError(
-                "max_ppr_nodes must be an integer or typed channel mapping."
+        typed_channel_groups, typed_channel_ratio_list = (
+            parse_typed_channel_ratio_groups(typed_channel_ratios)
+        )
+        self._typed_ppr_channel_target_counts = (
+            compute_typed_channel_target_counts(
+                typed_channel_ratio_list,
+                max_ppr_nodes,
             )
-        if isinstance(max_ppr_nodes, int):
-            if max_ppr_nodes < 0:
-                raise ValueError(
-                    f"max_ppr_nodes must be non-negative, got {max_ppr_nodes}."
-                )
-            self._max_ppr_nodes = max_ppr_nodes
-        elif isinstance(max_ppr_nodes, dict):
-            typed_channel_groups, typed_channel_target_counts = (
-                parse_typed_channel_target_groups(max_ppr_nodes)
-            )
-            self._typed_ppr_channel_target_counts = typed_channel_target_counts
-            self._max_ppr_nodes = sum(typed_channel_target_counts)
-        else:
-            raise ValueError(
-                "max_ppr_nodes must be an integer or typed channel mapping, "
-                f"got {max_ppr_nodes!r}."
-            )
+            if typed_channel_ratio_list is not None
+            else None
+        )
         if self._typed_ppr_channel_target_counts is not None:
             if self._is_homogeneous:
                 raise ValueError(
-                    "Typed PPR channel targets are only supported for heterogeneous PPR sampling."
+                    "Typed PPR channel ratios are only supported for heterogeneous PPR sampling."
                 )
 
         # Convert the public homogeneous/heterogeneous degree-tensor shape to

@@ -1,31 +1,32 @@
 """Construction-time typed-PPR option parsing for distributed samplers.
 
-The helpers in this module validate typed-channel edge-type keys and convert
+The helpers in this module validate typed-channel edge-type keys, convert
 public edge-type keys into the compact integer traversal maps consumed by the
-C++ forward-push kernel. They run once during ``DistPPRNeighborSampler``
-initialization, not in the per-batch PPR sampling hot loop.
+C++ forward-push kernel, and derive integer channel target counts from public
+ratios. They run once during ``DistPPRNeighborSampler`` initialization, not in
+the per-batch PPR sampling hot loop.
 """
 
+import math
 from collections.abc import Sequence
-from typing import Union, cast
+from typing import Optional, Union, cast
 
 from graphlearn_torch.typing import EdgeType, NodeType
 
-# Public typed PPR channel keys can be a single edge type or a grouped channel
-# containing multiple edge types.
+# Public typed_channel_ratios keys can be a single edge type or a grouped
+# channel containing multiple edge types.
 TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
-MaxPPRNodes = Union[int, dict[TypedPPRChannelKey, int]]
 
 """TypedPPRChannelKey describes one public typed-PPR traversal channel key.
 
 A single canonical edge type creates one channel restricted to that edge type.
 A tuple of canonical edge types creates one channel whose forward-push state may
 traverse any edge type in the group. When typed PPR emits multi-column
-``edge_attr`` tensors, channel columns follow the insertion order of the typed
-channel mapping.
+``edge_attr`` tensors, channel columns follow the insertion order of the
+``typed_channel_ratios`` mapping.
 """
 # Parsed typed-channel edge-type allowlists, ordered to match the insertion
-# order of the typed-channel mapping.
+# order of typed_channel_ratios.
 TypedPPRChannelEdgeTypeGroups = list[tuple[EdgeType, ...]]
 # One channel's traversal map. The outer list is indexed by integer node-type
 # ID; each inner list contains the integer edge-type IDs that channel may
@@ -35,39 +36,38 @@ TypedPPRChannelTraversalMap = list[list[int]]
 TypedPPRChannelTraversalMaps = list[TypedPPRChannelTraversalMap]
 
 
-def parse_typed_channel_target_groups(
-    typed_channel_targets: dict[TypedPPRChannelKey, int],
-) -> tuple[TypedPPRChannelEdgeTypeGroups, list[int]]:
-    """Parse typed-PPR channel keys and split keys from target counts.
+def parse_typed_channel_ratio_groups(
+    typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]],
+) -> tuple[Optional[TypedPPRChannelEdgeTypeGroups], Optional[list[float]]]:
+    """Parse typed-PPR channel keys and split keys from ratios.
 
     Public options allow each channel key to be either one canonical edge type
     or a non-empty tuple of canonical edge types. Internally, traversal setup
     needs only the edge-type groups while merge selection needs the aligned
-    integer target counts, so this helper returns those two parallel lists.
+    ratio values, so this helper returns those two parallel lists.
 
     This is construction-time option parsing and is not part of the per-batch
     PPR sampling hot loop.
 
     Args:
-        typed_channel_targets: User-provided channel mapping from edge-type
-            allowlist to target output count.
+        typed_channel_ratios: User-provided channel mapping from edge-type
+            allowlist to target output ratio.
 
     Returns:
-        ``(typed_channel_groups, typed_channel_target_counts)``, both ordered
-        by the input mapping insertion order.
+        ``(None, None)`` when typed PPR is disabled. Otherwise returns
+        ``(typed_channel_groups, typed_channel_ratio_list)``, both ordered by
+        the input mapping insertion order.
 
     Raises:
         ValueError: If a channel key is not a canonical edge type or non-empty
-            tuple of canonical edge types, or if target counts are not positive
-            integers.
+            tuple of canonical edge types, or if ratios are not positive and
+            summing to 1.0.
     """
-    if not typed_channel_targets:
-        raise ValueError(
-            "Typed PPR max_ppr_nodes mapping must contain at least one channel."
-        )
+    if not typed_channel_ratios:
+        return None, None
 
     typed_channel_groups: TypedPPRChannelEdgeTypeGroups = []
-    typed_channel_target_counts: list[int] = []
+    typed_channel_ratio_list: list[float] = []
 
     def is_canonical_edge_type(value: object) -> bool:
         """Return whether ``value`` has PyG's canonical edge-type shape."""
@@ -77,7 +77,7 @@ def parse_typed_channel_target_groups(
             and all(isinstance(part, str) for part in value)
         )
 
-    for edge_type_key, target_count in typed_channel_targets.items():
+    for edge_type_key, ratio in typed_channel_ratios.items():
         if is_canonical_edge_type(edge_type_key):
             edge_types = (cast(EdgeType, edge_type_key),)
         elif (
@@ -88,23 +88,69 @@ def parse_typed_channel_target_groups(
             edge_types = cast(tuple[EdgeType, ...], edge_type_key)
         else:
             raise ValueError(
-                "Typed PPR channel keys must be a canonical edge type "
+                "typed_channel_ratios keys must be a canonical edge type "
                 "(src_type, relation, dst_type) or a non-empty tuple of "
                 f"canonical edge types, got {edge_type_key!r}."
             )
         if (
-            not isinstance(target_count, int)
-            or isinstance(target_count, bool)
-            or target_count <= 0
+            not isinstance(ratio, (int, float))
+            or isinstance(ratio, bool)
+            or ratio <= 0.0
+            or ratio > 1.0
         ):
             raise ValueError(
-                "Typed PPR channel target counts must be positive integers, "
-                f"got {target_count!r} for channel {edge_type_key!r}."
+                "typed_channel_ratios values must be positive ratios in (0, 1], "
+                f"got {ratio!r} for channel {edge_type_key!r}."
             )
         typed_channel_groups.append(edge_types)
-        typed_channel_target_counts.append(target_count)
+        typed_channel_ratio_list.append(float(ratio))
 
-    return typed_channel_groups, typed_channel_target_counts
+    ratio_sum = sum(typed_channel_ratio_list)
+    if not math.isclose(ratio_sum, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+        raise ValueError(
+            "typed_channel_ratios values must sum to 1.0, "
+            f"got {ratio_sum} from ratios {typed_channel_ratio_list}."
+        )
+
+    return typed_channel_groups, typed_channel_ratio_list
+
+
+def compute_typed_channel_target_counts(
+    typed_channel_ratios: list[float],
+    max_ppr_nodes: int,
+) -> list[int]:
+    """Convert typed-channel ratios to integer per-channel target counts.
+
+    Ratios describe the desired attribution mix in the returned PPR sequence.
+    This helper converts them to integer counts whose sum is ``max_ppr_nodes``.
+    Fractional remainders are assigned from largest to smallest, with channel
+    order as the deterministic tie-breaker.
+
+    This is construction-time option parsing and is not part of the per-batch
+    PPR sampling hot loop.
+
+    Args:
+        typed_channel_ratios: Per-channel ratios, ordered by typed-channel
+            insertion order and summing to 1.0.
+        max_ppr_nodes: Maximum PPR sequence length per seed.
+
+    Returns:
+        Integer target counts aligned with ``typed_channel_ratios``.
+    """
+    raw_target_counts = [ratio * max_ppr_nodes for ratio in typed_channel_ratios]
+    target_counts = [math.floor(raw_count) for raw_count in raw_target_counts]
+    remaining_count = max_ppr_nodes - sum(target_counts)
+    channels_by_fractional_remainder = sorted(
+        range(len(raw_target_counts)),
+        key=lambda channel_index: (
+            raw_target_counts[channel_index] - target_counts[channel_index],
+            -channel_index,
+        ),
+        reverse=True,
+    )
+    for channel_index in channels_by_fractional_remainder[:remaining_count]:
+        target_counts[channel_index] += 1
+    return target_counts
 
 
 def build_edge_type_channel_group_edge_type_ids(

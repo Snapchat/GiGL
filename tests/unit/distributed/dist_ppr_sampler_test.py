@@ -546,9 +546,10 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes={
-                USER_TO_STORY: 3,
-                STORY_TO_USER: 2,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                USER_TO_STORY: 0.5,
+                STORY_TO_USER: 0.5,
             },
         ),
         pin_memory_device=torch.device("cpu"),
@@ -580,9 +581,10 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes={
-                STORY_TO_USER: 3,
-                (STORY_TO_USER,): 2,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                STORY_TO_USER: 0.5,
+                (STORY_TO_USER,): 0.5,
             },
         ),
         pin_memory_device=torch.device("cpu"),
