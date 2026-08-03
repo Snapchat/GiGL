@@ -13,7 +13,7 @@ from typing import Optional, Union
 from graphlearn_torch.typing import EdgeType
 
 from gigl.common.logger import Logger
-from gigl.distributed.utils.dist_typed_sampler import TypedPPRChannelKey
+from gigl.distributed.utils.dist_typed_sampler import PPRSequenceLength
 
 logger = Logger()
 
@@ -61,14 +61,46 @@ class PPRSamplerOptions:
         eps: Convergence threshold for the Forward Push algorithm. Smaller
             values give more accurate PPR scores but require more computation.
             Typical values: 1e-4 to 1e-6.
-        max_ppr_nodes: Maximum number of nodes to return per seed based on PPR
-            scores.
+        ppr_sequence_length: PPR output sequence specification. Pass an integer
+            to run regular untyped PPR and return up to that many nodes per
+            seed. Pass a mapping from typed channel key to integer target count
+            to run typed PPR; the sum of target counts is the total sequence
+            length.
+
+            Example::
+
+                # Regular untyped PPR with sequence length 200.
+                ppr_sequence_length = 200
+
+                # Typed PPR with two traversal channels and total length 200.
+                ppr_sequence_length = {
+                    ("user", "views", "item"): 120,
+                    (
+                        ("user", "likes", "item"),
+                        ("user", "shares", "item"),
+                    ): 80,
+                }
+
+            The typed example creates two traversal channels. The first channel
+            can traverse only ``("user", "views", "item")`` edges and targets
+            120 output nodes. The second channel groups
+            ``("user", "likes", "item")`` and ``("user", "shares", "item")``
+            into one PPR state and targets 80 output nodes. These targets are
+            best-effort rather than strict per-seed guarantees because channels
+            may be sparse or overlapping.
+
+            If residual top-up is enabled, discovered-but-unpushed residual
+            candidates from the same completed PPR states are included on the
+            same mass scale as finalized PPR scores: ``ppr_score + residual``.
+            Residual candidates follow the same typed channel targets as
+            finalized PPR candidates.
         enable_residual_topup: Whether to append discovered-but-unpushed
             residual candidates when finalized PPR scores produce fewer than
-            ``max_ppr_nodes`` results. Residual top-up candidates are scored on
-            the same mass scale as PPR scores: ``ppr_score + residual``. They
-            fill only unused output slots and do not displace finalized PPR nodes
-            when those already fill ``max_ppr_nodes``.
+            the requested sequence length. Residual top-up candidates are
+            scored on the same mass scale as PPR scores:
+            ``ppr_score + residual``. They fill only unused output slots and do
+            not displace finalized PPR nodes when those already fill the
+            sequence.
         num_neighbors_per_hop: Maximum number of neighbors fetched per node per edge
             type during PPR traversal. 1000 is sufficient in practice — high-degree
             hub nodes receive diminishing residual per neighbor, so capping the fetch
@@ -80,58 +112,14 @@ class PPRSamplerOptions:
             The algorithm still runs to convergence — re-enqueued nodes propagate
             through cached neighbors at negligible cost. ``None`` (default) means
             no fetch limit.
-        typed_channel_ratios: Optional target proportions for typed PPR
-            traversal channels defined by canonical edge-type allowlists. Keys
-            may be either a single canonical edge type
-            ``(src_type, relation, dst_type)`` or a tuple of canonical edge
-            types. Each key defines one traversal channel whose PPR state may
-            traverse only those exact edge types.
-            If not provided, PPR uses the regular untyped path: each state may
-            traverse all eligible edge types for the current node type and emits
-            scalar PPR scores without channel attribution.
-            Channel order follows the insertion order of this mapping. Values
-            are positive ratios that must sum to ``1.0``. The sampler converts
-            ratios to per-channel target counts from ``max_ppr_nodes``.
-            Finalized PPR candidates and residual top-up candidates both obey
-            these target counts. If the same node appears in multiple channels,
-            it is attributed to the channel where it has the highest calibrated
-            score. If sparse channels or duplicate nodes leave unused target
-            slots, the remaining slots are redistributed globally by score so
-            the returned sequence can still fill up to ``max_ppr_nodes``.
-            Example::
-
-                typed_channel_ratios = {
-                    ("user", "views", "item"): 0.6,
-                    (
-                        ("user", "likes", "item"),
-                        ("user", "shares", "item"),
-                    ): 0.4,
-                }
-
-            This example creates two traversal channels. The first channel can
-            traverse only ``("user", "views", "item")`` edges. With
-            ``max_ppr_nodes=200``, the ``0.6`` ratio targets 120 nodes
-            attributed to this channel. The second channel groups
-            ``("user", "likes", "item")`` and ``("user", "shares", "item")``
-            into one PPR state; the ``0.4`` ratio targets 80 nodes attributed
-            to that combined likes/shares channel. These targets are best-effort
-            rather than strict per-seed guarantees because channels may be
-            sparse or overlapping.
-
-            If residual top-up is enabled, discovered-but-unpushed residual
-            candidates from the same completed PPR states are included on the
-            same mass scale as finalized PPR scores: ``ppr_score + residual``.
-            Residual candidates follow the same channel targets as finalized
-            PPR candidates.
     """
 
     alpha: float = 0.5
     eps: float = 1e-4
-    max_ppr_nodes: int = 50
+    ppr_sequence_length: PPRSequenceLength = 50
     enable_residual_topup: bool = True
     num_neighbors_per_hop: int = 1_000
     max_fetch_iterations: Optional[int] = None
-    typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

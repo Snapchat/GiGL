@@ -370,7 +370,7 @@ def _run_ppr_loader_correctness_check(
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
             eps=_TEST_EPS,
-            max_ppr_nodes=max_ppr_nodes,
+            ppr_sequence_length=max_ppr_nodes,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -423,7 +423,7 @@ def _run_ppr_loader_correctness_check(
             graph=reference_graph,
             seed=seed_global_id,
             alpha=alpha,
-            max_ppr_nodes=max_ppr_nodes,
+            ppr_sequence_length=max_ppr_nodes,
         )
 
         # Verify same top-k node set
@@ -477,7 +477,7 @@ def _run_ppr_hetero_loader_correctness_check(
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
             eps=_TEST_EPS,
-            max_ppr_nodes=max_ppr_nodes,
+            ppr_sequence_length=max_ppr_nodes,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -508,7 +508,7 @@ def _run_ppr_hetero_loader_correctness_check(
             seed=seed_global_id,
             seed_type=str(USER),
             alpha=alpha,
-            max_ppr_nodes=max_ppr_nodes,
+            ppr_sequence_length=max_ppr_nodes,
         )
 
         _assert_ppr_scores_match_reference(
@@ -546,10 +546,9 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes=_TEST_MAX_PPR_NODES,
-            typed_channel_ratios={
-                USER_TO_STORY: 0.5,
-                STORY_TO_USER: 0.5,
+            ppr_sequence_length={
+                USER_TO_STORY: 3,
+                STORY_TO_USER: 2,
             },
         ),
         pin_memory_device=torch.device("cpu"),
@@ -581,10 +580,9 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes=_TEST_MAX_PPR_NODES,
-            typed_channel_ratios={
-                STORY_TO_USER: 0.5,
-                (STORY_TO_USER,): 0.5,
+            ppr_sequence_length={
+                STORY_TO_USER: 3,
+                (STORY_TO_USER,): 2,
             },
         ),
         pin_memory_device=torch.device("cpu"),
@@ -645,7 +643,7 @@ def _run_ppr_ablp_loader_correctness_check(
         sampler_options=PPRSamplerOptions(
             alpha=alpha,
             eps=_TEST_EPS,
-            max_ppr_nodes=max_ppr_nodes,
+            ppr_sequence_length=max_ppr_nodes,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -680,7 +678,7 @@ def _run_ppr_ablp_loader_correctness_check(
             seed=seed_global_id,
             seed_type=str(USER),
             alpha=alpha,
-            max_ppr_nodes=max_ppr_nodes,
+            ppr_sequence_length=max_ppr_nodes,
         )
 
         _assert_ppr_scores_match_reference(
@@ -747,7 +745,7 @@ def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            ppr_sequence_length=_TEST_MAX_PPR_NODES,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -794,7 +792,7 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            ppr_sequence_length=_TEST_MAX_PPR_NODES,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,
@@ -851,7 +849,7 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
         sampler_options=PPRSamplerOptions(
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
-            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            ppr_sequence_length=_TEST_MAX_PPR_NODES,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,

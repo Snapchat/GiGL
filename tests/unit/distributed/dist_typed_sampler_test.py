@@ -4,8 +4,7 @@ from absl.testing import absltest
 
 from gigl.distributed.utils.dist_typed_sampler import (
     build_edge_type_channel_group_edge_type_ids,
-    compute_typed_channel_target_counts,
-    parse_typed_channel_ratio_groups,
+    parse_typed_channel_target_groups,
 )
 from tests.test_assets.distributed.test_dataset import (
     STORY,
@@ -31,16 +30,16 @@ class DistTypedSamplerTest(TestCase):
             STORY_TO_USER: 1,
         }
 
-        typed_channel_groups, typed_channel_ratio_list = (
-            parse_typed_channel_ratio_groups(
+        typed_channel_groups, typed_channel_target_counts = (
+            parse_typed_channel_target_groups(
                 {
-                    USER_TO_STORY: 0.6,
-                    (USER_TO_STORY, STORY_TO_USER): 0.4,
+                    USER_TO_STORY: 4,
+                    (USER_TO_STORY, STORY_TO_USER): 3,
                 }
             )
         )
         assert typed_channel_groups is not None
-        assert typed_channel_ratio_list is not None
+        assert typed_channel_target_counts is not None
 
         self.assertEqual(
             typed_channel_groups,
@@ -49,11 +48,7 @@ class DistTypedSamplerTest(TestCase):
                 (USER_TO_STORY, STORY_TO_USER),
             ],
         )
-        self.assertEqual(typed_channel_ratio_list, [0.6, 0.4])
-        self.assertEqual(
-            compute_typed_channel_target_counts(typed_channel_ratio_list, 7),
-            [4, 3],
-        )
+        self.assertEqual(typed_channel_target_counts, [4, 3])
         self.assertEqual(
             build_edge_type_channel_group_edge_type_ids(
                 edge_type_groups=typed_channel_groups,
@@ -68,9 +63,9 @@ class DistTypedSamplerTest(TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "canonical edge type"):
-            parse_typed_channel_ratio_groups({("bad",): 1.0})
-        with self.assertRaisesRegex(ValueError, "sum to 1.0"):
-            parse_typed_channel_ratio_groups({USER_TO_STORY: 0.5})
+            parse_typed_channel_target_groups({("bad",): 1})
+        with self.assertRaisesRegex(ValueError, "positive integers"):
+            parse_typed_channel_target_groups({USER_TO_STORY: 0})
         with self.assertRaisesRegex(ValueError, "non-traversable edge types"):
             build_edge_type_channel_group_edge_type_ids(
                 edge_type_groups=[(("unknown", "edge", "type"),)],

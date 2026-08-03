@@ -81,11 +81,10 @@ def create_dist_sampler(
             **shared_sampler_kwargs,
             alpha=sampler_options.alpha,
             eps=sampler_options.eps,
-            max_ppr_nodes=sampler_options.max_ppr_nodes,
+            ppr_sequence_length=sampler_options.ppr_sequence_length,
             enable_residual_topup=sampler_options.enable_residual_topup,
             max_fetch_iterations=sampler_options.max_fetch_iterations,
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
-            typed_channel_ratios=sampler_options.typed_channel_ratios,
             degree_tensors=degree_tensors,
         )
     else:
