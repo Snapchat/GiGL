@@ -6,6 +6,7 @@
 #include <climits>
 #include <cstdint>
 #include <future>
+#include <numeric>
 #include <optional>
 #include <tuple>
 #include <unordered_map>
@@ -702,7 +703,6 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
 
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
-                                                   int32_t maxPPRNodes,
                                                    bool enableResidualTopUp) {
     // Typed channels are constructed from the same seed batch and graph schema;
     // only the edge-type traversal allowlist differs. The sampler calls typed
@@ -713,6 +713,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     int32_t batchSize = firstState->_batchSize;
     int32_t numNodeTypes = firstState->_numNodeTypes;
     int32_t numChannels = static_cast<int32_t>(states.size());
+    int32_t maxPPRNodes = std::accumulate(channelTargetCounts.begin(), channelTargetCounts.end(), 0);
     // Feature width is 1 + 2C:
     //   column 0: best calibrated score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction.
