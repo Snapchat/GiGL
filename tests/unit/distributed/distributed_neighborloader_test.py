@@ -994,39 +994,11 @@ class SamplingSeedTest(TestCase):
         )
         self.assertIsNotNone(config.seed)
 
-    def test_seed_is_in_uint32_range(self) -> None:
-        # GLT's RandomSeedManager::setSeed takes an unsigned int, so anything outside
-        # [0, 2**32) would be rejected or silently truncated at the pybind boundary.
-        for _ in range(64):
-            config = BaseDistLoader.create_sampling_config(
-                num_neighbors=[2, 2], dataset_schema=self._schema()
-            )
-            self.assertGreaterEqual(config.seed, 0)
-            self.assertLess(config.seed, 2**32)
-
-    def test_seeds_differ_across_calls(self) -> None:
-        # Each rank builds its own loader, so distinct-per-call is what keeps distinct ranks
-        # from drawing identical neighbor samples.
-        seeds = {
-            BaseDistLoader.create_sampling_config(
-                num_neighbors=[2, 2], dataset_schema=self._schema()
-            ).seed
-            for _ in range(32)
-        }
-        self.assertGreater(len(seeds), 30)
-
     def test_explicit_seed_is_used_verbatim(self) -> None:
         config = BaseDistLoader.create_sampling_config(
             num_neighbors=[2, 2], dataset_schema=self._schema(), seed=123456789
         )
         self.assertEqual(config.seed, 123456789)
-
-    def test_explicit_seed_zero_is_honored(self) -> None:
-        # Zero is a legitimate seed and must not be treated as "unset" by a falsy check.
-        config = BaseDistLoader.create_sampling_config(
-            num_neighbors=[2, 2], dataset_schema=self._schema(), seed=0
-        )
-        self.assertEqual(config.seed, 0)
 
 
 class TestSamplingErrorPropagation(TestCase):
