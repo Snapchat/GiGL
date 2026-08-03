@@ -558,20 +558,42 @@ class GraphTransformerEncoderLayer(nn.Module):
         Returns:
             Anchor output of shape ``(batch, 1, model_dim)``.
 
-        Raises:
-            ValueError: If relation-aware attention is enabled. Its square
-                query/key bias construction requires the full layer path.
         """
-        if self._relation_attention_mode != "none":
-            raise ValueError(
-                "Anchor-only final-layer execution does not support "
-                "relation-aware attention."
-            )
-
         batch_size, seq_len, model_dim = x.shape
         anchor_valid_mask = valid_mask[:, :1] if valid_mask is not None else None
         residual_anchor = x[:, :1, :]
         x_norm = self._attention_norm(x)
+
+        anchor_relation_indices = pairwise_relation_indices
+        if (
+            self._relation_attention_mode != "none"
+            or self._relation_message_mode != "none"
+        ):
+            if pairwise_relation_indices is None:
+                raise ValueError(
+                    "pairwise_relation_indices is required when relation-aware "
+                    "attention or messages are enabled."
+                )
+            if (
+                pairwise_relation_indices.dim() != 2
+                or pairwise_relation_indices.size(-1) != 4
+            ):
+                raise ValueError(
+                    "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+                )
+            if pairwise_relation_indices.numel() > 0:
+                relation_indices = pairwise_relation_indices[:, 3]
+                if (
+                    relation_indices.min().item() < 0
+                    or relation_indices.max().item() >= self._num_relations
+                ):
+                    raise ValueError(
+                        "pairwise_relation_indices contains relation ids outside "
+                        f"[0, {self._num_relations})."
+                    )
+            anchor_relation_indices = pairwise_relation_indices[
+                pairwise_relation_indices[:, 1] == 0
+            ]
 
         query = self._query_projection(x_norm[:, :1, :])
         key = self._key_projection(x_norm)
@@ -595,7 +617,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             key=key,
             value=value,
             attn_bias=anchor_attn_bias,
-            pairwise_relation_indices=pairwise_relation_indices,
+            pairwise_relation_indices=anchor_relation_indices,
         )
         attention_output = attention_output.transpose(1, 2).reshape(
             batch_size, 1, model_dim
@@ -603,33 +625,6 @@ class GraphTransformerEncoderLayer(nn.Module):
         attention_output = self._dropout(self._output_projection(attention_output))
         anchor = residual_anchor + attention_output
 
-        anchor_relation_indices = pairwise_relation_indices
-        if self._relation_message_mode != "none":
-            if pairwise_relation_indices is None:
-                raise ValueError(
-                    "pairwise_relation_indices is required when "
-                    "relation_message_mode is relation-aware."
-                )
-            if (
-                pairwise_relation_indices.dim() != 2
-                or pairwise_relation_indices.size(-1) != 4
-            ):
-                raise ValueError(
-                    "pairwise_relation_indices must have shape (num_relation_edges, 4)."
-                )
-            if pairwise_relation_indices.numel() > 0:
-                relation_indices = pairwise_relation_indices[:, 3]
-                if (
-                    relation_indices.min().item() < 0
-                    or relation_indices.max().item() >= self._num_relations
-                ):
-                    raise ValueError(
-                        "pairwise_relation_indices contains relation ids outside "
-                        f"[0, {self._num_relations})."
-                    )
-            anchor_relation_indices = pairwise_relation_indices[
-                pairwise_relation_indices[:, 1] == 0
-            ]
         if self._relation_message_mode == "edge_type_attention":
             anchor = anchor + self._dropout(
                 self._compute_relation_attention_messages(
@@ -697,8 +692,9 @@ class GraphTransformerEncoderLayer(nn.Module):
         ):
             return None
 
-        batch_size, _, seq_len, _ = query.shape
-        empty_bias = query.new_zeros((batch_size, self._num_heads, seq_len, seq_len))
+        batch_size, _, query_len, _ = query.shape
+        key_len = key.size(2)
+        empty_bias = query.new_zeros((batch_size, self._num_heads, query_len, key_len))
         return self._add_relation_attention_bias(
             attn_bias=empty_bias,
             query=query,
@@ -745,15 +741,15 @@ class GraphTransformerEncoderLayer(nn.Module):
                 f"[0, {self._num_relations})."
             )
 
-        batch_size, _, seq_len, _ = query.shape
+        batch_size, _, query_len, _ = query.shape
+        key_len = key.size(2)
+        bias_shape = (self._num_heads, query_len, key_len)
         if attn_bias is None:
-            attn_bias = query.new_zeros((batch_size, self._num_heads, seq_len, seq_len))
-        elif attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
+            attn_bias = query.new_zeros((batch_size, *bias_shape))
+        elif attn_bias.shape[1:] != bias_shape:
             attn_bias = attn_bias.expand(
                 batch_size,
-                self._num_heads,
-                seq_len,
-                seq_len,
+                *bias_shape,
             ).clone()
         else:
             attn_bias = attn_bias.clone()
@@ -1981,7 +1977,6 @@ class GraphTransformerEncoder(nn.Module):
             self._readout_mode == "anchor_only"
             and not self.training
             and len(encoder_layers) > 0
-            and encoder_layers[-1]._relation_attention_mode == "none"
         )
         num_full_sequence_layers = len(encoder_layers) - int(
             use_anchor_only_final_layer

@@ -543,14 +543,21 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                     f"relation_message_mode={relation_message_mode}",
                 )
 
-    def test_anchor_only_relation_attention_uses_full_sequence_path(self) -> None:
-        """Relation-aware attention retains its square full-sequence path."""
+    def test_anchor_only_final_layer_matches_relation_attention(self) -> None:
+        """Anchor specialization preserves rectangular relation attention."""
         sequences = torch.randn(2, 4, 8)
         valid_mask = torch.tensor(
             [[True, True, True, False], [True, True, False, False]]
         )
+        attn_bias = 0.1 * torch.randn(2, 2, 4, 4)
         relation_indices = _pairwise_relation_indices(
-            [(0, 0, 1, 0), (0, 1, 2, 0), (1, 0, 1, 0)]
+            [
+                (0, 0, 1, 0),
+                (0, 0, 2, 0),
+                (0, 1, 2, 0),
+                (1, 0, 1, 0),
+                (1, 1, 0, 0),
+            ]
         )
 
         for relation_attention_mode in ["edge_type_bilinear", "edge_type_hgt"]:
@@ -560,22 +567,39 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                     num_layers=2,
                     readout_mode="anchor_only",
                     relation_attention_mode=relation_attention_mode,
+                    relation_message_mode="edge_type_attention",
                 )
                 encoder.eval()
                 with torch.no_grad():
+                    for encoder_layer in encoder._encoder_layers:
+                        relation_parameters = [
+                            encoder_layer._relation_attention_matrices,
+                            encoder_layer._relation_hgt_attention_matrices,
+                            encoder_layer._relation_hgt_attention_priors,
+                            encoder_layer._relation_message_matrices,
+                        ]
+                        for relation_parameter in relation_parameters:
+                            if relation_parameter is not None:
+                                assert isinstance(relation_parameter, Tensor)
+                                relation_parameter.normal_()
                     expected = _full_sequence_anchor_reference(
                         encoder=encoder,
                         sequences=sequences,
                         valid_mask=valid_mask,
+                        attn_bias=attn_bias,
                         pairwise_relation_indices=relation_indices,
                     )
                     actual = encoder._encode_and_readout(
                         sequences=sequences,
                         valid_mask=valid_mask,
+                        attn_bias=attn_bias,
                         pairwise_relation_indices=relation_indices,
                     )
 
-                self.assertTrue(torch.equal(actual, expected))
+                self.assertTrue(
+                    torch.allclose(actual, expected, atol=1e-6, rtol=1e-5),
+                    f"relation_attention_mode={relation_attention_mode}",
+                )
 
     def test_additive_mode_matches_base_encoder_when_node_pe_projection_is_zero(
         self,
