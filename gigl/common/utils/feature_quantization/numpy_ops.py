@@ -23,7 +23,7 @@ def quantize_ndarray(
         # 1-bit quantization keeps only sign; values restore from neg/pos means.
         codes = (features > 0).astype(np.uint8)
     else:
-        # Linearly map clipped values into integer buckets.
+        # Min-max scale using clipped values and map to integer buckets.
         levels = (1 << bits) - 1
         lo, hi = stats["clip_min"], stats["clip_max"]
         clipped = np.clip(features, lo, hi)
