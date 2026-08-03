@@ -7,8 +7,9 @@ def quantize_ndarray(
     features: np.ndarray, *, bits: int, stats: Mapping[str, float]
 ) -> np.ndarray:
     """Quantize a 2D float array into packed uint8 codes."""
-    if bits not in (1, 2, 4, 8):
-        raise ValueError(f"bits must be one of 1, 2, 4, or 8, got {bits}.")
+    valid_bits = (1, 2, 4, 8)
+    if bits not in valid_bits:
+        raise ValueError(f"bits must be one of {valid_bits}, got {bits}")
     if features.ndim != 2:
         raise ValueError(f"Expected a 2D feature array, got shape {features.shape}.")
     if bits == 1:
@@ -21,10 +22,10 @@ def quantize_ndarray(
         clipped = np.clip(features, lo, hi)
         scaled = (clipped - lo) / (hi - lo)
         codes = np.rint(scaled * levels).astype(np.uint8)
-    return pack_codes(codes, bits)
+    return _pack_codes(codes, bits)
 
 
-def pack_codes(codes: np.ndarray, bits: int) -> np.ndarray:
+def _pack_codes(codes: np.ndarray, bits: int) -> np.ndarray:
     """Pack low-bit feature codes high-bits-first along the final dimension."""
     per_byte = 8 // bits
     pad = (-codes.shape[-1]) % per_byte
