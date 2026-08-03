@@ -14,7 +14,7 @@ from graphlearn_torch.typing import EdgeType, NodeType
 # Public typed PPR channel keys can be a single edge type or a grouped channel
 # containing multiple edge types.
 TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
-PPRSequenceLength = Union[int, dict[TypedPPRChannelKey, int]]
+MaxPPRNodes = Union[int, dict[TypedPPRChannelKey, int]]
 
 """TypedPPRChannelKey describes one public typed-PPR traversal channel key.
 
@@ -63,7 +63,7 @@ def parse_typed_channel_target_groups(
     """
     if not typed_channel_targets:
         raise ValueError(
-            "Typed PPR sequence length mapping must contain at least one channel."
+            "Typed PPR max_ppr_nodes mapping must contain at least one channel."
         )
 
     typed_channel_groups: TypedPPRChannelEdgeTypeGroups = []

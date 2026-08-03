@@ -13,7 +13,7 @@ from typing import Optional, Union
 from graphlearn_torch.typing import EdgeType
 
 from gigl.common.logger import Logger
-from gigl.distributed.utils.dist_typed_sampler import PPRSequenceLength
+from gigl.distributed.utils.dist_typed_sampler import MaxPPRNodes
 
 logger = Logger()
 
@@ -61,19 +61,18 @@ class PPRSamplerOptions:
         eps: Convergence threshold for the Forward Push algorithm. Smaller
             values give more accurate PPR scores but require more computation.
             Typical values: 1e-4 to 1e-6.
-        ppr_sequence_length: PPR output sequence specification. Pass an integer
-            to run regular untyped PPR and return up to that many nodes per
-            seed. Pass a mapping from typed channel key to integer target count
-            to run typed PPR; the sum of target counts is the total sequence
-            length.
+        max_ppr_nodes: PPR output sequence specification. Pass an integer to
+            run regular untyped PPR and return up to that many nodes per seed.
+            Pass a mapping from typed channel key to integer target count to
+            run typed PPR; the sum of target counts is the per-seed output cap.
 
             Example::
 
-                # Regular untyped PPR with sequence length 200.
-                ppr_sequence_length = 200
+                # Regular untyped PPR with up to 200 nodes per seed.
+                max_ppr_nodes = 200
 
-                # Typed PPR with two traversal channels and total length 200.
-                ppr_sequence_length = {
+                # Typed PPR with two traversal channels and up to 200 nodes per seed.
+                max_ppr_nodes = {
                     ("user", "views", "item"): 120,
                     (
                         ("user", "likes", "item"),
@@ -96,8 +95,8 @@ class PPRSamplerOptions:
             finalized PPR candidates.
         enable_residual_topup: Whether to append discovered-but-unpushed
             residual candidates when finalized PPR scores produce fewer than
-            the requested sequence length. Residual top-up candidates are
-            scored on the same mass scale as PPR scores:
+            the requested ``max_ppr_nodes`` output slots. Residual top-up
+            candidates are scored on the same mass scale as PPR scores:
             ``ppr_score + residual``. They fill only unused output slots and do
             not displace finalized PPR nodes when those already fill the
             sequence.
@@ -116,7 +115,7 @@ class PPRSamplerOptions:
 
     alpha: float = 0.5
     eps: float = 1e-4
-    ppr_sequence_length: PPRSequenceLength = 50
+    max_ppr_nodes: MaxPPRNodes = 50
     enable_residual_topup: bool = True
     num_neighbors_per_hop: int = 1_000
     max_fetch_iterations: Optional[int] = None

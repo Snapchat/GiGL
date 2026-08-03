@@ -22,7 +22,7 @@ from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.utils.dist_typed_sampler import (
-    PPRSequenceLength,
+    MaxPPRNodes,
     TypedPPRChannelTraversalMaps,
     build_edge_type_channel_group_edge_type_ids,
     parse_typed_channel_target_groups,
@@ -113,22 +113,21 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           ``[best_calibrated_score, calibrated_channel_scores..., channel_presence_bits...]``.
           Typed-PPR scores are calibrated within each channel/seed pool and
           globally ranked by the best calibrated score. Channel columns follow
-          the insertion order of the typed sequence mapping. Column 0 is the
-          scalar best score for consumers that need a single PPR weight.
+          the insertion order of the typed ``max_ppr_nodes`` mapping. Column 0
+          is the scalar best score for consumers that need a single PPR weight.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
                keep samples closer to seeds. Typical values: 0.15-0.25.
         eps: Convergence threshold. Smaller values give more accurate PPR scores
              but require more computation. Typical values: 1e-4 to 1e-6.
-        ppr_sequence_length: PPR output sequence specification. Pass an integer
-            to run regular untyped PPR and return up to that many nodes per
-            seed. Pass a mapping from typed channel key to integer target count
-            to run typed PPR; the sum of target counts is the total sequence
-            length.
+        max_ppr_nodes: PPR output sequence specification. Pass an integer to
+            run regular untyped PPR and return up to that many nodes per seed.
+            Pass a mapping from typed channel key to integer target count to
+            run typed PPR; the sum of target counts is the per-seed output cap.
         enable_residual_topup: Whether to include residual candidates discovered
-            during Forward Push when fewer than the requested sequence length
-            finalized PPR scores are available.
+            during Forward Push when fewer than the requested ``max_ppr_nodes``
+            output slots have finalized PPR scores.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
@@ -142,7 +141,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         *args,
         alpha: float = 0.5,
         eps: float = 1e-4,
-        ppr_sequence_length: PPRSequenceLength = 50,
+        max_ppr_nodes: MaxPPRNodes = 50,
         enable_residual_topup: bool = True,
         num_neighbors_per_hop: int = 100_000,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -189,26 +188,26 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         typed_channel_groups: Optional[list[tuple[EdgeType, ...]]] = None
         self._typed_ppr_channel_target_counts: Optional[list[int]] = None
-        if isinstance(ppr_sequence_length, bool):
+        if isinstance(max_ppr_nodes, bool):
             raise ValueError(
-                "ppr_sequence_length must be an integer or typed channel mapping."
+                "max_ppr_nodes must be an integer or typed channel mapping."
             )
-        if isinstance(ppr_sequence_length, int):
-            if ppr_sequence_length < 0:
+        if isinstance(max_ppr_nodes, int):
+            if max_ppr_nodes < 0:
                 raise ValueError(
-                    f"ppr_sequence_length must be non-negative, got {ppr_sequence_length}."
+                    f"max_ppr_nodes must be non-negative, got {max_ppr_nodes}."
                 )
-            self._max_ppr_nodes = ppr_sequence_length
-        elif isinstance(ppr_sequence_length, dict):
+            self._max_ppr_nodes = max_ppr_nodes
+        elif isinstance(max_ppr_nodes, dict):
             typed_channel_groups, typed_channel_target_counts = (
-                parse_typed_channel_target_groups(ppr_sequence_length)
+                parse_typed_channel_target_groups(max_ppr_nodes)
             )
             self._typed_ppr_channel_target_counts = typed_channel_target_counts
             self._max_ppr_nodes = sum(typed_channel_target_counts)
         else:
             raise ValueError(
-                "ppr_sequence_length must be an integer or typed channel mapping, "
-                f"got {ppr_sequence_length!r}."
+                "max_ppr_nodes must be an integer or typed channel mapping, "
+                f"got {max_ppr_nodes!r}."
             )
         if self._typed_ppr_channel_target_counts is not None:
             if self._is_homogeneous:
