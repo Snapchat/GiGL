@@ -1000,6 +1000,7 @@ class SamplingSeedTest(TestCase):
         )
         self.assertEqual(config.seed, 123456789)
 
+
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess
 # producer, which spawns worker subprocesses with a *fresh* interpreter
 # (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
