@@ -40,6 +40,9 @@ def _pack_codes(codes: np.ndarray, bits: int) -> np.ndarray:
         # Pad only the feature dimension of this 2D [row, feature] array.
         codes = np.pad(codes, ((0, 0), (0, pad)), constant_values=0)
     # Group the padded feature dimension into chunks that each form one byte.
+    # Valid bit widths pack exactly one byte per group, so the final sum is at
+    # most 255. uint16 is a conservative arithmetic dtype that avoids relying on
+    # NumPy's uint8 accumulator behavior before the final uint8 cast.
     codes = codes.reshape(codes.shape[0], -1, per_byte).astype(np.uint16)
     shifts = bits * np.arange(per_byte - 1, -1, -1, dtype=np.uint16)
     weights = (1 << shifts).astype(np.uint16)
