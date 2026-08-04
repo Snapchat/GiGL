@@ -47,6 +47,15 @@ containers/
 logs/
 **/src/test/assets/**/output/*
 
+# ==================== Agent-generated plans, workspaces, and scratch data
+**/.claude/plans/
+**/.claude/tmp/
+**/.claude/worktrees/
+**/.sdd/
+**/.superpowers/
+**/docs/plans/
+**/docs/superpowers/plans/
+
 # ==================== Git & VCS
 **/.git
 

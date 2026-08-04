@@ -3,6 +3,11 @@ from unittest.mock import patch
 import torch
 
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
+from gigl.distributed.utils.sampling_errors import (
+    SAMPLING_ERROR_KEY,
+    encode_sampling_error,
+    raise_if_sampling_error,
+)
 from tests.test_assets.test_case import TestCase
 
 
@@ -144,3 +149,35 @@ class RemoteReceivingChannelTest(TestCase):
         ):
             with self.assertRaises(RuntimeError):
                 channel.recv()
+
+    def test_recv_forwards_sampling_error_pill_to_decoder(self) -> None:
+        """A sampling-error poison pill survives graph-store transport and raises.
+
+        The server-side sampler forwards the pill as an ordinary ``SampleMessage``;
+        ``RemoteReceivingChannel.recv`` passes it through content-agnostically, and the
+        loader-side ``raise_if_sampling_error`` decodes the embedded traceback.
+        """
+        channel = RemoteReceivingChannel(
+            server_rank=[0],
+            channel_id=[10],
+            prefetch_size=1,
+            active_mask=[True],
+        )
+        channel.reset()
+
+        pill = {SAMPLING_ERROR_KEY: encode_sampling_error("boom")}
+        # Responses are mocked returned messages from the server
+        responses = iter([(pill, False), (None, True)])
+
+        def _mock_async_request_server(server_rank, func, channel_id):
+            return _resolved_future(next(responses))
+
+        with patch(
+            "gigl.distributed.graph_store.remote_channel.async_request_server",
+            side_effect=_mock_async_request_server,
+        ):
+            msg = channel.recv()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            raise_if_sampling_error(msg)
+        self.assertIn("boom", str(ctx.exception))

@@ -53,6 +53,7 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -60,6 +61,8 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
+from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING, is_env_flag_enabled
+from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.share_memory import share_memory
 
@@ -388,8 +391,10 @@ class BaseDistLoader(DistLoader):
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
-        Patches ``num_neighbors`` to zero-out label edge types, then creates
-        the SamplingConfig used by both colocated and graph store modes.
+        ``num_neighbors`` must cover the message-passing edge types; label edge types
+        are injected internally, are never sampled, and must not be specified (passing
+        one raises ``ValueError``). Then creates the SamplingConfig used by both
+        colocated and graph store modes.
 
         Args:
             num_neighbors: Fanout per hop.
@@ -414,7 +419,7 @@ class BaseDistLoader(DistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=True,
+            with_edge=dataset_schema.edge_feature_info is not None,
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,
@@ -424,21 +429,48 @@ class BaseDistLoader(DistLoader):
 
     @staticmethod
     def create_colocated_channel(
-        worker_options: MpDistSamplingWorkerOptions,
+        worker_options: MpDistSamplingWorkerOptions, channel_name: str
     ) -> ShmChannel:
         """Creates a ShmChannel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
+        Note: When GIGL_ENABLE_PERF_MONITORING is set, a `MonitoredShmChannel` is created and the
+        caller is expected to have already initialized the metrics service by calling
+        `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`. Otherwise, a standard
+        `ShmChannel` is created and `channel_name` is ignored.
+
         Args:
             worker_options: The colocated worker options (must already be fully configured).
+            channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
 
         Returns:
             A ShmChannel ready to be passed to a DistSamplingProducer.
+
+        Raises:
+            RuntimeError: If GIGL_ENABLE_PERF_MONITORING is set but user did not previously call
+                `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
-        channel = ShmChannel(
-            worker_options.channel_capacity, worker_options.channel_size
-        )
+        if is_env_flag_enabled(GIGL_ENABLE_PERF_MONITORING):
+            logger.info(f"{GIGL_ENABLE_PERF_MONITORING} set, using MonitoredShmChannel")
+            try:
+                get_metrics_service_instance()
+            except RuntimeError as e:
+                raise RuntimeError(
+                    f"{GIGL_ENABLE_PERF_MONITORING} is set, which uses MonitoredShmChannel, but the metrics "
+                    f"service was not initialized. Call initialize_metrics() or disable {GIGL_ENABLE_PERF_MONITORING}"
+                ) from e
+            channel = MonitoredShmChannel(
+                channel_name,
+                worker_options.channel_capacity,
+                worker_options.channel_size,
+            )
+        else:
+            logger.info(f"{GIGL_ENABLE_PERF_MONITORING} not set, using ShmChannel")
+            channel = ShmChannel(
+                worker_options.channel_capacity, worker_options.channel_size
+            )
+
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
@@ -450,6 +482,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
+        channel_name: str,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -466,12 +499,16 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
+            channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
             ``_init_colocated_connections``.
         """
-        channel = BaseDistLoader.create_colocated_channel(worker_options)
+        channel = BaseDistLoader.create_colocated_channel(
+            worker_options,
+            channel_name=channel_name,
+        )
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
             share_memory(degree_tensors)

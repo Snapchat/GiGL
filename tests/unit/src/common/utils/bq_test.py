@@ -1,8 +1,10 @@
+import os
 from typing import Sequence
 from unittest.mock import MagicMock, patch
 
 from parameterized import param, parameterized
 
+from gigl.env.constants import GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
 from gigl.src.common.utils.bq import BqUtils
 from tests.test_assets.test_case import TestCase
 
@@ -141,3 +143,54 @@ class GetLatestTableTest(TestCase):
             bq_table_path_prefix=self.PREFIX, table_partition_suffix="YYYYMMDDHH"
         )
         self.assertEqual(result, "myproject.mydataset.events_2025010112")
+
+
+@patch("gigl.src.common.utils.bq.bigquery.Client")
+class BqClientConstructionTest(TestCase):
+    def test_uses_default_quota_resolution_when_no_override_is_set(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            BqUtils(project="my-project")
+
+        mock_client_cls.assert_called_once_with(project="my-project")
+
+    def test_env_var_sets_quota_project(self, mock_client_cls: MagicMock) -> None:
+        with patch.dict(
+            os.environ,
+            {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: "env-quota-project"},
+            clear=True,
+        ):
+            BqUtils(project="my-project")
+
+        _, call_kwargs = mock_client_cls.call_args
+        self.assertEqual(call_kwargs["project"], "my-project")
+        self.assertEqual(
+            call_kwargs["client_options"].quota_project_id, "env-quota-project"
+        )
+
+    def test_explicit_param_overrides_env_var(self, mock_client_cls: MagicMock) -> None:
+        with patch.dict(
+            os.environ,
+            {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: "env-quota-project"},
+            clear=True,
+        ):
+            BqUtils(project="my-project", quota_project_id="explicit-quota-project")
+
+        _, call_kwargs = mock_client_cls.call_args
+        self.assertEqual(
+            call_kwargs["client_options"].quota_project_id,
+            "explicit-quota-project",
+        )
+
+    def test_empty_env_var_is_treated_as_unset(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY: ""},
+            clear=True,
+        ):
+            BqUtils(project="my-project")
+
+        mock_client_cls.assert_called_once_with(project="my-project")

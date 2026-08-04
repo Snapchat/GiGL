@@ -889,8 +889,8 @@ requires-dist = [
     { name = "torch-sparse", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "torch-spline-conv", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "torch-spline-conv", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
-    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
-    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
+    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
+    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
 ]
 provides-extras = ["transform", "pyg27-torch28-cpu", "pyg27-torch28-cu128", "experimental"]
 
