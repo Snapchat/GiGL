@@ -44,6 +44,8 @@ def _unpack_torch_tensor(
     per_byte = 8 // bits
     mask = (1 << bits) - 1
     # Extract high-bits-first codes from each packed byte.
-    shifts = bits * torch.arange(per_byte - 1, -1, -1, device=packed_features.device)
-    codes = (packed_features.unsqueeze(-1).to(torch.int16) >> shifts).bitwise_and(mask)
-    return codes.reshape(*packed_features.shape[:-1], -1)[..., :dim].to(torch.uint8)
+    shifts = bits * torch.arange(
+        per_byte - 1, -1, -1, device=packed_features.device, dtype=torch.uint8
+    )
+    codes = (packed_features.unsqueeze(-1) >> shifts).bitwise_and(mask)
+    return codes.reshape(*packed_features.shape[:-1], -1)[..., :dim]
