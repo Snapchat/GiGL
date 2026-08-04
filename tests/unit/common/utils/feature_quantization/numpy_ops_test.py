@@ -103,3 +103,19 @@ class NumpyFeatureQuantizationOpsTest(TestCase):
             quantize_ndarray(
                 np.zeros((1, 1, 1)), bits=2, stats={"clip_min": 0.0, "clip_max": 1.0}
             )
+
+    def test_quantize_ndarray_rejects_nan_features(self) -> None:
+        with self.assertRaisesRegex(ValueError, "features must be finite"):
+            quantize_ndarray(
+                np.array([[np.nan, 1.0]]),
+                bits=4,
+                stats={"clip_min": 0.0, "clip_max": 1.0},
+            )
+
+    def test_quantize_ndarray_rejects_inf_features(self) -> None:
+        with self.assertRaisesRegex(ValueError, "features must be finite"):
+            quantize_ndarray(
+                np.array([[np.inf, 1.0]]),
+                bits=4,
+                stats={"clip_min": 0.0, "clip_max": 1.0},
+            )

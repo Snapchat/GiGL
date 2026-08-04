@@ -19,6 +19,8 @@ def quantize_ndarray(
         raise ValueError(f"bits must be one of {valid_bits}, got {bits}")
     if features.ndim != 2:
         raise ValueError(f"Expected a 2D feature array, got shape {features.shape}.")
+    if not np.isfinite(features).all():
+        raise ValueError("features must be finite; got NaN or Inf")
     if bits == 1:
         # 1-bit quantization keeps only sign; values restore from neg/pos means.
         codes = (features > 0).astype(np.uint8)
