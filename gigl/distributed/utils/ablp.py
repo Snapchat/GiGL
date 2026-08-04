@@ -6,7 +6,7 @@ Tensor dimensions used in this module:
 - ``M``: padded label slots per anchor.
 - ``S``: sampled nodes for one supervision node type.
 - ``K``: non-padding candidate labels.
-- ``E``: candidate labels present in the sampled subgraph.
+- ``E``: output label pairs; ``E == K`` because sampling always includes labels.
 
 A label edge index has shape ``[2, E]``. Row 0 indexes anchors in ``[0, A)``;
 row 1 indexes local nodes in the supervision node store in ``[0, S)``.
@@ -100,11 +100,13 @@ def _remap_label_tensor_to_local_edge_index(
 
     Returns:
         ``[2, E]`` long tensor on ``label_tensor.device``. Row 0 contains
-        local anchor indices; row 1 contains local label-node indices. Labels
-        absent from the sampled subgraph are omitted, so ``E <= K <= A * M``.
+        local anchor indices; row 1 contains local label-node indices. Every
+        non-padding label must be present in the sampled subgraph, so
+        ``E == K <= A * M``.
 
     Raises:
         ValueError: If the sampled node map contains duplicate global ids.
+        ValueError: If a non-padding label was not sampled.
 
     Example:
         >>> _remap_label_tensor_to_local_edge_index(
@@ -131,8 +133,12 @@ def _remap_label_tensor_to_local_edge_index(
     is_not_padding = candidate_global_label_ids != PADDING_NODE  # [A * M]
     candidate_global_label_ids = candidate_global_label_ids[is_not_padding]  # [K]
     candidate_anchor_indices = candidate_anchor_indices[is_not_padding]  # [K]
-    if num_nodes == 0 or candidate_global_label_ids.numel() == 0:
+    if candidate_global_label_ids.numel() == 0:
         return empty_edge_index
+    if num_nodes == 0:
+        raise ValueError(
+            "Every non-padding ABLP label must be present in the sampled subgraph."
+        )
 
     if not bool((sorted_global_node_ids[1:] > sorted_global_node_ids[:-1]).all()):
         raise ValueError(
@@ -143,17 +149,15 @@ def _remap_label_tensor_to_local_edge_index(
     insertion_indices = torch.searchsorted(
         sorted_global_node_ids, candidate_global_label_ids
     )  # [K]
-    # An absent label larger than every sampled id inserts at num_nodes. Clamp
-    # before gathering; the exact-match mask below still discards that label.
-    insertion_indices = insertion_indices.clamp_(max=num_nodes - 1)
-    is_in_sampled_subgraph = (
-        sorted_global_node_ids[insertion_indices] == candidate_global_label_ids
-    )  # [K]
+    if bool((insertion_indices == num_nodes).any()) or not bool(
+        (sorted_global_node_ids[insertion_indices] == candidate_global_label_ids).all()
+    ):
+        raise ValueError(
+            "Every non-padding ABLP label must be present in the sampled subgraph."
+        )
 
-    local_label_indices = local_ids_by_sorted_global_id[insertion_indices][
-        is_in_sampled_subgraph
-    ]  # [E]
-    anchor_indices = candidate_anchor_indices[is_in_sampled_subgraph]  # [E]
+    local_label_indices = local_ids_by_sorted_global_id[insertion_indices]  # [E == K]
+    anchor_indices = candidate_anchor_indices  # [E == K]
     return torch.stack((anchor_indices, local_label_indices))  # [2, E]
 
 

@@ -94,7 +94,7 @@ class DistABLPLoader(BaseDistLoader):
         local_process_rank: Optional[int] = None,  # TODO: (svij) Deprecate this
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         non_blocking_transfers: bool = True,
-        use_edge_index_output: bool = False,
+        use_label_edge_index_output: bool = False,
     ):
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -106,7 +106,7 @@ class DistABLPLoader(BaseDistLoader):
         but will return a {py:class}`torch_geometric.data.Data` (homogeneous) object if the dataset is "labeled homogeneous".
 
         The following fields may also be present (this describes the deprecated
-        default shape; see ``use_edge_index_output`` for the tensor format):
+        default shape; see ``use_label_edge_index_output`` for the tensor format):
         - `y_positive`: `dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of positive
                 label node ids.
         - `y_negative`: (Optional) `dict[int, torch.Tensor]` mapping from local anchor node id to a tensor of negative
@@ -144,7 +144,7 @@ class DistABLPLoader(BaseDistLoader):
             - `y_positive`: {(a, to, b): {0: torch.tensor([1])}, (a, to, c): {0: torch.tensor([2])}}
             - `y_negative`: {(a, to, b): {0: torch.tensor([3])}, (a, to, c): {0: torch.tensor([4])}}
 
-        With ``use_edge_index_output=True``, each label field is a ``[2, E]``
+        With ``use_label_edge_index_output=True``, each label field is a ``[2, E]``
         tensor. Row 0 contains local anchor indices and row 1 contains local
         label-node indices. For the example above:
 
@@ -229,7 +229,7 @@ class DistABLPLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
-            use_edge_index_output (bool): Return labels as ``[2, E]`` edge-index
+            use_label_edge_index_output (bool): Return labels as ``[2, E]`` edge-index
                 tensors instead of the deprecated ragged dictionaries. Row 0
                 contains local anchor indices and row 1 contains local label-node
                 indices. Defaults to ``False`` for backward compatibility.
@@ -238,14 +238,14 @@ class DistABLPLoader(BaseDistLoader):
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
         # then we can properly clean up and don't get extraneous error messages.
         self._shutdowned = True
-        if not use_edge_index_output:
+        if not use_label_edge_index_output:
             warnings.warn(
                 "The ragged dictionary ABLP label output is deprecated. Pass "
-                "use_edge_index_output=True to receive [2, E] label edge indices.",
+                "use_label_edge_index_output=True to receive [2, E] label edge indices.",
                 FutureWarning,
                 stacklevel=2,
             )
-        self._use_edge_index_output = use_edge_index_output
+        self._use_label_edge_index_output = use_label_edge_index_output
 
         sampler_options = resolve_sampler_options(num_neighbors, sampler_options)
 
@@ -841,7 +841,7 @@ class DistABLPLoader(BaseDistLoader):
         output_negative_labels: dict[
             EdgeType, Union[torch.Tensor, dict[int, torch.Tensor]]
         ] = {}
-        if self._use_edge_index_output:
+        if self._use_label_edge_index_output:
             for edge_type, label_edge_index in positive_label_edge_indices.items():
                 output_positive_labels[edge_type] = label_edge_index
             for edge_type, label_edge_index in negative_label_edge_indices.items():

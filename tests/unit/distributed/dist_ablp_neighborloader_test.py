@@ -457,7 +457,7 @@ def _global_pair_set_from_edge_index(
 def _collect_homogeneous_labels(
     _,
     return_dict,
-    use_edge_index_output: bool,
+    use_label_edge_index_output: bool,
     dataset: DistDataset,
     input_nodes: torch.Tensor,
     batch_size: int,
@@ -471,14 +471,14 @@ def _collect_homogeneous_labels(
         input_nodes=input_nodes,
         batch_size=batch_size,
         pin_memory_device=torch.device("cpu"),
-        use_edge_index_output=use_edge_index_output,
+        use_label_edge_index_output=use_label_edge_index_output,
     )
     positive_pairs: list[tuple[int, int]] = []
     negative_pairs: list[tuple[int, int]] = []
     for datum in loader:
         assert isinstance(datum, Data)
         node = datum.node
-        if use_edge_index_output:
+        if use_label_edge_index_output:
             assert isinstance(datum.y_positive, torch.Tensor)
             assert datum.y_positive.size(0) == 2
             positive_pairs.extend(
@@ -487,7 +487,7 @@ def _collect_homogeneous_labels(
         else:
             positive_pairs.extend(_global_pair_set(node, node, datum.y_positive))
         if has_negatives:
-            if use_edge_index_output:
+            if use_label_edge_index_output:
                 assert isinstance(datum.y_negative, torch.Tensor)
                 assert datum.y_negative.size(0) == 2
                 negative_pairs.extend(
@@ -499,7 +499,7 @@ def _collect_homogeneous_labels(
             assert not hasattr(datum, "y_negative"), (
                 f"expected no negatives, got {getattr(datum, 'y_negative', None)}"
             )
-    return_dict[use_edge_index_output] = (
+    return_dict[use_label_edge_index_output] = (
         sorted(positive_pairs),
         sorted(negative_pairs),
     )
@@ -520,7 +520,7 @@ def _edge_type_key(edge_type: EdgeType) -> tuple[str, ...]:
 def _accumulate_heterogeneous_pairs(
     data: HeteroData,
     labels_by_edge_type: dict[EdgeType, Union[torch.Tensor, dict[int, torch.Tensor]]],
-    use_edge_index_output: bool,
+    use_label_edge_index_output: bool,
     into: dict[tuple[str, ...], list[tuple[int, int]]],
 ) -> None:
     """Accumulate one batch's labels as global (anchor, label) id pairs.
@@ -534,7 +534,7 @@ def _accumulate_heterogeneous_pairs(
     for edge_type, labels in labels_by_edge_type.items():
         anchor_node = data[edge_type[anchor_index]].node
         label_node = data[edge_type[supervision_index]].node
-        if use_edge_index_output:
+        if use_label_edge_index_output:
             assert isinstance(labels, torch.Tensor), f"{edge_type}: {type(labels)}"
             assert labels.size(0) == 2
             pairs = _global_pair_set_from_edge_index(anchor_node, label_node, labels)
@@ -547,7 +547,7 @@ def _accumulate_heterogeneous_pairs(
 def _collect_heterogeneous_labels(
     _,
     return_dict,
-    use_edge_index_output: bool,
+    use_label_edge_index_output: bool,
     dataset: DistDataset,
     input_nodes: tuple[NodeType, torch.Tensor],
     supervision_edge_types: list[EdgeType],
@@ -566,7 +566,7 @@ def _collect_heterogeneous_labels(
         batch_size=batch_size,
         pin_memory_device=torch.device("cpu"),
         supervision_edge_type=supervision_edge_types,
-        use_edge_index_output=use_edge_index_output,
+        use_label_edge_index_output=use_label_edge_index_output,
     )
     positive_pairs: dict[tuple[str, ...], list[tuple[int, int]]] = defaultdict(list)
     negative_pairs: dict[tuple[str, ...], list[tuple[int, int]]] = defaultdict(list)
@@ -575,12 +575,12 @@ def _collect_heterogeneous_labels(
         # Several supervision edge types keep y_positive / y_negative in their
         # dict-of-edge-type form rather than collapsing to a bare value.
         _accumulate_heterogeneous_pairs(
-            datum, datum.y_positive, use_edge_index_output, positive_pairs
+            datum, datum.y_positive, use_label_edge_index_output, positive_pairs
         )
         _accumulate_heterogeneous_pairs(
-            datum, datum.y_negative, use_edge_index_output, negative_pairs
+            datum, datum.y_negative, use_label_edge_index_output, negative_pairs
         )
-    return_dict[use_edge_index_output] = (
+    return_dict[use_label_edge_index_output] = (
         {edge_type: sorted(pairs) for edge_type, pairs in positive_pairs.items()},
         {edge_type: sorted(pairs) for edge_type, pairs in negative_pairs.items()},
     )
@@ -799,12 +799,12 @@ class DistABLPLoaderTest(TestCase):
 
         manager = mp.Manager()
         return_dict = manager.dict()
-        for use_edge_index_output in (False, True):
+        for use_label_edge_index_output in (False, True):
             mp.spawn(
                 fn=_collect_homogeneous_labels,
                 args=(
                     return_dict,
-                    use_edge_index_output,
+                    use_label_edge_index_output,
                     dataset,
                     input_nodes,
                     batch_size,
@@ -905,12 +905,12 @@ class DistABLPLoaderTest(TestCase):
 
         manager = mp.Manager()
         return_dict = manager.dict()
-        for use_edge_index_output in (False, True):
+        for use_label_edge_index_output in (False, True):
             mp.spawn(
                 fn=_collect_heterogeneous_labels,
                 args=(
                     return_dict,
-                    use_edge_index_output,
+                    use_label_edge_index_output,
                     dataset,
                     (_A, torch.tensor([10])),
                     [_A_TO_B, _A_TO_C],

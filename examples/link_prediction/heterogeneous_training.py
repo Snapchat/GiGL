@@ -144,7 +144,7 @@ def _setup_dataloaders(
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
-        use_edge_index_output=True,
+        use_label_edge_index_output=True,
     )
 
     logger.info(f"---Rank {rank} finished setting up main loader")

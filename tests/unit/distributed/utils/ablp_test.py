@@ -93,13 +93,13 @@ class RemapLabelsToLocalEdgeIndicesTest(TestCase):
     @parameterized.expand(
         [
             param(
-                "sorted_present_empty_and_padded",
+                "sorted_present_and_padded",
                 local_id_to_global_id_by_node_type={
                     _STORY: torch.tensor([10, 11, 12, 13, 14, 15, 16, 17])
                 },
                 positive_labels={
                     _positive_label_edge_type(_USER_TO_STORY): torch.tensor(
-                        [[15, -1], [15, 16], [-1, -1], [99, -1]]
+                        [[15, -1], [15, 16], [-1, -1], [-1, -1]]
                     )
                 },
                 negative_labels={},
@@ -176,11 +176,11 @@ class RemapLabelsToLocalEdgeIndicesTest(TestCase):
                 },
             ),
             param(
-                "all_anchors_empty",
+                "all_labels_padded",
                 local_id_to_global_id_by_node_type={_STORY: torch.tensor([10, 11, 12])},
                 positive_labels={
                     _positive_label_edge_type(_USER_TO_STORY): torch.tensor(
-                        [[-1, -1], [99, 98]]
+                        [[-1, -1], [-1, -1]]
                     )
                 },
                 negative_labels={},
@@ -269,6 +269,28 @@ class RemapLabelsToLocalEdgeIndicesTest(TestCase):
         label_edge_index = positive_edge_indices[_USER_TO_STORY]
         self.assertEqual(label_edge_index.device.type, "cpu")
         self.assertEqual(label_edge_index.dtype, torch.long)
+
+    def test_missing_non_padding_label_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            remap_labels_to_local_edge_indices(
+                local_id_to_global_id_by_node_type={_STORY: torch.tensor([10, 11, 12])},
+                positive_labels_by_edge_type={
+                    _positive_label_edge_type(_USER_TO_STORY): torch.tensor([[99]])
+                },
+                negative_labels_by_edge_type={},
+            )
+
+    def test_label_with_no_sampled_nodes_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            remap_labels_to_local_edge_indices(
+                local_id_to_global_id_by_node_type={
+                    _STORY: torch.empty(0, dtype=torch.long)
+                },
+                positive_labels_by_edge_type={
+                    _positive_label_edge_type(_USER_TO_STORY): torch.tensor([[10]])
+                },
+                negative_labels_by_edge_type={},
+            )
 
     def test_duplicate_node_map_raises(self) -> None:
         with self.assertRaises(ValueError):

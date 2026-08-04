@@ -211,7 +211,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
-        use_edge_index_output=True,
+        use_label_edge_index_output=True,
     )
 
     print(f"---Rank {rank} finished setting up main loader for split={split}")
