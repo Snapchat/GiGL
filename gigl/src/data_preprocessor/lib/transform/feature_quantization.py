@@ -114,7 +114,15 @@ def _quantize_record_batch(
     stats: dict[str, float],
 ) -> pa.RecordBatch:
     features = _build_feature_matrix(batch, spec.feature_keys)
-    packed = quantize_ndarray(features, bits=spec.bits, stats=stats)
+    if spec.bits == 1:
+        packed = quantize_ndarray(features, bits=spec.bits)
+    else:
+        packed = quantize_ndarray(
+            features,
+            bits=spec.bits,
+            clip_min=stats["clip_min"],
+            clip_max=stats["clip_max"],
+        )
     schema_names = batch.schema.names
     keep_indices = [
         i for i, name in enumerate(schema_names) if name not in set(spec.feature_keys)
