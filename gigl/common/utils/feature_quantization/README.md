@@ -1,6 +1,6 @@
 # Feature Quantization
 
-This package contains the low-level NumPy and Torch helpers for node feature
+This package contains the low-level NumPy and Torch helpers for feature
 quantization in GiGL.
 
 Feature quantization is lossy compression: high-precision feature values such as
@@ -27,7 +27,7 @@ a useful tradeoff for GiGL.
 The built-in flow is:
 
 1. The data preprocessor computes feature summary statistics offline.
-2. The preprocessor quantizes selected scalar node feature columns with NumPy.
+2. The preprocessor quantizes selected scalar feature columns with NumPy.
 3. The packed `uint8` feature sidecar is written to TFRecords.
 4. Distributed dataset construction partitions and samples the packed bytes.
 5. The dataloader collate path dequantizes sampled packed features with Torch.
