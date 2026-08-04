@@ -18,9 +18,9 @@ memory-bound:
 
 Reducing feature size can improve feature-store footprint, network bandwidth,
 and PCIe transfer volume. GNNs have also been shown to be relatively tolerant of
-input feature quantization in [Degree-Quant: Quantization-Aware Training for
-Graph Neural Networks](https://arxiv.org/abs/2207.14696), which motivates this
-as a useful tradeoff for GiGL.
+input feature quantization in [BiFeat: Supercharge GNN Training via Graph
+Feature Quantization](https://arxiv.org/abs/2207.14696), which motivates this as
+a useful tradeoff for GiGL.
 
 ## Current Built-In Flow
 
