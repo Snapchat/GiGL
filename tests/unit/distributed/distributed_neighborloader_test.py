@@ -973,9 +973,9 @@ class WithEdgeDerivationTest(TestCase):
 class SamplingSeedTest(TestCase):
     """Covers the sampling seed that ``create_sampling_config`` puts on ``SamplingConfig``.
 
-    A seed must always be present: an unset seed sends GLT down a path that gathers fresh
-    entropy once per source row (see ``create_sampling_config``), so ``seed is None`` is a
-    performance bug, not a neutral default.
+    An unset seed stays unset here and is drawn per worker in ``create_dist_sampler``.
+    Drawing it here instead would make the config differ per rank, which Graph Store mode
+    rejects when several ranks register on one shared sampling backend.
     """
 
     @staticmethod
@@ -988,17 +988,28 @@ class SamplingSeedTest(TestCase):
             edge_dir="out",
         )
 
-    def test_seed_is_always_set(self) -> None:
+    def test_seed_defaults_to_none(self) -> None:
         config = BaseDistLoader.create_sampling_config(
             num_neighbors=[2, 2], dataset_schema=self._schema()
         )
-        self.assertIsNotNone(config.seed)
+        self.assertIsNone(config.seed)
 
     def test_explicit_seed_is_used_verbatim(self) -> None:
         config = BaseDistLoader.create_sampling_config(
             num_neighbors=[2, 2], dataset_schema=self._schema(), seed=123456789
         )
         self.assertEqual(config.seed, 123456789)
+
+    def test_independent_calls_produce_equal_configs(self) -> None:
+        """Each rank builds its own config, and Graph Store compares them for equality."""
+        schema = self._schema()
+        first = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        second = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        self.assertEqual(first, second)
 
 
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess

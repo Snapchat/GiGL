@@ -8,7 +8,6 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
-import random
 import sys
 import time
 from collections import Counter
@@ -407,35 +406,23 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
-            seed: Sampling RNG seed. Defaults to a fresh random ``uint32``, which is
-                what you want; pass a value only to pin sampling deliberately. A seed
-                **must** be set for performance reasons -- see below.
+            seed: Sampling RNG seed. Leave unset unless you want to pin sampling
+                deliberately; an unset seed is derived per sampling worker at sampler
+                construction, in ``gigl.distributed.utils.dist_sampler.create_dist_sampler``.
 
         Returns:
             A fully configured SamplingConfig.
 
         Note:
-            Setting ``seed`` is a large performance win, not just a determinism knob.
-            GLT's ``CPURandomSampler::UniformSample`` reads
-            ``RandomSeedManager::getInstance().getSeed()`` on **every** call, and that call
-            happens once per source row of a batch:
+            The returned config must be identical across all ranks that share a sampling
+            backend. Graph Store mode keys one backend per ``backend_key`` and rejects any
+            rank whose config differs, in
+            ``gigl.distributed.graph_store.shared_dist_sampling_producer.SharedDistSamplingBackend.register_input``.
 
-            - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L144
-            - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L165
-
-            The ``std::mt19937`` it feeds is ``thread_local static``, so after the first call
-            the read is discarded -- but it still runs. With no seed set, ``getSeed()``
-            constructs a ``std::random_device`` and draws from it, about 5 us of real work per
-            source row for a value that is thrown away:
-
-            - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/common.h#L48-L56
-
-            For the production use case we see up to 7x speed up, and 29x speedup in local
-            testing.
-
-            TODO(kmonte): Drop this workaround if GLT ever hoists the ``getSeed()`` call out
-            of ``CPURandomSampler::UniformSample`` and into the engine initializer, so the
-            unseeded path stops paying per-row entropy.
+            ``SamplingConfig`` is a dataclass, so every field participates in that equality
+            check. Do not populate a field here with a per-rank value -- deriving the seed in
+            this function, for instance, breaks every rank but the one that wins the
+            initialization race.
         """
         num_neighbors = patch_fanout_for_sampling(
             edge_types=dataset_schema.edge_types,
@@ -452,7 +439,7 @@ class BaseDistLoader(DistLoader):
             with_neg=False,
             with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
-            seed=seed if seed is not None else random.getrandbits(32),
+            seed=seed,
         )
 
     @staticmethod
