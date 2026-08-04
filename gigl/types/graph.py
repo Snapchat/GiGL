@@ -99,6 +99,12 @@ class PartitionOutput:
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ]
 
+    # Quantized node features on current rank. These are packed uint8 features
+    # aligned by node id and dequantized/scattered in the sampler collate path.
+    partitioned_node_quantized_features: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
+
 
 @dataclass(frozen=True)
 class FeatureInfo:
