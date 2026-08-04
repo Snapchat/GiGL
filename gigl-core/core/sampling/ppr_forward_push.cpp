@@ -160,11 +160,14 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
                 " states.");
 
     TypedPPRQueueDrainResult queueDrainResult;
-    // Fetch requests are edge-type scoped: each edge type has its own adjacency
-    // table and destination node type. Grouping by node type would merge
+    // Unioned source nodes to fetch, keyed by edge type. Fetch requests are
+    // edge-type scoped: each edge type has its own adjacency table and
+    // destination node type. Grouping by node type would merge
     // relation-specific fetches that must remain separate.
     std::unordered_map<int32_t, std::unordered_set<int64_t>> unionedSourceNodeIdsByEdgeTypeId;
 
+    // One drainQueue() result per channel, aligned by vector index with states.
+    // std::nullopt means that channel had no queued nodes this iteration.
     std::vector<std::optional<std::unordered_map<int32_t, torch::Tensor>>> frontiersByChannel;
     frontiersByChannel.resize(states.size());
     if (states.size() == 1) {
@@ -196,9 +199,16 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
             continue;
         }
 
+        const auto& channelFrontier = channelFrontierByEdgeTypeId.value();
         std::vector<int32_t> requestedEdgeTypeIds;
-        for (const auto& [edgeTypeId, nodes] : channelFrontierByEdgeTypeId.value()) {
-            requestedEdgeTypeIds.push_back(edgeTypeId);
+        requestedEdgeTypeIds.reserve(channelFrontier.size());
+        for (const auto& channelFrontierEntry : channelFrontier) {
+            requestedEdgeTypeIds.push_back(channelFrontierEntry.first);
+        }
+        std::sort(requestedEdgeTypeIds.begin(), requestedEdgeTypeIds.end());
+
+        for (int32_t edgeTypeId : requestedEdgeTypeIds) {
+            const auto& nodes = channelFrontier.at(edgeTypeId);
             auto nodeAccessor = nodes.accessor<int64_t, 1>();
             auto& unionedSourceNodeIds = unionedSourceNodeIdsByEdgeTypeId[edgeTypeId];
             for (int64_t nodeIndex = 0; nodeIndex < nodes.size(0); ++nodeIndex) {
@@ -455,7 +465,6 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
 //
 // Inputs:
 //   nodesAndScores: extracted (node_id, score) candidates for one channel.
-//   maxScore: largest score in the channel, used to calibrate scores to [0, 1].
 //   channelIndex: index of the typed PPR channel being added.
 //   numChannels: total typed PPR channels, used to derive feature width.
 //   outputScoresByNodeId: mutable map from node ID to emitted edge_attr features.
@@ -463,9 +472,8 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
 //
 // Expected output: outputScoresByNodeId has this channel's score/presence
 // features merged in, and channelOutputCandidates contains this channel's
-// calibrated candidates.
+// candidates on the emitted PPR score scale.
 static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int32_t, double>>& nodesAndScores,
-                                                 double maxScore,
                                                  int32_t channelIndex,
                                                  int32_t numChannels,
                                                  std::unordered_map<int32_t, std::vector<double>>& outputScoresByNodeId,
@@ -473,19 +481,15 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
     if (nodesAndScores.empty()) {
         return;
     }
-    TORCH_CHECK(maxScore > 0.0,
-                "Typed PPR output has candidates but non-positive max score ",
-                maxScore,
-                ", which indicates invalid PPR state.");
 
     // Feature width is 1 + 2C:
-    //   column 0: best calibrated score across channels, used as the scalar
-    //             PPR weight by downstream ranking/sequence construction.
-    //   columns [1, C]: calibrated score for each channel.
+    //   column 0: best emitted PPR score across channels, used as the scalar
+    //             PPR weight by downstream ranking/sequence construction. This
+    //             stays on the same score scale as untyped PPR output.
+    //   columns [1, C]: emitted PPR score for each channel.
     //   columns [1 + C, 1 + 2C): presence bit for each channel.
     int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
     for (const auto& [nodeId, score] : nodesAndScores) {
-        double calibratedScore = score / maxScore;
         auto scoreIter = outputScoresByNodeId.find(nodeId);
         if (scoreIter == outputScoresByNodeId.end()) {
             scoreIter = outputScoresByNodeId.emplace(nodeId, std::vector<double>(numEdgeAttrFeatures, 0.0)).first;
@@ -493,27 +497,27 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         auto& scoreFeatures = scoreIter->second;
 
         // Feature layout:
-        // [best_calibrated_score, per-channel scores..., channel presence bits...].
-        scoreFeatures[0] = std::max(scoreFeatures[0], calibratedScore);
+        // [best_score, per-channel scores..., channel presence bits...].
+        scoreFeatures[0] = std::max(scoreFeatures[0], score);
         int32_t channelScoreIndex = 1 + channelIndex;
         int32_t channelPresenceIndex = 1 + numChannels + channelIndex;
 
         // Record this node's score for the current channel and mark that the
         // channel reached the node. Current extraction emits one row per node
         // per channel, so no intra-channel merge is needed here.
-        scoreFeatures[channelScoreIndex] = calibratedScore;
+        scoreFeatures[channelScoreIndex] = score;
         scoreFeatures[channelPresenceIndex] = 1.0;
 
         // Keep a per-channel sortable candidate list so target counts can be
         // applied after cross-channel attribution.
-        channelOutputCandidates.emplace_back(nodeId, calibratedScore);
+        channelOutputCandidates.emplace_back(nodeId, score);
     }
 }
 
 // Helper function for applying typed channel target counts and cross-channel dedup.
 //
 // Inputs:
-//   candidatesByChannel: mutable (node_id, calibrated_score) candidates per channel.
+//   candidatesByChannel: mutable (node_id, score) candidates per channel.
 //   channelTargetCounts: desired output count per attributed channel.
 //   maxPPRNodes: maximum number of deduplicated node IDs to return for a seed.
 //
@@ -521,24 +525,24 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
 //   1. Attribute duplicate nodes to the channel where they have the highest score.
 //   2. Fill each channel up to its target count.
 //   3. Redistribute unused slots to the remaining highest-scoring candidates.
-//   4. Return the selected nodes globally ranked by best calibrated score.
+//   4. Return the selected nodes globally ranked by best score.
 static std::vector<int32_t> selectTypedPPRNodeIds(
     std::vector<std::vector<std::pair<int32_t, double>>>& candidatesByChannel,
     const std::vector<int32_t>& channelTargetCounts,
     int32_t maxPPRNodes) {
     struct AttributedCandidate {
-        double bestCalibratedScore;
-        double channelCalibratedScore;
+        double bestScore;
+        double channelScore;
         int32_t channelIndex;
         int32_t nodeId;
     };
 
     const auto higherAttributedCandidate = [](const auto& a, const auto& b) {
-        if (a.bestCalibratedScore != b.bestCalibratedScore) {
-            return a.bestCalibratedScore > b.bestCalibratedScore;
+        if (a.bestScore != b.bestScore) {
+            return a.bestScore > b.bestScore;
         }
-        if (a.channelCalibratedScore != b.channelCalibratedScore) {
-            return a.channelCalibratedScore > b.channelCalibratedScore;
+        if (a.channelScore != b.channelScore) {
+            return a.channelScore > b.channelScore;
         }
         if (a.channelIndex != b.channelIndex) {
             return a.channelIndex < b.channelIndex;
@@ -553,12 +557,12 @@ static std::vector<int32_t> selectTypedPPRNodeIds(
 
     // Deduplicate before applying channel targets. A node that appears in
     // multiple channels is attributed to the channel where it has the strongest
-    // calibrated score, which is the same score used for global ranking.
+    // PPR score, which is the same score used for global overflow ranking.
     std::unordered_map<int32_t, AttributedCandidate> bestCandidateByNodeId;
     bestCandidateByNodeId.reserve(totalCandidateRows);
     for (int32_t channelIndex = 0; channelIndex < static_cast<int32_t>(candidatesByChannel.size()); ++channelIndex) {
-        for (const auto& [nodeId, calibratedScore] : candidatesByChannel[channelIndex]) {
-            AttributedCandidate candidate{calibratedScore, calibratedScore, channelIndex, nodeId};
+        for (const auto& [nodeId, score] : candidatesByChannel[channelIndex]) {
+            AttributedCandidate candidate{score, score, channelIndex, nodeId};
             auto [candidateIter, inserted] = bestCandidateByNodeId.emplace(nodeId, candidate);
             if (!inserted && higherAttributedCandidate(candidate, candidateIter->second)) {
                 candidateIter->second = candidate;
@@ -642,8 +646,8 @@ static std::vector<int32_t> selectTypedPPRNodeIds(
     }
 
     // The target/fill passes decide membership; final output order is still by
-    // best calibrated score so downstream sequence construction sees a ranked
-    // PPR sequence rather than channel-grouped blocks.
+    // best PPR score so downstream sequence construction sees a ranked PPR
+    // sequence rather than channel-grouped blocks.
     if (selectedCandidates.size() > 1) {
         std::sort(selectedCandidates.begin(), selectedCandidates.end(), higherAttributedCandidate);
     }
@@ -704,20 +708,29 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
                                                    bool enableResidualTopUp) {
+    TORCH_CHECK(!states.empty(), "extractTypedTopKWithResidualTopUp requires at least one channel state.");
+    TORCH_CHECK(states.size() == channelTargetCounts.size(),
+                "Expected one channel target count per PPR state, got ",
+                channelTargetCounts.size(),
+                " counts for ",
+                states.size(),
+                " states.");
+    for (int32_t targetCount : channelTargetCounts) {
+        TORCH_CHECK(targetCount >= 0, "channelTargetCounts must be non-negative, got ", targetCount, ".");
+    }
+
     // Typed channels are constructed from the same seed batch and graph schema;
-    // only the edge-type traversal allowlist differs. The sampler calls typed
-    // extraction only when typed-channel target counts are configured, so at
-    // least one state exists. Use the first state as the shared schema source
-    // for batch size and node-type count.
+    // only the edge-type traversal allowlist differs. Use the first state as
+    // the shared schema source for batch size and node-type count.
     const auto* firstState = states.front();
     int32_t batchSize = firstState->_batchSize;
     int32_t numNodeTypes = firstState->_numNodeTypes;
     int32_t numChannels = static_cast<int32_t>(states.size());
     int32_t maxPPRNodes = std::accumulate(channelTargetCounts.begin(), channelTargetCounts.end(), 0);
     // Feature width is 1 + 2C:
-    //   column 0: best calibrated score across channels, used as the scalar
+    //   column 0: best emitted PPR score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction.
-    //   columns [1, C]: calibrated score for each channel.
+    //   columns [1, C]: emitted PPR score for each channel.
     //   columns [1 + C, 1 + 2C): presence bit for each channel.
     int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
 
@@ -751,16 +764,8 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                     appendResidualTopUpPairs(nodeTypeState, outputNodesAndScores, maxPPRNodes);
                 }
 
-                auto outputMaxScoreIter =
-                    std::max_element(outputNodesAndScores.begin(),
-                                     outputNodesAndScores.end(),
-                                     [](const auto& a, const auto& b) { return a.second < b.second; });
-                double outputMaxScore =
-                    outputMaxScoreIter != outputNodesAndScores.end() ? outputMaxScoreIter->second : 0.0;
-
                 outputCandidatesByChannel[channelIndex].reserve(outputNodesAndScores.size());
                 addTypedPPRSeedFeaturesAndCandidates(outputNodesAndScores,
-                                                     outputMaxScore,
                                                      channelIndex,
                                                      numChannels,
                                                      outputScores,

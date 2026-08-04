@@ -190,10 +190,11 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // For each seed/node-type, typed extraction builds one candidate view per
 // channel. When residual top-up is enabled, residual candidates are included in
 // that same view, so finalized PPR and residual top-up both obey the configured
-// channel target counts. The merge calibrates scores within each channel,
+// channel target counts. The merge uses emitted PPR scores for selection,
 // deduplicates candidates seen through multiple channels by attributing each
-// node to its highest-scoring channel, fills each channel target, redistributes
-// unused slots globally by score, and emits per-node-type tensors.
+// node to the channel where it has the highest score, fills each channel
+// target, redistributes unused slots globally by score, and emits
+// per-node-type tensors.
 //
 // Inputs:
 //   states: Completed PPRForwardPush states, one per typed channel.
@@ -207,7 +208,7 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // extractTopKWithResidualTopUp:
 //   ids: int64 node IDs, flattened across seeds.
 //   weights: double feature matrix with columns
-//            [best_calibrated_score, per-channel scores..., presence bits...].
+//            [best_score, per-channel scores..., presence bits...].
 //   valid_counts: int64 count of selected nodes per seed.
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
