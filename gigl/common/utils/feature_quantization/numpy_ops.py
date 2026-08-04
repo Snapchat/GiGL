@@ -5,15 +5,22 @@ arrays and torch is not available. Dequantization lives in torch_ops.py because
 the dataloader collate path operates on torch tensors that may already be on GPU.
 """
 
-from collections.abc import Mapping
-
 import numpy as np
 
 
 def quantize_ndarray(
-    features: np.ndarray, *, bits: int, stats: Mapping[str, float]
+    features: np.ndarray,
+    *,
+    bits: int,
+    clip_min: float | None = None,
+    clip_max: float | None = None,
 ) -> np.ndarray:
-    """Quantize a 2D float array into packed uint8 codes."""
+    """Quantize a 2D float array into packed uint8 codes.
+
+    For multi-bit quantization, `clip_min` and `clip_max` are required and
+    define the min-max scaling range: values are clipped to that range, scaled
+    to `[0, 2**bits - 1]`, rounded to integer codes, then packed into bytes.
+    """
     valid_bits = (1, 2, 4, 8)
     if bits not in valid_bits:
         raise ValueError(f"bits must be one of {valid_bits}, got {bits}")
@@ -26,10 +33,11 @@ def quantize_ndarray(
         codes = (features > 0).astype(np.uint8)
     else:
         # Min-max scale using clipped values and map to integer buckets.
+        if clip_min is None or clip_max is None:
+            raise ValueError(f"{bits}-bit quantization requires clip_min/clip_max")
         levels = (1 << bits) - 1
-        lo, hi = stats["clip_min"], stats["clip_max"]
-        clipped = np.clip(features, lo, hi)
-        scaled = (clipped - lo) / (hi - lo)
+        clipped = np.clip(features, clip_min, clip_max)
+        scaled = (clipped - clip_min) / (clip_max - clip_min)
         codes = np.rint(scaled * levels).astype(np.uint8)
     return _pack_codes(codes, bits)
 

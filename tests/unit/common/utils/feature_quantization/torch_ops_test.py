@@ -18,7 +18,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             pos_mean=1.75,
         )
 
-        packed = quantize_ndarray(features, bits=metadata.bits, stats={})
+        packed = quantize_ndarray(features, bits=metadata.bits)
         actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
 
         torch.testing.assert_close(
@@ -27,15 +27,19 @@ class TorchFeatureQuantizationOpsTest(TestCase):
 
     def test_quantize_numpy_dequantize_torch_round_trip_multi_bit(self) -> None:
         features = np.array([[-1.0, 0.0, 1.0, 2.0, 4.0]], dtype=np.float32)
-        stats = {"clip_min": 0.0, "clip_max": 3.0}
+        clip_min = 0.0
+        clip_max = 3.0
         metadata = FeatureQuantizationMetadata(
             bits=2,
             feature_dim=features.shape[1],
             quantized_feature_indices=tuple(range(features.shape[1])),
-            **stats,
+            clip_min=clip_min,
+            clip_max=clip_max,
         )
 
-        packed = quantize_ndarray(features, bits=metadata.bits, stats=stats)
+        packed = quantize_ndarray(
+            features, bits=metadata.bits, clip_min=clip_min, clip_max=clip_max
+        )
         actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
 
         torch.testing.assert_close(actual, torch.tensor([[0.0, 0.0, 1.0, 2.0, 3.0]]))
