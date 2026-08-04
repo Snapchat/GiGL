@@ -8,30 +8,7 @@ from tests.test_assets.test_case import TestCase
 
 
 class TorchFeatureQuantizationOpsTest(TestCase):
-    def test_quantize_numpy_dequantize_torch_round_trip_single_bit_without_padding(
-        self,
-    ) -> None:
-        features = np.array(
-            [[-2.0, -0.5, 0.5, 3.0, -3.0, 2.0, -1.0, 1.0]], dtype=np.float32
-        )
-        metadata = FeatureQuantizationMetadata(
-            bits=1,
-            feature_dim=features.shape[1],
-            quantized_feature_indices=tuple(range(features.shape[1])),
-            neg_mean=-1.25,
-            pos_mean=1.75,
-        )
-
-        packed = quantize_ndarray(features, bits=metadata.bits, stats={})
-        actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
-
-        self.assertEqual(actual.shape, torch.Size(features.shape))
-        self.assertEqual(actual.dtype, torch.float32)
-        self.assertEqual(set(actual.flatten().tolist()), {-1.25, 1.75})
-
-    def test_quantize_numpy_dequantize_torch_round_trip_single_bit_with_padding(
-        self,
-    ) -> None:
+    def test_quantize_numpy_dequantize_torch_round_trip_single_bit(self) -> None:
         features = np.array([[-2.0, -0.5, 0.5, 3.0, -3.0]], dtype=np.float32)
         metadata = FeatureQuantizationMetadata(
             bits=1,
@@ -44,15 +21,13 @@ class TorchFeatureQuantizationOpsTest(TestCase):
         packed = quantize_ndarray(features, bits=metadata.bits, stats={})
         actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
 
-        self.assertEqual(actual.shape, torch.Size(features.shape))
-        self.assertEqual(actual.dtype, torch.float32)
-        self.assertEqual(set(actual.flatten().tolist()), {-1.25, 1.75})
+        torch.testing.assert_close(
+            actual, torch.tensor([[-1.25, -1.25, 1.75, 1.75, -1.25]])
+        )
 
-    def test_quantize_numpy_dequantize_torch_round_trip_multi_bit_without_padding(
-        self,
-    ) -> None:
-        features = np.array([[-1.0, 0.0, 0.5, 1.0]], dtype=np.float32)
-        stats = {"clip_min": 0.0, "clip_max": 1.0}
+    def test_quantize_numpy_dequantize_torch_round_trip_multi_bit(self) -> None:
+        features = np.array([[-1.0, 0.0, 1.0, 2.0, 4.0]], dtype=np.float32)
+        stats = {"clip_min": 0.0, "clip_max": 3.0}
         metadata = FeatureQuantizationMetadata(
             bits=2,
             feature_dim=features.shape[1],
@@ -63,30 +38,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
         packed = quantize_ndarray(features, bits=metadata.bits, stats=stats)
         actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
 
-        self.assertEqual(actual.shape, torch.Size(features.shape))
-        self.assertEqual(actual.dtype, torch.float32)
-        self.assertTrue(torch.all(actual >= stats["clip_min"]).item())
-        self.assertTrue(torch.all(actual <= stats["clip_max"]).item())
-
-    def test_quantize_numpy_dequantize_torch_round_trip_multi_bit_with_padding(
-        self,
-    ) -> None:
-        features = np.array([[-1.0, 0.0, 0.5, 1.0, 2.0]], dtype=np.float32)
-        stats = {"clip_min": 0.0, "clip_max": 1.0}
-        metadata = FeatureQuantizationMetadata(
-            bits=2,
-            feature_dim=features.shape[1],
-            quantized_feature_indices=tuple(range(features.shape[1])),
-            **stats,
-        )
-
-        packed = quantize_ndarray(features, bits=metadata.bits, stats=stats)
-        actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
-
-        self.assertEqual(actual.shape, torch.Size(features.shape))
-        self.assertEqual(actual.dtype, torch.float32)
-        self.assertTrue(torch.all(actual >= stats["clip_min"]).item())
-        self.assertTrue(torch.all(actual <= stats["clip_max"]).item())
+        torch.testing.assert_close(actual, torch.tensor([[0.0, 0.0, 1.0, 2.0, 3.0]]))
 
     def test_dequantize_torch_tensor_single_bit_unpacks_full_byte(self) -> None:
         # 0b10101010 = 170 unpacks high-bits-first to [1, 0, 1, 0, 1, 0, 1, 0].
