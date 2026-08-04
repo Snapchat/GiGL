@@ -18,8 +18,15 @@ from tests.test_assets.test_case import TestCase
 
 # Short timeout so a broken fresh image fails fast instead of hanging CI until the
 # outer Cloud Build timeout. launch_graph_store_job passes this through to Vertex AI
-# directly (it does not apply the 24h launch_job default).
+# directly (it does not apply the 24h launch_job default). Note this only covers a job
+# that starts and then misbehaves -- Vertex AI applies it to running time.
 _INTEGRATION_JOB_TIMEOUT_S = 30 * 60
+
+# Client side deadline for the whole wait, including time queued waiting on capacity,
+# which _INTEGRATION_JOB_TIMEOUT_S does not cover. The 2 compute + 2 storage case here
+# once sat 2h06m waiting on machines that never arrived and timed out the 3h Cloud Build
+# budget. These jobs finish in about 4-7 minutes when the region has capacity.
+_INTEGRATION_JOB_WAIT_TIMEOUT_S = 15 * 60
 
 
 def _assert_graph_store_info(num_storage_nodes: int, num_compute_nodes: int) -> None:
@@ -152,6 +159,7 @@ class NetworkingUtilsIntegrationTest(TestCase):
             machine_type="n2-standard-8",
             environment_variables=resource_config_env_vars,
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            wait_timeout_s=_INTEGRATION_JOB_WAIT_TIMEOUT_S,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
@@ -160,6 +168,7 @@ class NetworkingUtilsIntegrationTest(TestCase):
             machine_type="n1-standard-4",
             command=command,
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            wait_timeout_s=_INTEGRATION_JOB_WAIT_TIMEOUT_S,
         )
 
         self._vertex_ai_service.launch_graph_store_job(

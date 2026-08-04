@@ -18,6 +18,13 @@ from tests.test_assets.test_case import TestCase
 # directly (it does not apply the 24h launch_job default).
 _INTEGRATION_JOB_TIMEOUT_S = 30 * 60
 
+# Client side deadline for the whole wait, including time queued waiting on capacity.
+# _INTEGRATION_JOB_TIMEOUT_S alone does not bound that: it is enforced by Vertex AI over
+# the job's *running* time, so a job that never gets machines blows through it. One such
+# job stalled 2h06m and timed out the 3h Cloud Build budget. These jobs finish in about
+# 4-7 minutes when the region has capacity.
+_INTEGRATION_JOB_WAIT_TIMEOUT_S = 15 * 60
+
 
 def _assert_machine_cpu_count(expected_cpu_count: int) -> None:
     """Worker entrypoint: assert the provisioned VM exposes the expected vCPU count.
@@ -111,6 +118,7 @@ class VertexAIPipelineIntegrationTest(TestCase):
             machine_type="n1-standard-4",
             environment_variables=[env_var.EnvVar(name="FOO", value="BAR")],
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            wait_timeout_s=_INTEGRATION_JOB_WAIT_TIMEOUT_S,
         )
 
         job = self._vertex_ai_service.launch_job(job_config)
@@ -141,6 +149,7 @@ class VertexAIPipelineIntegrationTest(TestCase):
                 "_assert_machine_cpu_count(4)",  # n1-standard-4
             ],
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            wait_timeout_s=_INTEGRATION_JOB_WAIT_TIMEOUT_S,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
@@ -154,6 +163,7 @@ class VertexAIPipelineIntegrationTest(TestCase):
                 "_assert_machine_cpu_count(8)",  # n2-standard-8
             ],
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            wait_timeout_s=_INTEGRATION_JOB_WAIT_TIMEOUT_S,
         )
 
         job = self._vertex_ai_service.launch_graph_store_job(
