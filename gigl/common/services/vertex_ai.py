@@ -68,7 +68,6 @@ from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
     DiskSpec,
-    JobState,
     MachineSpec,
     ReservationAffinity,
     WorkerPoolSpec,
@@ -87,27 +86,7 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
-
-# States a CustomJob does not leave, mirroring the set
-# ``aiplatform.CustomJob.wait_for_completion`` stops on, plus ``JOB_STATE_EXPIRED``.
-_CUSTOM_JOB_COMPLETE_STATES: Final[frozenset[JobState]] = frozenset(
-    {
-        JobState.JOB_STATE_SUCCEEDED,
-        JobState.JOB_STATE_FAILED,
-        JobState.JOB_STATE_CANCELLED,
-        JobState.JOB_STATE_PAUSED,
-        JobState.JOB_STATE_EXPIRED,
-    }
-)
-
-# Terminal states that mean the job did not do its work.
-_CUSTOM_JOB_ERROR_STATES: Final[frozenset[JobState]] = frozenset(
-    {
-        JobState.JOB_STATE_FAILED,
-        JobState.JOB_STATE_CANCELLED,
-        JobState.JOB_STATE_EXPIRED,
-    }
-)
+_CUSTOM_JOB_POLL_PERIOD_S: Final[int] = 30
 
 
 @dataclass
@@ -393,66 +372,28 @@ class VertexAIService:
         logger.info(
             f"See job logs at: https://console.cloud.google.com/agent-platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
-        if job_config.wait_timeout_s is None:
-            job.wait_for_completion()
-        else:
-            self._wait_for_custom_job(job, timeout_s=job_config.wait_timeout_s)
-        return job
-
-    @staticmethod
-    def _wait_for_custom_job(
-        job: aiplatform.CustomJob,
-        timeout_s: int,
-        polling_period_s: int = 30,
-    ) -> None:
-        """Wait for a CustomJob to finish, giving up after ``timeout_s`` seconds.
-
-        ``CustomJob.wait_for_completion`` blocks for as long as Vertex AI takes, and the
-        server side ``timeout`` on the job spec only limits how long the job *runs*. A
-        job that cannot get capacity therefore keeps a caller blocked well past that
-        timeout -- long enough to exhaust an outer CI budget. This bounds the whole wait
-        instead, provisioning included.
-
-        Args:
-            job: An already submitted CustomJob.
-            timeout_s: Deadline in seconds, measured from entry.
-            polling_period_s: How often to re-check job state.
-
-        Raises:
-            TimeoutError: If the deadline passes first. The job is cancelled.
-            RuntimeError: If the job reaches a failed or cancelled state, matching
-                ``wait_for_completion``.
-        """
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            state = job.state
-            if state in _CUSTOM_JOB_COMPLETE_STATES:
-                if state in _CUSTOM_JOB_ERROR_STATES:
-                    raise RuntimeError(
-                        f"Vertex AI job {job.resource_name} finished as {state.name} with: "
-                        f"{job.gca_resource.error}"
+        # Vertex AI applies the spec's `timeout` to the job's *running* time, so a job
+        # that never gets capacity keeps us blocked past it -- one such job sat 2h06m and
+        # timed out the 3h Cloud Build budget. Bound the whole wait, provisioning
+        # included, then hand off to wait_for_completion for the terminal state handling.
+        if job_config.wait_timeout_s is not None:
+            deadline = time.monotonic() + job_config.wait_timeout_s
+            while not job.done():
+                if time.monotonic() >= deadline:
+                    logger.error(
+                        f"Job {job.resource_name} is still {job.state.name} after "
+                        f"{job_config.wait_timeout_s}s; cancelling it. A job that never "
+                        "starts running usually means the region is out of capacity for "
+                        "the requested machine types."
                     )
-                logger.info(
-                    f"Vertex AI job {job.resource_name} finished as {state.name}"
-                )
-                return
-            logger.info(
-                f"Vertex AI job {job.resource_name} in state {state.name}, "
-                f"{deadline - time.time():.0f}s left before the client deadline"
-            )
-            time.sleep(polling_period_s)
-
-        logger.error(
-            f"Vertex AI job {job.resource_name} did not finish within {timeout_s}s "
-            f"(last state {job.state.name}). Cancelling it."
-        )
-        job.cancel()
-        raise TimeoutError(
-            f"Vertex AI job {job.resource_name} did not finish within {timeout_s}s "
-            f"(last state {job.state.name}). Cancelled the job. "
-            "A job stuck before it starts running usually means the region is out of "
-            "capacity for the requested machine types."
-        )
+                    job.cancel()
+                    raise TimeoutError(
+                        f"Vertex AI job {job.resource_name} did not finish within "
+                        f"{job_config.wait_timeout_s}s (last state {job.state.name})."
+                    )
+                time.sleep(_CUSTOM_JOB_POLL_PERIOD_S)
+        job.wait_for_completion()
+        return job
 
     def run_pipeline(
         self,
