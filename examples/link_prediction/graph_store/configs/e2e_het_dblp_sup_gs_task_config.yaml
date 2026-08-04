@@ -56,14 +56,16 @@ trainerConfig:
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
       # Note this gets parsed with ast.literal_eval, so we need to use single quotes and escape the double quotes inside the string.
       # We do this so that the tuples for edge types get parsed as such.
-      # NOTE: We use the reverse "author to paper" edge type here as our splitter reverses the edge type if the sampling direction is "in".
+      # Supervision edge types are provided in outward form (anchor_node_type, relation, supervision_node_type),
+      # matching the taskMetadata "paper -> author" edge above. The splitter handles the in-direction storage
+      # reversal internally, so callers always specify the outward edge here.
       splitter_kwargs: >-
         {
           "sampling_direction": "in",
           "should_convert_labels_to_edges": True,
           "num_val": 0.3,
           "num_test": 0.3,
-          "supervision_edge_types": [("author", "to", "paper")]
+          "supervision_edge_types": [("paper", "to", "author")]
         }
       ssl_positive_label_percentage: "0.15"
       # We only do one session for training.

@@ -1,14 +1,14 @@
 import asyncio
+import os
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from threading import Thread
 from typing import Optional, Union
 
 import torch
 import uvloop
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
-from graphlearn_torch.distributed.dist_neighbor_sampler import ensure_device
 from graphlearn_torch.distributed.dist_feature import DistFeature
 from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
@@ -17,14 +17,22 @@ from graphlearn_torch.sampler import (
     SamplerOutput,
 )
 from graphlearn_torch.typing import NodeType, as_str
-from graphlearn_torch.utils import reverse_edge_type
+from graphlearn_torch.utils import ensure_device, reverse_edge_type
 
+from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
+from gigl.distributed.utils.sampling_errors import (
+    SAMPLING_ERROR_KEY,
+    encode_sampling_error,
+)
+from gigl.env.constants import GIGL_EVENT_LOOP_ENV_KEY
 from gigl.utils.data_splitters import PADDING_NODE
+
+logger = Logger()
 
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
@@ -95,15 +103,44 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     sampling strategy (e.g., k-hop neighbor sampling, PPR-based sampling).
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._loop.close()
-        self._loop = uvloop.new_event_loop()
-        self._runner_t = Thread(target=self._run_loop)
-        self._runner_t.daemon = True
-        self._loop.call_soon_threadsafe(ensure_device, self.device)
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize sampler state and select its asyncio event loop.
 
-    def _run_loop(self):
+        ``GIGL_EVENT_LOOP`` accepts ``asyncio`` (the default GLT loop) or
+        ``uvloop``. The selected loop is local to this sampler's dedicated
+        runner thread; it does not change the process-wide asyncio policy.
+
+        Raises:
+            ValueError: If ``GIGL_EVENT_LOOP`` has an unsupported value.
+        """
+        super().__init__(*args, **kwargs)
+        self._sampling_error_sent: bool = False
+
+        event_loop_implementation = (
+            os.environ.get(GIGL_EVENT_LOOP_ENV_KEY, "asyncio").strip().lower()
+        )
+        if event_loop_implementation not in ("asyncio", "uvloop"):
+            raise ValueError(
+                f"{GIGL_EVENT_LOOP_ENV_KEY} must be 'asyncio' or 'uvloop', "
+                f"got {event_loop_implementation!r}."
+            )
+
+        if event_loop_implementation == "uvloop":
+            # GLT creates but does not start its loop until start_loop(). Replace
+            # it before that point and restore GLT's device-initialization callback,
+            # which closing the original loop discards.
+            self._loop.close()
+            self._loop = uvloop.new_event_loop()
+            self._loop.call_soon_threadsafe(ensure_device, self.device)
+
+        logger.info(
+            f"Distributed sampler event loop configured "
+            f"{GIGL_EVENT_LOOP_ENV_KEY}={event_loop_implementation} "
+            f"loop_class={type(self._loop).__module__}.{type(self._loop).__qualname__}"
+        )
+
+    def _run_loop(self) -> None:
+        """Run the sampler event loop in its dedicated worker thread."""
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
@@ -228,9 +265,38 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         Copied from ``graphlearn_torch.distributed.DistNeighborSampler._send_adapter``
         (GLT 0.2.4) with the single change of ``_colloate_fn`` → ``_collate_fn``.
+
+        Additionally, any exception raised while sampling or collating is caught
+        and surfaced instead of swallowed. GLT's ``ConcurrentEventLoop`` logs a
+        failed coroutine as a one-line ``str(e)`` and drops the batch, so the
+        channel never receives a message and the loader hangs forever. Here we
+        log the full traceback and forward a one-time poison-pill ``SampleMessage``
+        (in channel mode) so the consumer raises promptly, or re-raise (in
+        channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
-        sampler_output = await async_func(*args, **kwargs)
-        res = await self._collate_fn(sampler_output)
+        try:
+            sampler_output = await async_func(*args, **kwargs)
+            res = await self._collate_fn(sampler_output)
+        except Exception:
+            logger.exception(
+                "Sampling coroutine failed; forwarding error to the loader."
+            )
+            if self.channel is not None:
+                # Send at most one poison pill per sampler instance. The consumer
+                # raises on the first pill anyway, and ``ShmChannel.send`` blocks;
+                # a failure storm into a bounded channel that nobody drains would
+                # wedge the sampler-side event loop.
+                if not self._sampling_error_sent:
+                    self._sampling_error_sent = True
+                    self.channel.send(
+                        {
+                            SAMPLING_ERROR_KEY: encode_sampling_error(
+                                traceback.format_exc()
+                            )
+                        }
+                    )
+                return None
+            raise  # channel-less mode: propagates via run_task / torch RPC
         if self.channel is None:
             return res
         self.channel.send(res)
@@ -254,6 +320,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         re-fetch approach would require.  The non-``DistFeature`` path (plain
         ``torch.Tensor`` labels) is unchanged — it never applied ``.T[0]``.
 
+        In non-all2all mode, this method also issues all independent
+        ``async_get`` requests before awaiting them, so label, node-feature, and
+        edge-feature fetches can overlap.
+
         # TODO (mkolodner-sc): Now that GiGL owns this method, investigate whether
         # post-processing steps in DistNeighborLoader._collate_fn can be folded in
         # here and simplified — e.g. set_missing_features (populating empty tensors
@@ -275,6 +345,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if isinstance(output.metadata, dict):
             for k, v in output.metadata.items():
                 result_map[f"#META.{k}"] = v
+
+        futs: dict[str, asyncio.Future[torch.Tensor]] = {}
+        label_keys: set[str] = set()
 
         if is_hetero:
             for ntype, nodes in output.node.items():
@@ -300,20 +373,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if not isinstance(input_type, tuple):
                 if self.dist_node_labels is not None:
                     if isinstance(self.dist_node_labels, DistFeature):
-                        fut = self.dist_node_labels.async_get(
-                            output.node[input_type], input_type
+                        result_key = f"{as_str(input_type)}.nlabels"
+                        futs[result_key] = wrap_torch_future(
+                            self.dist_node_labels.async_get(
+                                output.node[input_type], input_type
+                            )
                         )
-                        nlabels = await wrap_torch_future(fut)
-                        # DistFeature always returns [N, K]. We collapse K=1 to 1-D
-                        # [N] to match GLT's convention and what downstream code
-                        # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
-                        # (K>1) keeps the full 2-D matrix.
-                        # TODO (mkolodner-sc): Consider investigating always returning
-                        # 2-D — this may be a breaking change for single-label
-                        # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                        result_map[f"{as_str(input_type)}.nlabels"] = (
-                            nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
-                        )
+                        label_keys.add(result_key)
                     else:
                         node_labels = self.dist_node_labels.get(input_type, None)
                         if node_labels is not None:
@@ -329,17 +395,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     for ntype, nfeats in nfeat_dict.items():
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
                 else:
-                    nfeat_fut_dict = {}
                     for ntype, nodes in output.node.items():
                         nodes = nodes.to(torch.long)
-                        nfeat_fut_dict[ntype] = self.dist_node_feature.async_get(
-                            nodes, ntype
+                        futs[f"{as_str(ntype)}.nfeats"] = wrap_torch_future(
+                            self.dist_node_feature.async_get(nodes, ntype)
                         )
-                    for ntype, fut in nfeat_fut_dict.items():
-                        nfeats = await wrap_torch_future(fut)
-                        result_map[f"{as_str(ntype)}.nfeats"] = nfeats
             if self.dist_edge_feature is not None and self.with_edge:
-                efeat_fut_dict = {}
                 for etype in self.edge_types:
                     if self.edge_dir == "in":
                         eids = result_map.get(
@@ -349,16 +410,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         eids = result_map.get(f"{as_str(etype)}.eids", None)
                     if eids is not None:
                         eids = eids.to(torch.long)
-                        efeat_fut_dict[etype] = self.dist_edge_feature.async_get(
-                            eids, etype
-                        )
-                for etype, fut in efeat_fut_dict.items():
-                    efeats = await wrap_torch_future(fut)
-                    if self.edge_dir == "out":
-                        result_map[f"{as_str(etype)}.efeats"] = efeats
-                    elif self.edge_dir == "in":
-                        result_map[f"{as_str(reverse_edge_type(etype))}.efeats"] = (
-                            efeats
+                        if self.edge_dir == "in":
+                            result_key = f"{as_str(reverse_edge_type(etype))}.efeats"
+                        else:
+                            result_key = f"{as_str(etype)}.efeats"
+                        futs[result_key] = wrap_torch_future(
+                            self.dist_edge_feature.async_get(eids, etype)
                         )
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
@@ -378,33 +435,38 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 result_map["eids"] = output.edge
             if self.dist_node_labels is not None:
                 if isinstance(self.dist_node_labels, DistFeature):
-                    fut = self.dist_node_labels.async_get(output.node)
-                    nlabels = await wrap_torch_future(fut)
-                    # DistFeature always returns [N, K]. We collapse K=1 to 1-D
-                    # [N] to match GLT's convention and what downstream code
-                    # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
-                    # (K>1) keeps the full 2-D matrix.
-                    # TODO (mkolodner-sc): Consider investigating always returning
-                    # 2-D — this may be a breaking change for single-label
-                    # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                    result_map["nlabels"] = (
-                        nlabels if nlabels.shape[1] > 1 else nlabels.T[0]
+                    futs["nlabels"] = wrap_torch_future(
+                        self.dist_node_labels.async_get(output.node)
                     )
+                    label_keys.add("nlabels")
                 else:
                     result_map["nlabels"] = self.dist_node_labels[
                         output.node.to(self.dist_node_labels.device)
                     ]
             if self.dist_node_feature is not None:
-                fut = self.dist_node_feature.async_get(output.node)
-                nfeats = await wrap_torch_future(fut)
-                result_map["nfeats"] = nfeats
+                futs["nfeats"] = wrap_torch_future(
+                    self.dist_node_feature.async_get(output.node)
+                )
             if self.dist_edge_feature is not None:
                 eids = result_map["eids"]
-                fut = self.dist_edge_feature.async_get(eids)
-                efeats = await wrap_torch_future(fut)
-                result_map["efeats"] = efeats
+                futs["efeats"] = wrap_torch_future(
+                    self.dist_edge_feature.async_get(eids)
+                )
             if output.batch is not None:
                 result_map["batch"] = output.batch
+
+        values = await asyncio.gather(*futs.values())
+        for result_key, value in zip(futs, values):
+            if result_key in label_keys:
+                # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+                # [N] to match GLT's convention and what downstream code
+                # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
+                # (K>1) keeps the full 2-D matrix.
+                # TODO (mkolodner-sc): Consider investigating always returning
+                # 2-D — this may be a breaking change for single-label
+                # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
+                value = value if value.shape[1] > 1 else value.T[0]
+            result_map[result_key] = value
 
         return result_map
 

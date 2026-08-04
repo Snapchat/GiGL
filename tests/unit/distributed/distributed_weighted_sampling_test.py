@@ -327,6 +327,12 @@ def _run_weighted_sampling_correctness_homogeneous(
     for datum in loader:
         assert isinstance(datum, Data), f"Expected Data, got {type(datum)}"
         assert datum.x is not None, "Node features missing from sampled subgraph"
+        # The graph has no edge features, so with_edge is derived as False and GLT
+        # must not attach sampled edge ids -- yet weighted sampling still works.
+        assert getattr(datum, "edge", None) is None, (
+            "Featureless weighted dataset should sample with with_edge=False, "
+            "but sampled edge ids were attached to the batch."
+        )
         # Bad nodes have feature 0.0; hub and good nodes have feature > 0.
         bad_mask = datum.x[:, 0] == 0.0
         assert not bad_mask.any(), (

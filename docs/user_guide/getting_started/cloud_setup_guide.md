@@ -58,6 +58,20 @@ For more detailed information on meeting the prerequisites, refer to the officia
    <img src="../../assets/images/cloud_setup/multi_regional_bq_dataset_example.png" alt="Regional BQ Dataset Example">
    ```
 
+### BigQuery quota project
+
+By default, BigQuery uses the quota project resolved by google-auth. If GiGL should use a different project for BigQuery
+quota and billing, set the following environment variable before launching a GiGL component:
+
+```bash
+export GIGL_BIGQUERY_QUOTA_PROJECT="your-quota-project"
+```
+
+GiGL propagates a non-empty value to launched Python component containers. The setting applies only to clients created
+through `BqUtils`; it does not change the quota project for other Google Cloud clients. The runtime identity must have
+the `roles/serviceusage.serviceUsageConsumer` role, or equivalent `serviceusage.services.use` permission, on the quota
+project. Leaving the variable unset or empty preserves google-auth's default behavior.
+
 8. [Create a Docker Artifact Registry](https://console.cloud.google.com/artifacts) for storing your compiled docker
    images that will contain your custom source code GiGL source. Ensure the registry is in the same region as your other
    compute assets.
@@ -128,6 +142,24 @@ gcloud storage buckets add-iam-policy-binding $BUCKET_NAME \
 
 11. Give your SA `roles/bigquery.dataOwner` on the datasets you created. See
     [instructions](https://cloud.google.com/bigquery/docs/control-access-to-resources-iam#bq_2).
+
+### Console log format
+
+On App Engine and Kubernetes, `gigl.common.logger.Logger` routes records to Google Cloud Logging, which on GKE renders
+each one as a single-line JSON envelope. To get the plain console format instead, set:
+
+```bash
+export GIGL_DISABLE_CLOUD_LOGGING="1"
+```
+
+`1` and `true` (case-insensitive) disable cloud logging; anything else leaves it on.
+
+This is worth setting on processes whose stdout is relayed by another system before it reaches Cloud Logging. Ray is the
+motivating case: it prefixes each worker line it forwards to the driver with `(RayTrainWorker pid=...)`, which makes the
+line invalid JSON, so Cloud Logging stores it as a plain `textPayload` and the structured fields (`severity`,
+`sourceLocation`, trace correlation) are dropped anyway. The variable is read from the environment so that processes
+started with the `spawn` method — which inherit `os.environ` but not the parent's logging configuration — pick it up
+without each entry point having to opt in.
 
 ## AWS Project Setup Guide
 

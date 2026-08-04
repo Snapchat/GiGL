@@ -70,6 +70,37 @@ class GcsUtilsTest(TestCase):
             read_text = file.read()
             self.assertEqual(read_text, "Updated test content")
 
+    def test_object_helpers(self):
+        gcs_utils = GcsUtils()
+        helper_prefix = GcsUri.join(self._scratch_gcs_path, "test_object_helpers")
+        text_gcs_path = GcsUri.join(helper_prefix, "sample.txt")
+        json_gcs_path = GcsUri.join(helper_prefix, "metadata.json")
+
+        gcs_utils.upload_from_string(text_gcs_path, "This is a test")
+        gcs_utils.upload_from_string(json_gcs_path, "{}")
+
+        self.assertTrue(gcs_utils.does_gcs_file_exist(gcs_path=text_gcs_path))
+        self.assertTrue(gcs_utils.does_gcs_file_exist(gcs_path=json_gcs_path))
+        self.assertEqual(gcs_utils.count_blobs_in_gcs_path(gcs_path=helper_prefix), 2)
+        self.assertEqual(
+            gcs_utils.count_blobs_in_gcs_path(gcs_path=helper_prefix, suffix=".txt"),
+            1,
+        )
+
+        gcs_utils.delete_gcs_file_if_exist(gcs_path=text_gcs_path)
+        self.assertFalse(gcs_utils.does_gcs_file_exist(gcs_path=text_gcs_path))
+
+        gcs_utils.delete_files(gcs_files=[json_gcs_path])
+        self.assertFalse(gcs_utils.does_gcs_file_exist(gcs_path=json_gcs_path))
+
+        nested_gcs_path = GcsUri.join(helper_prefix, "nested/delete_me.txt")
+        nested_dir = GcsUri.join(helper_prefix, "nested")
+        gcs_utils.upload_from_string(nested_gcs_path, "Delete me")
+
+        self.assertTrue(gcs_utils.does_gcs_file_exist(gcs_path=nested_gcs_path))
+        gcs_utils.delete_files_in_bucket_dir(gcs_path=nested_dir)
+        self.assertFalse(gcs_utils.does_gcs_file_exist(gcs_path=nested_gcs_path))
+
     def test_copy_from_gcs_to_gcs(self):
         gcs_utils = GcsUtils()
         source_gcs_path = GcsUri.join(

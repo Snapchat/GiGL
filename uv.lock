@@ -730,6 +730,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "tensorflow" },
+    { name = "uvloop" },
 ]
 
 [package.optional-dependencies]
@@ -889,8 +890,9 @@ requires-dist = [
     { name = "torch-sparse", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "torch-spline-conv", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "torch-spline-conv", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
-    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
-    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
+    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
+    { name = "torchrec", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
+    { name = "uvloop" },
 ]
 provides-extras = ["transform", "pyg27-torch28-cpu", "pyg27-torch28-cu128", "experimental"]
 
@@ -4592,6 +4594,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+]
+
+[[package]]
+name = "uvloop"
+version = "0.22.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/f0/18d39dbd1971d6d62c4629cc7fa67f74821b0dc1f5a77af43719de7936a7/uvloop-0.22.1.tar.gz", hash = "sha256:6c84bae345b9147082b17371e3dd5d42775bddce91f885499017f4607fdaf39f", size = 2443250, upload-time = "2025-10-16T22:17:19.342Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/d5/69900f7883235562f1f50d8184bb7dd84a2fb61e9ec63f3782546fdbd057/uvloop-0.22.1-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:c60ebcd36f7b240b30788554b6f0782454826a0ed765d8430652621b5de674b9", size = 1352420, upload-time = "2025-10-16T22:16:21.187Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/73/c4e271b3bce59724e291465cc936c37758886a4868787da0278b3b56b905/uvloop-0.22.1-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:3b7f102bf3cb1995cfeaee9321105e8f5da76fdb104cdad8986f85461a1b7b77", size = 748677, upload-time = "2025-10-16T22:16:22.558Z" },
+    { url = "https://files.pythonhosted.org/packages/86/94/9fb7fad2f824d25f8ecac0d70b94d0d48107ad5ece03769a9c543444f78a/uvloop-0.22.1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:53c85520781d84a4b8b230e24a5af5b0778efdb39142b424990ff1ef7c48ba21", size = 3753819, upload-time = "2025-10-16T22:16:23.903Z" },
+    { url = "https://files.pythonhosted.org/packages/74/4f/256aca690709e9b008b7108bc85fba619a2bc37c6d80743d18abad16ee09/uvloop-0.22.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:56a2d1fae65fd82197cb8c53c367310b3eabe1bbb9fb5a04d28e3e3520e4f702", size = 3804529, upload-time = "2025-10-16T22:16:25.246Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/74/03c05ae4737e871923d21a76fe28b6aad57f5c03b6e6bfcfa5ad616013e4/uvloop-0.22.1-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:40631b049d5972c6755b06d0bfe8233b1bd9a8a6392d9d1c45c10b6f9e9b2733", size = 3621267, upload-time = "2025-10-16T22:16:26.819Z" },
+    { url = "https://files.pythonhosted.org/packages/75/be/f8e590fe61d18b4a92070905497aec4c0e64ae1761498cad09023f3f4b3e/uvloop-0.22.1-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:535cc37b3a04f6cd2c1ef65fa1d370c9a35b6695df735fcff5427323f2cd5473", size = 3723105, upload-time = "2025-10-16T22:16:28.252Z" },
 ]
 
 [[package]]

@@ -64,6 +64,14 @@ from gigl.utils.sampling import parse_fanout
 
 logger = Logger()
 
+# Fallback training processes per machine when `local_world_size` isn't in trainer args
+# and there are no GPUs (i.e. local dev / e2e runs).
+# Kept at 1, unlike inference's 4: CPU DDP training shares the same cores, so extra
+# processes add all-reduce and per-process model/sampler memory without real speedup, and
+# process count changes training semantics (num_max_train_batches // world_size), which
+# would shift e2e loss curves. Inference has no such coupling and parallelizes cleanly.
+DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE = 1
+
 
 def _sync_metric_across_processes(metric: torch.Tensor) -> float:
     """
@@ -338,27 +346,23 @@ def _training_process(
         args (TrainingProcessArgs): Dataclass containing all training process arguments
     """
 
-    world_size = args.machine_world_size * args.local_world_size
-    rank = args.machine_rank * args.local_world_size + local_rank
-    logger.info(
-        f"---Current training process rank: {rank}, training process world size: {world_size}"
-    )
-
-    torch.distributed.init_process_group(
-        backend="nccl" if torch.cuda.is_available() else "gloo",
-        init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
-        rank=rank,
-        world_size=world_size,
-    )
-
-    logger.info(f"---Rank {rank} training process started")
-
+    # The device is automatically inferred based off the local process rank and the available devices.
     device = get_available_device(local_process_rank=local_rank)
     if torch.cuda.is_available():
+        # Set the device for the current process. Without this, NCCL will fail when multiple GPUs are available.
         torch.cuda.set_device(device)
-    logger.info(f"---Rank {rank}  training process set device {device}")
 
-    logger.info(f"---Rank {rank} training process group initialized")
+    torch.distributed.init_process_group(
+        backend="gloo" if device.type == "cpu" else "nccl",
+        init_method=f"tcp://{args.master_ip_address}:{args.master_default_process_group_port}",
+        rank=args.machine_rank * args.local_world_size + local_rank,
+        world_size=args.machine_world_size * args.local_world_size,
+    )
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+    logger.info(
+        f"Local rank {local_rank} in machine {args.machine_rank} has rank {rank}/{world_size} and is using device {device}"
+    )
 
     loss_fn = RetrievalLoss(
         loss=torch.nn.CrossEntropyLoss(reduction="mean"),
@@ -513,8 +517,9 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-        # We save the model on the process with the 0th node rank and 0th local rank.
-        if args.machine_rank == 0 and local_rank == 0:
+        # Only rank 0 writes the checkpoint; every rank holds the same DDP-synced
+        # weights, so writing from all of them would be redundant and race on the URI.
+        if rank == 0:
             logger.info(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
             )
@@ -587,7 +592,7 @@ def _training_process(
     # These get written to some JSON under the gcs://<PERM ASSETS BUCKET>/<APPLIED TASK IDENTIFIER>/trainer/trainer_eval_metrics.json
     # And then the "Log Trainer Eval Metrics" component in the KFP pipeline UI will log them to the UI,
     # as a metrics artifact.
-    if args.machine_rank == 0 and local_rank == 0 and args.eval_metrics_uri is not None:
+    if rank == 0 and args.eval_metrics_uri is not None:
         eval_metrics = EvalMetricsCollection(
             metrics=[
                 EvalMetric.from_eval_metric_type(
@@ -715,12 +720,27 @@ def _run_example_training(
 
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    local_world_size = int(trainer_args.get("local_world_size", "1"))
-    if torch.cuda.is_available():
-        if local_world_size > torch.cuda.device_count():
-            raise ValueError(
-                f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
-            )
+    arg_local_world_size = trainer_args.get("local_world_size")
+    if arg_local_world_size is not None:
+        local_world_size = int(arg_local_world_size)
+        logger.info(f"Using local_world_size from trainer_args: {local_world_size}")
+    elif torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        local_world_size = torch.cuda.device_count()
+        logger.info(
+            f"Detected {local_world_size} GPUs. Setting local_world_size to {local_world_size}"
+        )
+    else:
+        logger.info(
+            f"No GPUs detected. Setting local_world_size to "
+            f"`{DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE}`"
+        )
+        local_world_size = DEFAULT_CPU_BASED_LOCAL_WORLD_SIZE
+
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     # Parses the fanout as a string. For the homogeneous case, the fanouts should be specified as a string of a list of integers, such as "[10, 10]".
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
@@ -802,11 +822,11 @@ def _run_example_training(
 
     graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
 
-    node_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_node_type
+    node_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map[
+        graph_metadata.homogeneous_node_type
     ]
-    edge_feature_dim = gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map[
-        graph_metadata.homogeneous_condensed_edge_type
+    edge_feature_dim = gbml_config_pb_wrapper.edge_type_to_feature_dim_map[
+        graph_metadata.homogeneous_edge_type
     ]
 
     model_uri = UriFactory.create_uri(
