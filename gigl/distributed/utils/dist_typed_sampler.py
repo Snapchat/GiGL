@@ -20,8 +20,8 @@ TypedPPRChannelKey = Union[EdgeType, tuple[EdgeType, ...]]
 """TypedPPRChannelKey describes one public typed-PPR traversal channel key.
 
 A single canonical edge type creates one channel restricted to that edge type.
-A tuple of canonical edge types creates one channel whose forward-push state may
-traverse any edge type in the group. When typed PPR emits multi-column
+A tuple of canonical edge types creates one channel whose PPR traversal may use
+any edge type in the group. When typed PPR emits multi-column
 ``edge_attr`` tensors, channel columns follow the insertion order of the
 ``typed_channel_ratios`` mapping.
 """
@@ -171,7 +171,7 @@ def build_edge_type_channel_group_edge_type_ids(
 
     Args:
         edge_type_groups: Ordered typed channels, where each channel is the
-            canonical edge types that its PPR state may traverse.
+            canonical edge types that its PPR traversal may use.
         edge_type_to_edge_type_id: Mapping from canonical edge type to the
             compact integer ID used by the C++ forward-push kernel.
         node_type_to_edge_types: Traversable edge types keyed by anchor node

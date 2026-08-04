@@ -85,20 +85,21 @@ class PPRSamplerOptions:
             traversal channels defined by canonical edge-type allowlists. Keys
             may be either a single canonical edge type
             ``(src_type, relation, dst_type)`` or a tuple of canonical edge
-            types. Each key defines one traversal channel whose PPR state may
-            traverse only those exact edge types.
-            If not provided, PPR uses the regular untyped path: each state may
-            traverse all eligible edge types for the current node type and emits
-            scalar PPR scores without channel attribution.
+            types. Each key defines one traversal channel that may use only
+            those exact edge types. Edge types may appear in multiple channels
+            when those channels intentionally overlap.
+            If not provided, PPR treats all eligible edge types as one shared
+            traversal space and emits a single scalar PPR score per output row.
             Channel order follows the insertion order of this mapping. Values
             are positive ratios that must sum to ``1.0``. The sampler converts
             ratios to per-channel target counts from ``max_ppr_nodes``.
             Finalized PPR candidates and residual top-up candidates both obey
             these target counts. If the same node appears in multiple channels,
-            it is attributed to the channel where it has the highest calibrated
-            score. If sparse channels or duplicate nodes leave unused target
-            slots, the remaining slots are redistributed globally by score so
-            the returned sequence can still fill up to ``max_ppr_nodes``.
+            it is attributed to the channel where it has the highest emitted
+            PPR score for that seed. If sparse channels or duplicate nodes
+            leave unused target slots, the remaining slots are redistributed
+            globally by score so the returned sequence can still fill up to,
+            but never exceed, ``max_ppr_nodes``.
             Example::
 
                 typed_channel_ratios = {
@@ -114,13 +115,13 @@ class PPRSamplerOptions:
             ``max_ppr_nodes=200``, the ``0.6`` ratio targets 120 nodes
             attributed to this channel. The second channel groups
             ``("user", "likes", "item")`` and ``("user", "shares", "item")``
-            into one PPR state; the ``0.4`` ratio targets 80 nodes attributed
-            to that combined likes/shares channel. These targets are best-effort
-            rather than strict per-seed guarantees because channels may be
-            sparse or overlapping.
+            into one traversal channel; the ``0.4`` ratio targets 80 nodes
+            attributed to that combined likes/shares channel. These targets are
+            best-effort rather than strict per-seed guarantees because channels
+            may be sparse or overlapping.
 
             If residual top-up is enabled, discovered-but-unpushed residual
-            candidates from the same completed PPR states are included on the
+            candidates from the same completed PPR traversals are included on the
             same mass scale as finalized PPR scores: ``ppr_score + residual``.
             Residual candidates follow the same channel targets as finalized
             PPR candidates.

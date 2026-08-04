@@ -90,7 +90,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     exposes the next frontier, Python performs the distributed neighbor fetch,
     ``push_residuals`` updates the state, and C++ extraction emits the final
     top-k plus residual top-up output. Typed PPR runs one ``PPRForwardPush``
-    state per traversal channel. Its typed drain step unions the channel
+    traversal per configured channel. Its typed drain step unions the channel
     frontiers before the same distributed fetch, pushes results back into the
     active channel states, and then uses one typed C++ extraction step to apply
     channel target counts, deduplicate shared candidates, and emit the final
@@ -111,11 +111,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         - ``data[(seed_type, "ppr", neighbor_type)].edge_index``: same format as above.
         - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``: scalar PPR
           score for regular PPR. For typed PPR, edge attrs are multi-column:
-          ``[best_calibrated_score, calibrated_channel_scores..., channel_presence_bits...]``.
-          Typed-PPR scores are calibrated within each channel/seed pool and
-          globally ranked by the best calibrated score. Channel columns follow
-          the insertion order of ``typed_channel_ratios``. Column 0 is the
-          scalar best score for consumers that need a single PPR weight.
+          ``[best_score, channel_scores..., channel_presence_bits...]``.
+          Scores use the same PPR mass scale as regular scalar PPR output.
+          Channel columns follow the insertion order of
+          ``typed_channel_ratios``. Column 0 is the scalar best score for
+          consumers that need a single PPR weight.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -133,22 +133,23 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
         typed_channel_ratios: Optional target proportions for typed PPR
-            traversal channels. If not provided, PPR uses the regular untyped
-            path: each state may traverse all eligible edge types for the
-            current node type and emits scalar PPR scores without channel
-            attribution.
+            traversal channels. If not provided, PPR treats all eligible edge
+            types as one shared traversal space and emits a single scalar PPR
+            score per output row.
             Keys may be either a single canonical edge type
             ``(src_type, relation, dst_type)`` or a tuple of canonical edge
-            types. Each key defines one traversal channel whose PPR state may
-            traverse only those exact edge types.
+            types. Each key defines one traversal channel that may use only
+            those exact edge types. Edge types may appear in multiple channels
+            when those channels intentionally overlap.
             Values are positive ratios that must sum to ``1.0``. The sampler
             converts ratios to per-channel target counts from ``max_ppr_nodes``.
             Finalized PPR candidates and residual top-up candidates both obey
             these target counts. If the same node appears in multiple channels,
-            it is attributed to the channel where it has the highest calibrated
-            score. If sparse channels or duplicate nodes leave unused target
-            slots, the remaining slots are redistributed globally by score so
-            the returned sequence can still fill up to ``max_ppr_nodes``.
+            it is attributed to the channel where it has the highest emitted
+            PPR score for that seed. If sparse channels or duplicate nodes
+            leave unused target slots, the remaining slots are redistributed
+            globally by score so the returned sequence can still fill up to,
+            but never exceed, ``max_ppr_nodes``.
             Example::
 
                 typed_channel_ratios = {
@@ -163,12 +164,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             attributed to the views channel and 80 nodes attributed to the
             grouped likes/shares channel. The views channel traverses only
             ``("user", "views", "item")`` edges. The grouped likes/shares
-            channel traverses either likes or shares edges in one PPR state.
+            channel traverses either likes or shares edges as one channel.
             Both finalized PPR rows and residual top-up rows fill those same
             targets. The targets are best-effort rather than strict per-seed
             guarantees: if a channel cannot provide enough unique candidates,
             unused slots are filled by the remaining highest-scoring candidates
-            from any channel.
+            from any channel, up to ``max_ppr_nodes`` total rows.
 
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
@@ -639,7 +640,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         dict[NodeType, torch.Tensor],
         dict[NodeType, torch.Tensor],
     ]:
-        """Run one PPR state per typed channel and extract the merged result.
+        """Run one PPR traversal per typed channel and extract the merged result.
 
         Each channel receives the same seed nodes but a different edge-type
         traversal allowlist. Fetch frontiers are unioned across active channels
