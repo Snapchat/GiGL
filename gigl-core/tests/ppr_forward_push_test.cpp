@@ -167,6 +167,19 @@ TEST(PPRForwardPush, DrainTypedPPRChannelQueuesHonorsPerChannelFetchBudget) {
     EXPECT_EQ(tensorValues(queueDrainResult.unionedNodeIdsByEdgeTypeId.at(0)), std::unordered_set<int64_t>({1}));
 }
 
+TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpValidatesInputs) {
+    auto channel = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1});
+
+    EXPECT_THROW(extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{}, std::vector<int32_t>{}, false),
+                 c10::Error);
+    EXPECT_THROW(
+        extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel}, std::vector<int32_t>{}, false),
+        c10::Error);
+    EXPECT_THROW(
+        extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel}, std::vector<int32_t>{-1}, false),
+        c10::Error);
+}
+
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     std::vector<int32_t> degrees(21, 1);
     auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
@@ -189,21 +202,21 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     ASSERT_EQ(features.size(1), 5);
 
     auto featureAccessor = features.accessor<double, 2>();
-    EXPECT_NEAR(featureAccessor[0][0], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][2], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
 
-    EXPECT_NEAR(featureAccessor[1][0], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
 
-    EXPECT_NEAR(featureAccessor[2][0], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[2][1], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][2], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][2], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[2][3], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[2][4], 1.0, 1e-9);
 }
@@ -230,15 +243,15 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     ASSERT_EQ(features.size(1), 5);
 
     auto featureAccessor = features.accessor<double, 2>();
-    EXPECT_NEAR(featureAccessor[0][0], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][2], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
 
-    EXPECT_NEAR(featureAccessor[1][0], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][1], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][2], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
 }
@@ -263,11 +276,11 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
     ASSERT_EQ(features.size(1), 3);
 
     auto featureAccessor = features.accessor<double, 2>();
-    EXPECT_NEAR(featureAccessor[0][0], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][0], 0.625, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 0.625, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][0], 0.4, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 0.4, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 1.0, 1e-9);
 }
 
