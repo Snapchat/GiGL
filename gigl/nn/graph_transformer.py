@@ -652,8 +652,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         if valid_mask is not None:
             x = x * valid_mask.unsqueeze(-1).to(x.dtype)  # [batch, seq_len, model_dim]
 
-        # Match the full layer's autograd participation when prefix filtering
-        # removes every relation edge from an otherwise nonempty relation set.
+        # The full-sequence path still touches relation parameters for edges outside
+        # this prefix, producing zero gradients. Filtering all such edges would leave
+        # those parameters with grad=None instead, changing DDP/optimizer behavior;
+        # retain a zero-valued dependency to preserve the original training semantics.
         if self.training and all_relation_edges_filtered:
             x = x + self._zero_relation_parameter_dependency(x)
 
