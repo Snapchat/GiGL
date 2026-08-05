@@ -96,7 +96,7 @@ class SparkJobManager:
         image_version: str
         if use_spark35:
             # https://cloud.google.com/dataproc/docs/concepts/versioning/dataproc-release-2.2
-            image_version = "2.2.85-ubuntu22"
+            image_version = "2.2.19-ubuntu22"
             gce_cluster_config = GceClusterConfig(
                 service_account=cluster_init_data.service_account,
                 service_account_scopes=[
