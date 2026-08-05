@@ -114,7 +114,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``:
           ``[ppr_score, min_hop]`` for regular PPR. For typed PPR, edge attrs
           are multi-column:
-          ``[best_score, min_hop, channel_scores..., channel_presence_bits...]``.
+          ``[best_score, min_hop, channel_scores..., channel_min_hops...,
+          channel_presence_bits...]``.
           Scores use the same PPR mass scale as regular PPR output.
           Channel columns follow the insertion order of
           ``typed_channel_ratios``. Column 0 is the scalar best score for

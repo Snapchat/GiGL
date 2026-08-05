@@ -508,14 +508,15 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         return;
     }
 
-    // Feature width is 2 + 2C:
+    // Feature width is 2 + 3C:
     //   column 0: best emitted PPR score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction. This
     //             stays on the same score scale as untyped PPR output.
     //   column 1: global minimum discovered-hop count as 0=anchor,
     //             1=1-hop, 2=2-hop, and so on.
     //   columns [2, 2 + C): emitted PPR score for each channel.
-    //   columns [2 + C, 2 + 2C): presence bit for each channel.
+    //   columns [2 + C, 2 + 2C): minimum discovered-hop count for each channel.
+    //   columns [2 + 2C, 2 + 3C): presence bit for each channel.
     for (const auto& [nodeId, score] : nodesAndScores) {
         auto scoreIter = outputScoresByNodeId.find(nodeId);
         bool isNewNode = scoreIter == outputScoresByNodeId.end();
@@ -525,11 +526,13 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         auto& scoreFeatures = scoreIter->second;
 
         // Feature layout:
-        // [best_score, min_hop, per-channel scores..., channel presence bits...].
+        // [best_score, min_hop, per-channel scores..., per-channel min-hops...,
+        //  channel presence bits...].
         scoreFeatures[0] = std::max(scoreFeatures[0], score);
-        int32_t hopIndex = 1;
+        int32_t globalHopIndex = 1;
         int32_t channelScoreIndex = 2 + channelIndex;
-        int32_t channelPresenceIndex = 2 + numChannels + channelIndex;
+        int32_t channelHopIndex = 2 + numChannels + channelIndex;
+        int32_t channelPresenceIndex = 2 + (2 * numChannels) + channelIndex;
 
         // Record this node's score for the current channel and mark that the
         // channel reached the node. Current extraction emits one row per node
@@ -538,8 +541,11 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         scoreFeatures[channelPresenceIndex] = 1.0;
 
         double hopFeature = getHopFeature(getNodeMinHop(nodeTypeState, nodeId));
-        if (isNewNode || hopFeature < scoreFeatures[hopIndex]) {
-            scoreFeatures[hopIndex] = hopFeature;
+        if (isNewNode || hopFeature < scoreFeatures[globalHopIndex]) {
+            scoreFeatures[globalHopIndex] = hopFeature;
+        }
+        if (scoreFeatures[channelHopIndex] == 0.0 || hopFeature < scoreFeatures[channelHopIndex]) {
+            scoreFeatures[channelHopIndex] = hopFeature;
         }
 
         // Keep a per-channel sortable candidate list so target counts can be
@@ -763,14 +769,15 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     int32_t numNodeTypes = firstState->_numNodeTypes;
     auto numChannels = static_cast<int32_t>(states.size());
     int32_t maxPPRNodes = std::accumulate(channelTargetCounts.begin(), channelTargetCounts.end(), 0);
-    // Feature width is 2 + 2C:
+    // Feature width is 2 + 3C:
     //   column 0: best emitted PPR score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction.
     //   column 1: global minimum discovered-hop count as 0=anchor,
     //             1=1-hop, 2=2-hop, and so on.
     //   columns [2, 2 + C): emitted PPR score for each channel.
-    //   columns [2 + C, 2 + 2C): presence bit for each channel.
-    int32_t numEdgeAttrFeatures = 2 + (2 * numChannels);
+    //   columns [2 + C, 2 + 2C): minimum discovered-hop count for each channel.
+    //   columns [2 + 2C, 2 + 3C): presence bit for each channel.
+    int32_t numEdgeAttrFeatures = 2 + (3 * numChannels);
 
     // Pre-size the per-seed feature map below. Each channel can contribute up
     // to maxPPRNodes candidates before cross-channel dedup and target filling.

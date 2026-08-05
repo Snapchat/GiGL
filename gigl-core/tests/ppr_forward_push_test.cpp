@@ -204,15 +204,17 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 10, 20}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({3}));
     ASSERT_EQ(features.size(0), 3);
-    ASSERT_EQ(features.size(1), 6);
+    ASSERT_EQ(features.size(1), 8);
 
     auto featureAccessor = features.accessor<double, 2>();
     EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][5], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][4], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][5], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][6], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
@@ -220,6 +222,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[1][3], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][5], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][6], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][7], 0.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[2][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[2][1], 1.0, 1e-9);
@@ -227,6 +231,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[2][3], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[2][4], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[2][5], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][6], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][7], 1.0, 1e-9);
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows) {
@@ -248,15 +254,17 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 20}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2}));
     ASSERT_EQ(features.size(0), 2);
-    ASSERT_EQ(features.size(1), 6);
+    ASSERT_EQ(features.size(1), 8);
 
     auto featureAccessor = features.accessor<double, 2>();
     EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][5], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][4], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][5], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][6], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
@@ -264,6 +272,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     EXPECT_NEAR(featureAccessor[1][3], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][5], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][6], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][7], 1.0, 1e-9);
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows) {
@@ -283,17 +293,19 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 1}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2}));
     ASSERT_EQ(features.size(0), 2);
-    ASSERT_EQ(features.size(1), 4);
+    ASSERT_EQ(features.size(1), 5);
 
     auto featureAccessor = features.accessor<double, 2>();
     EXPECT_NEAR(featureAccessor[0][0], 0.625, 1e-9);
     EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.625, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][3], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
@@ -315,7 +327,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({1}));
     ASSERT_EQ(features.size(0), 1);
-    ASSERT_EQ(features.size(1), 6);
+    ASSERT_EQ(features.size(1), 8);
 }
 
 // Two seeds (0 and 1) both push residual to sink node 2.  The neighbor-lookup

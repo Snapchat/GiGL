@@ -319,7 +319,7 @@ def _assert_typed_ppr_edge_attrs(
     num_channels: int,
 ) -> None:
     """Assert typed PPR edge attributes have the expected channel layout."""
-    expected_width = 2 + (2 * num_channels)
+    expected_width = 2 + (3 * num_channels)
     for node_type in node_types:
         ppr_edge_type = (seed_type, "ppr", node_type)
         assert ppr_edge_type in datum.edge_types, (
@@ -345,13 +345,20 @@ def _assert_typed_ppr_edge_attrs(
 
         best_scores = ppr_edge_attr[:, 0]
         min_hops = ppr_edge_attr[:, 1]
+        channel_scores = ppr_edge_attr[:, 2 : 2 + num_channels]
+        channel_min_hops = ppr_edge_attr[
+            :, 2 + num_channels : 2 + (2 * num_channels)
+        ]
         assert (best_scores >= 0).all()
         assert (best_scores <= 1).all()
         _assert_valid_min_hops(min_hops)
+        assert (channel_scores >= 0).all()
+        assert (channel_scores <= 1).all()
+        _assert_valid_min_hops(channel_min_hops)
         if best_scores.size(0) > 1:
             assert (best_scores[:-1] >= best_scores[1:]).all()
 
-        channel_presence = ppr_edge_attr[:, 2 + num_channels :]
+        channel_presence = ppr_edge_attr[:, 2 + (2 * num_channels) :]
         assert ((channel_presence == 0) | (channel_presence == 1)).all()
 
 
@@ -617,7 +624,7 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
         num_channels=2,
     )
     empty_story_edge_attr = empty_story_datum[(str(USER), "ppr", STORY)].edge_attr
-    assert tuple(empty_story_edge_attr.shape) == (0, 6)
+    assert tuple(empty_story_edge_attr.shape) == (0, 8)
 
     shutdown_rpc()
 

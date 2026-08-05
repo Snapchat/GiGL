@@ -46,7 +46,8 @@ class PPRSamplerOptions:
       ``min_hop`` is emitted as ``0`` for the anchor, ``1`` for 1-hop, ``2``
       for 2-hop, and so on.
       Typed PPR emits additional channel columns:
-      ``[best_score, min_hop, channel_scores..., channel_presence_bits...]``.
+      ``[best_score, min_hop, channel_scores..., channel_min_hops...,
+      channel_presence_bits...]``.
       Column 0 is the scalar best score for consumers that need a single PPR
       weight, and column 1 is always the minimum-hop count.
 
