@@ -1412,7 +1412,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                     [(0, 1, 0, 0), (0, 1, 2, 0), (0, 2, 0, 1)]
                 ),
                 batch_size=1,
-                query_length=3,
+                seq_len=3,
             )
 
         expected_target_1 = (2.0 * x_norm[0, 0] + 2.0 * x_norm[0, 2]) / 2.0
@@ -1530,7 +1530,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                     [(0, 1, 0, 0), (0, 1, 2, 0), (0, 2, 0, 1)]
                 ),
                 batch_size=1,
-                query_length=3,
+                seq_len=3,
             )
 
         expected_target_1 = (2.0 * x_norm[0, 0] + 2.0 * x_norm[0, 2]) / 2.0
@@ -1595,7 +1595,7 @@ class TestGraphTransformerEncoderPEModes(TestCase):
                     [(0, 1, 0, 0), (0, 1, 2, 0)]
                 ),
                 batch_size=1,
-                query_length=3,
+                seq_len=3,
             )
 
         self.assertTrue(torch.allclose(messages[0, 1], 2.0 * x_norm[0, 0], atol=1e-3))
