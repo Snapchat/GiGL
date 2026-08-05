@@ -243,14 +243,18 @@ def _extract_hetero_ppr_scores(
         )
 
         ppr_edge_index = datum[ppr_edge_type].edge_index
-        ppr_weights = datum[ppr_edge_type].edge_attr
+        ppr_edge_attr = datum[ppr_edge_type].edge_attr
 
         assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
             f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
         )
-        assert ppr_weights.dim() == 1
-        assert ppr_edge_index.size(1) == ppr_weights.size(0)
+        assert ppr_edge_attr.dim() == 2
+        assert ppr_edge_attr.size(1) == 2
+        assert ppr_edge_index.size(1) == ppr_edge_attr.size(0)
+        ppr_weights = ppr_edge_attr[:, 0]
+        ppr_hops = ppr_edge_attr[:, 1]
         assert (ppr_weights > 0).all(), f"PPR weights for {ntype} must be positive"
+        _assert_valid_min_hops(ppr_hops)
         assert (ppr_edge_index[0] == 0).all(), (
             "All src indices must be 0 for batch_size=1"
         )
@@ -264,6 +268,12 @@ def _extract_hetero_ppr_scores(
         ntype_to_sampler_ppr[str(ntype)] = type_ppr
 
     return ntype_to_sampler_ppr
+
+
+def _assert_valid_min_hops(min_hops: torch.Tensor) -> None:
+    """Assert PPR min-hop features are emitted as non-negative hop counts."""
+    assert (min_hops >= 0).all()
+    assert torch.allclose(min_hops, min_hops.round())
 
 
 def _assert_ppr_scores_match_reference(
@@ -309,7 +319,7 @@ def _assert_typed_ppr_edge_attrs(
     num_channels: int,
 ) -> None:
     """Assert typed PPR edge attributes have the expected channel layout."""
-    expected_width = 1 + (2 * num_channels)
+    expected_width = 2 + (2 * num_channels)
     for node_type in node_types:
         ppr_edge_type = (seed_type, "ppr", node_type)
         assert ppr_edge_type in datum.edge_types, (
@@ -334,12 +344,14 @@ def _assert_typed_ppr_edge_attrs(
             continue
 
         best_scores = ppr_edge_attr[:, 0]
+        min_hops = ppr_edge_attr[:, 1]
         assert (best_scores >= 0).all()
         assert (best_scores <= 1).all()
+        _assert_valid_min_hops(min_hops)
         if best_scores.size(0) > 1:
             assert (best_scores[:-1] >= best_scores[1:]).all()
 
-        channel_presence = ppr_edge_attr[:, 1 + num_channels :]
+        channel_presence = ppr_edge_attr[:, 2 + num_channels :]
         assert ((channel_presence == 0) | (channel_presence == 1)).all()
 
 
@@ -394,16 +406,22 @@ def _run_ppr_loader_correctness_check(
         assert hasattr(datum, "edge_attr"), "Missing edge_attr on Data"
 
         ppr_edge_index = datum.edge_index
-        ppr_weights = datum.edge_attr
+        ppr_edge_attr = datum.edge_attr
 
         assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
             f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
         )
-        assert ppr_weights.dim() == 1, f"Expected 1D weights, got {ppr_weights.dim()}D"
-        assert ppr_edge_index.size(1) == ppr_weights.size(0), (
-            f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_weights.size(0)}"
+        assert ppr_edge_attr.dim() == 2, (
+            f"Expected 2D PPR edge_attr, got {ppr_edge_attr.dim()}D"
         )
+        assert ppr_edge_attr.size(1) == 2
+        assert ppr_edge_index.size(1) == ppr_edge_attr.size(0), (
+            f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_edge_attr.size(0)}"
+        )
+        ppr_weights = ppr_edge_attr[:, 0]
+        ppr_hops = ppr_edge_attr[:, 1]
         assert (ppr_weights > 0).all(), "PPR weights must be positive"
+        _assert_valid_min_hops(ppr_hops)
         assert (ppr_edge_index[0] == 0).all(), (
             "All src indices must be 0 for batch_size=1"
         )
@@ -599,7 +617,7 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
         num_channels=2,
     )
     empty_story_edge_attr = empty_story_datum[(str(USER), "ppr", STORY)].edge_attr
-    assert tuple(empty_story_edge_attr.shape) == (0, 5)
+    assert tuple(empty_story_edge_attr.shape) == (0, 6)
 
     shutdown_rpc()
 
@@ -699,13 +717,17 @@ def _run_ppr_ablp_loader_correctness_check(
             )
 
             ppr_edge_index = datum[ppr_edge_type].edge_index
-            ppr_weights = datum[ppr_edge_type].edge_attr
+            ppr_edge_attr = datum[ppr_edge_type].edge_attr
 
             assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
-            assert ppr_weights.dim() == 1
-            assert ppr_edge_index.size(1) == ppr_weights.size(0)
-            if ppr_weights.numel() > 0:
+            assert ppr_edge_attr.dim() == 2
+            assert ppr_edge_attr.size(1) == 2
+            assert ppr_edge_index.size(1) == ppr_edge_attr.size(0)
+            if ppr_edge_attr.numel() > 0:
+                ppr_weights = ppr_edge_attr[:, 0]
+                ppr_hops = ppr_edge_attr[:, 1]
                 assert (ppr_weights > 0).all()
+                _assert_valid_min_hops(ppr_hops)
             assert (ppr_edge_index[1] >= 0).all()
             assert (ppr_edge_index[1] < datum[ntype].node.size(0)).all()
 
@@ -761,7 +783,9 @@ def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
     assert hasattr(datum, "y_negative"), "Missing y_negative on Data"
     assert datum.edge_index.dim() == 2
     assert datum.edge_index.size(0) == 2
-    assert datum.edge_index.size(1) == datum.edge_attr.numel()
+    assert datum.edge_attr.dim() == 2
+    assert datum.edge_attr.size(1) == 2
+    assert datum.edge_index.size(1) == datum.edge_attr.size(0)
 
     shutdown_rpc()
 
@@ -811,7 +835,7 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
     assert datum[ppr_edge_type].edge_index.shape[1] > 0, (
         "Expected at least one PPR edge to STORY"
     )
-    assert (datum[ppr_edge_type].edge_attr > 0).all()
+    assert (datum[ppr_edge_type].edge_attr[:, 0] > 0).all()
 
     shutdown_rpc()
 

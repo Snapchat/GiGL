@@ -104,18 +104,22 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     **Homogeneous (Data):**
         - ``data.edge_index``: ``[2, N]`` int64 — row 0 is local seed indices,
           row 1 is local neighbor indices.
-        - ``data.edge_attr``: ``[N]`` float — PPR score for each pair.
+        - ``data.edge_attr``: ``[N, 2]`` float — ``[ppr_score, min_hop]`` for
+          each pair. ``min_hop`` is emitted as ``0`` for the anchor, ``1``
+          for 1-hop, ``2`` for 2-hop, and so on.
 
     **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", neighbor_type)].edge_index``: same format as above.
-        - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``: scalar PPR
-          score for regular PPR. For typed PPR, edge attrs are multi-column:
-          ``[best_score, channel_scores..., channel_presence_bits...]``.
-          Scores use the same PPR mass scale as regular scalar PPR output.
+        - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``:
+          ``[ppr_score, min_hop]`` for regular PPR. For typed PPR, edge attrs
+          are multi-column:
+          ``[best_score, min_hop, channel_scores..., channel_presence_bits...]``.
+          Scores use the same PPR mass scale as regular PPR output.
           Channel columns follow the insertion order of
           ``typed_channel_ratios``. Column 0 is the scalar best score for
-          consumers that need a single PPR weight.
+          consumers that need a single PPR weight, and column 1 is always the
+          minimum-hop count.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values

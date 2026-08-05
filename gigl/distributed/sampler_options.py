@@ -41,11 +41,14 @@ class PPRSamplerOptions:
 
     - ``edge_index``: ``[2, N]`` int64 — row 0 is local seed indices, row 1 is local
       neighbor indices.
-    - ``edge_attr``: ``[N]`` float — PPR score for each (seed, neighbor) pair.
-      Typed PPR emits multi-column edge attrs:
-      ``[best_score, channel_scores..., channel_presence_bits...]``.
+    - ``edge_attr``: ``[N, 2]`` float — PPR score and minimum discovered-hop
+      count for each (seed, neighbor) pair: ``[ppr_score, min_hop]``.
+      ``min_hop`` is emitted as ``0`` for the anchor, ``1`` for 1-hop, ``2``
+      for 2-hop, and so on.
+      Typed PPR emits additional channel columns:
+      ``[best_score, min_hop, channel_scores..., channel_presence_bits...]``.
       Column 0 is the scalar best score for consumers that need a single PPR
-      weight.
+      weight, and column 1 is always the minimum-hop count.
 
     For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
 
