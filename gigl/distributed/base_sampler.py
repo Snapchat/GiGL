@@ -1,10 +1,12 @@
 import asyncio
+import os
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
+import uvloop
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
 from graphlearn_torch.distributed.dist_feature import DistFeature
@@ -15,7 +17,7 @@ from graphlearn_torch.sampler import (
     SamplerOutput,
 )
 from graphlearn_torch.typing import NodeType, as_str
-from graphlearn_torch.utils import reverse_edge_type
+from graphlearn_torch.utils import ensure_device, reverse_edge_type
 
 from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
@@ -27,6 +29,7 @@ from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
 )
+from gigl.env.constants import GIGL_EVENT_LOOP_ENV_KEY
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
@@ -101,17 +104,45 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the sampler and the one-time sampling-error guard.
+        """Initialize sampler state and select its asyncio event loop.
 
-        ``GLTDistNeighborSampler`` has no GiGL-owned state; we only add
-        ``_sampling_error_sent`` so ``_send_adapter`` can forward at most one
-        poison pill per sampler instance. Initializing it here (rather than
-        lazily) guarantees the failure handler never raises ``AttributeError``,
-        which GLT's event loop would swallow the same way it swallows the
-        original sampling exception.
+        ``GIGL_EVENT_LOOP`` accepts ``asyncio`` (the default GLT loop) or
+        ``uvloop``. The selected loop is local to this sampler's dedicated
+        runner thread; it does not change the process-wide asyncio policy.
+
+        Raises:
+            ValueError: If ``GIGL_EVENT_LOOP`` has an unsupported value.
         """
         super().__init__(*args, **kwargs)
         self._sampling_error_sent: bool = False
+
+        event_loop_implementation = (
+            os.environ.get(GIGL_EVENT_LOOP_ENV_KEY, "asyncio").strip().lower()
+        )
+        if event_loop_implementation not in ("asyncio", "uvloop"):
+            raise ValueError(
+                f"{GIGL_EVENT_LOOP_ENV_KEY} must be 'asyncio' or 'uvloop', "
+                f"got {event_loop_implementation!r}."
+            )
+
+        if event_loop_implementation == "uvloop":
+            # GLT creates but does not start its loop until start_loop(). Replace
+            # it before that point and restore GLT's device-initialization callback,
+            # which closing the original loop discards.
+            self._loop.close()
+            self._loop = uvloop.new_event_loop()
+            self._loop.call_soon_threadsafe(ensure_device, self.device)
+
+        logger.info(
+            f"Distributed sampler event loop configured "
+            f"{GIGL_EVENT_LOOP_ENV_KEY}={event_loop_implementation} "
+            f"loop_class={type(self._loop).__module__}.{type(self._loop).__qualname__}"
+        )
+
+    def _run_loop(self) -> None:
+        """Run the sampler event loop in its dedicated worker thread."""
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
 
     def _prepare_sample_loop_inputs(
         self,
