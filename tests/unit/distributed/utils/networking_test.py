@@ -622,9 +622,20 @@ class TestGetGraphStoreInfo(TestCase):
             / "graph_store_readiness.txt",
         )
 
+    def test_missing_graph_store_topology_raises_explicit_error(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=False,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            self.assertRaisesRegex(ValueError, "Unable to resolve GraphStore topology"),
+        ):
+            get_graph_store_info()
+
     @parameterized.expand(
         [
-            param("missing compute count", {}, GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY),
             param(
                 "non-positive compute count",
                 {

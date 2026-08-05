@@ -349,7 +349,11 @@ def _get_graph_store_shape_and_readiness() -> tuple[int, int, Uri]:
         )
         return num_compute_nodes, num_storage_nodes, readiness_uri
 
-    return _get_graph_store_shape_and_readiness_from_environment()
+    required_environment_keys = ", ".join(_GRAPH_STORE_TOPOLOGY_ENV_KEYS)
+    raise ValueError(
+        "Unable to resolve GraphStore topology. Set all required environment "
+        f"variables ({required_environment_keys}) or run in a supported Vertex AI job."
+    )
 
 
 def get_graph_store_info() -> GraphStoreInfo:
