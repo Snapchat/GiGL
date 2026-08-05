@@ -89,8 +89,7 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
         // PPR initialisation: each seed starts with residual = alpha (the
         // restart probability).  The first push will move alpha into ppr_score
         // and distribute (1-alpha)*alpha to the seed's neighbors.
-        _state[seedIdx][seedNodeTypeId].residuals[seedNodeId] = _alpha;
-        _state[seedIdx][seedNodeTypeId].minHops[seedNodeId] = 0;
+        _state[seedIdx][seedNodeTypeId].residualStates[seedNodeId] = ResidualState{_alpha, 0};
         _state[seedIdx][seedNodeTypeId].queue.insert(seedNodeId);
     }
 }
@@ -277,14 +276,18 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
             }
 
             for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
-                auto residualIter = srcNodeTypeState.residuals.find(sourceNodeId);
-                double sourceResidual = (residualIter != srcNodeTypeState.residuals.end()) ? residualIter->second : 0.0;
-                auto sourceHopIter = srcNodeTypeState.minHops.find(sourceNodeId);
-                int32_t sourceHop = sourceHopIter != srcNodeTypeState.minHops.end() ? sourceHopIter->second : 0;
+                auto sourceStateIter = srcNodeTypeState.residualStates.find(sourceNodeId);
+                TORCH_CHECK(sourceStateIter != srcNodeTypeState.residualStates.end(),
+                            "PPR push expected residual state for queued node ",
+                            sourceNodeId,
+                            ".");
+                auto& sourceState = sourceStateIter->second;
+                double sourceResidual = sourceState.residual;
+                int32_t sourceHop = sourceState.minHop;
 
                 // a. Absorb: move residual into the PPR score.
                 srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
-                srcNodeTypeState.residuals[sourceNodeId] = 0.0;
+                sourceState.residual = 0.0;
 
                 // b. Count total cached neighbors across all edge types for
                 // this source node.  We normalise by the number of neighbors we
@@ -333,18 +336,20 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     // exceeded.
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
-                        dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
                         int32_t neighborHop = sourceHop + 1;
-                        auto [hopIter, inserted] = dstNodeTypeState.minHops.emplace(neighborNodeId, neighborHop);
-                        if (!inserted && neighborHop < hopIter->second) {
-                            hopIter->second = neighborHop;
+                        auto [residualStateIter, inserted] =
+                            dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop});
+                        auto& residualState = residualStateIter->second;
+                        residualState.residual += residualPerNeighbor;
+                        if (!inserted && neighborHop < residualState.minHop) {
+                            residualState.minHop = neighborHop;
                         }
 
                         double threshold = _requeueThresholdFactor *
                                            static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
 
                         if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
-                            dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
+                            residualState.residual >= threshold) {
                             dstNodeTypeState.queue.insert(neighborNodeId);
                             ++_numNodesInQueue;
                         }
@@ -413,8 +418,9 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         }
 
         std::vector<std::pair<int32_t, double>> residualPairs;
-        residualPairs.reserve(nodeTypeState.residuals.size());
-        for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+        residualPairs.reserve(nodeTypeState.residualStates.size());
+        for (const auto& [nodeId, residualState] : nodeTypeState.residualStates) {
+            double residual = residualState.residual;
             // Forward push residuals are non-negative in normal operation. Pushed
             // nodes remain in the map with zero residual, so skip drained entries
             // and any unexpected non-positive values.
@@ -456,20 +462,20 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
 static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
                                       std::vector<std::pair<int32_t, double>>& selectedPairs) {
     for (auto& [nodeId, score] : selectedPairs) {
-        auto residualIter = nodeTypeState.residuals.find(nodeId);
-        if (residualIter != nodeTypeState.residuals.end()) {
-            score += residualIter->second;
+        auto residualStateIter = nodeTypeState.residualStates.find(nodeId);
+        if (residualStateIter != nodeTypeState.residualStates.end()) {
+            score += residualStateIter->second.residual;
         }
     }
 }
 
 static int32_t getNodeMinHop(const SeedNodeTypeState& nodeTypeState, int32_t nodeId) {
-    auto hopIter = nodeTypeState.minHops.find(nodeId);
-    TORCH_CHECK(hopIter != nodeTypeState.minHops.end(),
+    auto residualStateIter = nodeTypeState.residualStates.find(nodeId);
+    TORCH_CHECK(residualStateIter != nodeTypeState.residualStates.end(),
                 "PPR extraction expected a discovered hop for emitted node ",
                 nodeId,
                 ".");
-    return hopIter->second;
+    return residualStateIter->second.minHop;
 }
 
 static double getHopFeature(int32_t minHop) {

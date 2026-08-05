@@ -21,19 +21,23 @@ using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
 using PPRExtractTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
+struct ResidualState {
+    double residual; // unabsorbed mass waiting to push
+    int32_t minHop;  // minimum discovered hop from seed
+};
+
 // Per-seed, per-node-type PPR algorithm state.
-// Grouping all four tables into one struct is a logical convenience: a single
-// _state[seedIdx][nodeTypeId] access reaches all four tables for a given (seed, ntype)
+// Grouping all four containers into one struct is a logical convenience: a single
+// _state[seedIdx][nodeTypeId] access reaches all state for a given (seed, ntype)
 // pair, rather than indexing four separate 2D arrays.  Note that unordered_map and
 // unordered_set heap-allocate their bucket storage, so the actual key-value data is
 // not co-located in memory — only the control-plane metadata (size, bucket pointer)
 // lives inside the struct.
 struct SeedNodeTypeState {
-    std::unordered_map<int32_t, double> pprScores; // absorbed PPR mass
-    std::unordered_map<int32_t, double> residuals; // unabsorbed mass waiting to push
-    std::unordered_map<int32_t, int32_t> minHops;  // minimum discovered hop from seed
-    std::unordered_set<int32_t> queue;             // nodes queued for the next drain
-    std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
+    std::unordered_map<int32_t, double> pprScores;             // absorbed PPR mass
+    std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
+    std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
+    std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
 };
 
 // Batched drain result for typed-PPR channels.
