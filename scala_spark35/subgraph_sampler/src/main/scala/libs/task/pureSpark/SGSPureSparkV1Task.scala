@@ -12,6 +12,8 @@ import libs.task.SamplingStrategy.shuffleBasedUniformPermutation
 import libs.task.SubgraphSamplerTask
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.expressions.UserDefinedFunction
+import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.sql.{functions => F}
 import org.apache.spark.storage.StorageLevel
@@ -19,6 +21,7 @@ import snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata
 
 import java.util.UUID.randomUUID
 import scala.collection.mutable.ListBuffer
+import scala.util.Random
 
 abstract class SGSPureSparkV1Task(
   gbmlConfigWrapper: GbmlConfigPbWrapper)
@@ -35,6 +38,16 @@ abstract class SGSPureSparkV1Task(
   }
 
   val uniqueTempViewSuffix: String = generateUniqueSuffix
+
+  val sampleWithReplacementUDF: UserDefinedFunction = udf((array: Seq[Int], numSamples: Int) => {
+    if (array == null || array.isEmpty) {
+      Seq.empty[Int]
+    } else {
+      val random = new Random()
+      (1 to numSamples).map(_ => array(random.nextInt(array.length)))
+    }
+  })
+  spark.udf.register("sampleWithReplacementUDF", sampleWithReplacementUDF)
 
   def loadNodeDataframeIntoSparkSql(condensedNodeType: Int): String = {
 
@@ -302,6 +315,7 @@ abstract class SGSPureSparkV1Task(
     numNeighborsToSample: Int,
     unhydratedEdgeVIEW: String,
     permutationStrategy: String,
+    sampleWithReplacement: Boolean = false,
   ): String = {
 
     /** 1. for each dst node, take all in-edges as onehop array 2. randomly shuffle onehop array
@@ -339,13 +353,27 @@ abstract class SGSPureSparkV1Task(
     val permutedOnehopArrayVIEW = "permutedOnehopArrayDF" + uniqueTempViewSuffix
     permutedOnehopArrayDF.createOrReplaceTempView(permutedOnehopArrayVIEW)
 
-    val sampledOnehopDF: DataFrame = spark.sql(f"""
-          SELECT
-            _dst_node AS _0_hop,
-            slice(_shuffled_1_hop_arr, 1, ${numNeighborsToSample}) AS _sampled_1_hop_arr
-          FROM
-            ${permutedOnehopArrayVIEW}
-          """)
+    val sampledOnehopDF: DataFrame = if (sampleWithReplacement) {
+      spark.sql(
+        f"""
+        SELECT
+          _dst_node AS _0_hop,
+          sampleWithReplacementUDF(_shuffled_1_hop_arr, ${numNeighborsToSample}) AS _sampled_1_hop_arr
+        FROM
+          ${permutedOnehopArrayVIEW}
+         """,
+      )
+    } else {
+      spark.sql(
+        f"""
+        SELECT
+          _dst_node AS _0_hop,
+          slice(_shuffled_1_hop_arr, 1, ${numNeighborsToSample}) AS _sampled_1_hop_arr
+        FROM
+          ${permutedOnehopArrayVIEW}
+        """,
+      )
+    }
 
     // @spark: critical NOTE: cache is necessary here, to break parallelism and enforce random shuffle/sampling happens once, to circumvent NON-determinism in F.shuffle. Otherwise, for all calls to sampledOnehopDF downstream, this stage will run in parallel and mess up onehop samples!
     // @spark: maybe in future we wanna try caching the exploded verison of below DF.
@@ -365,6 +393,7 @@ abstract class SGSPureSparkV1Task(
     unhydratedEdgeVIEW: String,
     sampledOnehopVIEW: String,
     permutationStrategy: String,
+    sampleWithReplacement: Boolean = false,
   ): String = {
 
     /**   1. uses onehop nodes in sampledOnehopVIEW as reference to obtain twohop neighbors for each
@@ -431,14 +460,29 @@ abstract class SGSPureSparkV1Task(
     val permutedTwohopArrayVIEW = "permutedTwohopArrayDF" + uniqueTempViewSuffix
     permutedTwohopArrayDF.createOrReplaceTempView(permutedTwohopArrayVIEW)
     // @spark: Since twohop df is called only once, no need to take care of NON determinism in the shuffle/sampling (for k hop any k-1 df must be cached)
-    val sampledTwohopDF: DataFrame = spark.sql(f"""
+    val sampledTwohopDF: DataFrame = if (sampleWithReplacement) {
+      spark.sql(
+        f"""
+        SELECT
+          _0_hop,
+          _1_hop,
+          sampleWithReplacementUDF(_shuffled_2_hop_arr, ${numNeighborsToSample}) AS _sampled_2_hop_arr
+        FROM
+          ${permutedTwohopArrayVIEW}
+         """,
+      )
+    } else {
+      spark.sql(
+        f"""
         SELECT
           _0_hop,
           _1_hop,
           slice(_shuffled_2_hop_arr ,1 , ${numNeighborsToSample}) AS _sampled_2_hop_arr
         FROM
           ${permutedTwohopArrayVIEW}
-        """)
+        """,
+      )
+    }
     val sampledTwohopVIEW = "sampledTwohopDF" + uniqueTempViewSuffix
     sampledTwohopDF.createOrReplaceTempView(sampledTwohopVIEW)
     //
@@ -631,6 +675,7 @@ abstract class SGSPureSparkV1Task(
     unhydratedEdgeVIEW: String,
     numNeighborsToSample: Int,
     permutationStrategy: String,
+    sampleWithReplacement: Boolean = false,
   ): String = {
 
     /** Adds root node features to hydrated neighborhood and creates final subgraphDF for each root
@@ -650,12 +695,14 @@ abstract class SGSPureSparkV1Task(
       numNeighborsToSample = numNeighborsToSample,
       unhydratedEdgeVIEW = unhydratedEdgeVIEW,
       permutationStrategy = permutationStrategy,
+      sampleWithReplacement = sampleWithReplacement,
     )
     val sampledTwohopVIEW = sampleTwohopSrcNodesUniformly(
       numNeighborsToSample = numNeighborsToSample,
       unhydratedEdgeVIEW = unhydratedEdgeVIEW,
       sampledOnehopVIEW = sampledOnehopVIEW,
       permutationStrategy = permutationStrategy,
+      sampleWithReplacement = sampleWithReplacement,
     )
     // hydrate onehop neighbors
     val hydratedOnehopNeighborsVIEW = createKthHydratedNeighborhood(
