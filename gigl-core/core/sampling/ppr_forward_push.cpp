@@ -414,7 +414,7 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
                 continue;
             }
 
-            const auto pprScoreIter = pprScoresByNodeId.find(nodeId);
+            auto pprScoreIter = pprScoresByNodeId.find(nodeId);
             double pprScore = (pprScoreIter != pprScoresByNodeId.end()) ? pprScoreIter->second : 0.0;
             double outputScore = pprScore + residual;
             residualPairs.emplace_back(nodeId, outputScore);
@@ -725,7 +725,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     const auto* firstState = states.front();
     int32_t batchSize = firstState->_batchSize;
     int32_t numNodeTypes = firstState->_numNodeTypes;
-    int32_t numChannels = static_cast<int32_t>(states.size());
+    auto numChannels = static_cast<int32_t>(states.size());
     int32_t maxPPRNodes = std::accumulate(channelTargetCounts.begin(), channelTargetCounts.end(), 0);
     // Feature width is 1 + 2C:
     //   column 0: best emitted PPR score across channels, used as the scalar
@@ -773,7 +773,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
             }
 
             auto selectedNodes = selectTypedPPRNodeIds(outputCandidatesByChannel, channelTargetCounts, maxPPRNodes);
-            int32_t selectedNodeCount = static_cast<int32_t>(selectedNodes.size());
+            auto selectedNodeCount = static_cast<int32_t>(selectedNodes.size());
 
             for (int32_t nodeId : selectedNodes) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
