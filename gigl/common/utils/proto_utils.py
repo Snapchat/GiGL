@@ -9,11 +9,25 @@ from omegaconf import OmegaConf
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.omegaconf_resolvers import register_resolvers
+from gigl.common.utils.hydra_config import compose_yaml_config
 from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 
 T = TypeVar("T", bound=message.Message)
+
+
+def proto_to_yaml(proto: message.Message) -> str:
+    """Serialize a protobuf message to canonical YAML.
+
+    Args:
+        proto: Protobuf message to serialize.
+
+    Returns:
+        YAML containing the protobuf JSON representation.
+    """
+    proto_dict = MessageToDict(message=proto)
+    return yaml.safe_dump(proto_dict, default_flow_style=False, sort_keys=True)
 
 
 class ProtoUtils:
@@ -33,6 +47,27 @@ class ProtoUtils:
                 f"ProtoUtils.read_proto_from_yaml expected a mapping at the YAML root for "
                 f"{uri}, got {type(obj_dict).__name__}."
             )
+        proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
+        return proto
+
+    def compose_proto_from_yaml(self, uri: Uri, proto_cls: Type[T]) -> T:
+        """Compose a YAML config with Hydra and parse it as a protobuf.
+
+        Remote URIs are downloaded as a single primary config; relative Defaults
+        List entries are not fetched.
+        """
+        if isinstance(uri, LocalUri):
+            # Compose from the source path so its parent remains Hydra's config
+            # root and relative Defaults List entries resolve as expected.
+            obj_dict = compose_yaml_config(uri=uri)
+        else:
+            with NamedTemporaryFile(suffix=".yaml") as temp_file:
+                local_uri = LocalUri(temp_file.name)
+                self.__file_loader.load_file(
+                    file_uri_src=uri,
+                    file_uri_dst=local_uri,
+                )
+                obj_dict = compose_yaml_config(uri=local_uri)
         proto = ParseDict(js_dict=cast(dict, obj_dict), message=proto_cls())
         return proto
 

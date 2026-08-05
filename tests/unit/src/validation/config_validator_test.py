@@ -1,15 +1,21 @@
 import os
 import shutil
 import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import google.protobuf.message
 from absl.testing import absltest
 from parameterized import param, parameterized
 
 import gigl.env.pipelines_config
-from gigl.common import Uri, UriFactory
+from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.utils.proto_utils import ProtoUtils
-from gigl.src.validation_check.config_validator import kfp_validation_checks
+from gigl.src.validation_check.config_validator import (
+    kfp_validation_checks,
+    materialize_resolved_configs,
+    resolve_configs,
+)
 from snapchat.research.gbml import (
     gbml_config_pb2,
     gigl_resource_config_pb2,
@@ -350,6 +356,130 @@ class TestConfigValidationPerSGSBackends(TestCase):
                 start_at="config_populator",
                 resource_config_uri=self._live_resource_config_uri,
             )
+
+    @patch("gigl.src.validation_check.config_validator.GcsUtils")
+    def test_composes_and_materializes_both_configs(self, mock_gcs_utils) -> None:
+        config_root = Path(self._temp_dir) / "composed"
+        (config_root / "task").mkdir(parents=True)
+        (config_root / "resource").mkdir()
+
+        task_config_path = config_root / "task_config.yaml"
+        task_config_path.write_text("defaults:\n  - task@_global_: base\n  - _self_\n")
+        (config_root / "task" / "base.yaml").write_text(
+            "graph_metadata:\n"
+            "  node_types: [paper]\n"
+            "shared_config:\n"
+            "  is_graph_directed: true\n"
+        )
+
+        shared_resource_config_path = config_root / "shared_resource_config.yaml"
+        shared_resource_config_path.write_text(
+            "common_compute_config:\n"
+            "  project: ${oc.env:CONFIG_VALIDATOR_TEST_PROJECT}\n"
+            "  region: us-central1\n"
+            "  temp_regional_assets_bucket: gs://test-temp-regional\n"
+        )
+        resource_config_path = config_root / "resource_config.yaml"
+        resource_config_path.write_text(
+            "defaults:\n  - resource@_global_: base\n  - _self_\n"
+        )
+        (config_root / "resource" / "base.yaml").write_text(
+            f"shared_resource_config_uri: {shared_resource_config_path}\n"
+        )
+
+        with patch.dict(
+            os.environ,
+            {"CONFIG_VALIDATOR_TEST_PROJECT": "composed-project"},
+        ):
+            task_config, resource_config = resolve_configs(
+                task_config_uri=UriFactory.create_uri(str(task_config_path)),
+                resource_config_uri=UriFactory.create_uri(str(resource_config_path)),
+            )
+
+        self.assertTrue(task_config.shared_config.is_graph_directed)
+        self.assertEqual(
+            resource_config.WhichOneof("shared_resource"),
+            "shared_resource_config",
+        )
+        self.assertEqual(
+            resource_config.shared_resource_config.common_compute_config.project,
+            "composed-project",
+        )
+
+        snapshot_directory = Path(self._temp_dir) / "snapshots"
+        snapshot_directory.mkdir()
+
+        def write_snapshot(gcs_path, content):
+            (snapshot_directory / gcs_path.get_basename()).write_text(content)
+
+        mock_gcs_utils.return_value.upload_from_string.side_effect = write_snapshot
+        task_uri, resource_uri = materialize_resolved_configs(
+            job_name="config-resolution-test",
+            task_config=task_config,
+            resource_config=resource_config,
+        )
+
+        self.assertEqual(task_uri.get_basename(), "resolved_task_config.yaml")
+        self.assertEqual(resource_uri.get_basename(), "resolved_resource_config.yaml")
+        materialized_task_config = self._proto_utils.read_proto_from_yaml(
+            UriFactory.create_uri(
+                str(snapshot_directory / "resolved_task_config.yaml")
+            ),
+            gbml_config_pb2.GbmlConfig,
+        )
+        materialized_resource_config = self._proto_utils.read_proto_from_yaml(
+            UriFactory.create_uri(
+                str(snapshot_directory / "resolved_resource_config.yaml")
+            ),
+            gigl_resource_config_pb2.GiglResourceConfig,
+        )
+        self.assertEqual(materialized_task_config, task_config)
+        self.assertEqual(materialized_resource_config, resource_config)
+
+    @patch("gigl.common.utils.proto_utils.FileLoader.load_file")
+    def test_downloads_remote_configs_before_composing(self, mock_load_file) -> None:
+        task_uri = GcsUri("gs://test-configs/task.yaml")
+        resource_uri = GcsUri("gs://test-configs/resource.yaml")
+        search_root = Path(self._temp_dir) / "remote_shared_configs"
+        (search_root / "task").mkdir(parents=True)
+        (search_root / "task" / "base.yaml").write_text(
+            "shared_config:\n  is_graph_directed: true\n"
+        )
+        source_configs = {
+            task_uri.uri: (
+                "hydra:\n"
+                "  searchpath:\n"
+                f"    - file://{search_root}\n"
+                "defaults:\n"
+                "  - task@_global_: base\n"
+                "  - _self_\n"
+            ),
+            resource_uri.uri: (
+                "shared_resource_config:\n"
+                "  common_compute_config:\n"
+                "    project: remote-project\n"
+                "    temp_regional_assets_bucket: gs://test-temp-regional\n"
+            ),
+        }
+
+        def download_config(
+            file_uri_src,
+            file_uri_dst,
+        ):
+            self.assertTrue(file_uri_dst.get_basename().endswith(".yaml"))
+            Path(file_uri_dst.uri).write_text(source_configs[file_uri_src.uri])
+
+        mock_load_file.side_effect = download_config
+        task_config, resource_config = resolve_configs(
+            task_config_uri=task_uri,
+            resource_config_uri=resource_uri,
+        )
+
+        self.assertTrue(task_config.shared_config.is_graph_directed)
+        self.assertEqual(
+            resource_config.shared_resource_config.common_compute_config.project,
+            "remote-project",
+        )
 
 
 if __name__ == "__main__":
