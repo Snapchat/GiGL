@@ -463,77 +463,15 @@ class GraphTransformerEncoderLayer(nn.Module):
         Returns:
             Output tensor of shape ``(batch, seq, model_dim)``.
         """
-        batch_size, seq_len, model_dim = x.shape
-
-        # Self-attention block (pre-norm)
-        residual = x
-        x_norm = self._attention_norm(x)
-
-        query = self._query_projection(x_norm)
-        key = self._key_projection(x_norm)
-        value = self._value_projection(x_norm)
-
-        # Reshape to (batch, num_heads, seq, head_dim)
-        query = query.view(
-            batch_size, seq_len, self._num_heads, self._head_dim
-        ).transpose(1, 2)
-        key = key.view(batch_size, seq_len, self._num_heads, self._head_dim).transpose(
-            1, 2
-        )
-        value = value.view(
-            batch_size, seq_len, self._num_heads, self._head_dim
-        ).transpose(1, 2)
-
-        attention_output = self._run_attention(
-            query=query,
-            key=key,
-            value=value,
+        return self._forward_query_prefix(
+            x=x,
+            query_length=x.size(1),
             attn_bias=attn_bias,
+            valid_mask=valid_mask,
             pairwise_relation_indices=pairwise_relation_indices,
         )
 
-        # Reshape back to (batch, seq, model_dim)
-        attention_output = attention_output.transpose(1, 2).reshape(
-            batch_size, seq_len, model_dim
-        )
-        attention_output = self._output_projection(attention_output)
-        attention_output = self._dropout(attention_output)
-
-        x = residual + attention_output
-        if self._relation_message_mode == "edge_type_attention":
-            x = x + self._dropout(
-                self._compute_relation_attention_messages(
-                    x_norm=x_norm,
-                    query=query,
-                    key=key,
-                    pairwise_relation_indices=pairwise_relation_indices,
-                    batch_size=batch_size,
-                    seq_len=seq_len,
-                )
-            )
-        elif self._relation_message_mode != "none":
-            x = x + self._dropout(
-                self._compute_relation_messages(
-                    x_norm=x_norm,
-                    pairwise_relation_indices=pairwise_relation_indices,
-                    batch_size=batch_size,
-                    seq_len=seq_len,
-                )
-            )
-        if valid_mask is not None:
-            x = x * valid_mask.unsqueeze(-1).to(x.dtype)
-
-        # Feed-forward block (pre-norm)
-        residual = x
-        x_norm = self._ffn_norm(x)
-        ffn_output = self._ffn(x_norm)
-        x = residual + ffn_output
-        if valid_mask is not None:
-            x = x * valid_mask.unsqueeze(-1).to(x.dtype)
-
-        return x
-
-    def forward_anchor_only(
+    def _forward_anchor_only(
         self,
         x: Tensor,
         attn_bias: Optional[Tensor] = None,
@@ -557,51 +495,80 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         Returns:
             Anchor output of shape ``(batch, 1, model_dim)``.
+        """
+        return self._forward_query_prefix(
+            x=x,
+            query_length=1,
+            attn_bias=attn_bias,
+            valid_mask=valid_mask,
+            pairwise_relation_indices=pairwise_relation_indices,
+        )
 
+    def _forward_query_prefix(
+        self,
+        x: Tensor,
+        query_length: int,
+        attn_bias: Optional[Tensor],
+        valid_mask: Optional[Tensor],
+        pairwise_relation_indices: Optional[Tensor],
+    ) -> Tensor:
+        """Compute layer outputs for a prefix of query positions.
+
+        Keys and values retain the full sequence so every token can contribute
+        to each requested query output.
+
+        Args:
+            x: Input tensor of shape ``(batch, seq, model_dim)``.
+            query_length: Number of leading query positions to compute.
+            attn_bias: Optional attention bias broadcastable to
+                ``(batch, num_heads, query_length, seq)``.
+            valid_mask: Optional boolean tensor of shape ``(batch, seq)``.
+            pairwise_relation_indices: Optional sparse relation coordinates
+                shaped ``(num_relation_edges, 4)``.
+
+        Returns:
+            Output tensor of shape ``(batch, query_length, model_dim)``.
+
+        Raises:
+            ValueError: If ``query_length`` is outside ``[1, seq]`` or relation
+                coordinates are invalid.
         """
         batch_size, seq_len, model_dim = x.shape
-        anchor_valid_mask = valid_mask[:, :1] if valid_mask is not None else None
-        residual_anchor = x[:, :1, :]
-        x_norm = self._attention_norm(x)
+        if query_length < 1 or query_length > seq_len:
+            raise ValueError(
+                f"query_length must be in [1, {seq_len}], got {query_length}."
+            )
 
-        anchor_relation_indices = pairwise_relation_indices
+        output_valid_mask = (
+            valid_mask[:, :query_length] if valid_mask is not None else None
+        )
+        output = x[:, :query_length, :]
+
+        selected_relation_indices = pairwise_relation_indices
         if (
             self._relation_attention_mode != "none"
             or self._relation_message_mode != "none"
         ):
-            if pairwise_relation_indices is None:
-                raise ValueError(
-                    "pairwise_relation_indices is required when relation-aware "
-                    "attention or messages are enabled."
-                )
-            if (
-                pairwise_relation_indices.dim() != 2
-                or pairwise_relation_indices.size(-1) != 4
-            ):
-                raise ValueError(
-                    "pairwise_relation_indices must have shape (num_relation_edges, 4)."
-                )
-            if pairwise_relation_indices.numel() > 0:
-                relation_indices = pairwise_relation_indices[:, 3]
-                if (
-                    relation_indices.min().item() < 0
-                    or relation_indices.max().item() >= self._num_relations
-                ):
-                    raise ValueError(
-                        "pairwise_relation_indices contains relation ids outside "
-                        f"[0, {self._num_relations})."
-                    )
-            anchor_relation_indices = pairwise_relation_indices[
-                pairwise_relation_indices[:, 1] == 0
-            ]
+            selected_relation_indices = self._validate_pairwise_relation_indices(
+                pairwise_relation_indices=pairwise_relation_indices,
+                device=x.device,
+                batch_size=batch_size,
+                query_length=seq_len,
+                key_length=seq_len,
+            )
+            if query_length < seq_len:
+                selected_relation_indices = selected_relation_indices[
+                    selected_relation_indices[:, 1] < query_length
+                ]
 
-        query = self._query_projection(x_norm[:, :1, :])
+        x_norm = self._attention_norm(x)
+        query = self._query_projection(x_norm[:, :query_length, :])
         key = self._key_projection(x_norm)
         value = self._value_projection(x_norm)
 
-        query = query.view(batch_size, 1, self._num_heads, self._head_dim).transpose(
-            1, 2
-        )
+        query = query.view(
+            batch_size, query_length, self._num_heads, self._head_dim
+        ).transpose(1, 2)
         key = key.view(batch_size, seq_len, self._num_heads, self._head_dim).transpose(
             1, 2
         )
@@ -609,60 +576,107 @@ class GraphTransformerEncoderLayer(nn.Module):
             batch_size, seq_len, self._num_heads, self._head_dim
         ).transpose(1, 2)
 
-        anchor_attn_bias = attn_bias
-        if anchor_attn_bias is not None and anchor_attn_bias.size(-2) == seq_len:
-            anchor_attn_bias = anchor_attn_bias[..., :1, :]
+        if attn_bias is not None and attn_bias.dim() >= 2:
+            attn_bias = attn_bias[..., :query_length, :]
         attention_output = self._run_attention(
             query=query,
             key=key,
             value=value,
-            attn_bias=anchor_attn_bias,
-            pairwise_relation_indices=anchor_relation_indices,
+            attn_bias=attn_bias,
+            pairwise_relation_indices=selected_relation_indices,
         )
         attention_output = attention_output.transpose(1, 2).reshape(
-            batch_size, 1, model_dim
+            batch_size, query_length, model_dim
         )
         attention_output = self._dropout(self._output_projection(attention_output))
-        anchor = residual_anchor + attention_output
+        output = output + attention_output
 
         if self._relation_message_mode == "edge_type_attention":
-            anchor = anchor + self._dropout(
+            output = output + self._dropout(
                 self._compute_relation_attention_messages(
                     x_norm=x_norm,
                     query=query,
                     key=key,
-                    pairwise_relation_indices=anchor_relation_indices,
+                    pairwise_relation_indices=selected_relation_indices,
                     batch_size=batch_size,
-                    seq_len=1,
+                    seq_len=query_length,
                 )
             )
         elif self._relation_message_mode != "none":
-            anchor = anchor + self._dropout(
+            output = output + self._dropout(
                 self._compute_relation_messages(
                     x_norm=x_norm,
-                    pairwise_relation_indices=anchor_relation_indices,
+                    pairwise_relation_indices=selected_relation_indices,
                     batch_size=batch_size,
-                    seq_len=1,
+                    seq_len=query_length,
                 )
             )
-        if anchor_valid_mask is not None:
-            anchor = anchor * anchor_valid_mask.unsqueeze(-1).to(anchor.dtype)
+        if output_valid_mask is not None:
+            output = output * output_valid_mask.unsqueeze(-1).to(output.dtype)
 
         if (
             self.training
             and pairwise_relation_indices is not None
             and pairwise_relation_indices.numel() > 0
-            and anchor_relation_indices is not None
-            and anchor_relation_indices.numel() == 0
+            and selected_relation_indices is not None
+            and selected_relation_indices.numel() == 0
         ):
-            anchor = anchor + self._zero_relation_parameter_dependency(anchor)
+            output = output + self._zero_relation_parameter_dependency(output)
 
-        residual_anchor = anchor
-        anchor = residual_anchor + self._ffn(self._ffn_norm(anchor))
-        if anchor_valid_mask is not None:
-            anchor = anchor * anchor_valid_mask.unsqueeze(-1).to(anchor.dtype)
+        output = output + self._ffn(self._ffn_norm(output))
+        if output_valid_mask is not None:
+            output = output * output_valid_mask.unsqueeze(-1).to(output.dtype)
 
-        return anchor
+        return output
+
+    def _validate_pairwise_relation_indices(
+        self,
+        pairwise_relation_indices: Optional[Tensor],
+        device: torch.device,
+        batch_size: int,
+        query_length: int,
+        key_length: int,
+    ) -> Tensor:
+        """Normalize and validate sparse relation coordinates."""
+        if pairwise_relation_indices is None:
+            raise ValueError(
+                "pairwise_relation_indices is required for relation-aware "
+                "attention or messages."
+            )
+        if (
+            pairwise_relation_indices.dim() != 2
+            or pairwise_relation_indices.size(-1) != 4
+        ):
+            raise ValueError(
+                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
+            )
+
+        pairwise_relation_indices = pairwise_relation_indices.to(
+            device=device,
+            dtype=torch.long,
+        )
+        if pairwise_relation_indices.numel() == 0:
+            return pairwise_relation_indices
+
+        coordinate_names_and_limits = [
+            ("batch", pairwise_relation_indices[:, 0], batch_size),
+            ("query", pairwise_relation_indices[:, 1], query_length),
+            ("key", pairwise_relation_indices[:, 2], key_length),
+            ("relation", pairwise_relation_indices[:, 3], self._num_relations),
+        ]
+        for coordinate_name, coordinates, upper_bound in coordinate_names_and_limits:
+            if coordinates.min().item() < 0 or coordinates.max().item() >= upper_bound:
+                if coordinate_name == "relation":
+                    raise ValueError(
+                        "pairwise_relation_indices contains relation ids outside "
+                        f"[0, {upper_bound})."
+                    )
+                raise ValueError(
+                    "pairwise_relation_indices contains "
+                    f"{coordinate_name} indices outside [0, {upper_bound})."
+                )
+
+        return pairwise_relation_indices
 
     def _zero_relation_parameter_dependency(self, reference: Tensor) -> Tensor:
         """Keep relation parameters in the training graph after anchor filtering."""
@@ -713,14 +727,18 @@ class GraphTransformerEncoderLayer(nn.Module):
         key: Tensor,
         pairwise_relation_indices: Optional[Tensor],
     ) -> Optional[Tensor]:
-        if (
-            pairwise_relation_indices is not None
-            and pairwise_relation_indices.numel() == 0
-        ):
-            return None
-
         batch_size, _, query_len, _ = query.shape
         key_len = key.size(2)
+        pairwise_relation_indices = self._validate_pairwise_relation_indices(
+            pairwise_relation_indices=pairwise_relation_indices,
+            device=query.device,
+            batch_size=batch_size,
+            query_length=query_len,
+            key_length=key_len,
+        )
+        if pairwise_relation_indices.numel() == 0:
+            return None
+
         empty_bias = query.new_zeros((batch_size, self._num_heads, query_len, key_len))
         return self._add_relation_attention_bias(
             attn_bias=empty_bias,
@@ -736,40 +754,22 @@ class GraphTransformerEncoderLayer(nn.Module):
         key: Tensor,
         pairwise_relation_indices: Optional[Tensor],
     ) -> Optional[Tensor]:
-        if pairwise_relation_indices is None:
-            raise ValueError(
-                "pairwise_relation_indices is required when "
-                "relation_attention_mode is relation-aware."
-            )
+        batch_size, _, query_len, _ = query.shape
+        key_len = key.size(2)
+        pairwise_relation_indices = self._validate_pairwise_relation_indices(
+            pairwise_relation_indices=pairwise_relation_indices,
+            device=query.device,
+            batch_size=batch_size,
+            query_length=query_len,
+            key_length=key_len,
+        )
         if pairwise_relation_indices.numel() == 0:
             return attn_bias
-        if (
-            pairwise_relation_indices.dim() != 2
-            or pairwise_relation_indices.size(-1) != 4
-        ):
-            raise ValueError(
-                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
-            )
-
-        pairwise_relation_indices = pairwise_relation_indices.to(
-            device=query.device,
-            dtype=torch.long,
-        )
         batch_indices = pairwise_relation_indices[:, 0]
         query_indices = pairwise_relation_indices[:, 1]
         key_indices = pairwise_relation_indices[:, 2]
         relation_indices = pairwise_relation_indices[:, 3]
-        if (
-            relation_indices.min().item() < 0
-            or relation_indices.max().item() >= self._num_relations
-        ):
-            raise ValueError(
-                "pairwise_relation_indices contains relation ids outside "
-                f"[0, {self._num_relations})."
-            )
 
-        batch_size, _, query_len, _ = query.shape
-        key_len = key.size(2)
         bias_shape = (self._num_heads, query_len, key_len)
         if attn_bias is None:
             attn_bias = query.new_zeros((batch_size, *bias_shape))
@@ -893,11 +893,13 @@ class GraphTransformerEncoderLayer(nn.Module):
         """
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
-        if pairwise_relation_indices is None:
-            raise ValueError(
-                "pairwise_relation_indices is required when "
-                "relation_message_mode is relation-aware."
-            )
+        pairwise_relation_indices = self._validate_pairwise_relation_indices(
+            pairwise_relation_indices=pairwise_relation_indices,
+            device=x_norm.device,
+            batch_size=batch_size,
+            query_length=seq_len,
+            key_length=x_norm.size(1),
+        )
         messages = torch.zeros(
             (batch_size, seq_len, x_norm.size(-1)),
             dtype=x_norm.dtype,
@@ -905,30 +907,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         )
         if pairwise_relation_indices.numel() == 0:
             return messages
-        if (
-            pairwise_relation_indices.dim() != 2
-            or pairwise_relation_indices.size(-1) != 4
-        ):
-            raise ValueError(
-                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
-            )
-
-        pairwise_relation_indices = pairwise_relation_indices.to(
-            device=x_norm.device,
-            dtype=torch.long,
-        )
         batch_indices = pairwise_relation_indices[:, 0]
         target_indices = pairwise_relation_indices[:, 1]
         source_indices = pairwise_relation_indices[:, 2]
         relation_indices = pairwise_relation_indices[:, 3]
-        if (
-            relation_indices.min().item() < 0
-            or relation_indices.max().item() >= self._num_relations
-        ):
-            raise ValueError(
-                "pairwise_relation_indices contains relation ids outside "
-                f"[0, {self._num_relations})."
-            )
 
         # Per-(relation, batch, target) in-degree for mean aggregation, computed
         # globally up front so grouping order of the entries does not matter.
@@ -1017,11 +999,13 @@ class GraphTransformerEncoderLayer(nn.Module):
             raise ValueError("Relation message attention matrices are not initialized.")
         if self._relation_message_attention_priors is None:
             raise ValueError("Relation message attention priors are not initialized.")
-        if pairwise_relation_indices is None:
-            raise ValueError(
-                "pairwise_relation_indices is required when "
-                "relation_message_mode is relation-aware."
-            )
+        pairwise_relation_indices = self._validate_pairwise_relation_indices(
+            pairwise_relation_indices=pairwise_relation_indices,
+            device=x_norm.device,
+            batch_size=batch_size,
+            query_length=seq_len,
+            key_length=x_norm.size(1),
+        )
         messages = torch.zeros(
             (batch_size, seq_len, x_norm.size(-1)),
             dtype=x_norm.dtype,
@@ -1029,30 +1013,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         )
         if pairwise_relation_indices.numel() == 0:
             return messages
-        if (
-            pairwise_relation_indices.dim() != 2
-            or pairwise_relation_indices.size(-1) != 4
-        ):
-            raise ValueError(
-                "pairwise_relation_indices must have shape (num_relation_edges, 4)."
-            )
-
-        pairwise_relation_indices = pairwise_relation_indices.to(
-            device=x_norm.device,
-            dtype=torch.long,
-        )
         batch_indices = pairwise_relation_indices[:, 0]
         target_indices = pairwise_relation_indices[:, 1]
         source_indices = pairwise_relation_indices[:, 2]
         relation_indices = pairwise_relation_indices[:, 3]
-        if (
-            relation_indices.min().item() < 0
-            or relation_indices.max().item() >= self._num_relations
-        ):
-            raise ValueError(
-                "pairwise_relation_indices contains relation ids outside "
-                f"[0, {self._num_relations})."
-            )
 
         # Gather per-edge queries/keys: (num_edges, num_heads, head_dim).
         edge_queries = query[batch_indices, :, target_indices]
@@ -2003,15 +1967,18 @@ class GraphTransformerEncoder(nn.Module):
         use_anchor_only_final_layer = (
             self._readout_mode == "anchor_only" and len(encoder_layers) > 0
         )
-        num_full_sequence_layers = len(encoder_layers) - int(
-            use_anchor_only_final_layer
+        final_encoder_layer = (
+            cast(GraphTransformerEncoderLayer, encoder_layers[-1])
+            if use_anchor_only_final_layer
+            else None
         )
-        for layer_index in range(num_full_sequence_layers):
-            encoder_layer = encoder_layers[layer_index]
-            if not isinstance(encoder_layer, GraphTransformerEncoderLayer):
-                raise TypeError(
-                    "Graph transformer encoder contains an unexpected layer type."
-                )
+        for encoder_layer_module in encoder_layers:
+            encoder_layer = cast(
+                GraphTransformerEncoderLayer,
+                encoder_layer_module,
+            )
+            if encoder_layer is final_encoder_layer:
+                break
             x = encoder_layer(
                 x,
                 attn_bias=attn_bias,
@@ -2019,25 +1986,18 @@ class GraphTransformerEncoder(nn.Module):
                 valid_mask=valid_mask,
             )
 
-        if use_anchor_only_final_layer:
-            final_encoder_layer = encoder_layers[-1]
-            if not isinstance(final_encoder_layer, GraphTransformerEncoderLayer):
-                raise TypeError(
-                    "Graph transformer encoder contains an unexpected layer type."
-                )
-            x = final_encoder_layer.forward_anchor_only(
+        output_valid_mask = valid_mask
+        if final_encoder_layer is not None:
+            x = final_encoder_layer._forward_anchor_only(
                 x,
                 attn_bias=attn_bias,
                 pairwise_relation_indices=pairwise_relation_indices,
                 valid_mask=valid_mask,
             )
-            anchor_valid_mask = valid_mask[:, :1]
-            x = self._final_norm(x)
-            x = x * anchor_valid_mask.unsqueeze(-1).to(x.dtype)
-            return x.squeeze(1)
+            output_valid_mask = valid_mask[:, :1]
 
         x = self._final_norm(x)
-        x = x * valid_mask.unsqueeze(-1).to(x.dtype)
+        x = x * output_valid_mask.unsqueeze(-1).to(x.dtype)
 
         # Readout: anchor (position 0) + attention-weighted neighbor aggregation
         anchor = x[:, 0, :].unsqueeze(1)  # (batch, 1, hid_dim)

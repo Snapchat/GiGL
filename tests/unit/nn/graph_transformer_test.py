@@ -1,7 +1,7 @@
 """Tests for GraphTransformerEncoder."""
 
 import copy
-from typing import Literal, cast
+from typing import Callable, Literal, cast
 
 import torch
 import torch.nn as nn
@@ -484,6 +484,83 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         )
         defaults.update(kwargs)
         return GraphTransformerEncoder(**defaults)
+
+    def test_anchor_only_final_layer_restricts_query_side_work(self) -> None:
+        """Anchor specialization keeps full keys and values but one query."""
+        encoder = self._create_encoder(
+            num_layers=2,
+            readout_mode="anchor_only",
+        )
+        first_layer = cast(
+            GraphTransformerEncoderLayer,
+            encoder._encoder_layers[0],
+        )
+        final_layer = cast(
+            GraphTransformerEncoderLayer,
+            encoder._encoder_layers[-1],
+        )
+        input_shapes: dict[str, tuple[int, ...]] = {}
+
+        def record_input_shape(
+            name: str,
+        ) -> Callable[[nn.Module, tuple[Tensor, ...]], None]:
+            def hook(_module: nn.Module, inputs: tuple[Tensor, ...]) -> None:
+                input_shapes[name] = tuple(inputs[0].shape)
+
+            return hook
+
+        hooks = [
+            first_layer._query_projection.register_forward_pre_hook(
+                record_input_shape("first_query")
+            ),
+            final_layer._query_projection.register_forward_pre_hook(
+                record_input_shape("final_query")
+            ),
+            final_layer._key_projection.register_forward_pre_hook(
+                record_input_shape("final_key")
+            ),
+            final_layer._value_projection.register_forward_pre_hook(
+                record_input_shape("final_value")
+            ),
+            final_layer._output_projection.register_forward_pre_hook(
+                record_input_shape("final_output")
+            ),
+            final_layer._ffn.register_forward_pre_hook(record_input_shape("final_ffn")),
+        ]
+        try:
+            output = encoder._encode_and_readout(
+                sequences=torch.randn(2, 4, 8),
+                valid_mask=torch.tensor(
+                    [[True, True, True, False], [True, True, False, False]]
+                ),
+            )
+        finally:
+            for hook in hooks:
+                hook.remove()
+
+        self.assertEqual(output.shape, (2, 8))
+        self.assertEqual(input_shapes["first_query"], (2, 4, 8))
+        self.assertEqual(input_shapes["final_query"], (2, 1, 8))
+        self.assertEqual(input_shapes["final_key"], (2, 4, 8))
+        self.assertEqual(input_shapes["final_value"], (2, 4, 8))
+        self.assertEqual(input_shapes["final_output"], (2, 1, 8))
+        self.assertEqual(input_shapes["final_ffn"], (2, 1, 8))
+
+    def test_anchor_only_rejects_invalid_non_anchor_relation_coordinates(
+        self,
+    ) -> None:
+        """Validate all relation coordinates before filtering anchor rows."""
+        encoder = self._create_encoder(
+            readout_mode="anchor_only",
+            relation_attention_mode="edge_type_bilinear",
+        )
+
+        with self.assertRaisesRegex(ValueError, "query indices outside"):
+            encoder._encode_and_readout(
+                sequences=torch.randn(1, 2, 8),
+                valid_mask=torch.ones((1, 2), dtype=torch.bool),
+                pairwise_relation_indices=_pairwise_relation_indices([(0, 2, 1, 0)]),
+            )
 
     def test_anchor_only_final_layer_matches_full_sequence_relation_messages(
         self,
