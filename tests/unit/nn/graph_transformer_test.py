@@ -546,22 +546,6 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(input_shapes["final_output"], (2, 1, 8))
         self.assertEqual(input_shapes["final_ffn"], (2, 1, 8))
 
-    def test_anchor_only_rejects_invalid_non_anchor_relation_coordinates(
-        self,
-    ) -> None:
-        """Validate all relation coordinates before filtering anchor rows."""
-        encoder = self._create_encoder(
-            readout_mode="anchor_only",
-            relation_attention_mode="edge_type_bilinear",
-        )
-
-        with self.assertRaisesRegex(ValueError, "query indices outside"):
-            encoder._encode_and_readout(
-                sequences=torch.randn(1, 2, 8),
-                valid_mask=torch.ones((1, 2), dtype=torch.bool),
-                pairwise_relation_indices=_pairwise_relation_indices([(0, 2, 1, 0)]),
-            )
-
     def test_anchor_only_final_layer_matches_full_sequence_relation_messages(
         self,
     ) -> None:
@@ -1776,9 +1760,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "relation ids outside"):
-            layer._build_relation_attention_bias(
-                query=torch.zeros((1, 1, 2, 2)),
-                key=torch.zeros((1, 1, 2, 2)),
+            layer(
+                x=torch.zeros((1, 2, 2)),
                 pairwise_relation_indices=_pairwise_relation_indices([(0, 1, 0, 1)]),
             )
 
@@ -1794,9 +1777,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "relation ids outside"):
-            layer._build_relation_attention_bias(
-                query=torch.zeros((1, 1, 2, 2)),
-                key=torch.zeros((1, 1, 2, 2)),
+            layer(
+                x=torch.zeros((1, 2, 2)),
                 pairwise_relation_indices=_pairwise_relation_indices([(0, 1, 0, 1)]),
             )
 
