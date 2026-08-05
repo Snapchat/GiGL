@@ -150,6 +150,9 @@ class DistPartitioner:
         node_features: Optional[
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]
         ] = None,
+        node_quantized_features: Optional[
+            Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+        ] = None,
         edge_index: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None,
         edge_features: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
@@ -171,6 +174,7 @@ class DistPartitioner:
             should_assign_edges_by_src_node (bool): Whether edges should be assigned to the machine of the source nodes during partitioning
             node_ids (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node ids from input. Tensors should be of shape [num_nodes_on_current_rank]
             node_features (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node feats from input. Tensors should be of shope [num_nodes_on_current_rank, node_feat_dim]
+            node_quantized_features (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered packed uint8 node features from input. Tensors should be of shape [num_nodes_on_current_rank, packed_node_feat_dim]
             edge_index (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge indexes from input. Tensors should be of shape [2, num_edges_on_current_rank]
             edge_features (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered edge features from input. Tensors should be of shape [num_edges_on_current_rank, edge_feat_dim]
             positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_pos_labels_on_current_rank]
@@ -195,6 +199,8 @@ class DistPartitioner:
         self._max_node_ids: Optional[dict[NodeType, int]] = None
         self._node_feat: Optional[dict[NodeType, torch.Tensor]] = None
         self._node_feat_dim: Optional[dict[NodeType, int]] = None
+        self._node_quantized_feat: Optional[dict[NodeType, torch.Tensor]] = None
+        self._node_quantized_feat_dim: Optional[dict[NodeType, int]] = None
         self._node_labels: Optional[dict[NodeType, torch.Tensor]] = None
         self._node_labels_dim: Optional[dict[NodeType, int]] = None
 
@@ -217,6 +223,11 @@ class DistPartitioner:
 
         if node_features is not None:
             self.register_node_features(node_features=node_features)
+
+        if node_quantized_features is not None:
+            self.register_node_quantized_features(
+                node_quantized_features=node_quantized_features
+            )
 
         if edge_features is not None:
             self.register_edge_features(edge_features=edge_features)
@@ -540,6 +551,40 @@ class DistPartitioner:
         self._node_feat_dim = {}
         for node_type in input_node_features:
             self._node_feat_dim[node_type] = input_node_features[node_type].shape[1]
+
+    def register_node_quantized_features(
+        self,
+        node_quantized_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    ) -> None:
+        """Registers packed uint8 node features to the partitioner."""
+
+        self._assert_and_get_rpc_setup()
+
+        if self._node_quantized_feat is not None:
+            raise ValueError(
+                "Node quantized features have already been registered. Cannot re-register node quantized feature data."
+            )
+
+        logger.info("Registering Node Quantized Features ...")
+
+        input_node_quantized_features = (
+            self._convert_node_entity_to_heterogeneous_format(
+                input_node_entity=node_quantized_features
+            )
+        )
+
+        assert input_node_quantized_features, (
+            "Node quantized features is an empty dictionary. Please provide node quantized features to register."
+        )
+
+        self._node_quantized_feat = convert_to_tensor(
+            input_node_quantized_features, dtype=torch.uint8
+        )
+        self._node_quantized_feat_dim = {}
+        for node_type in input_node_quantized_features:
+            self._node_quantized_feat_dim[node_type] = input_node_quantized_features[
+                node_type
+            ].shape[1]
 
     def register_node_labels(
         self, node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
@@ -928,7 +973,11 @@ class DistPartitioner:
         self,
         node_partition_book: dict[NodeType, PartitionBook],
         node_type: NodeType,
-    ) -> tuple[Optional[FeaturePartitionData], Optional[FeaturePartitionData]]:
+    ) -> tuple[
+        Optional[FeaturePartitionData],
+        Optional[FeaturePartitionData],
+        Optional[FeaturePartitionData],
+    ]:
         """
         Partitions node features and labels according to the node partition book.
 
@@ -941,6 +990,7 @@ class DistPartitioner:
 
         Returns:
             Optional[FeaturePartitionData]: Partitioned data of node features for current node type.
+            Optional[FeaturePartitionData]: Partitioned data of packed uint8 node features for current node type.
             Optional[FeaturePartitionData]: Partitioned data of node labels for current node type.
         """
 
@@ -980,6 +1030,18 @@ class DistPartitioner:
             if self._node_feat_dim is not None and node_type in self._node_feat_dim
             else None
         )
+        node_quantized_features = (
+            self._node_quantized_feat[node_type]
+            if self._node_quantized_feat is not None
+            and node_type in self._node_quantized_feat
+            else None
+        )
+        node_quantized_feat_dim = (
+            self._node_quantized_feat_dim[node_type]
+            if self._node_quantized_feat_dim is not None
+            and node_type in self._node_quantized_feat_dim
+            else None
+        )
 
         node_labels = (
             self._node_labels[node_type]
@@ -992,22 +1054,29 @@ class DistPartitioner:
             else None
         )
 
-        if node_features is not None and node_labels is not None:
-            input_data: Tuple[torch.Tensor, ...] = (
-                node_features,
-                node_labels,
-                node_ids,
-            )
-        elif node_features is not None:
-            input_data = (node_features, node_ids)
-        elif node_labels is not None:
-            input_data = (node_labels, node_ids)
-        else:
+        input_parts: list[torch.Tensor] = []
+        node_feature_ind: Optional[int] = None
+        node_quantized_feature_ind: Optional[int] = None
+        node_label_ind: Optional[int] = None
+
+        if node_features is not None:
+            node_feature_ind = len(input_parts)
+            input_parts.append(node_features)
+        if node_quantized_features is not None:
+            node_quantized_feature_ind = len(input_parts)
+            input_parts.append(node_quantized_features)
+        if node_labels is not None:
+            node_label_ind = len(input_parts)
+            input_parts.append(node_labels)
+        if not input_parts:
             raise ValueError(
-                f"Found no node features or node labels to partition for node type {node_type}"
+                f"Found no node features, quantized node features, or node labels to partition for node type {node_type}"
             )
+        input_parts.append(node_ids)
+        input_data: Tuple[torch.Tensor, ...] = tuple(input_parts)
 
         has_node_features = node_features is not None
+        has_node_quantized_features = node_quantized_features is not None
         has_node_labels = node_labels is not None
 
         def _node_feature_partition_fn(node_feature_ids, _):
@@ -1028,12 +1097,21 @@ class DistPartitioner:
         self._remove_key_from_member_dict("_max_node_ids", node_type)
         self._remove_key_from_member_dict("_node_feat", node_type)
         self._remove_key_from_member_dict("_node_feat_dim", node_type)
+        self._remove_key_from_member_dict("_node_quantized_feat", node_type)
+        self._remove_key_from_member_dict("_node_quantized_feat_dim", node_type)
         self._remove_key_from_member_dict("_node_labels", node_type)
         self._remove_key_from_member_dict("_node_labels_dim", node_type)
 
         # Since the unpartitioned node ids, features and labels are large, we would like to delete them when
         # they are no longer needed to free memory.
-        del node_ids, num_nodes, max_node_ids, node_features, node_labels
+        del (
+            node_ids,
+            num_nodes,
+            max_node_ids,
+            node_features,
+            node_quantized_features,
+            node_labels,
+        )
 
         gc.collect()
 
@@ -1049,18 +1127,29 @@ class DistPartitioner:
 
             # Partitioned node features are stored at the 0th index ineach tuple of the partitioned results.
             if has_node_features:
+                assert node_feature_ind is not None
                 node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[0] for r in partitioned_results]),
+                    feats=torch.cat([r[node_feature_ind] for r in partitioned_results]),
                     ids=partitioned_ids,
                 )
 
             else:
                 node_feature_partition_data = None
 
-            # Partitioned node labels are stored at the 1st index in each tuple of the partitioned results if we have
-            # both node features and node labels. Otherwise, it is stored at the 0th index
+            if has_node_quantized_features:
+                assert node_quantized_feature_ind is not None
+                node_quantized_feature_partition_data = FeaturePartitionData(
+                    feats=torch.cat(
+                        [r[node_quantized_feature_ind] for r in partitioned_results]
+                    ),
+                    ids=partitioned_ids,
+                )
+
+            else:
+                node_quantized_feature_partition_data = None
+
             if has_node_labels:
-                node_label_ind = 1 if has_node_features else 0
+                assert node_label_ind is not None
                 node_label_partition_data = FeaturePartitionData(
                     feats=torch.cat([r[node_label_ind] for r in partitioned_results]),
                     ids=partitioned_ids,
@@ -1076,6 +1165,14 @@ class DistPartitioner:
                 )
             else:
                 node_feature_partition_data = None
+
+            if node_quantized_feat_dim is not None:
+                node_quantized_feature_partition_data = FeaturePartitionData(
+                    feats=torch.empty((0, node_quantized_feat_dim), dtype=torch.uint8),
+                    ids=torch.empty(0),
+                )
+            else:
+                node_quantized_feature_partition_data = None
 
             if node_labels_dim is not None:
                 node_label_partition_data = FeaturePartitionData(
@@ -1093,7 +1190,11 @@ class DistPartitioner:
             f"Node feature and label partitioning for node type {node_type} finished, took {time.time() - start_time:.3f}s"
         )
 
-        return node_feature_partition_data, node_label_partition_data
+        return (
+            node_feature_partition_data,
+            node_quantized_feature_partition_data,
+            node_label_partition_data,
+        )
 
     def _partition_edge_index_and_edge_features(
         self,
@@ -1459,6 +1560,7 @@ class DistPartitioner:
     ) -> tuple[
         Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]],
         Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]],
+        Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]],
     ]:
         """
         Partitions node features and labels of a graph. If heterogeneous, partitions features and labels for all node type.
@@ -1476,6 +1578,7 @@ class DistPartitioner:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The Computed Node Partition Book
         Returns:
             Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of node features.
+            Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of packed uint8 node features.
             Optional[Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]]: Partitioned data of node labels.
         """
         assert self._num_nodes is not None and self._node_ids is not None, (
@@ -1509,22 +1612,32 @@ class DistPartitioner:
             )
             for node_type in self._node_feat.keys():
                 node_feature_types.add(node_type)
-        elif self._node_labels is not None:
+        if self._node_quantized_feat is not None:
+            self._assert_data_type_consistency(
+                input_entity=self._node_quantized_feat,
+                is_node_entity=True,
+                is_subset=True,
+            )
+            for node_type in self._node_quantized_feat.keys():
+                node_feature_types.add(node_type)
+        if self._node_labels is not None:
             self._assert_data_type_consistency(
                 input_entity=self._node_labels, is_node_entity=True, is_subset=True
             )
             for node_type in self._node_labels.keys():
                 node_feature_types.add(node_type)
-        else:
+        if not node_feature_types:
             raise ValueError(
-                "Node features or labels must be registered prior to partitioning."
+                "Node features, quantized node features, or labels must be registered prior to partitioning."
             )
 
         partitioned_node_features: dict[NodeType, FeaturePartitionData] = {}
+        partitioned_node_quantized_features: dict[NodeType, FeaturePartitionData] = {}
         partitioned_node_labels: dict[NodeType, FeaturePartitionData] = {}
         for node_type in sorted(node_feature_types):
             (
                 partitioned_node_features_for_node_type,
+                partitioned_node_quantized_features_for_node_type,
                 partitioned_node_labels_for_node_type,
             ) = self._partition_node_features_and_labels(
                 node_partition_book=transformed_node_partition_book, node_type=node_type
@@ -1532,6 +1645,10 @@ class DistPartitioner:
             if partitioned_node_features_for_node_type is not None:
                 partitioned_node_features[node_type] = (
                     partitioned_node_features_for_node_type
+                )
+            if partitioned_node_quantized_features_for_node_type is not None:
+                partitioned_node_quantized_features[node_type] = (
+                    partitioned_node_quantized_features_for_node_type
                 )
             if partitioned_node_labels_for_node_type is not None:
                 partitioned_node_labels[node_type] = (
@@ -1546,6 +1663,9 @@ class DistPartitioner:
                 partitioned_node_features[DEFAULT_HOMOGENEOUS_NODE_TYPE]
                 if partitioned_node_features
                 else None,
+                partitioned_node_quantized_features[DEFAULT_HOMOGENEOUS_NODE_TYPE]
+                if partitioned_node_quantized_features
+                else None,
                 partitioned_node_labels[DEFAULT_HOMOGENEOUS_NODE_TYPE]
                 if partitioned_node_labels
                 else None,
@@ -1553,6 +1673,9 @@ class DistPartitioner:
         else:
             return (
                 partitioned_node_features if partitioned_node_features else None,
+                partitioned_node_quantized_features
+                if partitioned_node_quantized_features
+                else None,
                 partitioned_node_labels if partitioned_node_labels else None,
             )
 
@@ -1771,15 +1894,21 @@ class DistPartitioner:
             node_partition_book=node_partition_book
         )
 
-        if self._node_feat is not None or self._node_labels is not None:
+        if (
+            self._node_feat is not None
+            or self._node_quantized_feat is not None
+            or self._node_labels is not None
+        ):
             (
                 partitioned_node_features,
+                partitioned_node_quantized_features,
                 partitioned_node_labels,
             ) = self.partition_node_features_and_labels(
                 node_partition_book=node_partition_book
             )
         else:
             partitioned_node_features = None
+            partitioned_node_quantized_features = None
             partitioned_node_labels = None
 
         if self._positive_label_edge_index is not None:
@@ -1805,6 +1934,7 @@ class DistPartitioner:
             edge_partition_book=edge_partition_book,
             partitioned_edge_index=partitioned_edge_index,
             partitioned_node_features=partitioned_node_features,
+            partitioned_node_quantized_features=partitioned_node_quantized_features,
             partitioned_edge_features=partitioned_edge_features,
             partitioned_positive_labels=partitioned_positive_edge_index,
             partitioned_negative_labels=partitioned_negative_edge_index,

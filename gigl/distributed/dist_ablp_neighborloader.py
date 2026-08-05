@@ -1,3 +1,4 @@
+import time
 from collections import abc, defaultdict
 from itertools import count
 from typing import Optional, Union
@@ -33,6 +34,7 @@ from gigl.distributed.utils.neighborloader import (
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_node_features,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
@@ -579,6 +581,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
+                node_quantization_metadata=dataset.node_quantization_metadata,
                 edge_dir=dataset.edge_dir,
             ),
         )
@@ -768,6 +771,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
+                node_quantization_metadata=dataset.node_quantization_metadata,
                 edge_dir=edge_dir,
             ),
             backend_key,
@@ -866,9 +870,15 @@ class DistABLPLoader(BaseDistLoader):
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
         # pulls out labels by prefix.
         # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
+        collate_start_time = time.perf_counter()
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
 
+        base_collate_start_time = time.perf_counter()
         data = super()._collate_fn(stripped_msg)
+        base_collate_time = time.perf_counter() - base_collate_start_time
+        logger.debug(
+            f"Distributed ABLPNeighborLoader GLT base collate time: {base_collate_time:.3f}s"
+        )
 
         data = set_missing_features(
             data=data,
@@ -908,8 +918,19 @@ class DistABLPLoader(BaseDistLoader):
 
         data, metadata = self._apply_ppr_outputs(data, metadata)
 
+        data, metadata = materialize_quantized_node_features(
+            data=data,
+            metadata=metadata,
+            node_quantization_metadata=self._node_quantization_metadata,
+        )
+
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.
         for key, value in metadata.items():
             data[key] = value
+
+        collate_time = time.perf_counter() - collate_start_time
+        logger.debug(
+            f"Distributed ABLPNeighborLoader end-to-end collate time: {collate_time:.3f}s"
+        )
         return data
