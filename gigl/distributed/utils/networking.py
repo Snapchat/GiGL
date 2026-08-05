@@ -27,6 +27,12 @@ from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
 
+_GRAPH_STORE_TOPOLOGY_ENV_KEYS = (
+    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY,
+    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY,
+    GRAPH_STORE_READINESS_URI_ENV_KEY,
+)
+
 
 def get_free_port() -> int:
     """
@@ -291,8 +297,39 @@ def _positive_int_from_env(key: str) -> int:
     return value
 
 
+def _get_graph_store_shape_and_readiness_from_environment() -> tuple[int, int, Uri]:
+    """Resolve GraphStore topology from explicit environment variables."""
+    num_compute_nodes = _positive_int_from_env(GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY)
+    num_storage_nodes = _positive_int_from_env(GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY)
+    readiness_uri_raw = os.environ[GRAPH_STORE_READINESS_URI_ENV_KEY]
+    if not readiness_uri_raw:
+        raise ValueError(
+            f"Environment variable {GRAPH_STORE_READINESS_URI_ENV_KEY} must be non-empty."
+        )
+    return (
+        num_compute_nodes,
+        num_storage_nodes,
+        UriFactory.create_uri(readiness_uri_raw),
+    )
+
+
 def _get_graph_store_shape_and_readiness() -> tuple[int, int, Uri]:
-    """Resolve GraphStore topology from Vertex AI or a generic environment."""
+    """Resolve GraphStore topology from explicit settings or Vertex AI."""
+    present_environment_keys = [
+        key for key in _GRAPH_STORE_TOPOLOGY_ENV_KEYS if key in os.environ
+    ]
+    if present_environment_keys:
+        missing_environment_keys = [
+            key for key in _GRAPH_STORE_TOPOLOGY_ENV_KEYS if key not in os.environ
+        ]
+        if missing_environment_keys:
+            missing_keys = ", ".join(missing_environment_keys)
+            raise ValueError(
+                "GraphStore topology environment configuration is incomplete. "
+                f"Missing required environment variables: {missing_keys}."
+            )
+        return _get_graph_store_shape_and_readiness_from_environment()
+
     if is_currently_running_in_vertex_ai_job():
         cluster_spec = get_cluster_spec()
         _validate_cluster_spec(cluster_spec)
@@ -312,18 +349,7 @@ def _get_graph_store_shape_and_readiness() -> tuple[int, int, Uri]:
         )
         return num_compute_nodes, num_storage_nodes, readiness_uri
 
-    num_compute_nodes = _positive_int_from_env(GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY)
-    num_storage_nodes = _positive_int_from_env(GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY)
-    readiness_uri_raw = os.environ.get(GRAPH_STORE_READINESS_URI_ENV_KEY)
-    if not readiness_uri_raw:
-        raise ValueError(
-            f"Missing required environment variable {GRAPH_STORE_READINESS_URI_ENV_KEY}."
-        )
-    return (
-        num_compute_nodes,
-        num_storage_nodes,
-        UriFactory.create_uri(readiness_uri_raw),
-    )
+    return _get_graph_store_shape_and_readiness_from_environment()
 
 
 def get_graph_store_info() -> GraphStoreInfo:
@@ -333,9 +359,10 @@ def get_graph_store_info() -> GraphStoreInfo:
     MUST be called with a torch.distributed process group initialized, for the *entire* training cluster.
     E.g. the process group *must* include both the compute and storage nodes.
 
-    Vertex AI topology is discovered from its cluster spec. Other
-    orchestrators provide the compute/storage counts and readiness URI through
-    the ``GIGL_GRAPH_STORE_*`` environment variables.
+    Explicit ``GIGL_GRAPH_STORE_*`` environment variables provide the
+    compute/storage counts and readiness URI, and take precedence over Vertex
+    AI topology discovery. When they are absent, Vertex AI topology is
+    discovered from its cluster spec.
 
     Returns:
         GraphStoreInfo: The information about the graph store cluster.
