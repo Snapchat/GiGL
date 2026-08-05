@@ -11,7 +11,7 @@ from torch_geometric.data import HeteroData
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
-    PPR_RELATION_FEATURES_NAME,
+    PPR_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
@@ -638,7 +638,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
 
-    def test_ppr_sequence_can_return_relation_token_input_features(self):
+    def test_ppr_sequence_can_return_ppr_token_input_features(self):
         data = create_ppr_sequence_hetero_data()
         data["user", "ppr", "item"].edge_attr = torch.tensor(
             [
@@ -662,7 +662,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
             sequence_construction_method="ppr",
             anchor_based_input_attr_names=[
                 PPR_WEIGHT_FEATURE_NAME,
-                PPR_RELATION_FEATURES_NAME,
+                PPR_FEATURES_NAME,
             ],
         )
 
@@ -671,7 +671,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
 
         self.assertEqual(
             set(token_input.keys()),
-            {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME},
+            {PPR_WEIGHT_FEATURE_NAME, PPR_FEATURES_NAME},
         )
         self.assertTrue(
             torch.allclose(
@@ -686,7 +686,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
         self.assertTrue(
             torch.allclose(
-                token_input[PPR_RELATION_FEATURES_NAME],
+                token_input[PPR_FEATURES_NAME],
                 torch.tensor(
                     [
                         [[0.0, 0.0], [9.0, 90.0], [6.0, 60.0], [4.0, 40.0]],
@@ -719,7 +719,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
             anchor_node_type="user",
             sequence_construction_method="ppr",
             anchor_based_attention_bias_attr_names=[PPR_WEIGHT_FEATURE_NAME],
-            anchor_based_input_attr_names=[PPR_RELATION_FEATURES_NAME],
+            anchor_based_input_attr_names=[PPR_FEATURES_NAME],
         )
 
         anchor_bias = sequence_auxiliary_data["anchor_bias"]
@@ -741,7 +741,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
         self.assertTrue(
             torch.allclose(
-                token_input[PPR_RELATION_FEATURES_NAME],
+                token_input[PPR_FEATURES_NAME],
                 torch.tensor([[[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]]]),
             )
         )
