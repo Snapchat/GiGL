@@ -90,8 +90,11 @@ class PPRSamplerOptions:
             when those channels intentionally overlap.
             If not provided, PPR treats all eligible edge types as one shared
             traversal space and emits a single scalar PPR score per output row.
-            Channel order follows the insertion order of this mapping. Values
-            are positive ratios that must sum to ``1.0``. The sampler converts
+            Channel order follows the insertion order of this mapping, and
+            typed ``edge_attr`` channel columns use that same order. If the
+            mapping is produced from an unordered config source, construct it
+            deterministically before passing it to the sampler. Values are
+            positive ratios that must sum to ``1.0``. The sampler converts
             ratios to per-channel target counts from ``max_ppr_nodes``.
             Finalized PPR candidates and residual top-up candidates both obey
             these target counts. If the same node appears in multiple channels,

@@ -141,8 +141,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             types. Each key defines one traversal channel that may use only
             those exact edge types. Edge types may appear in multiple channels
             when those channels intentionally overlap.
-            Values are positive ratios that must sum to ``1.0``. The sampler
-            converts ratios to per-channel target counts from ``max_ppr_nodes``.
+            Channel order follows the insertion order of this mapping, and
+            typed ``edge_attr`` channel columns use that same order. If the
+            mapping is produced from an unordered config source, construct it
+            deterministically before passing it to the sampler. Values are
+            positive ratios that must sum to ``1.0``. The sampler converts
+            ratios to per-channel target counts from ``max_ppr_nodes``.
             Finalized PPR candidates and residual top-up candidates both obey
             these target counts. If the same node appears in multiple channels,
             it is attributed to the channel where it has the highest emitted
