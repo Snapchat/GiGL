@@ -1,7 +1,18 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
 from collections import abc, defaultdict
-from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union, cast
+from typing import (
+    Any,
+    Iterable,
+    Literal,
+    MutableMapping,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
+from unittest.mock import Mock, patch
 
 import torch
 import torch.multiprocessing as mp
@@ -12,6 +23,7 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
 from gigl.distributed import DistPartitioner, DistRangePartitioner
+from gigl.distributed.constants import DEFAULT_PARTITIONER_CHUNK_COUNT
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.partition_book import get_ids_on_rank
@@ -40,6 +52,105 @@ from tests.test_assets.test_case import TestCase
 class DistRandomPartitionerTestCase(TestCase):
     def setUp(self):
         self._master_ip_address = "localhost"
+
+    def test_partitioner_chunk_count_validation(self) -> None:
+        partitioner = DistPartitioner()
+
+        self.assertEqual(
+            partitioner.partitioner_chunk_count, DEFAULT_PARTITIONER_CHUNK_COUNT
+        )
+        for invalid_value in (True, 0, -1, 1.5, "2"):
+            with self.subTest(invalid_value=invalid_value):
+                with self.assertRaises(ValueError):
+                    partitioner.partitioner_chunk_count = cast(Any, invalid_value)
+
+    def test_partition_by_chunk_uses_configured_chunk_count_and_boundaries(
+        self,
+    ) -> None:
+        partitioner = DistPartitioner(partitioner_chunk_count=3)
+        partitioner._partition_mgr = Mock()
+
+        with (
+            patch("gigl.distributed.dist_partitioner.glt_rpc.barrier"),
+            patch.object(
+                partitioner, "_partition_single_chunk_data"
+            ) as mock_partition_single_chunk_data,
+        ):
+            partitioner._partition_by_chunk(
+                input_data=(torch.arange(10),),
+                rank_indices=torch.arange(10),
+                partition_function=Mock(),
+            )
+
+        self.assertEqual(mock_partition_single_chunk_data.call_count, 3)
+        self.assertEqual(
+            [
+                call.kwargs["chunk_start_pos"]
+                for call in mock_partition_single_chunk_data.call_args_list
+            ],
+            [0, 4, 7],
+        )
+        self.assertEqual(
+            [
+                call.kwargs["chunk_end_pos"]
+                for call in mock_partition_single_chunk_data.call_args_list
+            ],
+            [4, 7, 10],
+        )
+
+    def test_partition_by_chunk_uses_default_chunk_count(self) -> None:
+        partitioner = DistPartitioner()
+        partitioner._partition_mgr = Mock()
+
+        with (
+            patch("gigl.distributed.dist_partitioner.glt_rpc.barrier"),
+            patch.object(
+                partitioner, "_partition_single_chunk_data"
+            ) as mock_partition_single_chunk_data,
+        ):
+            partitioner._partition_by_chunk(
+                input_data=(torch.arange(10),),
+                rank_indices=torch.arange(10),
+                partition_function=Mock(),
+            )
+
+        self.assertEqual(mock_partition_single_chunk_data.call_count, 8)
+
+    def test_partition_by_chunk_limits_chunks_to_item_count(self) -> None:
+        partitioner = DistPartitioner(partitioner_chunk_count=8)
+        partitioner._partition_mgr = Mock()
+
+        with (
+            patch("gigl.distributed.dist_partitioner.glt_rpc.barrier"),
+            patch.object(
+                partitioner, "_partition_single_chunk_data"
+            ) as mock_partition_single_chunk_data,
+        ):
+            partitioner._partition_by_chunk(
+                input_data=(torch.arange(3),),
+                rank_indices=torch.arange(3),
+                partition_function=Mock(),
+            )
+
+        self.assertEqual(mock_partition_single_chunk_data.call_count, 3)
+
+    def test_partition_by_chunk_does_not_process_empty_inputs(self) -> None:
+        partitioner = DistPartitioner(partitioner_chunk_count=3)
+        partitioner._partition_mgr = Mock()
+
+        with (
+            patch("gigl.distributed.dist_partitioner.glt_rpc.barrier"),
+            patch.object(
+                partitioner, "_partition_single_chunk_data"
+            ) as mock_partition_single_chunk_data,
+        ):
+            partitioner._partition_by_chunk(
+                input_data=(torch.empty(0),),
+                rank_indices=torch.empty(0, dtype=torch.long),
+                partition_function=Mock(),
+            )
+
+        mock_partition_single_chunk_data.assert_not_called()
 
     def _assert_data_type_correctness(
         self,

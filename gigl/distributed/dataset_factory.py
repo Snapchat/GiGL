@@ -28,7 +28,11 @@ from gigl.common.data.load_torch_tensors import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
-from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
+from gigl.distributed.constants import (
+    DEFAULT_MASTER_DATA_BUILDING_PORT,
+    DEFAULT_PARTITIONER_CHUNK_COUNT,
+    DEFAULT_PARTITIONER_NUM_RPC_THREADS,
+)
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
@@ -67,6 +71,7 @@ def _load_and_build_partitioned_dataset(
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+    partitioner_chunk_count: int = DEFAULT_PARTITIONER_CHUNK_COUNT,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -87,6 +92,7 @@ def _load_and_build_partitioned_dataset(
             sampling weights. The column is extracted from the feature tensor and registered separately via
             ``DistPartitioner.register_edge_weights()``; it is removed from the feature matrix to avoid duplication.
             Supply a single string to use the same column name for all edge types, or a per-edge-type dict.
+        partitioner_chunk_count (int): Maximum number of chunks used when partitioning one input tensor.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -173,6 +179,7 @@ def _load_and_build_partitioned_dataset(
     partitioner = partitioner_class(
         should_assign_edges_by_src_node=should_assign_edges_by_src_node
     )
+    partitioner.partitioner_chunk_count = partitioner_chunk_count
 
     partitioner.register_node_ids(node_ids=loaded_graph_tensors.node_ids)
     partitioner.register_edge_index(edge_index=loaded_graph_tensors.edge_index)
@@ -243,6 +250,8 @@ def _build_dataset_process(
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+    partitioner_chunk_count: int = DEFAULT_PARTITIONER_CHUNK_COUNT,
+    partitioner_num_rpc_threads: int = DEFAULT_PARTITIONER_NUM_RPC_THREADS,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -279,6 +288,8 @@ def _build_dataset_process(
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
         _ssl_positive_label_percentage (Optional[float]): Percentage of edges to select as self-supervised labels. Must be None if supervised edge labels are provided in advance.
             Slotted for refactor once this functionality is available in the transductive `splitter` directly
+        partitioner_chunk_count (int): Maximum number of chunks used when partitioning one input tensor.
+        partitioner_num_rpc_threads (int): Number of RPC worker threads used during partitioning.
     """
 
     # Sets up the worker group and rpc connection. We need to ensure we cleanup by calling shutdown_rpc() after we no longer need the rpc connection.
@@ -297,7 +308,7 @@ def _build_dataset_process(
     init_rpc(
         master_addr=master_ip_address,
         master_port=rpc_port,
-        num_rpc_threads=16,
+        num_rpc_threads=partitioner_num_rpc_threads,
     )
     # DistNodeAnchorLinkSplitter and DistNodeSplitter require rpc to be initialized, so we initialize it here.
     should_teardown_process_group = False
@@ -325,6 +336,7 @@ def _build_dataset_process(
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
         weight_edge_feat_name=weight_edge_feat_name,
+        partitioner_chunk_count=partitioner_chunk_count,
     )
 
     output_dict["dataset"] = output_dataset
@@ -351,6 +363,8 @@ def build_dataset(
         int
     ] = None,  # WARNING: This field will be deprecated in the future
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+    partitioner_chunk_count: int = DEFAULT_PARTITIONER_CHUNK_COUNT,
+    partitioner_num_rpc_threads: int = DEFAULT_PARTITIONER_NUM_RPC_THREADS,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -387,6 +401,8 @@ def build_dataset(
             as sampling weights. The column is extracted from the feature tensor and registered separately; it is
             removed from the feature matrix to avoid memory duplication. Supply a single string to apply to all
             edge types, or a per-edge-type dict. (default: ``None``)
+        partitioner_chunk_count (int): Maximum number of chunks used when partitioning one input tensor.
+        partitioner_num_rpc_threads (int): Number of RPC worker threads used during partitioning.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -401,6 +417,17 @@ def build_dataset(
     assert sample_edge_direction == "in" or sample_edge_direction == "out", (
         f"Provided edge direction from inference args must be one of `in` or `out`, got {sample_edge_direction}"
     )
+
+    for parameter_name, parameter_value in (
+        ("partitioner_chunk_count", partitioner_chunk_count),
+        ("partitioner_num_rpc_threads", partitioner_num_rpc_threads),
+    ):
+        if (
+            isinstance(parameter_value, bool)
+            or not isinstance(parameter_value, int)
+            or parameter_value <= 0
+        ):
+            raise ValueError(f"{parameter_name} must be a positive non-boolean integer")
 
     if splitter is not None:
         logger.info(f"Received splitter {type(splitter)}.")
@@ -482,6 +509,8 @@ def build_dataset(
             splitter,
             _ssl_positive_label_percentage,
             weight_edge_feat_name,
+            partitioner_chunk_count,
+            partitioner_num_rpc_threads,
         ),
     )
 

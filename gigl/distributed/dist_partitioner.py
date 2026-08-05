@@ -11,6 +11,7 @@ from graphlearn_torch.partition import PartitionBook
 from graphlearn_torch.utils import convert_to_tensor, index_select
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import DEFAULT_PARTITIONER_CHUNK_COUNT
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -161,6 +162,7 @@ class DistPartitioner:
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = None,
         node_labels: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]] = None,
+        partitioner_chunk_count: int = DEFAULT_PARTITIONER_CHUNK_COUNT,
     ):
         """
         Initializes the parameters of the partitioner. Also optionally takes in node and edge tensors as arguments and registers them to the partitioner. Registered
@@ -176,6 +178,7 @@ class DistPartitioner:
             positive_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered positive labels from input. Tensors should be of shape [2, num_pos_labels_on_current_rank]
             negative_labels (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Optionally registered negative labels from input. Tensors should be of shape [2, num_neg_labels_on_current_rank]
             node_labels (Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]): Optionally registered node labels from input. Tensors should be of shape [num_nodes_on_current_rank, node_label_dim]
+            partitioner_chunk_count (int): Maximum number of chunks used to partition one input tensor. Must be a positive integer.
         """
 
         self._world_size: int
@@ -183,6 +186,8 @@ class DistPartitioner:
         self._partition_mgr: _DistLinkPredicitonPartitionManager
 
         self._is_rpc_initialized: bool = False
+        self._partitioner_chunk_count: int
+        self.partitioner_chunk_count = partitioner_chunk_count
 
         self._is_input_homogeneous: Optional[bool] = None
         self._should_assign_edges_by_src_node: bool = should_assign_edges_by_src_node
@@ -228,6 +233,31 @@ class DistPartitioner:
             self.register_labels(label_edge_index=negative_labels, is_positive=False)
         if node_labels is not None:
             self.register_node_labels(node_labels=node_labels)
+
+    @property
+    def partitioner_chunk_count(self) -> int:
+        """Gets the maximum number of chunks used while partitioning input data."""
+        return self._partitioner_chunk_count
+
+    @partitioner_chunk_count.setter
+    def partitioner_chunk_count(self, partitioner_chunk_count: int) -> None:
+        """Sets the maximum number of chunks used while partitioning input data.
+
+        Args:
+            partitioner_chunk_count (int): Maximum number of chunks. Must be a positive integer.
+
+        Raises:
+            ValueError: If ``partitioner_chunk_count`` is not a positive non-boolean integer.
+        """
+        if (
+            isinstance(partitioner_chunk_count, bool)
+            or not isinstance(partitioner_chunk_count, int)
+            or partitioner_chunk_count <= 0
+        ):
+            raise ValueError(
+                "partitioner_chunk_count must be a positive non-boolean integer"
+            )
+        self._partitioner_chunk_count = partitioner_chunk_count
 
     def _assert_data_type_consistency(
         self,
@@ -814,9 +844,7 @@ class DistPartitioner:
         """
         num_items = len(rank_indices)
 
-        # We currently hard-code the chunk_num to be 8 unless the number of items is less than 8, and determine the chunk size based on this value.
-        # If this is not performant, we may revisit this in the future.
-        chunk_num = min(num_items, 8)
+        chunk_num = min(num_items, self.partitioner_chunk_count)
         if chunk_num != 0:
             chunk_size, remainder = divmod(num_items, chunk_num)
         else:
