@@ -79,7 +79,7 @@ class SequenceAuxiliaryData(TypedDict):
 
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
-PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
+PPR_FEATURES_NAME = "ppr_features"
 
 
 class _TokenOccurrenceIndex(NamedTuple):
@@ -134,7 +134,7 @@ def heterodata_to_graph_transformer_input(
             ``"ppr"`` uses outgoing ``(anchor_type, "ppr", neighbor_type)`` edges,
             sorted by descending PPR weight from edge-attr column 0.
             Multi-column edge attrs can also expose remaining columns as
-            ``"ppr_relation_features"``. (default: ``"khop"``)
+            ``"ppr_features"``. (default: ``"khop"``)
         include_anchor_first: If True, anchor node is always first in sequence.
         padding_value: Value to use for padding (default: 0.0).
         anchor_based_attention_bias_attr_names: List of anchor-relative feature
@@ -145,10 +145,11 @@ def heterodata_to_graph_transformer_input(
         anchor_based_input_attr_names: List of anchor-relative attribute names
             returned as token-aligned model-input features. Sparse graph-level
             attributes are looked up from ``data`` and ``"ppr_weight"`` resolves
-            to PPR edge weights in PPR sequence mode. The reserved name
-            ``"ppr_relation_features"`` resolves to any additional PPR edge-attr
-            columns after the first weight column.
-            Example: ['hop_distance', 'ppr_weight', 'ppr_relation_features'].
+            to PPR edge weights in PPR sequence mode. The reserved
+            ``"ppr_features"`` name resolves to any additional PPR edge-attr
+            columns after the first weight column, such as hop or typed-channel
+            metadata emitted by the sampler.
+            Example: ['hop_distance', 'ppr_weight', 'ppr_features'].
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
@@ -223,7 +224,7 @@ def heterodata_to_graph_transformer_input(
 
     ppr_reserved_feature_names = {
         PPR_WEIGHT_FEATURE_NAME,
-        PPR_RELATION_FEATURES_NAME,
+        PPR_FEATURES_NAME,
     }
     requested_ppr_feature_names = set(anchor_bias_attr_names + anchor_input_attr_names)
 
@@ -253,9 +254,9 @@ def heterodata_to_graph_transformer_input(
             "sequence_construction_method='ppr'."
         )
 
-    if PPR_RELATION_FEATURES_NAME in anchor_bias_attr_names:
+    if PPR_FEATURES_NAME in anchor_bias_attr_names:
         raise ValueError(
-            f"'{PPR_RELATION_FEATURES_NAME}' is a multi-column token-input feature "
+            f"'{PPR_FEATURES_NAME}' is a multi-column token-input feature "
             "and cannot be used as attention bias."
         )
 
@@ -291,7 +292,7 @@ def heterodata_to_graph_transformer_input(
     anchor_indices = offset + anchor_local_indices
 
     ppr_weight_sequences: Optional[Tensor] = None
-    ppr_relation_feature_sequences: Optional[Tensor] = None
+    ppr_feature_sequences: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
         if sampling_direction == "in":
@@ -317,7 +318,7 @@ def heterodata_to_graph_transformer_input(
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
-            ppr_relation_feature_sequences,
+            ppr_feature_sequences,
         ) = _build_sequence_layout_from_ppr_edges(
             homo_data=homo_data,
             anchor_indices=anchor_indices,
@@ -329,9 +330,7 @@ def heterodata_to_graph_transformer_input(
                 PPR_WEIGHT_FEATURE_NAME
                 in anchor_bias_attr_names + anchor_input_attr_names
             ),
-            return_relation_features=(
-                PPR_RELATION_FEATURES_NAME in anchor_input_attr_names
-            ),
+            return_ppr_features=(PPR_FEATURES_NAME in anchor_input_attr_names),
         )
     else:
         raise ValueError(
@@ -397,14 +396,14 @@ def heterodata_to_graph_transformer_input(
         available_anchor_attr_names=anchor_matrix_attr_names,
         requested_anchor_attr_names=anchor_bias_attr_names,
         ppr_weight_sequences=ppr_weight_sequences,
-        ppr_relation_feature_sequences=ppr_relation_feature_sequences,
+        ppr_feature_sequences=ppr_feature_sequences,
     )
     token_input_features = _compose_anchor_feature_dict(
         anchor_relative_feature_sequences=anchor_relative_feature_sequences,
         available_anchor_attr_names=anchor_matrix_attr_names,
         requested_anchor_attr_names=anchor_input_attr_names,
         ppr_weight_sequences=ppr_weight_sequences,
-        ppr_relation_feature_sequences=ppr_relation_feature_sequences,
+        ppr_feature_sequences=ppr_feature_sequences,
     )
 
     return (
@@ -474,7 +473,7 @@ def _compose_anchor_feature_tensor(
     available_anchor_attr_names: list[str],
     requested_anchor_attr_names: list[str],
     ppr_weight_sequences: Optional[Tensor],
-    ppr_relation_feature_sequences: Optional[Tensor],
+    ppr_feature_sequences: Optional[Tensor],
 ) -> Optional[Tensor]:
     if not requested_anchor_attr_names:
         return None
@@ -491,7 +490,7 @@ def _compose_anchor_feature_tensor(
                 anchor_relative_feature_sequences=anchor_relative_feature_sequences,
                 feature_index_by_name=feature_index_by_name,
                 ppr_weight_sequences=ppr_weight_sequences,
-                ppr_relation_feature_sequences=ppr_relation_feature_sequences,
+                ppr_feature_sequences=ppr_feature_sequences,
             )
         )
 
@@ -503,7 +502,7 @@ def _compose_anchor_feature_dict(
     available_anchor_attr_names: list[str],
     requested_anchor_attr_names: list[str],
     ppr_weight_sequences: Optional[Tensor],
-    ppr_relation_feature_sequences: Optional[Tensor],
+    ppr_feature_sequences: Optional[Tensor],
 ) -> Optional[TokenInputData]:
     if not requested_anchor_attr_names:
         return None
@@ -519,7 +518,7 @@ def _compose_anchor_feature_dict(
             anchor_relative_feature_sequences=anchor_relative_feature_sequences,
             feature_index_by_name=feature_index_by_name,
             ppr_weight_sequences=ppr_weight_sequences,
-            ppr_relation_feature_sequences=ppr_relation_feature_sequences,
+            ppr_feature_sequences=ppr_feature_sequences,
         )
 
     return feature_dict
@@ -530,7 +529,7 @@ def _resolve_anchor_feature_sequence(
     anchor_relative_feature_sequences: Optional[Tensor],
     feature_index_by_name: dict[str, int],
     ppr_weight_sequences: Optional[Tensor],
-    ppr_relation_feature_sequences: Optional[Tensor],
+    ppr_feature_sequences: Optional[Tensor],
 ) -> Tensor:
     if attr_name == PPR_WEIGHT_FEATURE_NAME:
         if ppr_weight_sequences is None:
@@ -538,12 +537,12 @@ def _resolve_anchor_feature_sequence(
                 f"Requested '{PPR_WEIGHT_FEATURE_NAME}' but it was not computed."
             )
         return ppr_weight_sequences
-    if attr_name == PPR_RELATION_FEATURES_NAME:
-        if ppr_relation_feature_sequences is None:
+    if attr_name == PPR_FEATURES_NAME:
+        if ppr_feature_sequences is None:
             raise ValueError(
-                f"Requested '{PPR_RELATION_FEATURES_NAME}' but it was not computed."
+                f"Requested '{PPR_FEATURES_NAME}' but it was not computed."
             )
-        return ppr_relation_feature_sequences
+        return ppr_feature_sequences
 
     if anchor_relative_feature_sequences is None:
         raise ValueError("Anchor-relative features were requested but not computed.")
@@ -659,7 +658,7 @@ def _build_sequence_layout_from_ppr_edges(
     num_nodes: int,
     device: torch.device,
     return_edge_weights: bool = False,
-    return_relation_features: bool = False,
+    return_ppr_features: bool = False,
 ) -> tuple[Tensor, Tensor, Optional[Tensor], Optional[Tensor]]:
     """Build sequences directly from outgoing PPR edges for each anchor.
 
@@ -688,7 +687,7 @@ def _build_sequence_layout_from_ppr_edges(
             dtype=torch.float,
             device=device,
         )
-    ppr_relation_feature_sequences = None
+    ppr_feature_sequences = None
 
     if include_anchor_first and max_seq_len > 0:
         node_index_sequences[:, 0] = anchor_indices
@@ -702,7 +701,7 @@ def _build_sequence_layout_from_ppr_edges(
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
-            ppr_relation_feature_sequences,
+            ppr_feature_sequences,
         )
 
     if not hasattr(homo_data, "edge_attr") or homo_data.edge_attr is None:
@@ -710,28 +709,41 @@ def _build_sequence_layout_from_ppr_edges(
             "sequence_construction_method='ppr' requires homogeneous edge_attr weights."
         )
 
-    edge_features = homo_data.edge_attr.float()
-    if edge_features.dim() == 1:
-        edge_features = edge_features.unsqueeze(1)
-    elif edge_features.dim() != 2:
+    raw_edge_features = homo_data.edge_attr.float()
+    if raw_edge_features.dim() == 1:
+        raw_edge_features = raw_edge_features.unsqueeze(1)
+    elif raw_edge_features.dim() != 2:
         raise ValueError(
-            f"PPR edge features must be 1D or 2D, got {tuple(edge_features.shape)}."
+            "PPR edge features must be 1D or 2D, "
+            f"got {tuple(raw_edge_features.shape)}."
         )
-    if edge_features.size(1) < 1:
+    if raw_edge_features.size(1) < 1:
         raise ValueError("PPR edge features must contain at least one weight column.")
-    if return_relation_features:
-        if edge_features.size(1) == 1:
+    edge_weights = torch.nan_to_num(
+        raw_edge_features[:, 0],
+        nan=0.0,
+        posinf=1.0,
+        neginf=0.0,
+    ).clamp_(min=0.0, max=1.0)
+    ppr_features = None
+    if raw_edge_features.size(1) > 1:
+        ppr_features = torch.nan_to_num(
+            raw_edge_features[:, 1:],
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).clamp_(min=0.0)
+    if return_ppr_features:
+        if raw_edge_features.size(1) == 1:
             raise ValueError(
-                f"Requested '{PPR_RELATION_FEATURES_NAME}' but PPR edge_attr only "
+                f"Requested '{PPR_FEATURES_NAME}' but PPR edge_attr only "
                 "contains the scalar weight column."
             )
-        ppr_relation_feature_sequences = torch.zeros(
-            (batch_size, max_seq_len, edge_features.size(1) - 1),
+        ppr_feature_sequences = torch.zeros(
+            (batch_size, max_seq_len, raw_edge_features.size(1) - 1),
             dtype=torch.float,
             device=device,
         )
-    edge_weights = edge_features[:, 0]
-    relation_features = edge_features[:, 1:] if edge_features.size(1) > 1 else None
 
     anchor_batch_index_by_homo_idx = torch.full(
         (num_nodes,),
@@ -752,15 +764,13 @@ def _build_sequence_layout_from_ppr_edges(
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
-            ppr_relation_feature_sequences,
+            ppr_feature_sequences,
         )
 
     all_anchor_batch_idx = anchor_batch_idx[keep]
     all_dst_idx = dst_idx[keep]
     all_weights = edge_weights[keep]
-    all_relation_features = (
-        relation_features[keep] if relation_features is not None else None
-    )
+    all_ppr_features = ppr_features[keep] if ppr_features is not None else None
 
     if include_anchor_first:
         keep = all_dst_idx != anchor_indices[all_anchor_batch_idx]
@@ -769,32 +779,30 @@ def _build_sequence_layout_from_ppr_edges(
                 node_index_sequences,
                 valid_mask,
                 ppr_weight_sequences,
-                ppr_relation_feature_sequences,
+                ppr_feature_sequences,
             )
         all_anchor_batch_idx = all_anchor_batch_idx[keep]
         all_dst_idx = all_dst_idx[keep]
         all_weights = all_weights[keep]
-        all_relation_features = (
-            all_relation_features[keep] if all_relation_features is not None else None
+        all_ppr_features = (
+            all_ppr_features[keep] if all_ppr_features is not None else None
         )
 
     weight_order = torch.argsort(all_weights, descending=True, stable=True)
     all_anchor_batch_idx = all_anchor_batch_idx[weight_order]
     all_dst_idx = all_dst_idx[weight_order]
     all_weights = all_weights[weight_order]
-    all_relation_features = (
-        all_relation_features[weight_order]
-        if all_relation_features is not None
-        else None
+    all_ppr_features = (
+        all_ppr_features[weight_order] if all_ppr_features is not None else None
     )
 
     batch_order = torch.argsort(all_anchor_batch_idx, stable=True)
     sorted_batch_idx = all_anchor_batch_idx[batch_order]
     sorted_dst_idx = all_dst_idx[batch_order]
     sorted_weights = all_weights[batch_order]
-    sorted_relation_features = (
-        all_relation_features[batch_order]
-        if all_relation_features is not None
+    sorted_ppr_features = (
+        all_ppr_features[batch_order]
+        if all_ppr_features is not None
         else None
     )
 
@@ -813,9 +821,9 @@ def _build_sequence_layout_from_ppr_edges(
     valid_positions = positions[valid]
     valid_dst_idx = sorted_dst_idx[valid]
     valid_weights = sorted_weights[valid]
-    valid_relation_features = (
-        sorted_relation_features[valid]
-        if sorted_relation_features is not None
+    valid_ppr_features = (
+        sorted_ppr_features[valid]
+        if sorted_ppr_features is not None
         else None
     )
 
@@ -826,18 +834,18 @@ def _build_sequence_layout_from_ppr_edges(
             valid_weights.float()
         )
     if (
-        ppr_relation_feature_sequences is not None
-        and valid_relation_features is not None
+        ppr_feature_sequences is not None
+        and valid_ppr_features is not None
     ):
-        ppr_relation_feature_sequences[valid_batch_idx, valid_positions] = (
-            valid_relation_features.float()
+        ppr_feature_sequences[valid_batch_idx, valid_positions] = (
+            valid_ppr_features.float()
         )
 
     return (
         node_index_sequences,
         valid_mask,
         ppr_weight_sequences,
-        ppr_relation_feature_sequences,
+        ppr_feature_sequences,
     )
 
 
