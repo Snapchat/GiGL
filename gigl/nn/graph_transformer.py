@@ -22,12 +22,12 @@ from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    PPR_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
     heterodata_to_graph_transformer_input,
 )
-
 
 def _get_node_type_positional_encodings(
     data: torch_geometric.data.hetero_data.HeteroData,
@@ -1053,11 +1053,14 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_attr_names: List of anchor-relative attribute names
             used as token-aligned input features. Sparse graph-level attributes
             are looked up from ``data`` and ``"ppr_weight"`` resolves to PPR
-            edge weights in PPR mode. These are projected to ``hid_dim`` and
-            added to the sequence tokens after sequence construction.
-            Example: ``['hop_distance', 'ppr_weight']`` for continuous features,
-            or ``['hop_distance']`` when ``hop_distance`` will be embedded via
-            ``anchor_based_input_embedding_dict``.
+            edge weights in PPR mode. The reserved ``"ppr_features"`` name
+            resolves to additional PPR edge-attr columns after the first weight
+            column, such as hop or typed-channel metadata. These are projected
+            to ``hid_dim`` and added to the sequence tokens after sequence
+            construction.
+            Example: ``['hop_distance', 'ppr_weight', 'ppr_features']`` for
+            continuous features, or ``['hop_distance']`` when ``hop_distance``
+            will be embedded via ``anchor_based_input_embedding_dict``.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1261,18 +1264,28 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
         anchor_input_attr_names = anchor_based_input_attr_names or []
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
-        if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
+        ppr_reserved_feature_names = {
+            PPR_WEIGHT_FEATURE_NAME,
+            PPR_FEATURES_NAME,
+        }
+        if ppr_reserved_feature_names & set(pairwise_bias_attr_names):
             raise ValueError(
-                f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and "
+                f"{sorted(ppr_reserved_feature_names)} are anchor-relative features and "
                 "cannot be used as pairwise attention bias."
             )
         if (
-            PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
+            ppr_reserved_feature_names
+            & set(anchor_bias_attr_names + anchor_input_attr_names)
             and sequence_construction_method != "ppr"
         ):
             raise ValueError(
-                "The reserved anchor-relative feature 'ppr_weight' requires "
+                "Reserved PPR anchor-relative features require "
                 "sequence_construction_method='ppr'."
+            )
+        if PPR_FEATURES_NAME in anchor_bias_attr_names:
+            raise ValueError(
+                f"'{PPR_FEATURES_NAME}' is a multi-column token-input "
+                "feature and cannot be used as attention bias."
             )
         self._sequence_construction_method = sequence_construction_method
         self._sampling_direction = sampling_direction
@@ -1338,7 +1351,6 @@ class GraphTransformerEncoder(nn.Module):
                 None,
                 persistent=False,
             )
-
         # Per-node-type input projection to hid_dim (like HGT's lin_dict)
         self._node_projection_dict = nn.ModuleDict(
             {
@@ -1504,14 +1516,14 @@ class GraphTransformerEncoder(nn.Module):
             if hasattr(data[edge_type], "edge_attr"):
                 projected_data[edge_type].edge_attr = data[edge_type].edge_attr
         # Copy relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
-        relative_pe_attr_names = {
-            attr_name
-            for attr_name in (self._anchor_based_attention_bias_attr_names or [])
-            if attr_name != PPR_WEIGHT_FEATURE_NAME
-        }
-        relative_pe_attr_names.update(self._anchor_based_input_attr_names or [])
-        relative_pe_attr_names.update(self._pairwise_attention_bias_attr_names or [])
-        relative_pe_attr_names.discard(PPR_WEIGHT_FEATURE_NAME)
+        relative_pe_attr_names = (
+            set(self._anchor_based_attention_bias_attr_names or [])
+            | set(self._anchor_based_input_attr_names or [])
+            | set(self._pairwise_attention_bias_attr_names or [])
+        )
+        relative_pe_attr_names.difference_update(
+            {PPR_WEIGHT_FEATURE_NAME, PPR_FEATURES_NAME}
+        )
         if relative_pe_attr_names:
             for attr_name in sorted(relative_pe_attr_names):
                 if hasattr(data, attr_name):
@@ -1677,11 +1689,11 @@ class GraphTransformerEncoder(nn.Module):
                         "sequence auxiliary data."
                     )
                 continuous_feature_parts.append(token_input_features[attr_name])
+            continuous_features = torch.cat(continuous_feature_parts, dim=-1).to(
+                sequences.dtype
+            )
             token_contribution = token_contribution + (
-                self._token_input_projection(
-                    torch.cat(continuous_feature_parts, dim=-1).to(sequences.dtype)
-                )
-                * valid_token_mask
+                self._token_input_projection(continuous_features) * valid_token_mask
             )
 
         return token_contribution
