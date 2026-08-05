@@ -518,11 +518,12 @@ class GraphTransformerEncoderLayer(nn.Module):
         to each requested query output.
 
         Args:
-            x: Input tensor of shape ``(batch, seq, model_dim)``.
+            x: Input tensor of shape ``(batch, sequence_length, model_dim)``.
             query_length: Number of leading query positions to compute.
             attn_bias: Optional attention bias broadcastable to
-                ``(batch, num_heads, query_length, seq)``.
-            valid_mask: Optional boolean tensor of shape ``(batch, seq)``.
+                ``(batch, num_heads, query_length, sequence_length)``.
+            valid_mask: Optional boolean tensor of shape
+                ``(batch, sequence_length)``.
             pairwise_relation_indices: Optional sparse relation coordinates
                 shaped ``(num_relation_edges, 4)``.
 
@@ -530,21 +531,22 @@ class GraphTransformerEncoderLayer(nn.Module):
             Output tensor of shape ``(batch, query_length, model_dim)``.
 
         Raises:
-            ValueError: If ``query_length`` is outside ``[1, seq]`` or relation
-                coordinates are invalid.
+            ValueError: If ``query_length`` is outside
+                ``[1, sequence_length]`` or relation coordinates are invalid.
         """
-        batch_size, seq_len, model_dim = x.shape
-        if query_length < 1 or query_length > seq_len:
+        batch_size, sequence_length, model_dim = x.shape
+        if query_length < 1 or query_length > sequence_length:
             raise ValueError(
-                f"query_length must be in [1, {seq_len}], got {query_length}."
+                f"query_length must be in [1, {sequence_length}], got {query_length}."
             )
 
         output_valid_mask = (
             valid_mask[:, :query_length] if valid_mask is not None else None
-        )
-        output = x[:, :query_length, :]
+        )  # [batch, query_length] or None
+        output = x[:, :query_length, :]  # [batch, query_length, model_dim]
 
         selected_relation_indices = pairwise_relation_indices
+        all_relation_edges_filtered = False
         if (
             self._relation_attention_mode != "none"
             or self._relation_message_mode != "none"
@@ -564,7 +566,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             selected_relation_indices = pairwise_relation_indices.to(
                 device=x.device,
                 dtype=torch.long,
-            )
+            )  # [num_relation_edges, 4]
             if selected_relation_indices.numel() > 0:
                 relation_indices = selected_relation_indices[:, 3]
                 if (
@@ -575,40 +577,56 @@ class GraphTransformerEncoderLayer(nn.Module):
                         "pairwise_relation_indices contains relation ids outside "
                         f"[0, {self._num_relations})."
                     )
-            if query_length < seq_len:
+            if query_length < sequence_length:
                 selected_relation_indices = selected_relation_indices[
                     selected_relation_indices[:, 1] < query_length
-                ]
+                ]  # [num_selected_relation_edges, 4]
+            all_relation_edges_filtered = (
+                pairwise_relation_indices.numel() > 0
+                and selected_relation_indices.numel() == 0
+            )
 
-        x_norm = self._attention_norm(x)
-        query = self._query_projection(x_norm[:, :query_length, :])
-        key = self._key_projection(x_norm)
-        value = self._value_projection(x_norm)
+        x_norm = self._attention_norm(x)  # [batch, sequence_length, model_dim]
+        query = self._query_projection(
+            x_norm[:, :query_length, :]
+        )  # [batch, query_length, model_dim]
+        key = self._key_projection(x_norm)  # [batch, sequence_length, model_dim]
+        value = self._value_projection(x_norm)  # [batch, sequence_length, model_dim]
 
         query = query.view(
             batch_size, query_length, self._num_heads, self._head_dim
-        ).transpose(1, 2)
-        key = key.view(batch_size, seq_len, self._num_heads, self._head_dim).transpose(
-            1, 2
-        )
+        ).transpose(1, 2)  # [batch, num_heads, query_length, head_dim]
+        key = key.view(
+            batch_size,
+            sequence_length,
+            self._num_heads,
+            self._head_dim,
+        ).transpose(1, 2)  # [batch, num_heads, sequence_length, head_dim]
         value = value.view(
-            batch_size, seq_len, self._num_heads, self._head_dim
-        ).transpose(1, 2)
+            batch_size,
+            sequence_length,
+            self._num_heads,
+            self._head_dim,
+        ).transpose(1, 2)  # [batch, num_heads, sequence_length, head_dim]
 
         if attn_bias is not None and attn_bias.dim() >= 2:
-            attn_bias = attn_bias[..., :query_length, :]
+            attn_bias = attn_bias[
+                ..., :query_length, :
+            ]  # [..., query_length, sequence_length]
         attention_output = self._run_attention(
             query=query,
             key=key,
             value=value,
             attn_bias=attn_bias,
             pairwise_relation_indices=selected_relation_indices,
-        )
+        )  # [batch, num_heads, query_length, head_dim]
         attention_output = attention_output.transpose(1, 2).reshape(
             batch_size, query_length, model_dim
-        )
-        attention_output = self._dropout(self._output_projection(attention_output))
-        output = output + attention_output
+        )  # [batch, query_length, model_dim]
+        attention_output = self._dropout(
+            self._output_projection(attention_output)
+        )  # [batch, query_length, model_dim]
+        output = output + attention_output  # [batch, query_length, model_dim]
 
         if self._relation_message_mode == "edge_type_attention":
             output = output + self._dropout(
@@ -621,7 +639,7 @@ class GraphTransformerEncoderLayer(nn.Module):
                         selected_relation_indices,
                     ),
                     batch_size=batch_size,
-                    seq_len=query_length,
+                    query_length=query_length,
                 )
             )
         elif self._relation_message_mode != "none":
@@ -633,24 +651,26 @@ class GraphTransformerEncoderLayer(nn.Module):
                         selected_relation_indices,
                     ),
                     batch_size=batch_size,
-                    seq_len=query_length,
+                    query_length=query_length,
                 )
             )
         if output_valid_mask is not None:
-            output = output * output_valid_mask.unsqueeze(-1).to(output.dtype)
+            output = output * output_valid_mask.unsqueeze(-1).to(
+                output.dtype
+            )  # [batch, query_length, model_dim]
 
-        if (
-            self.training
-            and pairwise_relation_indices is not None
-            and pairwise_relation_indices.numel() > 0
-            and selected_relation_indices is not None
-            and selected_relation_indices.numel() == 0
-        ):
+        # Match the full layer's autograd participation when prefix filtering
+        # removes every relation edge from an otherwise nonempty relation set.
+        if self.training and all_relation_edges_filtered:
             output = output + self._zero_relation_parameter_dependency(output)
 
-        output = output + self._ffn(self._ffn_norm(output))
+        output = output + self._ffn(
+            self._ffn_norm(output)
+        )  # [batch, query_length, model_dim]
         if output_valid_mask is not None:
-            output = output * output_valid_mask.unsqueeze(-1).to(output.dtype)
+            output = output * output_valid_mask.unsqueeze(-1).to(
+                output.dtype
+            )  # [batch, query_length, model_dim]
 
         return output
 
@@ -709,9 +729,11 @@ class GraphTransformerEncoderLayer(nn.Module):
         if pairwise_relation_indices.numel() == 0:
             return None
 
-        batch_size, _, query_len, _ = query.shape
-        key_len = key.size(2)
-        empty_bias = query.new_zeros((batch_size, self._num_heads, query_len, key_len))
+        batch_size, _, query_length, _ = query.shape
+        key_length = key.size(2)
+        empty_bias = query.new_zeros(
+            (batch_size, self._num_heads, query_length, key_length)
+        )
         return self._add_relation_attention_bias(
             attn_bias=empty_bias,
             query=query,
@@ -726,8 +748,8 @@ class GraphTransformerEncoderLayer(nn.Module):
         key: Tensor,
         pairwise_relation_indices: Tensor,
     ) -> Optional[Tensor]:
-        batch_size, _, query_len, _ = query.shape
-        key_len = key.size(2)
+        batch_size, _, query_length, _ = query.shape
+        key_length = key.size(2)
         if pairwise_relation_indices.numel() == 0:
             return attn_bias
         batch_indices = pairwise_relation_indices[:, 0]
@@ -735,7 +757,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         key_indices = pairwise_relation_indices[:, 2]
         relation_indices = pairwise_relation_indices[:, 3]
 
-        bias_shape = (self._num_heads, query_len, key_len)
+        bias_shape = (self._num_heads, query_length, key_length)
         if attn_bias is None:
             attn_bias = query.new_zeros((batch_size, *bias_shape))
         elif attn_bias.shape[1:] != bias_shape:
@@ -840,7 +862,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         x_norm: Tensor,
         pairwise_relation_indices: Tensor,
         batch_size: int,
-        seq_len: int,
+        query_length: int,
     ) -> Tensor:
         """Aggregate per-relation linear messages over sampled directed edges.
 
@@ -854,12 +876,12 @@ class GraphTransformerEncoderLayer(nn.Module):
         path and its memory profile are unaffected.
 
         Returns:
-            Message tensor of shape ``(batch_size, seq_len, model_dim)``.
+            Message tensor of shape ``(batch_size, query_length, model_dim)``.
         """
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
         messages = torch.zeros(
-            (batch_size, seq_len, x_norm.size(-1)),
+            (batch_size, query_length, x_norm.size(-1)),
             dtype=x_norm.dtype,
             device=x_norm.device,
         )
@@ -873,7 +895,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         # Per-(relation, batch, target) in-degree for mean aggregation, computed
         # globally up front so grouping order of the entries does not matter.
         target_degrees = torch.zeros(
-            (self._num_relations, batch_size, seq_len),
+            (self._num_relations, batch_size, query_length),
             dtype=x_norm.dtype,
             device=x_norm.device,
         )
@@ -923,7 +945,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         key: Tensor,
         pairwise_relation_indices: Tensor,
         batch_size: int,
-        seq_len: int,
+        query_length: int,
     ) -> Tensor:
         """Aggregate per-relation messages weighted by renormalized attention.
 
@@ -938,18 +960,19 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         Args:
             x_norm: Pre-norm token states of shape
-                ``(batch_size, seq_len, model_dim)``.
+                ``(batch_size, key_length, model_dim)``.
             query: Projected queries of shape
-                ``(batch_size, num_heads, seq_len, head_dim)``.
-            key: Projected keys of the same shape as ``query``.
+                ``(batch_size, num_heads, query_length, head_dim)``.
+            key: Projected keys of shape
+                ``(batch_size, num_heads, key_length, head_dim)``.
             pairwise_relation_indices: Sparse relation coordinates shaped
                 ``(num_relation_edges, 4)`` storing
                 ``(batch_idx, query_pos=target, key_pos=source, relation_idx)``.
             batch_size: Number of sequences in the batch.
-            seq_len: Sequence length.
+            query_length: Number of query outputs.
 
         Returns:
-            Message tensor of shape ``(batch_size, seq_len, model_dim)``.
+            Message tensor of shape ``(batch_size, query_length, model_dim)``.
         """
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
@@ -958,7 +981,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         if self._relation_message_attention_priors is None:
             raise ValueError("Relation message attention priors are not initialized.")
         messages = torch.zeros(
-            (batch_size, seq_len, x_norm.size(-1)),
+            (batch_size, query_length, x_norm.size(-1)),
             dtype=x_norm.dtype,
             device=x_norm.device,
         )
@@ -1008,13 +1031,14 @@ class GraphTransformerEncoderLayer(nn.Module):
         scores = torch.cat(score_parts, dim=0)  # (num_edges, num_heads)
 
         # Numerically stable scatter-softmax per (relation, batch, target) group
-        # and head. Group buffers are (num_relations * batch * seq, num_heads) —
-        # tiny compared to any (seq, seq) tensor.
+        # and head. Group buffers are
+        # (num_relations * batch * query_length, num_heads), much smaller than
+        # any (sequence_length, sequence_length) tensor.
         group_indices = (
             relation_indices * batch_size + batch_indices
-        ) * seq_len + target_indices
+        ) * query_length + target_indices
         head_group_indices = group_indices.unsqueeze(-1).expand(-1, self._num_heads)
-        num_groups = self._num_relations * batch_size * seq_len
+        num_groups = self._num_relations * batch_size * query_length
         group_score_max = scores.new_full(
             (num_groups, self._num_heads), torch.finfo(scores.dtype).min
         )
