@@ -488,28 +488,35 @@ static int32_t getNodeMinHop(const SeedNodeTypeState& nodeTypeState, int32_t nod
 // keeps addTypedPPRSeedFeaturesAndCandidates focused on merge policy instead of
 // repeating manual column math.
 //
-// Layout:
-//   [best_score, min_hop, channel_scores..., channel_min_hops...,
-//    channel_presence_bits...]
+// The width is 2 + (3 * numChannels):
+//   - 2 global columns:
+//       [best_score, min_hop]
+//     These preserve the regular PPR edge_attr contract at the front of the row.
+//   - 3 columns per typed channel:
+//       [channel_score, channel_min_hop, channel_presence]
+//     The per-channel score supports channel attribution/ranking, the per-channel
+//     hop exposes how far that channel had to walk, and the presence bit is the
+//     explicit channel-reachability mask.
 //
 // Scores and presence bits naturally default to 0. Channel min-hop columns use
 // -1 for "channel did not reach this node" so missing channels are distinct from
 // the anchor hop 0.
 class TypedPPRFeatureLayout {
 public:
-    explicit TypedPPRFeatureLayout(int32_t numChannels)
-        : _numChannels(numChannels), _numFeatures(2 + (3 * numChannels)) {}
+    explicit TypedPPRFeatureLayout(int32_t numChannels) : _numChannels(numChannels) {
+        TORCH_CHECK(numChannels > 0, "Typed PPR feature layout requires at least one channel.");
+    }
 
     [[nodiscard]] int32_t numFeatures() const {
-        return _numFeatures;
+        return kNumGlobalFeatures + (kNumPerChannelFeatures * _numChannels);
     }
 
     // New node feature vectors start empty. The global min-hop is also marked
     // missing until the first channel writes it, which lets updateScores use the
     // same min-update path for both global and per-channel hop fields.
     [[nodiscard]] std::vector<double> makeFeatureVector() const {
-        std::vector<double> features(_numFeatures, 0.0);
-        features[minHopIndex()] = kMissingTypedPPRChannelHop;
+        std::vector<double> features(numFeatures(), 0.0);
+        features[kGlobalMinHopIndex] = kMissingTypedPPRChannelHop;
         std::fill(features.begin() + channelHopStartIndex(),
                   features.begin() + channelPresenceStartIndex(),
                   kMissingTypedPPRChannelHop);
@@ -531,31 +538,30 @@ public:
         TORCH_CHECK(minHop >= 0, "PPR min-hop must be non-negative, got ", minHop, ".");
 
         const double hopFeature = static_cast<double>(minHop);
-        features[bestScoreIndex()] = std::max(features[bestScoreIndex()], score);
-        updateMinHop(features[minHopIndex()], hopFeature);
+        features[kBestScoreIndex] = std::max(features[kBestScoreIndex], score);
+        updateMinHop(features[kGlobalMinHopIndex], hopFeature);
         features[channelScoreIndex(channelIndex)] = score;
         updateMinHop(features[channelHopIndex(channelIndex)], hopFeature);
         features[channelPresenceIndex(channelIndex)] = 1.0;
     }
 
 private:
-    [[nodiscard]] int32_t bestScoreIndex() const {
-        return 0;
-    }
-    [[nodiscard]] int32_t minHopIndex() const {
-        return 1;
-    }
+    static constexpr int32_t kBestScoreIndex = 0;
+    static constexpr int32_t kGlobalMinHopIndex = 1;
+    static constexpr int32_t kNumGlobalFeatures = 2;     // best score + global min-hop
+    static constexpr int32_t kNumPerChannelFeatures = 3; // score + min-hop + presence
+
     [[nodiscard]] int32_t channelScoreIndex(int32_t channelIndex) const {
-        return 2 + channelIndex;
+        return kNumGlobalFeatures + channelIndex;
     }
     [[nodiscard]] int32_t channelHopStartIndex() const {
-        return 2 + _numChannels;
+        return kNumGlobalFeatures + _numChannels;
     }
     [[nodiscard]] int32_t channelHopIndex(int32_t channelIndex) const {
         return channelHopStartIndex() + channelIndex;
     }
     [[nodiscard]] int32_t channelPresenceStartIndex() const {
-        return 2 + (2 * _numChannels);
+        return kNumGlobalFeatures + (2 * _numChannels);
     }
     [[nodiscard]] int32_t channelPresenceIndex(int32_t channelIndex) const {
         return channelPresenceStartIndex() + channelIndex;
@@ -567,8 +573,9 @@ private:
         }
     }
 
-    int32_t _numChannels;
-    int32_t _numFeatures;
+    // The channel count is the only stored layout state. Every offset is derived
+    // from it, so feature width cannot drift from the per-channel blocks.
+    const int32_t _numChannels;
 };
 
 // Helper function for adding one channel's extracted PPR candidates into the
