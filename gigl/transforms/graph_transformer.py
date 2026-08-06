@@ -62,6 +62,7 @@ from typing import Literal, NamedTuple, Optional, TypedDict
 import torch
 from torch import Tensor
 from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType as PyGEdgeType
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
@@ -242,8 +243,9 @@ def heterodata_to_graph_transformer_input(
             "sequence_construction_method='ppr'."
         )
 
+    ppr_edge_types: list[PyGEdgeType] = []
     if sequence_construction_method == "ppr":
-        _validate_ppr_sequence_input(data)
+        ppr_edge_types = _validate_ppr_sequence_input(data)
 
     device = data[anchor_node_type].x.device
 
@@ -295,12 +297,18 @@ def heterodata_to_graph_transformer_input(
             device=device,
         )
     elif sequence_construction_method == "ppr":
+        ppr_homo_data = _build_homogeneous_ppr_edge_data(
+            data=data,
+            ppr_edge_types=ppr_edge_types,
+            node_type_offsets=node_type_offsets,
+            device=device,
+        )
         (
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
         ) = _build_sequence_layout_from_ppr_edges(
-            homo_data=homo_data,
+            homo_data=ppr_homo_data,
             anchor_indices=anchor_indices,
             max_seq_len=max_seq_len,
             include_anchor_first=include_anchor_first,
@@ -408,25 +416,78 @@ def _get_node_type_offsets(
     return offsets
 
 
-def _validate_ppr_sequence_input(data: HeteroData) -> None:
-    if not data.edge_types:
+def _validate_ppr_sequence_input(data: HeteroData) -> list[PyGEdgeType]:
+    ppr_edge_types = [
+        edge_type for edge_type in data.edge_types if edge_type[1] == "ppr"
+    ]
+    if not ppr_edge_types:
         raise ValueError(
-            "sequence_construction_method='ppr' requires at least one PPR edge type."
+            "sequence_construction_method='ppr' requires at least one PPR edge type "
+            "with relation name 'ppr'."
         )
 
-    if any(edge_type[1] != "ppr" for edge_type in data.edge_types):
-        raise ValueError(
-            "sequence_construction_method='ppr' expects the hetero batch to contain "
-            f"only PPR edges, got edge types: {data.edge_types}."
-        )
-
-    for edge_type in data.edge_types:
+    for edge_type in ppr_edge_types:
         edge_store = data[edge_type]
         if not hasattr(edge_store, "edge_attr") or edge_store.edge_attr is None:
             raise ValueError(
                 "sequence_construction_method='ppr' requires every PPR edge type to "
                 f"have edge_attr weights, but {edge_type} is missing them."
             )
+    return ppr_edge_types
+
+
+def _get_scalar_ppr_edge_weights(edge_attr: Tensor, edge_type: PyGEdgeType) -> Tensor:
+    if edge_attr.dim() == 1:
+        return edge_attr
+    if edge_attr.dim() == 2 and edge_attr.size(1) >= 1:
+        return edge_attr[:, 0]
+    raise ValueError(
+        "PPR edge weights must be 1D or have a scalar score in column 0, "
+        f"got shape {tuple(edge_attr.shape)} for edge type {edge_type}."
+    )
+
+
+def _build_homogeneous_ppr_edge_data(
+    data: HeteroData,
+    ppr_edge_types: list[PyGEdgeType],
+    node_type_offsets: dict[NodeType, int],
+    device: torch.device,
+) -> Data:
+    edge_index_parts: list[Tensor] = []
+    edge_weight_parts: list[Tensor] = []
+    for edge_type in ppr_edge_types:
+        edge_store = data[edge_type]
+        edge_index = edge_store.edge_index.to(device=device, dtype=torch.long)
+        if edge_index.numel() == 0:
+            continue
+        source_offset = int(node_type_offsets[edge_type[0]])
+        destination_offset = int(node_type_offsets[edge_type[-1]])
+        edge_index_parts.append(
+            torch.stack(
+                [
+                    edge_index[0] + source_offset,
+                    edge_index[1] + destination_offset,
+                ],
+                dim=0,
+            )
+        )
+        edge_weight_parts.append(
+            _get_scalar_ppr_edge_weights(
+                edge_attr=edge_store.edge_attr.to(device=device),
+                edge_type=edge_type,
+            )
+        )
+
+    if not edge_index_parts:
+        return Data(
+            edge_index=torch.zeros((2, 0), dtype=torch.long, device=device),
+            edge_attr=torch.zeros((0,), dtype=torch.float, device=device),
+        )
+
+    return Data(
+        edge_index=torch.cat(edge_index_parts, dim=1),
+        edge_attr=torch.cat(edge_weight_parts, dim=0),
+    )
 
 
 def _get_sparse_feature_matrices(
