@@ -15,8 +15,6 @@
 
 namespace gigl {
 
-static constexpr double kUnsetTypedPPRMinHop = -1.0;
-
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
 // Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
 static uint64_t packKey(int32_t nodeId, int32_t edgeTypeId) {
@@ -514,13 +512,11 @@ public:
         return kNumGlobalFeatures + (kNumPerChannelFeatures * _numChannels);
     }
 
-    // New node feature vectors start empty. The global min-hop is marked missing
-    // until the first channel writes it, while channel scores, proximities, and
-    // presence bits naturally use 0 as their absent-channel value.
+    // New node feature vectors start empty. All columns can start at 0 because
+    // the first channel write initializes the global min-hop before any
+    // cross-channel min comparison is needed.
     [[nodiscard]] std::vector<double> makeFeatureVector() const {
-        std::vector<double> features(numFeatures(), 0.0);
-        features[kGlobalMinHopIndex] = kUnsetTypedPPRMinHop;
-        return features;
+        return std::vector<double>(numFeatures(), 0.0);
     }
 
     // Merge one channel's emitted score/hop into an existing node feature row.
@@ -528,12 +524,18 @@ public:
     // A node can be seen in multiple typed channels. The scalar score column keeps
     // the best emitted PPR score for downstream consumers that expect one weight,
     // while the global hop keeps the nearest discovered distance.
-    void updateScores(std::vector<double>& features, int32_t channelIndex, double score, int32_t minHop) const {
+    void updateScores(std::vector<double>& features,
+                      int32_t channelIndex,
+                      double score,
+                      int32_t minHop,
+                      bool isFirstChannelForNode) const {
         // The extraction loop bounds channelIndex, and getNodeMinHop validates
         // minHop before this call. Avoid duplicating those checks per candidate.
         const double hopFeature = static_cast<double>(minHop);
         features[kBestScoreIndex] = std::max(features[kBestScoreIndex], score);
-        updateMinHop(features[kGlobalMinHopIndex], hopFeature);
+        if (isFirstChannelForNode || hopFeature < features[kGlobalMinHopIndex]) {
+            features[kGlobalMinHopIndex] = hopFeature;
+        }
         features[channelScoreIndex(channelIndex)] = score;
         features[channelHopProximityIndex(channelIndex)] = 1.0 / (1.0 + hopFeature);
         features[channelPresenceIndex(channelIndex)] = 1.0;
@@ -559,12 +561,6 @@ private:
     }
     [[nodiscard]] int32_t channelPresenceIndex(int32_t channelIndex) const {
         return channelPresenceStartIndex() + channelIndex;
-    }
-
-    static void updateMinHop(double& currentMinHopFeature, double hopFeature) {
-        if (currentMinHopFeature == kUnsetTypedPPRMinHop || hopFeature < currentMinHopFeature) {
-            currentMinHopFeature = hopFeature;
-        }
     }
 
     // The channel count is the only stored layout state. Every offset is derived
@@ -603,7 +599,8 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
 
     for (const auto& [nodeId, score] : nodesAndScores) {
         auto scoreIter = outputScoresByNodeId.find(nodeId);
-        if (scoreIter == outputScoresByNodeId.end()) {
+        const bool isFirstChannelForNode = scoreIter == outputScoresByNodeId.end();
+        if (isFirstChannelForNode) {
             scoreIter = outputScoresByNodeId.emplace(nodeId, featureLayout.makeFeatureVector()).first;
         }
         auto& scoreFeatures = scoreIter->second;
@@ -611,7 +608,8 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         // Record this node's score for the current channel and mark that the
         // channel reached the node. Current extraction emits one row per node
         // per channel, so no intra-channel merge is needed here.
-        featureLayout.updateScores(scoreFeatures, channelIndex, score, getNodeMinHop(nodeTypeState, nodeId));
+        featureLayout.updateScores(
+            scoreFeatures, channelIndex, score, getNodeMinHop(nodeTypeState, nodeId), isFirstChannelForNode);
 
         // Keep a per-channel sortable candidate list so target counts can be
         // applied after cross-channel attribution.
