@@ -569,58 +569,10 @@ class TestHeteroToGraphTransformerInput(TestCase):
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
 
-    def test_ppr_sequence_ignores_original_edges_and_uses_them_for_relations(self):
-        data = create_ppr_sequence_hetero_data()
-        user = NodeType("user")
-        follows = EdgeType(user, Relation("follows"), user)
-        data[follows.tuple_repr()].edge_index = torch.tensor([[1], [0]])
-
-        sequences, valid_mask, auxiliary_data = heterodata_to_graph_transformer_input(
-            data=data,
-            batch_size=2,
-            max_seq_len=4,
-            anchor_node_type="user",
-            sequence_construction_method="ppr",
-            relation_edge_types=[follows],
-        )
-
-        expected_anchor_0 = torch.tensor(
-            [
-                [10.0, 0.0],
-                [0.0, 21.0],
-                [0.0, 20.0],
-                [11.0, 0.0],
-            ]
-        )
-        expected_anchor_1 = torch.tensor(
-            [
-                [11.0, 0.0],
-                [0.0, 20.0],
-                [10.0, 0.0],
-                [0.0, 0.0],
-            ]
-        )
-
-        self.assertTrue(torch.allclose(sequences[0], expected_anchor_0))
-        self.assertTrue(torch.allclose(sequences[1], expected_anchor_1))
-        self.assertTrue(
-            torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
-        )
-        pairwise_relation_indices = auxiliary_data["pairwise_relation_indices"]
-        self.assertIsNotNone(pairwise_relation_indices)
-        assert pairwise_relation_indices is not None
-        self.assertEqual(
-            {tuple(coord) for coord in pairwise_relation_indices.tolist()},
-            {
-                (0, 0, 3, 0),
-                (1, 2, 0, 0),
-            },
-        )
-
-    def test_ppr_sequence_construction_requires_ppr_relations(self):
+    def test_ppr_sequence_construction_requires_only_ppr_relations(self):
         data = create_simple_hetero_data()
 
-        with self.assertRaisesRegex(ValueError, "requires at least one PPR edge type"):
+        with self.assertRaisesRegex(ValueError, "contain only PPR edges"):
             heterodata_to_graph_transformer_input(
                 data=data,
                 batch_size=1,
