@@ -4,6 +4,7 @@ import common.types.pb_wrappers.GbmlConfigPbWrapper
 import common.utils.ProtoLoader.populateProtoFromYaml
 import libs.task.pureSpark.SGSPureSparkV1Task
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.Encoder
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{functions => F}
@@ -11,8 +12,21 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import snapchat.research.gbml.gbml_config.GbmlConfig
+import snapchat.research.gbml.training_samples_schema.RootedNodeNeighborhood
 
 import java.util.UUID.randomUUID
+
+/** Holds the scalapb proto encoders for this suite.
+  *
+  * They live outside the suite because `SGSPureSparkV1TaskTest` imports `sqlImplicits._` at class
+  * level to build mock DataFrames from Scala Seqs, and `sqlImplicits`' generic product encoder
+  * takes precedence over the scalapb one for proto case classes.
+  */
+private object ProtoEncoders {
+  import scalapb.spark.Implicits._
+  val rootedNodeNeighborhood: Encoder[RootedNodeNeighborhood] =
+    implicitly[Encoder[RootedNodeNeighborhood]]
+}
 
 class SGSPureSparkV1TaskTest extends AnyFunSuite with BeforeAndAfterAll with SharedSparkSession {
 
@@ -386,6 +400,58 @@ class SGSPureSparkV1TaskTest extends AnyFunSuite with BeforeAndAfterAll with Sha
     diffDF = hydratedTwohopNodesDF.filter(!(F.col("_node_id").contains(F.col("_2_hop"))))
     assert(diffDF.count() == 0)
 
+  }
+
+  test("Rooted Node Neighborhood conforms to the RootedNodeNeighborhood proto schema.") {
+    // Regression test for the Spark 3.5 / sparksql-scalapb 1.0.4 upgrade. 1.0.4 resolves repeated
+    // proto fields by name rather than by position, so the `_`-prefixed field names that the
+    // sampling pipeline uses inside array-of-struct columns have to be rewritten to the proto's
+    // names before `.as[RootedNodeNeighborhood]`. Without the rewrite this fails at analysis time
+    // with `FIELD_NOT_FOUND: No such struct field node_id in _node_id, ...`.
+    //
+    // The production loaders are used deliberately: they read the checked-in TFRecord assets and
+    // therefore produce the `array<float>` feature types that real preprocessed data has. The
+    // mock fixtures in this suite use scalar/double features, which the proto encoder rejects for
+    // unrelated reasons.
+    sparkTest.sqlContext.tableNames().foreach(sparkTest.catalog.dropTempView(_))
+
+    val hydratedNodeVIEW   = sgsTask.loadNodeDataframeIntoSparkSql(condensedNodeType = 0)
+    val hydratedEdgeVIEW   = sgsTask.loadEdgeDataframeIntoSparkSql(condensedEdgeType = 0)
+    val unhydratedEdgeVIEW = sgsTask.loadUnhydratedEdgeDataframeIntoSparkSql(hydratedEdgeVIEW)
+
+    val subgraphVIEW = sgsTask.createSubgraph(
+      hydratedNodeVIEW = hydratedNodeVIEW,
+      hydratedEdgeVIEW = hydratedEdgeVIEW,
+      unhydratedEdgeVIEW = unhydratedEdgeVIEW,
+      numNeighborsToSample = 3,
+      permutationStrategy = "non-deterministic",
+    )
+    val rnnVIEW = sgsTask.createRootedNodeNeighborhoodSubgraph(
+      hydratedNodeVIEW = hydratedNodeVIEW,
+      unhydratedEdgeVIEW = unhydratedEdgeVIEW,
+      subgraphVIEW = subgraphVIEW,
+    )
+    // Neighborless root nodes get a NULL `_neighbor_edges`; the cast has to keep passing those
+    // through so they deserialize to an empty `edges` sequence.
+    val numRootNodesWithoutEdges =
+      sparkTest.table(rnnVIEW).filter(F.col("_neighbor_edges").isNull).count()
+    assert(numRootNodesWithoutEdges > 0)
+
+    val rnnWithSchemaVIEW = sgsTask.castToRootedNodeNeighborhoodProtoSchema(dfVIEW = rnnVIEW)
+    val samples = sparkTest
+      .table(rnnWithSchemaVIEW)
+      .as[RootedNodeNeighborhood](ProtoEncoders.rootedNodeNeighborhood)
+      .collect()
+
+    assert(samples.length == sparkTest.table(rnnVIEW).count())
+    assert(samples.count(_.neighborhood.get.edges.isEmpty) == numRootNodesWithoutEdges)
+    // Field values must survive the rename, not just the field names.
+    val sampleWithEdges = samples.filter(_.neighborhood.get.edges.nonEmpty).head
+    val neighborhood    = sampleWithEdges.neighborhood.get
+    neighborhood.nodes.map(_.nodeId) should contain(sampleWithEdges.rootNode.get.nodeId)
+    val nodeIdsFromEdges =
+      neighborhood.edges.flatMap(edge => Seq(edge.srcNodeId, edge.dstNodeId)).distinct
+    neighborhood.nodes.map(_.nodeId) should contain allElementsOf nodeIdsFromEdges
   }
 
   test("Rooted Node Neighborhood is valid.") {

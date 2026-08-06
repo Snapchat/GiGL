@@ -1017,6 +1017,51 @@ abstract class SGSPureSparkV1Task(
     subgraphsWithNeighborlessNodesVIEW
   }
 
+  /** SQL fragment renaming a node array's *element* fields to the `Node` proto field names.
+    *
+    * Everywhere inside the sampling pipeline, array-of-struct elements carry `_`-prefixed field
+    * names (`_node_id`, `_condensed_node_type`, `_feature_values`). The proto expects
+    * `node_id`, `condensed_node_type`, `feature_values`, and sparksql-scalapb resolves repeated
+    * message fields **by name**, so the element fields have to be renamed before `.as[proto]`.
+    *
+    * `transform` is NULL-safe (`transform(NULL, ...)` is NULL), which matters because several UNION
+    * branches emit `NULL` for their neighbor arrays.
+    *
+    * @param nodeArrayColumnName column holding `ARRAY<STRUCT<_node_id, _condensed_node_type, _feature_values>>`
+    */
+  protected def castNodeArrayToProtoSchema(nodeArrayColumnName: String): String =
+    s"""transform(${nodeArrayColumnName}, node -> struct(
+       |    node._node_id AS node_id,
+       |    node._condensed_node_type AS condensed_node_type,
+       |    node._feature_values AS feature_values
+       |  ))""".stripMargin
+
+  /** SQL fragment renaming an edge array's *element* fields to the `Edge` proto field names.
+    *
+    * Same by-name-resolution reasoning as [[castNodeArrayToProtoSchema]]. Note the source struct
+    * calls the endpoints `_src_node` / `_dst_node` while the proto calls them `src_node_id` /
+    * `dst_node_id`.
+    *
+    * @param edgeArrayColumnName column holding `ARRAY<STRUCT<_src_node, _dst_node, _condensed_edge_type, _feature_values>>`
+    */
+  protected def castEdgeArrayToProtoSchema(edgeArrayColumnName: String): String =
+    s"""transform(${edgeArrayColumnName}, edge -> struct(
+       |    edge._src_node AS src_node_id,
+       |    edge._dst_node AS dst_node_id,
+       |    edge._condensed_edge_type AS condensed_edge_type,
+       |    edge._feature_values AS feature_values
+       |  ))""".stripMargin
+
+  /** SQL fragment for an always-empty edge array with an explicit `Edge` proto element type.
+    *
+    * A bare `ARRAY()` literal is `ARRAY<VOID>`. sparksql-scalapb hands the element type to the
+    * analyzer rather than declaring it, so a VOID element type fails with
+    * `INVALID_EXTRACT_BASE_FIELD_TYPE` instead of deserializing to an empty `Seq`.
+    */
+  protected val emptyEdgeArrayWithProtoSchema: String =
+    "CAST(ARRAY() AS ARRAY<STRUCT<src_node_id: INT, dst_node_id: INT, " +
+      "condensed_edge_type: INT, feature_values: ARRAY<FLOAT>>>)"
+
   def castToRootedNodeNeighborhoodProtoSchema(dfVIEW: String): String = {
 
     /** Creates desirable schema for RootedNodeNeighborhood defined in training_samples_schema.proto. Returns rnnVIEW
@@ -1030,8 +1075,8 @@ abstract class SGSPureSparkV1Task(
                     _node_features AS feature_values
                   ) AS root_node,
                   struct(
-                    _neighbor_nodes AS nodes,
-                    _neighbor_edges AS edges
+                    ${castNodeArrayToProtoSchema("_neighbor_nodes")} AS nodes,
+                    ${castEdgeArrayToProtoSchema("_neighbor_edges")} AS edges
                   ) AS neighborhood
                 FROM ${dfVIEW}
                 """)

@@ -193,6 +193,48 @@ class NodeAnchorBasedLinkPredictionTaskTest
     expectedNeighborEdges should contain allElementsOf currentNeighborEdges
   }
 
+  test("Training samples conform to the NodeAnchorBasedLinkPredictionSample proto schema.") {
+    // Regression test for the Spark 3.5 / sparksql-scalapb 1.0.4 upgrade. Two distinct failures are
+    // covered here, both of which only appear once repeated proto fields are resolved by name:
+    //   1. array-of-struct elements carrying `_`-prefixed field names instead of the proto's names,
+    //      which fails with `FIELD_NOT_FOUND`, and
+    //   2. the always-empty `neg_edges` / `hard_neg_edges` literals, which are `ARRAY<VOID>` unless
+    //      explicitly CAST, and fail with `INVALID_EXTRACT_BASE_FIELD_TYPE ... got "VOID"`.
+    val uniqueTestViewSuffix = "_" + randomUUID.toString.replace("-", "_")
+    val mockSubgraphDF       = mockSubgraphForCurrentTest
+    val mockSubgraphVIEW     = "mockSubgraphDF" + uniqueTestViewSuffix
+    mockSubgraphDF.createOrReplaceTempView(mockSubgraphVIEW)
+    // Reuse the neighbor edges as the supervision edges; only their schema matters here.
+    val trainingSubgraphDF = sparkTest.sql(s"""
+      SELECT
+        _root_node, _condensed_node_type, _node_features, _neighbor_nodes, _neighbor_edges,
+        _neighbor_edges AS _pos_hydrated_edges,
+        _neighbor_edges AS _neg_hydrated_edges
+      FROM ${mockSubgraphVIEW}
+      """)
+    val trainingSubgraphVIEW = "trainingSubgraphDF" + uniqueTestViewSuffix
+    trainingSubgraphDF.createOrReplaceTempView(trainingSubgraphVIEW)
+
+    for (hasHardNegs <- Seq(false, true)) {
+      val nablpWithSchemaVIEW = nablpTask.castToTrainingSampleProtoSchema(
+        dfVIEW = trainingSubgraphVIEW,
+        hasHardNegs = hasHardNegs,
+      )
+      val samples =
+        sparkTest.table(nablpWithSchemaVIEW).as[NodeAnchorBasedLinkPredictionSample].collect()
+      assert(samples.length == mockSubgraphDF.count())
+      // `neg_edges` is always the empty literal, for both branches.
+      assert(samples.forall(_.negEdges.isEmpty))
+      assert(samples.forall(_.posEdges.nonEmpty))
+      assert(samples.forall(_.hardNegEdges.nonEmpty) == hasHardNegs)
+      // Field values must survive the rename, not just the field names.
+      val sample = samples.head
+      sample.posEdges.map(_.srcNodeId) should contain allElementsOf
+        sample.neighborhood.get.edges.map(_.srcNodeId)
+      sample.neighborhood.get.nodes.map(_.nodeId) shouldNot be(empty)
+    }
+  }
+
   test("validation fails if nodes of supervision edges not present in neighborhood nodes") {
     val rootNode = Node(nodeId = 0)
 
