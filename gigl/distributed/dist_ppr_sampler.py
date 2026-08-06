@@ -120,8 +120,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           Channel columns follow the insertion order of
           ``typed_channel_ratios``. Column 0 is the scalar best score for
           consumers that need a single PPR weight, and column 1 is always the
-          global minimum-hop count. Per-channel min-hop columns use ``-1`` when
-          that channel did not reach the node.
+          global minimum-hop count. Per-channel min-hop columns use one greater
+          than the largest reached-channel min-hop for that node when the
+          channel did not reach the node.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values

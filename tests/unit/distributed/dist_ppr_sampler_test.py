@@ -93,7 +93,6 @@ _NUM_TEST_STORIES = 3
 _TEST_ALPHA = 0.5
 _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
-_MISSING_TYPED_PPR_CHANNEL_HOP = -1.0
 
 
 # ---------------------------------------------------------------------------
@@ -281,11 +280,25 @@ def _assert_typed_channel_min_hops(
     channel_min_hops: torch.Tensor,
     channel_presence: torch.Tensor,
 ) -> None:
-    """Assert typed channel min-hops distinguish missing channels from anchors."""
+    """Assert missing typed-channel hops are finite and farther than present hops."""
     assert torch.allclose(channel_min_hops, channel_min_hops.round())
-    assert (channel_min_hops[channel_presence == 1] >= 0).all()
+    assert (channel_min_hops >= 0).all()
+    present_channel_mask = channel_presence == 1
+    assert present_channel_mask.any(dim=1).all()
+    row_max_present_hops = (
+        channel_min_hops.masked_fill(
+            ~present_channel_mask,
+            -1.0,
+        )
+        .max(dim=1)
+        .values
+    )
+    expected_missing_hops = (
+        (row_max_present_hops + 1).unsqueeze(1).expand_as(channel_min_hops)
+    )
     assert (
-        channel_min_hops[channel_presence == 0] == _MISSING_TYPED_PPR_CHANNEL_HOP
+        channel_min_hops[~present_channel_mask]
+        == expected_missing_hops[~present_channel_mask]
     ).all()
 
 
