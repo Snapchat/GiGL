@@ -12,14 +12,19 @@
 namespace gigl {
 
 // Neighbor fetch input from Python, keyed by integer edge type ID:
-//   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N].
-using NeighborFetchTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
+//   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N], optional edge_ids[sum(counts)].
+using NeighborFetchTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>>;
 using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
 
 // PPR extraction output, keyed by integer node type ID:
 //   ids, weights/edge_attr, valid_counts.
 using PPRExtractTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
+
+// Original-edge extraction output, keyed by integer edge type ID:
+//   rows, cols, optional edge_ids.
+using OriginalEdgeExtractTensors = std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>>;
+using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
 // Per-seed, per-node-type PPR algorithm state.
 // Grouping all four tables into one struct is a logical convenience: a single
@@ -33,6 +38,11 @@ struct SeedNodeTypeState {
     std::unordered_map<int32_t, double> residuals; // unabsorbed mass waiting to push
     std::unordered_set<int32_t> queue;             // nodes queued for the next drain
     std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
+};
+
+struct CachedNeighborList {
+    std::vector<int32_t> neighborIds;
+    std::optional<std::vector<int64_t>> edgeIds;
 };
 
 // Batched drain result for typed-PPR channels.
@@ -96,6 +106,12 @@ public:
     // Push residuals given fetched neighbor data.
     void pushResiduals(const NeighborFetchMap& fetchedByEtypeId);
 
+    // Return original graph edges from fetched adjacency whose endpoints are
+    // both in the selected node set. The rows/cols are local indices into the
+    // selected node tensors supplied by node type ID.
+    OriginalEdgeExtractResult extractOriginalEdgesFromCache(
+        const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId, bool includeEdgeIds) const;
+
     // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
     //
     // Residual top-up does not issue new neighbor fetches.  It only reads the
@@ -116,6 +132,10 @@ public:
     friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                               const std::vector<int32_t>& channelTargetCounts,
                                                               bool enableResidualTopUp);
+    friend OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+        const std::vector<const PPRForwardPush*>& states,
+        const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+        bool includeEdgeIds);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
@@ -138,6 +158,7 @@ private:
     // _degreeTensors[ntype_id]         → int32 tensor of total out-degrees, indexed by node ID.
     std::vector<std::vector<int32_t>> _nodeTypeToEdgeTypeIds;
     std::vector<int32_t> _edgeTypeToDstNtypeId;
+    std::vector<int32_t> _edgeTypeToSrcNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
 
     // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
@@ -155,7 +176,7 @@ private:
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
-    std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
+    std::unordered_map<uint64_t, CachedNeighborList> _neighborCache;
 };
 
 // Helper function for draining several independent channel states for one
@@ -213,5 +234,13 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
                                                    bool enableResidualTopUp);
+
+// Extract original graph edges from one or more completed PPR states. Multiple
+// states are used for typed PPR, where each channel owns its own cache. Duplicate
+// fetched rows shared by channels are emitted once.
+OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+    const std::vector<const PPRForwardPush*>& states,
+    const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+    bool includeEdgeIds);
 
 } // namespace gigl

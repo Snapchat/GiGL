@@ -40,10 +40,6 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
-from gigl.distributed.dist_ppr_sampler import (
-    DistPPRNeighborSampler,
-    PPRNeighborFetch,
-)
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.types.graph import (
@@ -948,38 +944,6 @@ class DistPPRSamplerTest(TestCase):
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
         super().tearDown()
-
-    def test_materialize_original_edges_filters_to_selected_endpoints(self) -> None:
-        """Verify original-edge output only keeps selected endpoints."""
-        sampler = object.__new__(DistPPRNeighborSampler)
-        sampler._etype_id_to_etype = [USER_TO_STORY]
-        sampler.edge_dir = "out"
-        sampler.with_edge = False
-
-        node_dict = {
-            USER: torch.tensor([0]),
-            STORY: torch.tensor([0, 1]),
-        }
-        rows, cols, edge_ids, num_sampled_edges = (
-            sampler._materialize_original_edges_from_fetched_adjacency(
-                node_dict=node_dict,
-                fetched_adjacency={
-                    0: [
-                        PPRNeighborFetch(
-                            source_nodes=torch.tensor([0, 2]),
-                            neighbors=torch.tensor([0, 1, 2, 0]),
-                            neighbor_counts=torch.tensor([3, 1]),
-                            edge_ids=None,
-                        )
-                    ]
-                },
-            )
-        )
-
-        self.assertIsNone(edge_ids)
-        self.assertEqual(num_sampled_edges, {USER_TO_STORY: [2]})
-        self.assertTrue(torch.equal(rows[USER_TO_STORY], torch.tensor([0, 0])))
-        self.assertTrue(torch.equal(cols[USER_TO_STORY], torch.tensor([0, 1])))
 
     @parameterized.expand(
         [
