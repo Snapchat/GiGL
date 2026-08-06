@@ -22,11 +22,12 @@ from graphlearn_torch.utils import merge_dict
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.utils.dist_typed_sampler import (
+    TypedPPRChannelEmittingStateIds,
     TypedPPRChannelKey,
-    TypedPPRChannelTraversalMaps,
-    build_edge_type_channel_group_edge_type_ids,
+    TypedPPRChannelTraversalPrograms,
+    build_typed_ppr_channel_traversal_programs,
     compute_typed_channel_target_counts,
-    parse_typed_channel_ratio_groups,
+    parse_typed_channel_ratio_specs,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
@@ -136,11 +137,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             traversal channels. If not provided, PPR treats all eligible edge
             types as one shared traversal space and emits a single scalar PPR
             score per output row.
-            Keys may be either a single canonical edge type
-            ``(src_type, relation, dst_type)`` or a tuple of canonical edge
-            types. Each key defines one traversal channel that may use only
-            those exact edge types. Edge types may appear in multiple channels
-            when those channels intentionally overlap.
+            Keys may be a single canonical edge type
+            ``(src_type, relation, dst_type)``, a tuple of canonical edge
+            types, or a ``PPRMetaPath``. Single edge-type and tuple keys keep
+            the original allowlist semantics: the channel may use any of those
+            edge types at every step. ``PPRMetaPath`` uses PyG's metapath shape
+            from ``AddMetaPaths`` and ``MetaPath2Vec``: an ordered sequence of
+            canonical edge-type tuples.
             Channel order follows the insertion order of this mapping, and
             typed ``edge_attr`` channel columns use that same order. If the
             mapping is produced from an unordered config source, construct it
@@ -158,17 +161,24 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
                 typed_channel_ratios = {
                     ("user", "views", "item"): 0.6,
-                    (
-                        ("user", "likes", "item"),
-                        ("user", "shares", "item"),
+                    PPRMetaPath(
+                        path=(
+                            (
+                                ("user", "likes", "item"),
+                                ("user", "shares", "item"),
+                            ),
+                            ("item", "bought_by", "user"),
+                        ),
+                        cyclic_from=0,
                     ): 0.4,
                 }
 
             With ``max_ppr_nodes=200``, this example targets 120 nodes
-            attributed to the views channel and 80 nodes attributed to the
-            grouped likes/shares channel. The views channel traverses only
-            ``("user", "views", "item")`` edges. The grouped likes/shares
-            channel traverses either likes or shares edges as one channel.
+            attributed to the views allowlist channel and 80 nodes attributed
+            to the ordered metapath channel. The metapath follows
+            ``(likes|shares) -> bought_by`` and repeats the whole path;
+            the grouped first step is a GiGL extension and requires all
+            alternatives to share traversal source and destination node types.
             Both finalized PPR rows and residual top-up rows fill those same
             targets. The targets are best-effort rather than strict per-seed
             guarantees: if a channel cannot provide enough unique candidates,
@@ -238,8 +248,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
-        typed_channel_groups, typed_channel_ratio_list = (
-            parse_typed_channel_ratio_groups(typed_channel_ratios)
+        typed_channel_specs, typed_channel_ratio_list = parse_typed_channel_ratio_specs(
+            typed_channel_ratios
         )
         self._typed_ppr_channel_target_counts = (
             compute_typed_channel_target_counts(
@@ -317,15 +327,18 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for node_type in all_node_types
         ]
 
-        self._typed_ppr_channel_to_node_type_id_to_edge_type_ids: TypedPPRChannelTraversalMaps = []
-        if typed_channel_groups is not None:
-            self._typed_ppr_channel_to_node_type_id_to_edge_type_ids = (
-                build_edge_type_channel_group_edge_type_ids(
-                    edge_type_groups=typed_channel_groups,
-                    edge_type_to_edge_type_id=self._etype_to_etype_id,
-                    node_type_to_edge_types=self._node_type_to_edge_types,
-                    node_types=self._ntype_id_to_ntype,
-                )
+        self._typed_ppr_channel_traversal_programs: TypedPPRChannelTraversalPrograms = []
+        self._typed_ppr_channel_emitting_state_ids: TypedPPRChannelEmittingStateIds = []
+        if typed_channel_specs is not None:
+            (
+                self._typed_ppr_channel_traversal_programs,
+                self._typed_ppr_channel_emitting_state_ids,
+            ) = build_typed_ppr_channel_traversal_programs(
+                channel_specs=typed_channel_specs,
+                edge_type_to_edge_type_id=self._etype_to_etype_id,
+                node_type_to_edge_types=self._node_type_to_edge_types,
+                node_types=self._ntype_id_to_ntype,
+                edge_dir=self.edge_dir,
             )
 
     def _convert_degree_tensors_to_dict(
@@ -658,7 +671,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             seed_nodes: Global node IDs for the seed batch.
             seed_node_type: Heterogeneous node type for ``seed_nodes``.
             typed_ppr_channel_target_counts: Per-channel target output counts, aligned
-                with ``self._typed_ppr_channel_to_node_type_id_to_edge_type_ids``.
+                with ``self._typed_ppr_channel_traversal_programs``.
 
         Returns:
             Heterogeneous PPR extraction output with typed edge-attribute
@@ -669,7 +682,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
         # Build one Forward Push state per typed channel. All states use the
         # same seeds, restart probability, degree tensors, and destination-type
-        # map; only the per-node-type edge traversal allowlist differs.
+        # map; only the traversal program and emitting states differ.
         def build_ppr_states() -> list[PPRForwardPush]:
             return [
                 PPRForwardPush(
@@ -677,12 +690,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     self._node_type_to_id[seed_node_type],
                     self._alpha,
                     self._requeue_threshold_factor,
-                    node_type_id_to_edge_type_ids,
+                    traversal_program,
+                    emitting_state_ids,
                     self._edge_type_id_to_dst_ntype_id,
                     self._degree_tensors_for_cpp,
                 )
-                for node_type_id_to_edge_type_ids in (
-                    self._typed_ppr_channel_to_node_type_id_to_edge_type_ids
+                for traversal_program, emitting_state_ids in zip(
+                    self._typed_ppr_channel_traversal_programs,
+                    self._typed_ppr_channel_emitting_state_ids,
+                    strict=True,
                 )
             ]
 

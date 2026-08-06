@@ -21,13 +21,21 @@ using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
 using PPRExtractTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
-// Per-seed, per-node-type PPR algorithm state.
+// Traversal program for one PPR state.
+//
+// A transition is (edge_type_id, next_traversal_state_id).  The full program is
+// indexed as:
+//   traversalProgram[traversal_state_id][node_type_id] -> transitions.
+using PPRTraversalTransition = std::tuple<int32_t, int32_t>;
+using PPRTraversalProgram = std::vector<std::vector<std::vector<PPRTraversalTransition>>>;
+
+// Per-seed, per-traversal-state, per-node-type PPR algorithm state.
 // Grouping all four tables into one struct is a logical convenience: a single
-// _state[seedIdx][nodeTypeId] access reaches all four tables for a given (seed, ntype)
-// pair, rather than indexing four separate 2D arrays.  Note that unordered_map and
-// unordered_set heap-allocate their bucket storage, so the actual key-value data is
-// not co-located in memory — only the control-plane metadata (size, bucket pointer)
-// lives inside the struct.
+// _state[seedIdx][traversalStateId][nodeTypeId] access reaches all four tables
+// for a given (seed, traversal state, node type) tuple, rather than indexing
+// four separate arrays.  Note that unordered_map and unordered_set heap-allocate
+// their bucket storage, so the actual key-value data is not co-located in
+// memory — only the control-plane metadata lives inside the struct.
 struct SeedNodeTypeState {
     std::unordered_map<int32_t, double> pprScores; // absorbed PPR mass
     std::unordered_map<int32_t, double> residuals; // unabsorbed mass waiting to push
@@ -88,6 +96,15 @@ public:
                    std::vector<int32_t> edgeTypeToDstNtypeId,
                    std::vector<torch::Tensor> degreeTensors);
 
+    PPRForwardPush(const torch::Tensor& seedNodes,
+                   int32_t seedNodeTypeId,
+                   double alpha,
+                   double requeueThresholdFactor,
+                   PPRTraversalProgram traversalProgram,
+                   std::vector<int32_t> emittingTraversalStateIds,
+                   std::vector<int32_t> edgeTypeToDstNtypeId,
+                   std::vector<torch::Tensor> degreeTensors);
+
     // Drain queued nodes and return {etype_id: int64 node tensor} for neighbor lookup.
     // Returns nullopt when the queue is empty (convergence). Empty map means all nodes
     // were cache-hits; call pushResiduals({}) to continue.
@@ -120,6 +137,8 @@ public:
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
     [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
+    [[nodiscard]] int32_t getTraversalDegree(int32_t nodeId, int32_t nodeTypeId, int32_t traversalStateId) const;
+    [[nodiscard]] SeedNodeTypeState collectEmittingNodeTypeState(int32_t seedIdx, int32_t nodeTypeId) const;
 
     double _alpha;
     double _requeueThresholdFactor; // alpha * eps; per-node requeue threshold = factor * degree
@@ -130,27 +149,31 @@ private:
     // scale ever approaches that threshold, these should be widened to int64_t.
     int32_t _batchSize;          // number of seed nodes in the current batch
     int32_t _numNodeTypes;       // total distinct node types (1 for homogeneous graphs)
-    int32_t _numNodesInQueue{0}; // running count of queued nodes across all seeds and types
+    int32_t _numTraversalStates; // total states in this channel's traversal program
+    int32_t _numNodesInQueue{0}; // running count of queued nodes across all seeds, traversal states, and types
 
     // Graph structure — set at construction, read-only during the algorithm.
-    // _nodeTypeToEdgeTypeIds[ntype_id] → list of edge type IDs that originate from that node type.
-    // _edgeTypeToDstNtypeId[etype_id]  → destination node type ID for that edge type.
-    // _degreeTensors[ntype_id]         → int32 tensor of total out-degrees, indexed by node ID.
-    std::vector<std::vector<int32_t>> _nodeTypeToEdgeTypeIds;
+    // _traversalProgram[state_id][ntype_id] → (edge type ID, next state ID) transitions.
+    // _emittingTraversalStateIds            → traversal states whose scores are emitted.
+    // _edgeTypeToDstNtypeId[etype_id]       → destination node type ID for that edge type.
+    // _degreeTensors[ntype_id]              → int32 tensor of total out-degrees, indexed by node ID.
+    PPRTraversalProgram _traversalProgram;
+    std::vector<int32_t> _emittingTraversalStateIds;
     std::vector<int32_t> _edgeTypeToDstNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
 
-    // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
-    // 2D vector: both dimensions are dense sequential integers bounded at construction,
-    // so array indexing is O(1) with no hashing (contrast with _neighborCache below).
+    // Per-seed, per-traversal-state, per-node-type PPR state.
+    // Indexed as _state[seedIdx][traversalStateId][nodeTypeId].
+    // All dimensions are dense sequential integers bounded at construction, so
+    // array indexing is O(1) with no hashing (contrast with _neighborCache below).
     //
     // int32_t is used for node and type IDs throughout to match PyG/GLT's signed-integer
     // convention (torch.int32 / torch.int64).  Signed types also make nodeId >= 0 checks
     // meaningful — an unsigned type would make that guard tautological.
     //
-    // Sized [_batchSize][_numNodeTypes] at construction and never resized,
-    // so [seedIdx][nodeTypeId] indexing is always safe within the loop bounds.
-    std::vector<std::vector<SeedNodeTypeState>> _state;
+    // Sized [_batchSize][_numTraversalStates][_numNodeTypes] at construction
+    // and never resized, so indexing is always safe within the loop bounds.
+    std::vector<std::vector<std::vector<SeedNodeTypeState>>> _state;
 
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is

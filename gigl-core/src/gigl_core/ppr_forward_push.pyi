@@ -1,8 +1,11 @@
-from typing import Sequence
+from typing import Sequence, overload
 
 import torch
 
+PPRTraversalProgram = list[list[list[tuple[int, int]]]]
+
 class PPRForwardPush:
+    @overload
     def __init__(
         self,
         seed_nodes: torch.Tensor,
@@ -10,6 +13,18 @@ class PPRForwardPush:
         alpha: float,
         requeue_threshold_factor: float,
         node_type_to_edge_type_ids: list[list[int]],
+        edge_type_to_dst_ntype_id: list[int],
+        degree_tensors: list[torch.Tensor],
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        seed_nodes: torch.Tensor,
+        seed_node_type_id: int,
+        alpha: float,
+        requeue_threshold_factor: float,
+        traversal_program: PPRTraversalProgram,
+        emitting_traversal_state_ids: list[int],
         edge_type_to_dst_ntype_id: list[int],
         degree_tensors: list[torch.Tensor],
     ) -> None: ...

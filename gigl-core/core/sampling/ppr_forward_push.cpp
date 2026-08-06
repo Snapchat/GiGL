@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <numeric>
 #include <optional>
@@ -21,6 +22,18 @@ static uint64_t packKey(int32_t nodeId, int32_t edgeTypeId) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) | static_cast<uint32_t>(edgeTypeId);
 }
 
+static PPRTraversalProgram buildSingleStateTraversalProgram(
+    const std::vector<std::vector<int32_t>>& nodeTypeToEdgeTypeIds) {
+    PPRTraversalProgram traversalProgram(1);
+    traversalProgram[0].resize(nodeTypeToEdgeTypeIds.size());
+    for (size_t nodeTypeId = 0; nodeTypeId < nodeTypeToEdgeTypeIds.size(); ++nodeTypeId) {
+        for (int32_t edgeTypeId : nodeTypeToEdgeTypeIds[nodeTypeId]) {
+            traversalProgram[0][nodeTypeId].emplace_back(edgeTypeId, 0);
+        }
+    }
+    return traversalProgram;
+}
+
 PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                                int32_t seedNodeTypeId,
                                double alpha,
@@ -28,18 +41,42 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                                std::vector<std::vector<int32_t>> nodeTypeToEdgeTypeIds,
                                std::vector<int32_t> edgeTypeToDstNtypeId,
                                std::vector<torch::Tensor> degreeTensors)
+    : PPRForwardPush(seedNodes,
+                     seedNodeTypeId,
+                     alpha,
+                     requeueThresholdFactor,
+                     buildSingleStateTraversalProgram(nodeTypeToEdgeTypeIds),
+                     /*emittingTraversalStateIds=*/{0},
+                     std::move(edgeTypeToDstNtypeId),
+                     std::move(degreeTensors)) {}
+
+PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
+                               int32_t seedNodeTypeId,
+                               double alpha,
+                               double requeueThresholdFactor,
+                               PPRTraversalProgram traversalProgram,
+                               std::vector<int32_t> emittingTraversalStateIds,
+                               std::vector<int32_t> edgeTypeToDstNtypeId,
+                               std::vector<torch::Tensor> degreeTensors)
     : _alpha(alpha),
       _requeueThresholdFactor(requeueThresholdFactor),
-      // std::move transfers ownership of each vector into the member variable
-      // without copying its contents — equivalent to Python's list hand-off
-      // when you no longer need the original.
-      _nodeTypeToEdgeTypeIds(std::move(nodeTypeToEdgeTypeIds)),
+      _traversalProgram(std::move(traversalProgram)),
+      _emittingTraversalStateIds(std::move(emittingTraversalStateIds)),
       _edgeTypeToDstNtypeId(std::move(edgeTypeToDstNtypeId)),
       _degreeTensors(std::move(degreeTensors)) {
     TORCH_CHECK(seedNodes.dim() == 1, "seedNodes must be 1D");
     // int32_t is sufficient: batch sizes approaching 2B seeds are not a realistic concern.
     _batchSize = static_cast<int32_t>(seedNodes.size(0));
-    _numNodeTypes = static_cast<int32_t>(_nodeTypeToEdgeTypeIds.size());
+    _numTraversalStates = static_cast<int32_t>(_traversalProgram.size());
+    TORCH_CHECK(_numTraversalStates > 0, "traversalProgram must contain at least one traversal state.");
+    _numNodeTypes = static_cast<int32_t>(_traversalProgram[0].size());
+    TORCH_CHECK(_numNodeTypes > 0, "traversalProgram must contain at least one node type per traversal state.");
+    TORCH_CHECK(static_cast<int32_t>(_degreeTensors.size()) == _numNodeTypes,
+                "Expected one degree tensor per node type, got ",
+                _degreeTensors.size(),
+                " degree tensors for ",
+                _numNodeTypes,
+                " node types.");
 
     TORCH_CHECK(seedNodeTypeId >= 0, "seedNodeTypeId ", seedNodeTypeId, " is negative.");
     TORCH_CHECK(
@@ -57,28 +94,78 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                     _numNodeTypes,
                     ").");
     }
-    for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
-        for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-            TORCH_CHECK(edgeTypeId >= 0,
-                        "nodeTypeToEdgeTypeIds[",
-                        nodeTypeId,
-                        "] contains negative edge type id ",
-                        edgeTypeId,
-                        ".");
-            TORCH_CHECK(edgeTypeId < numEdgeTypes,
-                        "nodeTypeToEdgeTypeIds[",
-                        nodeTypeId,
-                        "] contains edge type id ",
-                        edgeTypeId,
-                        " out of range [0, ",
-                        numEdgeTypes,
-                        ").");
+    TORCH_CHECK(!_emittingTraversalStateIds.empty(),
+                "emittingTraversalStateIds must contain at least one traversal state.");
+    for (int32_t emittingTraversalStateId : _emittingTraversalStateIds) {
+        TORCH_CHECK(emittingTraversalStateId >= 0,
+                    "emittingTraversalStateIds contains negative traversal state id ",
+                    emittingTraversalStateId,
+                    ".");
+        TORCH_CHECK(emittingTraversalStateId < _numTraversalStates,
+                    "emittingTraversalStateIds contains traversal state id ",
+                    emittingTraversalStateId,
+                    " out of range [0, ",
+                    _numTraversalStates,
+                    ").");
+    }
+    for (int32_t traversalStateId = 0; traversalStateId < _numTraversalStates; ++traversalStateId) {
+        TORCH_CHECK(static_cast<int32_t>(_traversalProgram[traversalStateId].size()) == _numNodeTypes,
+                    "traversalProgram[",
+                    traversalStateId,
+                    "] has ",
+                    _traversalProgram[traversalStateId].size(),
+                    " node-type entries, expected ",
+                    _numNodeTypes,
+                    ".");
+        for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
+            for (const auto& transition : _traversalProgram[traversalStateId][nodeTypeId]) {
+                int32_t edgeTypeId = std::get<0>(transition);
+                int32_t nextTraversalStateId = std::get<1>(transition);
+                TORCH_CHECK(edgeTypeId >= 0,
+                            "traversalProgram[",
+                            traversalStateId,
+                            "][",
+                            nodeTypeId,
+                            "] contains negative edge type id ",
+                            edgeTypeId,
+                            ".");
+                TORCH_CHECK(edgeTypeId < numEdgeTypes,
+                            "traversalProgram[",
+                            traversalStateId,
+                            "][",
+                            nodeTypeId,
+                            "] contains edge type id ",
+                            edgeTypeId,
+                            " out of range [0, ",
+                            numEdgeTypes,
+                            ").");
+                TORCH_CHECK(nextTraversalStateId >= 0,
+                            "traversalProgram[",
+                            traversalStateId,
+                            "][",
+                            nodeTypeId,
+                            "] contains negative next traversal state id ",
+                            nextTraversalStateId,
+                            ".");
+                TORCH_CHECK(nextTraversalStateId < _numTraversalStates,
+                            "traversalProgram[",
+                            traversalStateId,
+                            "][",
+                            nodeTypeId,
+                            "] contains next traversal state id ",
+                            nextTraversalStateId,
+                            " out of range [0, ",
+                            _numTraversalStates,
+                            ").");
+            }
         }
     }
 
-    // Allocate per-seed, per-node-type state.
+    // Allocate per-seed, per-traversal-state, per-node-type state.
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
-    _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
+    _state.assign(_batchSize,
+                  std::vector<std::vector<SeedNodeTypeState>>(_numTraversalStates,
+                                                              std::vector<SeedNodeTypeState>(_numNodeTypes)));
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
     // supports [i] indexing with bounds checking in debug builds.
@@ -89,8 +176,8 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
         // PPR initialisation: each seed starts with residual = alpha (the
         // restart probability).  The first push will move alpha into ppr_score
         // and distribute (1-alpha)*alpha to the seed's neighbors.
-        _state[seedIdx][seedNodeTypeId].residuals[seedNodeId] = _alpha;
-        _state[seedIdx][seedNodeTypeId].queue.insert(seedNodeId);
+        _state[seedIdx][0][seedNodeTypeId].residuals[seedNodeId] = _alpha;
+        _state[seedIdx][0][seedNodeTypeId].queue.insert(seedNodeId);
     }
 }
 
@@ -103,8 +190,10 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     // TODO: if this loop becomes a bottleneck, consider parallelising with
     // std::for_each(std::execution::par_unseq, ...) or adding vectorisation hints.
     for (auto& perSeedState : _state) {
-        for (auto& nodeTypeState : perSeedState) {
-            nodeTypeState.queuedNodes.clear();
+        for (auto& traversalState : perSeedState) {
+            for (auto& nodeTypeState : traversalState) {
+                nodeTypeState.queuedNodes.clear();
+            }
         }
     }
 
@@ -118,23 +207,27 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     // dedicated homogeneous code path could eliminate the loop entirely.  Profile
     // before splitting.
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
-        for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
-            auto& seedNodeTypeState = _state[seedIdx][nodeTypeId];
-            if (seedNodeTypeState.queue.empty()) {
-                continue;
-            }
+        for (int32_t traversalStateId = 0; traversalStateId < _numTraversalStates; ++traversalStateId) {
+            for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
+                auto& seedNodeTypeState = _state[seedIdx][traversalStateId][nodeTypeId];
+                if (seedNodeTypeState.queue.empty()) {
+                    continue;
+                }
 
-            // Move the live queue into the snapshot in O(1) — avoids copying all node IDs.
-            // The explicit clear() after move is defensive: the standard only guarantees
-            // a moved-from container is "valid but unspecified", not necessarily empty.
-            seedNodeTypeState.queuedNodes = std::move(seedNodeTypeState.queue);
-            seedNodeTypeState.queue.clear();
-            _numNodesInQueue -= static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
+                // Move the live queue into the snapshot in O(1) — avoids copying all node IDs.
+                // The explicit clear() after move is defensive: the standard only guarantees
+                // a moved-from container is "valid but unspecified", not necessarily empty.
+                seedNodeTypeState.queuedNodes = std::move(seedNodeTypeState.queue);
+                seedNodeTypeState.queue.clear();
+                _numNodesInQueue -= static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
 
-            for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
-                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    if (_neighborCache.find(packKey(nodeId, edgeTypeId)) == _neighborCache.end()) {
-                        nodesToLookup[edgeTypeId].insert(nodeId);
+                const auto& transitions = _traversalProgram[traversalStateId][nodeTypeId];
+                for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
+                    for (const auto& transition : transitions) {
+                        int32_t edgeTypeId = std::get<0>(transition);
+                        if (_neighborCache.find(packKey(nodeId, edgeTypeId)) == _neighborCache.end()) {
+                            nodesToLookup[edgeTypeId].insert(nodeId);
+                        }
                     }
                 }
             }
@@ -269,76 +362,84 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
     //   b. Distribute (1-alpha) * residual equally to each neighbor.
     //   c. Enqueue any neighbor whose residual now exceeds the requeue threshold.
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
-        for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
-            auto& srcNodeTypeState = _state[seedIdx][nodeTypeId];
-            if (srcNodeTypeState.queuedNodes.empty()) {
-                continue;
-            }
-
-            for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
-                auto residualIter = srcNodeTypeState.residuals.find(sourceNodeId);
-                double sourceResidual = (residualIter != srcNodeTypeState.residuals.end()) ? residualIter->second : 0.0;
-
-                // a. Absorb: move residual into the PPR score.
-                srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
-                srcNodeTypeState.residuals[sourceNodeId] = 0.0;
-
-                // b. Count total cached neighbors across all edge types for
-                // this source node.  We normalise by the number of neighbors we
-                // actually retrieved, not the true degree, so residual is fully
-                // distributed among known neighbors rather than leaking to unfetched
-                // ones (which matters when num_neighbors_per_hop < true_degree).
-                int32_t totalCachedNeighbors = 0;
-                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
-                    if (cachedEntry != _neighborCache.end()) {
-                        totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.size());
-                    }
-                }
-                // Two cases reach here:
-                //   1. True sink node (no outgoing edges): absorbing the full residual is correct.
-                //   2. Budget exhausted, no cache entry: the (1-α)·r that should flow to
-                //      neighbors has nowhere to go, so it gets absorbed into src's score instead.
-                //      This overstates src and understates its neighbors.  This is expected
-                //      behavior when max_fetch_iterations is set, which intentionally trades
-                //      theoretical PPR correctness for better throughput.
-                if (totalCachedNeighbors == 0) {
+        for (int32_t traversalStateId = 0; traversalStateId < _numTraversalStates; ++traversalStateId) {
+            for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
+                auto& srcNodeTypeState = _state[seedIdx][traversalStateId][nodeTypeId];
+                if (srcNodeTypeState.queuedNodes.empty()) {
                     continue;
                 }
 
-                double residualPerNeighbor =
-                    (1.0 - _alpha) * sourceResidual / static_cast<double>(totalCachedNeighbors);
+                const auto& transitions = _traversalProgram[traversalStateId][nodeTypeId];
+                for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
+                    auto residualIter = srcNodeTypeState.residuals.find(sourceNodeId);
+                    double sourceResidual =
+                        (residualIter != srcNodeTypeState.residuals.end()) ? residualIter->second : 0.0;
 
-                for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
-                    // Neighbor list for this (src, edgeTypeId) pair, borrowed from whichever
-                    // map holds it.  reference_wrapper is used because std::optional cannot
-                    // hold a reference directly, and we want to avoid copying the vector —
-                    // the data already exists in _neighborCache and outlives this loop body.
-                    // Access via neighborList->get().
-                    std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
-                    auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
-                    if (cachedEntry != _neighborCache.end()) {
-                        neighborList = std::cref(cachedEntry->second);
+                    // a. Absorb: move residual into the PPR score at this traversal state.
+                    srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
+                    srcNodeTypeState.residuals[sourceNodeId] = 0.0;
+
+                    // b. Count total cached neighbors across all transitions allowed
+                    // from this traversal state and source node type. We normalise by
+                    // the number of neighbors we actually retrieved, not the true
+                    // degree, so residual is fully distributed among known neighbors
+                    // rather than leaking to unfetched ones.
+                    int32_t totalCachedNeighbors = 0;
+                    for (const auto& transition : transitions) {
+                        int32_t edgeTypeId = std::get<0>(transition);
+                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
+                        if (cachedEntry != _neighborCache.end()) {
+                            totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.size());
+                        }
                     }
-                    if (!neighborList || neighborList->get().empty()) {
+                    // Two cases reach here:
+                    //   1. True sink node, or terminal traversal state: absorbing
+                    //      the full residual is correct.
+                    //   2. Budget exhausted, no cache entry: the (1-α)·r that
+                    //      should flow to neighbors has nowhere to go, so it gets
+                    //      absorbed into src's score instead.
+                    if (totalCachedNeighbors == 0) {
                         continue;
                     }
 
-                    int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
+                    double residualPerNeighbor =
+                        (1.0 - _alpha) * sourceResidual / static_cast<double>(totalCachedNeighbors);
 
-                    // c. Accumulate residual for each neighbor and re-enqueue if threshold
-                    // exceeded.
-                    auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
-                    for (int32_t neighborNodeId : neighborList->get()) {
-                        dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
+                    for (const auto& transition : transitions) {
+                        int32_t edgeTypeId = std::get<0>(transition);
+                        int32_t nextTraversalStateId = std::get<1>(transition);
 
-                        double threshold = _requeueThresholdFactor *
-                                           static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
+                        // Neighbor list for this (src, edgeTypeId) pair, borrowed from whichever
+                        // map holds it.  reference_wrapper is used because std::optional cannot
+                        // hold a reference directly, and we want to avoid copying the vector —
+                        // the data already exists in _neighborCache and outlives this loop body.
+                        // Access via neighborList->get().
+                        std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
+                        auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
+                        if (cachedEntry != _neighborCache.end()) {
+                            neighborList = std::cref(cachedEntry->second);
+                        }
+                        if (!neighborList || neighborList->get().empty()) {
+                            continue;
+                        }
 
-                        if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
-                            dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
-                            dstNodeTypeState.queue.insert(neighborNodeId);
-                            ++_numNodesInQueue;
+                        int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
+
+                        // c. Accumulate residual for each neighbor and re-enqueue
+                        // in the transition's destination state if threshold exceeded.
+                        auto& dstNodeTypeState = _state[seedIdx][nextTraversalStateId][dstNodeTypeId];
+                        for (int32_t neighborNodeId : neighborList->get()) {
+                            dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
+
+                            double threshold =
+                                _requeueThresholdFactor * static_cast<double>(getTraversalDegree(
+                                                              neighborNodeId, dstNodeTypeId, nextTraversalStateId));
+
+                            if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
+                                dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
+                                dstNodeTypeState.queue.insert(neighborNodeId);
+                                ++_numNodesInQueue;
+                            }
                         }
                     }
                 }
@@ -673,7 +774,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
         std::vector<int64_t> validCounts;
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
-            const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
+            auto nodeTypeState = collectEmittingNodeTypeState(seedIdx, nodeTypeId);
             auto selectedPairs = selectFinalizedPPRPairs(nodeTypeState, maxPPRNodes);
             if (enableResidualTopUp) {
                 addResidualMassToPPRPairs(nodeTypeState, selectedPairs);
@@ -756,7 +857,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                 static_cast<size_t>(numChannels));
 
             for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
-                const auto& nodeTypeState = states[channelIndex]->_state[seedIdx][nodeTypeId];
+                auto nodeTypeState = states[channelIndex]->collectEmittingNodeTypeState(seedIdx, nodeTypeId);
                 auto outputNodesAndScores = selectFinalizedPPRPairs(nodeTypeState, maxPPRNodes);
 
                 if (enableResidualTopUp) {
@@ -829,6 +930,57 @@ int32_t PPRForwardPush::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const
                 degreeTensor.scalar_type(),
                 ". Expected torch.int32 or torch.int64.");
     return 0; // unreachable; suppresses compiler warning
+}
+
+int32_t PPRForwardPush::getTraversalDegree(int32_t nodeId, int32_t nodeTypeId, int32_t traversalStateId) const {
+    TORCH_CHECK(
+        traversalStateId >= 0, "traversalStateId ", traversalStateId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(traversalStateId < _numTraversalStates,
+                "traversalStateId ",
+                traversalStateId,
+                " out of range [0, ",
+                _numTraversalStates,
+                "). This indicates a sampler bug.");
+    TORCH_CHECK(nodeTypeId >= 0, "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeTypeId < _numNodeTypes,
+                "nodeTypeId ",
+                nodeTypeId,
+                " out of range [0, ",
+                _numNodeTypes,
+                "). This indicates a sampler bug.");
+    if (_traversalProgram[traversalStateId][nodeTypeId].empty()) {
+        return 0;
+    }
+    return getTotalDegree(nodeId, nodeTypeId);
+}
+
+SeedNodeTypeState PPRForwardPush::collectEmittingNodeTypeState(int32_t seedIdx, int32_t nodeTypeId) const {
+    TORCH_CHECK(seedIdx >= 0, "seedIdx ", seedIdx, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(seedIdx < _batchSize,
+                "seedIdx ",
+                seedIdx,
+                " out of range [0, ",
+                _batchSize,
+                "). This indicates a sampler bug.");
+    TORCH_CHECK(nodeTypeId >= 0, "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeTypeId < _numNodeTypes,
+                "nodeTypeId ",
+                nodeTypeId,
+                " out of range [0, ",
+                _numNodeTypes,
+                "). This indicates a sampler bug.");
+
+    SeedNodeTypeState mergedState;
+    for (int32_t traversalStateId : _emittingTraversalStateIds) {
+        const auto& nodeTypeState = _state[seedIdx][traversalStateId][nodeTypeId];
+        for (const auto& [nodeId, score] : nodeTypeState.pprScores) {
+            mergedState.pprScores[nodeId] += score;
+        }
+        for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+            mergedState.residuals[nodeId] += residual;
+        }
+    }
+    return mergedState;
 }
 
 } // namespace gigl
