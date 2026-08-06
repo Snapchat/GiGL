@@ -481,6 +481,20 @@ static int32_t getNodeMinHop(const SeedNodeTypeState& nodeTypeState, int32_t nod
     return minHop;
 }
 
+// Owns the packed edge_attr layout used while merging typed PPR channels.
+//
+// Typed extraction first accumulates one dense feature vector per selected node,
+// then copies those vectors into the final tensor. Keeping the offsets here
+// keeps addTypedPPRSeedFeaturesAndCandidates focused on merge policy instead of
+// repeating manual column math.
+//
+// Layout:
+//   [best_score, min_hop, channel_scores..., channel_min_hops...,
+//    channel_presence_bits...]
+//
+// Scores and presence bits naturally default to 0. Channel min-hop columns use
+// -1 for "channel did not reach this node" so missing channels are distinct from
+// the anchor hop 0.
 class TypedPPRFeatureLayout {
 public:
     explicit TypedPPRFeatureLayout(int32_t numChannels)
@@ -490,6 +504,9 @@ public:
         return _numFeatures;
     }
 
+    // New node feature vectors start empty. The global min-hop is also marked
+    // missing until the first channel writes it, which lets updateScores use the
+    // same min-update path for both global and per-channel hop fields.
     [[nodiscard]] std::vector<double> makeFeatureVector() const {
         std::vector<double> features(_numFeatures, 0.0);
         features[minHopIndex()] = kMissingTypedPPRChannelHop;
@@ -499,6 +516,11 @@ public:
         return features;
     }
 
+    // Merge one channel's emitted score/hop into an existing node feature row.
+    //
+    // A node can be seen in multiple typed channels. The scalar score column keeps
+    // the best emitted PPR score for downstream consumers that expect one weight,
+    // while hop columns keep the nearest discovered distance.
     void updateScores(std::vector<double>& features, int32_t channelIndex, double score, int32_t minHop) const {
         TORCH_CHECK(channelIndex >= 0 && channelIndex < _numChannels,
                     "Typed PPR channel index ",
