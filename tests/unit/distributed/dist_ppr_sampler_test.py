@@ -40,7 +40,7 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.distributed.sampler_options import PPRMetaPath, PPRSamplerOptions
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -600,6 +600,35 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
     )
     empty_story_edge_attr = empty_story_datum[(str(USER), "ppr", STORY)].edge_attr
     assert tuple(empty_story_edge_attr.shape) == (0, 5)
+
+    metapath_loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, node_ids[USER][:1]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                PPRMetaPath(path=(USER_TO_STORY, STORY_TO_USER), cyclic_from=0): 1.0,
+            },
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+    metapath_datum = next(iter(metapath_loader))
+    assert isinstance(metapath_datum, HeteroData)
+    _assert_typed_ppr_edge_attrs(
+        datum=metapath_datum,
+        seed_type=str(USER),
+        node_types=[USER, STORY],
+        num_channels=1,
+    )
+    metapath_user_edge_attr = metapath_datum[(str(USER), "ppr", USER)].edge_attr
+    metapath_story_edge_attr = metapath_datum[(str(USER), "ppr", STORY)].edge_attr
+    assert metapath_user_edge_attr.size(0) > 0
+    assert (metapath_user_edge_attr[:, 2] == 1).all()
+    assert tuple(metapath_story_edge_attr.shape) == (0, 3)
 
     shutdown_rpc()
 

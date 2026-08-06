@@ -13,9 +13,17 @@ from typing import Optional, Union
 from graphlearn_torch.typing import EdgeType
 
 from gigl.common.logger import Logger
-from gigl.distributed.utils.dist_typed_sampler import TypedPPRChannelKey
+from gigl.distributed.utils.dist_typed_sampler import PPRMetaPath, TypedPPRChannelKey
 
 logger = Logger()
+
+__all__ = [
+    "KHopNeighborSamplerOptions",
+    "PPRMetaPath",
+    "PPRSamplerOptions",
+    "SamplerOptions",
+    "resolve_sampler_options",
+]
 
 
 @dataclass(frozen=True)
@@ -82,12 +90,13 @@ class PPRSamplerOptions:
             through cached neighbors at negligible cost. ``None`` (default) means
             no fetch limit.
         typed_channel_ratios: Optional target proportions for typed PPR
-            traversal channels defined by canonical edge-type allowlists. Keys
-            may be either a single canonical edge type
-            ``(src_type, relation, dst_type)`` or a tuple of canonical edge
-            types. Each key defines one traversal channel that may use only
-            those exact edge types. Edge types may appear in multiple channels
-            when those channels intentionally overlap.
+            traversal channels. Keys may be a single canonical edge type
+            ``(src_type, relation, dst_type)``, a tuple of canonical edge
+            types, or a ``PPRMetaPath``. Single edge-type and tuple keys keep
+            the original allowlist semantics: the channel may use any of those
+            edge types at every step. ``PPRMetaPath`` uses PyG's metapath shape
+            from ``AddMetaPaths`` and ``MetaPath2Vec``: an ordered sequence of
+            canonical edge-type tuples.
             If not provided, PPR treats all eligible edge types as one shared
             traversal space and emits a single scalar PPR score per output row.
             Channel order follows the insertion order of this mapping, and
@@ -107,21 +116,28 @@ class PPRSamplerOptions:
 
                 typed_channel_ratios = {
                     ("user", "views", "item"): 0.6,
-                    (
-                        ("user", "likes", "item"),
-                        ("user", "shares", "item"),
+                    PPRMetaPath(
+                        path=(
+                            (
+                                ("user", "likes", "item"),
+                                ("user", "shares", "item"),
+                            ),
+                            ("item", "bought_by", "user"),
+                        ),
+                        cyclic_from=0,
                     ): 0.4,
                 }
 
             This example creates two traversal channels. The first channel can
             traverse only ``("user", "views", "item")`` edges. With
             ``max_ppr_nodes=200``, the ``0.6`` ratio targets 120 nodes
-            attributed to this channel. The second channel groups
-            ``("user", "likes", "item")`` and ``("user", "shares", "item")``
-            into one traversal channel; the ``0.4`` ratio targets 80 nodes
-            attributed to that combined likes/shares channel. These targets are
-            best-effort rather than strict per-seed guarantees because channels
-            may be sparse or overlapping.
+            attributed to this channel. The second channel follows the ordered
+            metapath ``(likes|shares) -> bought_by`` and repeats the whole path;
+            the grouped first step is a GiGL extension and requires all
+            alternatives to share traversal source and destination node types.
+            The ``0.4`` ratio targets 80 nodes attributed to that metapath
+            channel. These targets are best-effort rather than strict per-seed
+            guarantees because channels may be sparse or overlapping.
 
             If residual top-up is enabled, discovered-but-unpushed residual
             candidates from the same completed PPR traversals are included on the

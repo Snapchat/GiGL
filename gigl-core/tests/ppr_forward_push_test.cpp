@@ -3,11 +3,13 @@
 
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 using gigl::drainTypedPPRChannelQueues;
 using gigl::extractTypedTopKWithResidualTopUp;
 using gigl::NeighborFetchMap;
 using gigl::PPRForwardPush;
+using gigl::PPRTraversalProgram;
 
 // Builds a single-edge-type, single-node-type PPRForwardPush.
 static PPRForwardPush makeState(const std::vector<int64_t>& seeds,
@@ -20,6 +22,23 @@ static PPRForwardPush makeState(const std::vector<int64_t>& seeds,
                           requeueThresholdFactor,
                           /*nodeTypeToEdgeTypeIds=*/{{0}},
                           /*edgeTypeToDstNtypeId=*/{0},
+                          {torch::tensor(degrees, torch::kInt)});
+}
+
+static PPRForwardPush makeTraversalState(const std::vector<int64_t>& seeds,
+                                         double alpha,
+                                         double requeueThresholdFactor,
+                                         PPRTraversalProgram traversalProgram,
+                                         const std::vector<int32_t>& emittingTraversalStateIds,
+                                         const std::vector<int32_t>& edgeTypeToDstNtypeId,
+                                         const std::vector<int32_t>& degrees) {
+    return PPRForwardPush(torch::tensor(seeds, torch::kLong),
+                          /*seedNodeTypeId=*/0,
+                          alpha,
+                          requeueThresholdFactor,
+                          std::move(traversalProgram),
+                          emittingTraversalStateIds,
+                          edgeTypeToDstNtypeId,
                           {torch::tensor(degrees, torch::kInt)});
 }
 
@@ -130,6 +149,48 @@ TEST(PPRForwardPush, NeighborCacheAvoidsRefetchingPreviouslyFetchedNode) {
     auto iter3 = state.drainQueue();
     ASSERT_TRUE(iter3.has_value());
     EXPECT_TRUE(iter3->empty());
+}
+
+TEST(PPRForwardPush, TraversalProgramEmitsOnlyAfterMetapathCompletion) {
+    PPRTraversalProgram traversalProgram = {
+        {{{0, 1}}},
+        {{{1, 2}}},
+        {{}},
+    };
+    auto state = makeTraversalState(/*seeds=*/{0},
+                                    /*alpha=*/0.5,
+                                    /*requeueThresholdFactor=*/1e-9,
+                                    std::move(traversalProgram),
+                                    /*emittingTraversalStateIds=*/{2},
+                                    /*edgeTypeToDstNtypeId=*/{0, 0},
+                                    /*degrees=*/{1, 1, 0});
+
+    auto iter1 = state.drainQueue();
+    ASSERT_TRUE(iter1.has_value());
+    ASSERT_NE(iter1->find(0), iter1->end());
+    EXPECT_EQ(tensorToInt64Vector(iter1->at(0)), std::vector<int64_t>({0}));
+    EXPECT_EQ(iter1->find(1), iter1->end());
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1}, /*counts=*/{1}));
+
+    auto iter2 = state.drainQueue();
+    ASSERT_TRUE(iter2.has_value());
+    ASSERT_NE(iter2->find(1), iter2->end());
+    EXPECT_EQ(tensorToInt64Vector(iter2->at(1)), std::vector<int64_t>({1}));
+    EXPECT_EQ(iter2->find(0), iter2->end());
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/1, /*nodeIds=*/{1}, /*flatNeighborIds=*/{2}, /*counts=*/{1}));
+
+    auto iter3 = state.drainQueue();
+    ASSERT_TRUE(iter3.has_value());
+    EXPECT_TRUE(iter3->empty());
+    state.pushResiduals({});
+    EXPECT_FALSE(state.drainQueue().has_value());
+
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
+    ASSERT_NE(topk.find(0), topk.end());
+    const auto& [ids, weights, counts] = topk.at(0);
+    EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({2}));
+    EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({1}));
+    EXPECT_NEAR(weights[0].item<float>(), 0.125F, 1e-5F);
 }
 
 TEST(PPRForwardPush, DrainTypedPPRChannelQueuesUnionsChannelFrontiers) {

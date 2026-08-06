@@ -134,6 +134,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              // Constructor argument conversion happens before the C++ body; the
              // body only initializes PPR state and can run without the GIL.
              py::call_guard<py::gil_scoped_release>())
+        .def(py::init<torch::Tensor,
+                      int32_t,
+                      double,
+                      double,
+                      gigl::PPRTraversalProgram,
+                      std::vector<int32_t>,
+                      std::vector<int32_t>,
+                      std::vector<torch::Tensor>>(),
+             // Constructor argument conversion happens before the C++ body; the
+             // body only initializes PPR state and can run without the GIL.
+             py::call_guard<py::gil_scoped_release>())
         .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",
