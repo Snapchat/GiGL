@@ -93,6 +93,7 @@ _NUM_TEST_STORIES = 3
 _TEST_ALPHA = 0.5
 _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
+_MISSING_TYPED_PPR_CHANNEL_HOP = -1.0
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +277,18 @@ def _assert_valid_min_hops(min_hops: torch.Tensor) -> None:
     assert torch.allclose(min_hops, min_hops.round())
 
 
+def _assert_typed_channel_min_hops(
+    channel_min_hops: torch.Tensor,
+    channel_presence: torch.Tensor,
+) -> None:
+    """Assert typed channel min-hops distinguish missing channels from anchors."""
+    assert torch.allclose(channel_min_hops, channel_min_hops.round())
+    assert (channel_min_hops[channel_presence == 1] >= 0).all()
+    assert (
+        channel_min_hops[channel_presence == 0] == _MISSING_TYPED_PPR_CHANNEL_HOP
+    ).all()
+
+
 def _assert_ppr_scores_match_reference(
     ntype_to_sampler_ppr: dict[str, dict[int, float]],
     reference_ppr: dict[str, dict[int, float]],
@@ -346,19 +359,17 @@ def _assert_typed_ppr_edge_attrs(
         best_scores = ppr_edge_attr[:, 0]
         min_hops = ppr_edge_attr[:, 1]
         channel_scores = ppr_edge_attr[:, 2 : 2 + num_channels]
-        channel_min_hops = ppr_edge_attr[
-            :, 2 + num_channels : 2 + (2 * num_channels)
-        ]
+        channel_min_hops = ppr_edge_attr[:, 2 + num_channels : 2 + (2 * num_channels)]
+        channel_presence = ppr_edge_attr[:, 2 + (2 * num_channels) :]
         assert (best_scores >= 0).all()
         assert (best_scores <= 1).all()
         _assert_valid_min_hops(min_hops)
         assert (channel_scores >= 0).all()
         assert (channel_scores <= 1).all()
-        _assert_valid_min_hops(channel_min_hops)
+        _assert_typed_channel_min_hops(channel_min_hops, channel_presence)
         if best_scores.size(0) > 1:
             assert (best_scores[:-1] >= best_scores[1:]).all()
 
-        channel_presence = ppr_edge_attr[:, 2 + (2 * num_channels) :]
         assert ((channel_presence == 0) | (channel_presence == 1)).all()
 
 

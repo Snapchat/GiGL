@@ -49,7 +49,8 @@ class PPRSamplerOptions:
       ``[best_score, min_hop, channel_scores..., channel_min_hops...,
       channel_presence_bits...]``.
       Column 0 is the scalar best score for consumers that need a single PPR
-      weight, and column 1 is always the minimum-hop count.
+      weight, and column 1 is always the global minimum-hop count. Per-channel
+      min-hop columns use ``-1`` when that channel did not reach the node.
 
     For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
 
