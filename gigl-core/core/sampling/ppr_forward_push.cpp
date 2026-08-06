@@ -529,14 +529,8 @@ public:
     // the best emitted PPR score for downstream consumers that expect one weight,
     // while hop columns keep the nearest discovered distance.
     void updateScores(std::vector<double>& features, int32_t channelIndex, double score, int32_t minHop) const {
-        TORCH_CHECK(channelIndex >= 0 && channelIndex < _numChannels,
-                    "Typed PPR channel index ",
-                    channelIndex,
-                    " out of range [0, ",
-                    _numChannels,
-                    ").");
-        TORCH_CHECK(minHop >= 0, "PPR min-hop must be non-negative, got ", minHop, ".");
-
+        // The extraction loop bounds channelIndex, and getNodeMinHop validates
+        // minHop before this call. Avoid duplicating those checks per candidate.
         const double hopFeature = static_cast<double>(minHop);
         features[kBestScoreIndex] = std::max(features[kBestScoreIndex], score);
         updateMinHop(features[kGlobalMinHopIndex], hopFeature);
