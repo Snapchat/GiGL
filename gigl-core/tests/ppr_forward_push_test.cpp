@@ -178,7 +178,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     channel1.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{20}, /*counts=*/{1}));
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
-                                                    /*channelTargetCounts=*/{2, 1},
+                                                    /*channelQuotas=*/{2, 1},
                                                     /*maxPPRNodes=*/3,
                                                     /*enableResidualTopUp=*/true);
 
@@ -209,7 +209,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[2][4], 1.0, 1e-9);
 }
 
-TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows) {
+TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpFillsResidualRowsAfterQuotaPass) {
     std::vector<int32_t> degrees(21, 1);
     auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
     auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, degrees);
@@ -220,13 +220,13 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     channel1.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{20}, /*counts=*/{1}));
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
-                                                    /*channelTargetCounts=*/{1, 1},
+                                                    /*channelQuotas=*/{1, 1},
                                                     /*maxPPRNodes=*/2,
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
     const auto& [ids, features, counts] = result.at(0);
-    EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 20}));
+    EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 10}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2}));
     ASSERT_EQ(features.size(0), 2);
     ASSERT_EQ(features.size(1), 5);
@@ -239,10 +239,10 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[1][0], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][2], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][3], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][2], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][3], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows) {
@@ -254,7 +254,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
     channel.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{1}, /*flatNeighborIds=*/{0}, /*counts=*/{1}));
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel},
-                                                    /*channelTargetCounts=*/{2},
+                                                    /*channelQuotas=*/{2},
                                                     /*maxPPRNodes=*/2,
                                                     /*enableResidualTopUp=*/true);
 
@@ -285,7 +285,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
     channel1.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{20}, /*counts=*/{1}));
 
     auto result = extractTypedTopKWithResidualTopUp(std::vector<PPRForwardPush*>{&channel0, &channel1},
-                                                    /*channelTargetCounts=*/{2, 1},
+                                                    /*channelQuotas=*/{2, 1},
                                                     /*maxPPRNodes=*/3,
                                                     /*enableResidualTopUp=*/false);
 

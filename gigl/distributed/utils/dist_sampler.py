@@ -85,7 +85,10 @@ def create_dist_sampler(
             enable_residual_topup=sampler_options.enable_residual_topup,
             max_fetch_iterations=sampler_options.max_fetch_iterations,
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
-            typed_channel_ratios=sampler_options.typed_channel_ratios,
+            typed_channel_quotas=sampler_options.typed_channel_quotas,
+            include_original_edges_in_ppr_subgraph=(
+                sampler_options.include_original_edges_in_ppr_subgraph
+            ),
             degree_tensors=degree_tensors,
         )
     else:

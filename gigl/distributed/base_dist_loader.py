@@ -244,6 +244,15 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options
+        if (
+            isinstance(sampler_options, PPRSamplerOptions)
+            and sampler_options.include_original_edges_in_ppr_subgraph
+            and dataset_schema.is_homogeneous_with_labeled_edge_type
+        ):
+            raise ValueError(
+                "include_original_edges_in_ppr_subgraph is only supported for "
+                "heterogeneous PPR output that remains HeteroData."
+            )
         self._non_blocking_transfers = non_blocking_transfers
         self._backend_key = backend_key
 
@@ -965,7 +974,10 @@ class BaseDistLoader(DistLoader):
             ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
             ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
             attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
-            if isinstance(data, HeteroData):
+            if (
+                isinstance(data, HeteroData)
+                and not self._sampler_options.include_original_edges_in_ppr_subgraph
+            ):
                 data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
 
         return data, metadata

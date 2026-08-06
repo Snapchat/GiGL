@@ -444,8 +444,36 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
     }
 }
 
+// Helper function for adding one channel's candidates to the quota-selection
+// view.
+//
+// Inputs:
+//   channelSelectionCandidates: mutable sortable candidates for this channel quota.
+//   nodesAndScores: extracted (node_id, score) candidates for one channel.
+//   maxScore: largest score in the channel, used to calibrate scores to [0, 1].
+//
+// Expected output: channelSelectionCandidates contains this channel's
+// calibrated candidates for later quota selection. This helper does not write
+// output features; it only determines which node IDs can consume quota slots.
+static void addTypedPPRChannelCandidates(std::vector<std::pair<int32_t, double>>& channelSelectionCandidates,
+                                         const std::vector<std::pair<int32_t, double>>& nodesAndScores,
+                                         double maxScore) {
+    if (nodesAndScores.empty()) {
+        return;
+    }
+    TORCH_CHECK(maxScore > 0.0,
+                "Typed PPR selection has candidates but non-positive max score ",
+                maxScore,
+                ", which indicates invalid PPR state.");
+
+    for (const auto& [nodeId, score] : nodesAndScores) {
+        double calibratedScore = score / maxScore;
+        channelSelectionCandidates.emplace_back(nodeId, calibratedScore);
+    }
+}
+
 // Helper function for adding one channel's extracted PPR candidates into the
-// emitted typed feature table and a selection candidate list.
+// emitted typed feature table and a fill-pass candidate list.
 //
 // This helper writes the emitted edge_attr feature table for every node it
 // sees. When residual top-up is enabled, callers pass residual-aware scores
@@ -458,7 +486,7 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
 //   channelIndex: index of the typed PPR channel being added.
 //   numChannels: total typed PPR channels, used to derive feature width.
 //   outputScoresByNodeId: mutable map from node ID to emitted edge_attr features.
-//   channelOutputCandidates: mutable sortable candidates for target-count selection.
+//   channelOutputCandidates: mutable sortable candidates for residual fill.
 //
 // Expected output: outputScoresByNodeId has this channel's score/presence
 // features merged in, and channelOutputCandidates contains this channel's
@@ -503,36 +531,42 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
         scoreFeatures[channelScoreIndex] = calibratedScore;
         scoreFeatures[channelPresenceIndex] = 1.0;
 
-        // Keep a per-channel sortable candidate list so target counts can be
-        // applied after cross-channel attribution.
+        // Keep a per-channel sortable candidate list for the later residual
+        // fill pass.
         channelOutputCandidates.emplace_back(nodeId, calibratedScore);
     }
 }
 
-// Helper function for applying typed channel target counts and cross-channel dedup.
+// Helper function for applying typed channel quotas and cross-channel dedup.
 //
 // Inputs:
 //   candidatesByChannel: mutable (node_id, calibrated_score) candidates per channel.
-//   channelTargetCounts: desired output count per attributed channel.
+//   channelQuotas: maximum number of candidates to consider from each channel.
 //   maxPPRNodes: maximum number of deduplicated node IDs to return for a seed.
 //
-// Expected output: node IDs selected by this policy:
-//   1. Attribute duplicate nodes to the channel where they have the highest score.
-//   2. Fill each channel up to its target count.
-//   3. Redistribute unused slots to the remaining highest-scoring candidates.
-//   4. Return the selected nodes globally ranked by best calibrated score.
+// Expected output: node IDs selected after per-channel quota filtering, then
+// globally ranked by best calibrated score. Tie breakers keep output deterministic.
 static std::vector<int32_t> selectTypedPPRNodeIds(
     std::vector<std::vector<std::pair<int32_t, double>>>& candidatesByChannel,
-    const std::vector<int32_t>& channelTargetCounts,
+    const std::vector<int32_t>& channelQuotas,
     int32_t maxPPRNodes) {
-    struct AttributedCandidate {
+    struct GlobalCandidate {
         double bestCalibratedScore;
         double channelCalibratedScore;
         int32_t channelIndex;
         int32_t nodeId;
     };
 
-    const auto higherAttributedCandidate = [](const auto& a, const auto& b) {
+    // Per-channel ordering is by the channel-local score. Global ordering is by
+    // the node's best score across all quota-surviving channels, then by the
+    // candidate's own channel score and stable IDs for deterministic ties.
+    const auto higherScorePair = [](const auto& a, const auto& b) {
+        if (a.second != b.second) {
+            return a.second > b.second;
+        }
+        return a.first < b.first;
+    };
+    const auto higherGlobalCandidate = [](const auto& a, const auto& b) {
         if (a.bestCalibratedScore != b.bestCalibratedScore) {
             return a.bestCalibratedScore > b.bestCalibratedScore;
         }
@@ -545,112 +579,88 @@ static std::vector<int32_t> selectTypedPPRNodeIds(
         return a.nodeId < b.nodeId;
     };
 
-    size_t totalCandidateRows = 0;
-    for (const auto& candidates : candidatesByChannel) {
-        totalCandidateRows += candidates.size();
-    }
-
-    // Deduplicate before applying channel targets. A node that appears in
-    // multiple channels is attributed to the channel where it has the strongest
-    // calibrated score, which is the same score used for global ranking.
-    std::unordered_map<int32_t, AttributedCandidate> bestCandidateByNodeId;
-    bestCandidateByNodeId.reserve(totalCandidateRows);
+    // Bound reserve sizes by the number of rows that can survive per-channel
+    // quotas. Current callers already cap channels to these limits, but this
+    // keeps the helper efficient if a future caller passes larger vectors.
+    size_t candidateRowReserveSize = 0;
     for (int32_t channelIndex = 0; channelIndex < static_cast<int32_t>(candidatesByChannel.size()); ++channelIndex) {
-        for (const auto& [nodeId, calibratedScore] : candidatesByChannel[channelIndex]) {
-            AttributedCandidate candidate{calibratedScore, calibratedScore, channelIndex, nodeId};
-            auto [candidateIter, inserted] = bestCandidateByNodeId.emplace(nodeId, candidate);
-            if (!inserted && higherAttributedCandidate(candidate, candidateIter->second)) {
-                candidateIter->second = candidate;
-            }
-        }
+        candidateRowReserveSize += static_cast<size_t>(
+            std::min(channelQuotas[channelIndex], static_cast<int32_t>(candidatesByChannel[channelIndex].size())));
     }
 
-    std::vector<std::vector<AttributedCandidate>> candidatesByAttributedChannel(
-        static_cast<size_t>(candidatesByChannel.size()));
-    for (const auto& candidateEntry : bestCandidateByNodeId) {
-        const auto& candidate = candidateEntry.second;
-        candidatesByAttributedChannel[candidate.channelIndex].push_back(candidate);
-    }
-
-    std::vector<AttributedCandidate> selectedCandidates;
-    selectedCandidates.reserve(
-        static_cast<size_t>(std::min(maxPPRNodes, static_cast<int32_t>(bestCandidateByNodeId.size()))));
-    std::unordered_set<int32_t> selectedNodeIds;
-    selectedNodeIds.reserve(selectedCandidates.capacity());
-
-    // First honor the target counts for each attributed channel. Selection is
-    // local to each channel so we only spend target slots on that channel's
-    // strongest unique nodes.
-    for (int32_t channelIndex = 0; channelIndex < static_cast<int32_t>(candidatesByAttributedChannel.size());
-         ++channelIndex) {
-        auto& candidates = candidatesByAttributedChannel[channelIndex];
-        int32_t remainingOutputSlots = maxPPRNodes - static_cast<int32_t>(selectedCandidates.size());
-        if (remainingOutputSlots <= 0) {
-            break;
-        }
-        int32_t numTargetCandidates = std::min(
-            {channelTargetCounts[channelIndex], static_cast<int32_t>(candidates.size()), remainingOutputSlots});
-        if (numTargetCandidates <= 0) {
+    // First apply per-channel quotas. candidateRows may still contain the same
+    // node multiple times if multiple channels reached it, while
+    // bestCalibratedScoreByNodeId tracks the cross-channel score used for final
+    // ranking.
+    std::unordered_map<int32_t, double> bestCalibratedScoreByNodeId;
+    bestCalibratedScoreByNodeId.reserve(candidateRowReserveSize);
+    std::vector<GlobalCandidate> candidateRows;
+    candidateRows.reserve(candidateRowReserveSize);
+    for (int32_t channelIndex = 0; channelIndex < static_cast<int32_t>(candidatesByChannel.size()); ++channelIndex) {
+        auto& candidates = candidatesByChannel[channelIndex];
+        int32_t channelQuota = channelQuotas[channelIndex];
+        int32_t numCandidates = std::min(channelQuota, static_cast<int32_t>(candidates.size()));
+        if (numCandidates <= 0) {
             continue;
         }
 
-        if (numTargetCandidates < static_cast<int32_t>(candidates.size())) {
-            // Membership is enough here: the final selected set is sorted once
-            // after target fill and redistribution.
-            std::nth_element(candidates.begin(),
-                             candidates.begin() + numTargetCandidates,
-                             candidates.end(),
-                             higherAttributedCandidate);
+        // Only partition when a channel has more rows than its quota. We do not
+        // need a sorted per-channel prefix; we only need the top quota rows
+        // before the global cross-channel rank.
+        if (numCandidates < static_cast<int32_t>(candidates.size())) {
+            std::nth_element(candidates.begin(), candidates.begin() + numCandidates, candidates.end(), higherScorePair);
         }
 
-        for (int32_t candidateIndex = 0; candidateIndex < numTargetCandidates; ++candidateIndex) {
-            const auto& candidate = candidates[candidateIndex];
-            selectedCandidates.push_back(candidate);
-            selectedNodeIds.insert(candidate.nodeId);
-        }
-    }
-
-    // Sparse channels or cross-channel duplicates can leave some target slots
-    // unused. Redistribute that leftover capacity to the strongest remaining
-    // candidates globally so sequence length is not sacrificed for ratios that
-    // cannot be exactly filled on this seed.
-    int32_t remainingOutputSlots = maxPPRNodes - static_cast<int32_t>(selectedCandidates.size());
-    if (remainingOutputSlots > 0) {
-        std::vector<AttributedCandidate> remainingCandidates;
-        remainingCandidates.reserve(bestCandidateByNodeId.size() - selectedNodeIds.size());
-        for (const auto& candidateEntry : bestCandidateByNodeId) {
-            const auto& candidate = candidateEntry.second;
-            if (selectedNodeIds.find(candidate.nodeId) == selectedNodeIds.end()) {
-                remainingCandidates.push_back(candidate);
+        for (int32_t candidateIndex = 0; candidateIndex < numCandidates; ++candidateIndex) {
+            int32_t nodeId = candidates[candidateIndex].first;
+            double calibratedScore = candidates[candidateIndex].second;
+            candidateRows.push_back({0.0, calibratedScore, channelIndex, nodeId});
+            auto [bestScoreIter, inserted] = bestCalibratedScoreByNodeId.emplace(nodeId, calibratedScore);
+            if (!inserted) {
+                bestScoreIter->second = std::max(bestScoreIter->second, calibratedScore);
             }
         }
+    }
 
-        int32_t numFillCandidates = std::min(remainingOutputSlots, static_cast<int32_t>(remainingCandidates.size()));
-        if (numFillCandidates < static_cast<int32_t>(remainingCandidates.size())) {
-            // Membership is enough here too; final output ordering happens once
-            // after selectedCandidates is complete.
-            std::nth_element(remainingCandidates.begin(),
-                             remainingCandidates.begin() + numFillCandidates,
-                             remainingCandidates.end(),
-                             higherAttributedCandidate);
-        }
-
-        for (int32_t candidateIndex = 0; candidateIndex < numFillCandidates; ++candidateIndex) {
-            selectedCandidates.push_back(remainingCandidates[candidateIndex]);
+    // Collapse duplicate node IDs before global ranking. If the same node is
+    // present through multiple channels, keep the row that would sort highest
+    // under the final comparator; its bestCalibratedScore is still the best
+    // score observed for that node across every quota-surviving channel.
+    std::unordered_map<int32_t, GlobalCandidate> bestCandidateByNodeId;
+    bestCandidateByNodeId.reserve(bestCalibratedScoreByNodeId.size());
+    for (auto candidate : candidateRows) {
+        candidate.bestCalibratedScore = bestCalibratedScoreByNodeId.at(candidate.nodeId);
+        auto [candidateIter, inserted] = bestCandidateByNodeId.emplace(candidate.nodeId, candidate);
+        if (!inserted && higherGlobalCandidate(candidate, candidateIter->second)) {
+            candidateIter->second = candidate;
         }
     }
 
-    // The target/fill passes decide membership; final output order is still by
-    // best calibrated score so downstream sequence construction sees a ranked
-    // PPR sequence rather than channel-grouped blocks.
-    if (selectedCandidates.size() > 1) {
-        std::sort(selectedCandidates.begin(), selectedCandidates.end(), higherAttributedCandidate);
+    // Move unique candidates into a vector so the final top-k ranking can use
+    // partial_sort. This avoids sorting the full candidate set when
+    // maxPPRNodes is smaller than the number of unique channel candidates.
+    std::vector<GlobalCandidate> globalCandidates;
+    globalCandidates.reserve(bestCandidateByNodeId.size());
+    for (const auto& candidateEntry : bestCandidateByNodeId) {
+        globalCandidates.push_back(candidateEntry.second);
     }
 
+    int32_t selectedReserveSize = std::min(maxPPRNodes, static_cast<int32_t>(globalCandidates.size()));
+    if (selectedReserveSize < static_cast<int32_t>(globalCandidates.size())) {
+        std::partial_sort(globalCandidates.begin(),
+                          globalCandidates.begin() + selectedReserveSize,
+                          globalCandidates.end(),
+                          higherGlobalCandidate);
+    } else if (globalCandidates.size() > 1) {
+        std::sort(globalCandidates.begin(), globalCandidates.end(), higherGlobalCandidate);
+    }
+
+    // globalCandidates is already ranked through selectedReserveSize, so emit
+    // only node IDs in final order. Dedup already happened above.
     std::vector<int32_t> selectedNodes;
-    selectedNodes.reserve(selectedCandidates.size());
-    for (const auto& candidate : selectedCandidates) {
-        selectedNodes.push_back(candidate.nodeId);
+    selectedNodes.reserve(static_cast<size_t>(selectedReserveSize));
+    for (int32_t candidateIndex = 0; candidateIndex < selectedReserveSize; ++candidateIndex) {
+        selectedNodes.push_back(globalCandidates[candidateIndex].nodeId);
     }
     return selectedNodes;
 }
@@ -701,14 +711,14 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
 }
 
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
-                                                   const std::vector<int32_t>& channelTargetCounts,
+                                                   const std::vector<int32_t>& channelQuotas,
                                                    int32_t maxPPRNodes,
                                                    bool enableResidualTopUp) {
     // Typed channels are constructed from the same seed batch and graph schema;
     // only the edge-type traversal allowlist differs. The sampler calls typed
-    // extraction only when typed-channel target counts are configured, so at
-    // least one state exists. Use the first state as the shared schema source
-    // for batch size and node-type count.
+    // extraction only when typed-channel quotas are configured, so at least one
+    // state exists. Use the first state as the shared schema source for batch
+    // size and node-type count.
     const auto* firstState = states.front();
     int32_t batchSize = firstState->_batchSize;
     int32_t numNodeTypes = firstState->_numNodeTypes;
@@ -720,11 +730,16 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     //   columns [1 + C, 1 + 2C): presence bit for each channel.
     int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
 
-    // Pre-size the per-seed feature map below. Each channel can contribute up
-    // to maxPPRNodes candidates before cross-channel dedup and target filling.
-    size_t outputCandidateReserveSize = static_cast<size_t>(numChannels) * static_cast<size_t>(maxPPRNodes);
+    // Pre-size the per-seed feature map below. Output features may receive up
+    // to maxPPRNodes candidates per channel when residual top-up is on.
+    size_t outputCandidateReserveSize = 0;
+    for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
+        int32_t channelPPRNodeBudget = std::min(channelQuotas[channelIndex], maxPPRNodes);
+        outputCandidateReserveSize += static_cast<size_t>(enableResidualTopUp ? maxPPRNodes : channelPPRNodeBudget);
+    }
 
     PPRExtractResult extractedTypedPPRByNodeTypeId;
+    std::vector<int32_t> topUpChannelQuotas(static_cast<size_t>(numChannels), maxPPRNodes);
 
     for (int32_t nodeTypeId = 0; nodeTypeId < numNodeTypes; ++nodeTypeId) {
         std::vector<int64_t> flatIds;
@@ -734,22 +749,37 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
         for (int32_t seedIdx = 0; seedIdx < batchSize; ++seedIdx) {
             std::unordered_map<int32_t, std::vector<double>> outputScores;
             outputScores.reserve(outputCandidateReserveSize);
-            // outputCandidatesByChannel includes finalized PPR rows, plus
-            // residual-aware rows when top-up is enabled. Selection and emitted
-            // features use this same view so both finalized and residual
-            // candidates obey the per-channel target counts.
+            // Keep the two typed views separate:
+            //   - baseCandidatesByChannel is selection-only. It contains raw
+            //     finalized PPR rows and drives the quota-biased first pass.
+            //   - outputScores/outputCandidatesByChannel is the emitted view.
+            //     It includes residual-aware scores when top-up is enabled, so
+            //     base-selected and fill-selected rows share one score scale.
+            std::vector<std::vector<std::pair<int32_t, double>>> baseCandidatesByChannel(
+                static_cast<size_t>(numChannels));
             std::vector<std::vector<std::pair<int32_t, double>>> outputCandidatesByChannel(
                 static_cast<size_t>(numChannels));
 
             for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
                 const auto& nodeTypeState = states[channelIndex]->_state[seedIdx][nodeTypeId];
-                auto outputNodesAndScores = selectFinalizedPPRPairs(nodeTypeState, maxPPRNodes);
+                int32_t channelPPRNodeBudget = std::min(channelQuotas[channelIndex], maxPPRNodes);
+                auto baseNodesAndScores = selectFinalizedPPRPairs(nodeTypeState, channelPPRNodeBudget);
 
+                // Keep residual top-up out of the quota-biased base pass. The
+                // output view starts from the same finalized candidates, then
+                // adds residual mass/candidates for emitted features and the
+                // later fill pass.
+                auto outputNodesAndScores = baseNodesAndScores;
                 if (enableResidualTopUp) {
                     addResidualMassToPPRPairs(nodeTypeState, outputNodesAndScores);
                     appendResidualTopUpPairs(nodeTypeState, outputNodesAndScores, maxPPRNodes);
                 }
 
+                auto baseMaxScoreIter =
+                    std::max_element(baseNodesAndScores.begin(),
+                                     baseNodesAndScores.end(),
+                                     [](const auto& a, const auto& b) { return a.second < b.second; });
+                double baseMaxScore = baseMaxScoreIter != baseNodesAndScores.end() ? baseMaxScoreIter->second : 0.0;
                 auto outputMaxScoreIter =
                     std::max_element(outputNodesAndScores.begin(),
                                      outputNodesAndScores.end(),
@@ -757,7 +787,9 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                 double outputMaxScore =
                     outputMaxScoreIter != outputNodesAndScores.end() ? outputMaxScoreIter->second : 0.0;
 
+                baseCandidatesByChannel[channelIndex].reserve(baseNodesAndScores.size());
                 outputCandidatesByChannel[channelIndex].reserve(outputNodesAndScores.size());
+                addTypedPPRChannelCandidates(baseCandidatesByChannel[channelIndex], baseNodesAndScores, baseMaxScore);
                 addTypedPPRSeedFeaturesAndCandidates(outputNodesAndScores,
                                                      outputMaxScore,
                                                      channelIndex,
@@ -766,8 +798,41 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                                                      outputCandidatesByChannel[channelIndex]);
             }
 
-            auto selectedNodes = selectTypedPPRNodeIds(outputCandidatesByChannel, channelTargetCounts, maxPPRNodes);
+            auto selectedNodes = selectTypedPPRNodeIds(baseCandidatesByChannel, channelQuotas, maxPPRNodes);
             int32_t selectedNodeCount = static_cast<int32_t>(selectedNodes.size());
+            if (selectedNodeCount < maxPPRNodes) {
+                std::unordered_set<int32_t> selectedNodeIds(selectedNodes.begin(), selectedNodes.end());
+                auto topUpSelectedNodes =
+                    selectTypedPPRNodeIds(outputCandidatesByChannel, topUpChannelQuotas, maxPPRNodes);
+                for (int32_t nodeId : topUpSelectedNodes) {
+                    if (selectedNodeCount >= maxPPRNodes) {
+                        break;
+                    }
+                    if (selectedNodeIds.find(nodeId) != selectedNodeIds.end()) {
+                        continue;
+                    }
+                    ++selectedNodeCount;
+                    selectedNodeIds.insert(nodeId);
+                    selectedNodes.push_back(nodeId);
+                }
+            }
+
+            if (enableResidualTopUp && selectedNodes.size() > 1) {
+                std::vector<std::pair<int32_t, double>> selectedNodesAndScores;
+                selectedNodesAndScores.reserve(selectedNodes.size());
+                for (int32_t nodeId : selectedNodes) {
+                    selectedNodesAndScores.emplace_back(nodeId, outputScores.at(nodeId)[0]);
+                }
+                std::stable_sort(selectedNodesAndScores.begin(),
+                                 selectedNodesAndScores.end(),
+                                 [](const auto& a, const auto& b) { return a.second > b.second; });
+
+                selectedNodes.clear();
+                selectedNodes.reserve(selectedNodesAndScores.size());
+                for (const auto& selectedNodeAndScore : selectedNodesAndScores) {
+                    selectedNodes.push_back(selectedNodeAndScore.first);
+                }
+            }
 
             for (int32_t nodeId : selectedNodes) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
