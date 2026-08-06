@@ -114,15 +114,18 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``:
           ``[ppr_score, min_hop]`` for regular PPR. For typed PPR, edge attrs
           are multi-column:
-          ``[best_score, min_hop, channel_scores..., channel_min_hops...,
+          ``[best_score, min_hop, channel_scores..., channel_hop_proximities...,
           channel_presence_bits...]``.
           Scores use the same PPR mass scale as regular PPR output.
           Channel columns follow the insertion order of
           ``typed_channel_ratios``. Column 0 is the scalar best score for
           consumers that need a single PPR weight, and column 1 is always the
-          global minimum-hop count. Per-channel min-hop columns use one greater
-          than the largest reached-channel min-hop for that node when the
-          channel did not reach the node.
+          global minimum-hop count. Per-channel hop proximity is
+          ``1 / (1 + min_hop)`` when that channel reached the node, and ``0``
+          when it did not.
+          For present channels, the original hop count can be recovered as
+          ``(1 - proximity) / proximity``; use the presence bit before applying
+          this inverse because missing channels have proximity ``0``.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values

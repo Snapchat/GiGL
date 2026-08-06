@@ -211,8 +211,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][5], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][5], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][6], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
 
@@ -220,8 +220,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][5], 2.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][4], 0.5, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][5], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][6], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][7], 0.0, 1e-9);
 
@@ -229,8 +229,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[2][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[2][2], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[2][3], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][4], 2.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][5], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][4], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][5], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[2][6], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[2][7], 1.0, 1e-9);
 }
@@ -261,8 +261,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][5], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][5], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][6], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
 
@@ -270,8 +270,8 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][4], 2.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][5], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][5], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[1][6], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][7], 1.0, 1e-9);
 }
@@ -299,12 +299,12 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
     EXPECT_NEAR(featureAccessor[0][0], 0.625, 1e-9);
     EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.625, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][3], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][3], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][3], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
 }
 

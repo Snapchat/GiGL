@@ -46,12 +46,15 @@ class PPRSamplerOptions:
       ``min_hop`` is emitted as ``0`` for the anchor, ``1`` for 1-hop, ``2``
       for 2-hop, and so on.
       Typed PPR emits additional channel columns:
-      ``[best_score, min_hop, channel_scores..., channel_min_hops...,
+      ``[best_score, min_hop, channel_scores..., channel_hop_proximities...,
       channel_presence_bits...]``.
       Column 0 is the scalar best score for consumers that need a single PPR
-      weight, and column 1 is always the global minimum-hop count. Per-channel
-      min-hop columns use one greater than the largest reached-channel min-hop
-      for that node when the channel did not reach the node.
+      weight, and column 1 is always the global minimum-hop count.
+      Per-channel hop proximity is ``1 / (1 + min_hop)`` when that channel
+      reached the node, and ``0`` when it did not.
+      For present channels, the original hop count can be recovered as
+      ``(1 - proximity) / proximity``; use the presence bit before applying
+      this inverse because missing channels have proximity ``0``.
 
     For homogeneous graphs these live directly on ``data.edge_index`` / ``data.edge_attr``.
 

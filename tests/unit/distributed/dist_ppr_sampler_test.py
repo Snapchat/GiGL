@@ -276,30 +276,21 @@ def _assert_valid_min_hops(min_hops: torch.Tensor) -> None:
     assert torch.allclose(min_hops, min_hops.round())
 
 
-def _assert_typed_channel_min_hops(
-    channel_min_hops: torch.Tensor,
+def _assert_typed_channel_hop_proximities(
+    channel_hop_proximities: torch.Tensor,
     channel_presence: torch.Tensor,
 ) -> None:
-    """Assert missing typed-channel hops are finite and farther than present hops."""
-    assert torch.allclose(channel_min_hops, channel_min_hops.round())
-    assert (channel_min_hops >= 0).all()
+    """Assert typed-channel hop proximity is bounded and zero when missing."""
+    assert (channel_hop_proximities >= 0).all()
+    assert (channel_hop_proximities <= 1).all()
     present_channel_mask = channel_presence == 1
     assert present_channel_mask.any(dim=1).all()
-    row_max_present_hops = (
-        channel_min_hops.masked_fill(
-            ~present_channel_mask,
-            -1.0,
-        )
-        .max(dim=1)
-        .values
-    )
-    expected_missing_hops = (
-        (row_max_present_hops + 1).unsqueeze(1).expand_as(channel_min_hops)
-    )
-    assert (
-        channel_min_hops[~present_channel_mask]
-        == expected_missing_hops[~present_channel_mask]
-    ).all()
+    assert (channel_hop_proximities[present_channel_mask] > 0).all()
+    recovered_present_hops = (
+        1 - channel_hop_proximities[present_channel_mask]
+    ) / channel_hop_proximities[present_channel_mask]
+    assert torch.allclose(recovered_present_hops, recovered_present_hops.round())
+    assert (channel_hop_proximities[~present_channel_mask] == 0).all()
 
 
 def _assert_ppr_scores_match_reference(
@@ -372,14 +363,16 @@ def _assert_typed_ppr_edge_attrs(
         best_scores = ppr_edge_attr[:, 0]
         min_hops = ppr_edge_attr[:, 1]
         channel_scores = ppr_edge_attr[:, 2 : 2 + num_channels]
-        channel_min_hops = ppr_edge_attr[:, 2 + num_channels : 2 + (2 * num_channels)]
+        channel_hop_proximities = ppr_edge_attr[
+            :, 2 + num_channels : 2 + (2 * num_channels)
+        ]
         channel_presence = ppr_edge_attr[:, 2 + (2 * num_channels) :]
         assert (best_scores >= 0).all()
         assert (best_scores <= 1).all()
         _assert_valid_min_hops(min_hops)
         assert (channel_scores >= 0).all()
         assert (channel_scores <= 1).all()
-        _assert_typed_channel_min_hops(channel_min_hops, channel_presence)
+        _assert_typed_channel_hop_proximities(channel_hop_proximities, channel_presence)
         if best_scores.size(0) > 1:
             assert (best_scores[:-1] >= best_scores[1:]).all()
 

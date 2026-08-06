@@ -15,7 +15,7 @@
 
 namespace gigl {
 
-static constexpr double kUnsetTypedPPRChannelHop = -1.0;
+static constexpr double kUnsetTypedPPRMinHop = -1.0;
 
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
 // Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
@@ -493,17 +493,17 @@ static int32_t getNodeMinHop(const SeedNodeTypeState& nodeTypeState, int32_t nod
 //       [best_score, min_hop]
 //     These preserve the regular PPR edge_attr contract at the front of the row.
 //   - 3 columns per typed channel:
-//       [channel_score, channel_min_hop, channel_presence]
+//       [channel_score, channel_hop_proximity, channel_presence]
 //     The per-channel score supports channel attribution/ranking, the per-channel
-//     hop exposes how far that channel had to walk, and the presence bit is the
-//     explicit channel-reachability mask.
+//     hop proximity gives models a bounded closeness signal, and the presence bit
+//     is the explicit channel-reachability mask.
 //
-// Scores and presence bits naturally default to 0. Channel min-hop columns use
-// an internal -1 marker while channels are merged; that marker is never emitted.
-// Before output, missing channel-hop values are replaced with one past the
-// farthest channel that did reach this node. That keeps the emitted scalar finite
-// and on the "farther" side of every valid channel hop, without introducing
-// inf/NaN into model input.
+// Channel hop proximity is 1 / (1 + min_hop) when a channel reaches the node:
+// anchor=1.0, 1-hop=0.5, 2-hop ~= 0.333, and so on. Missing channels remain 0,
+// which is finite, bounded, and never looks closer than a reached channel. For
+// present channels, callers can recover the original hop count as
+// (1 - proximity) / proximity; use the presence bit before applying this
+// inverse because proximity 0 means the channel is missing.
 class TypedPPRFeatureLayout {
 public:
     explicit TypedPPRFeatureLayout(int32_t numChannels) : _numChannels(numChannels) {
@@ -514,15 +514,12 @@ public:
         return kNumGlobalFeatures + (kNumPerChannelFeatures * _numChannels);
     }
 
-    // New node feature vectors start empty. The global min-hop is also marked
-    // missing until the first channel writes it, which lets updateScores use the
-    // same min-update path for both global and per-channel hop fields.
+    // New node feature vectors start empty. The global min-hop is marked missing
+    // until the first channel writes it, while channel scores, proximities, and
+    // presence bits naturally use 0 as their absent-channel value.
     [[nodiscard]] std::vector<double> makeFeatureVector() const {
         std::vector<double> features(numFeatures(), 0.0);
-        features[kGlobalMinHopIndex] = kUnsetTypedPPRChannelHop;
-        std::fill(features.begin() + channelHopStartIndex(),
-                  features.begin() + channelPresenceStartIndex(),
-                  kUnsetTypedPPRChannelHop);
+        features[kGlobalMinHopIndex] = kUnsetTypedPPRMinHop;
         return features;
     }
 
@@ -530,7 +527,7 @@ public:
     //
     // A node can be seen in multiple typed channels. The scalar score column keeps
     // the best emitted PPR score for downstream consumers that expect one weight,
-    // while hop columns keep the nearest discovered distance.
+    // while the global hop keeps the nearest discovered distance.
     void updateScores(std::vector<double>& features, int32_t channelIndex, double score, int32_t minHop) const {
         // The extraction loop bounds channelIndex, and getNodeMinHop validates
         // minHop before this call. Avoid duplicating those checks per candidate.
@@ -538,59 +535,24 @@ public:
         features[kBestScoreIndex] = std::max(features[kBestScoreIndex], score);
         updateMinHop(features[kGlobalMinHopIndex], hopFeature);
         features[channelScoreIndex(channelIndex)] = score;
-        updateMinHop(features[channelHopIndex(channelIndex)], hopFeature);
+        features[channelHopProximityIndex(channelIndex)] = 1.0 / (1.0 + hopFeature);
         features[channelPresenceIndex(channelIndex)] = 1.0;
-    }
-
-    // Append the feature row using model-facing values. The internal -1 marker is
-    // useful while merging channels, but as a scalar feature it would look closer
-    // than anchor hop 0. Missing channel hops are emitted as max_present_hop + 1
-    // for this node, with the presence bit still carrying the exact mask.
-    void appendOutputFeatures(std::vector<double>& outputFeatureValues, const std::vector<double>& features) const {
-        const auto outputStartIndex = outputFeatureValues.size();
-        outputFeatureValues.insert(outputFeatureValues.end(), features.begin(), features.end());
-
-        double maxPresentChannelHop = kUnsetTypedPPRChannelHop;
-        bool hasMissingChannelHop = false;
-        const int32_t channelHopStart = channelHopStartIndex();
-        const int32_t channelPresenceStart = channelPresenceStartIndex();
-        for (int32_t featureIndex = channelHopStart; featureIndex < channelPresenceStart; ++featureIndex) {
-            const double channelHop = features[featureIndex];
-            if (channelHop == kUnsetTypedPPRChannelHop) {
-                hasMissingChannelHop = true;
-            } else {
-                maxPresentChannelHop = std::max(maxPresentChannelHop, channelHop);
-            }
-        }
-
-        if (!hasMissingChannelHop) {
-            return;
-        }
-        TORCH_CHECK(maxPresentChannelHop != kUnsetTypedPPRChannelHop,
-                    "Typed PPR output feature row has no present channel hop.");
-        const double missingChannelHopFeature = maxPresentChannelHop + 1.0;
-        for (int32_t featureIndex = channelHopStart; featureIndex < channelPresenceStart; ++featureIndex) {
-            const auto outputFeatureIndex = outputStartIndex + static_cast<size_t>(featureIndex);
-            if (outputFeatureValues[outputFeatureIndex] == kUnsetTypedPPRChannelHop) {
-                outputFeatureValues[outputFeatureIndex] = missingChannelHopFeature;
-            }
-        }
     }
 
 private:
     static constexpr int32_t kBestScoreIndex = 0;
     static constexpr int32_t kGlobalMinHopIndex = 1;
     static constexpr int32_t kNumGlobalFeatures = 2;     // best score + global min-hop
-    static constexpr int32_t kNumPerChannelFeatures = 3; // score + min-hop + presence
+    static constexpr int32_t kNumPerChannelFeatures = 3; // score + hop proximity + presence
 
     [[nodiscard]] int32_t channelScoreIndex(int32_t channelIndex) const {
         return kNumGlobalFeatures + channelIndex;
     }
-    [[nodiscard]] int32_t channelHopStartIndex() const {
+    [[nodiscard]] int32_t channelHopProximityStartIndex() const {
         return kNumGlobalFeatures + _numChannels;
     }
-    [[nodiscard]] int32_t channelHopIndex(int32_t channelIndex) const {
-        return channelHopStartIndex() + channelIndex;
+    [[nodiscard]] int32_t channelHopProximityIndex(int32_t channelIndex) const {
+        return channelHopProximityStartIndex() + channelIndex;
     }
     [[nodiscard]] int32_t channelPresenceStartIndex() const {
         return kNumGlobalFeatures + (2 * _numChannels);
@@ -600,7 +562,7 @@ private:
     }
 
     static void updateMinHop(double& currentMinHopFeature, double hopFeature) {
-        if (currentMinHopFeature == kUnsetTypedPPRChannelHop || hopFeature < currentMinHopFeature) {
+        if (currentMinHopFeature == kUnsetTypedPPRMinHop || hopFeature < currentMinHopFeature) {
             currentMinHopFeature = hopFeature;
         }
     }
@@ -626,8 +588,8 @@ private:
 //   outputScoresByNodeId: mutable map from node ID to emitted edge_attr features.
 //   channelOutputCandidates: mutable sortable candidates for target-count selection.
 //
-// Expected output: outputScoresByNodeId has this channel's score/presence
-// features merged in, and channelOutputCandidates contains this channel's
+// Expected output: outputScoresByNodeId has this channel's score, proximity,
+// and presence features merged in, and channelOutputCandidates contains this channel's
 // candidates on the emitted PPR score scale.
 static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int32_t, double>>& nodesAndScores,
                                                  const SeedNodeTypeState& nodeTypeState,
@@ -878,9 +840,11 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     //   column 1: global minimum discovered-hop count as 0=anchor,
     //             1=1-hop, 2=2-hop, and so on.
     //   columns [2, 2 + C): emitted PPR score for each channel.
-    //   columns [2 + C, 2 + 2C): minimum discovered-hop count for each channel,
-    //                             or max-present-channel-hop + 1 when that channel
-    //                             did not reach the node.
+    //   columns [2 + C, 2 + 2C): hop proximity for each channel:
+    //                             1/(1 + min_hop) when present, 0 when missing.
+    //                             For present channels, min_hop can be recovered
+    //                             as (1 - proximity) / proximity; use the
+    //                             presence bit before applying this inverse.
     //   columns [2 + 2C, 2 + 3C): presence bit for each channel.
     TypedPPRFeatureLayout featureLayout(numChannels);
     int32_t numEdgeAttrFeatures = featureLayout.numFeatures();
@@ -930,7 +894,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
             for (int32_t nodeId : selectedNodes) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
                 const auto& features = outputScores.at(nodeId);
-                featureLayout.appendOutputFeatures(flatFeatureValues, features);
+                flatFeatureValues.insert(flatFeatureValues.end(), features.begin(), features.end());
             }
 
             validCounts.push_back(static_cast<int64_t>(selectedNodeCount));

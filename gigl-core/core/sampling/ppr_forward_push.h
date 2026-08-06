@@ -217,9 +217,12 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 //   ids: int64 node IDs, flattened across seeds.
 //   weights: double feature matrix with columns
 //            [best_score, min_hop, per-channel scores...,
-//             per-channel min-hops..., presence bits...].
-//            When a channel did not reach the selected node, its min-hop is one
-//            greater than the largest min-hop among channels that did reach it.
+//             per-channel hop proximities..., presence bits...].
+//            Per-channel hop proximity is 1 / (1 + min_hop) when that channel
+//            reached the selected node, and 0 when it did not.
+//            For present channels, the original hop count can be recovered as
+//            (1 - proximity) / proximity; use the presence bit before applying
+//            this inverse because missing channels have proximity 0.
 //   valid_counts: int64 count of selected nodes per seed.
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
