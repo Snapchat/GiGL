@@ -291,7 +291,7 @@ class TFRecordDataLoaderTest(TestCase):
     ):
         """Test TFRecordDataLoader's ability to load features and optionally labels."""
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
                 feature_spec=feature_spec,
@@ -305,11 +305,11 @@ class TFRecordDataLoaderTest(TestCase):
         )
 
         # Verify entity IDs are loaded correctly
-        assert_close(node_ids, expected_id_tensor)
+        assert_close(loaded.ids, expected_id_tensor)
 
-        assert_close(feature_tensor, expected_feature_tensor)
+        assert_close(loaded.features, expected_feature_tensor)
 
-        assert_close(label_tensor, expected_label_tensor)
+        assert_close(loaded.labels, expected_label_tensor)
 
     def test_build_dataset_for_uris(self):
         dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -396,7 +396,7 @@ class TFRecordDataLoaderTest(TestCase):
         self.addCleanup(temp_dir.cleanup)
 
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
                 feature_spec={},  # Doesn't matter what this is.
@@ -408,9 +408,9 @@ class TFRecordDataLoaderTest(TestCase):
             tf_dataset_options=TFDatasetOptions(deterministic=True),
         )
 
-        assert_close(node_ids, expected_node_ids)
-        assert_close(feature_tensor, expected_features)
-        assert_close(label_tensor, expected_label_tensor)
+        assert_close(loaded.ids, expected_node_ids)
+        assert_close(loaded.features, expected_features)
+        assert_close(loaded.labels, expected_label_tensor)
 
     @parameterized.expand(
         [
@@ -470,7 +470,7 @@ class TFRecordDataLoaderTest(TestCase):
             condensed_node_type
         ]
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        _, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(
                     node_metadata.tfrecord_uri_prefix
@@ -487,9 +487,9 @@ class TFRecordDataLoaderTest(TestCase):
             tf_dataset_options=TFDatasetOptions(deterministic=True),
         )
         # Ensure we have loaded data
-        assert feature_tensor is not None and label_tensor is not None
-        self.assertEqual(feature_tensor.size(1), node_metadata.feature_dim)
-        self.assertEqual(label_tensor.size(1), len(node_metadata.label_keys))
+        assert loaded.features is not None and loaded.labels is not None
+        self.assertEqual(loaded.features.size(1), node_metadata.feature_dim)
+        self.assertEqual(loaded.labels.size(1), len(node_metadata.label_keys))
 
     def test_load_edge_weights_from_tf_record(self):
         """Edge weight column is extracted from edge features and returned separately.
