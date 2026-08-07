@@ -486,10 +486,10 @@ class DataPreprocessor:
                 node_transformed_features_info.feature_quantization_metadata_path.uri
             )
             if tf.io.gfile.exists(metadata_path):
-                logger.info(f"Loading quantization metadata from: {metadata_path}")
+                logger.info(f"Loading node quantization metadata from {metadata_path}")
                 with tf.io.gfile.GFile(metadata_path) as f:
                     metadata = json.loads(f.read())
-                logger.info(f"Loaded quantization metadata: {metadata}")
+                logger.info(f"Loaded node quantization metadata {metadata}")
                 bits = metadata["bits"]
                 quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
                     packed_feature_key=metadata["packed_feature_key"],

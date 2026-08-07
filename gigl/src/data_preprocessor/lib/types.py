@@ -51,6 +51,8 @@ class NodeOutputIdentifier(str):
 
 @dataclass(frozen=True)
 class FeatureQuantizationSpec:
+    """Selects logical feature fields to pack at a fixed bit width."""
+
     feature_keys: list[str]
     bits: int
 

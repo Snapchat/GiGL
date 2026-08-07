@@ -16,38 +16,38 @@ from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
 _NODE_PACKED_FEATURE_KEY: Final[str] = "node_packed_features"
-_SingleBitAcc: TypeAlias = tuple[float, int, float, int]
+_SignStats: TypeAlias = tuple[float, int, float, int]
 
 
 def apply_feature_quantization_transform(
     logical_features: beam.PCollection[pa.RecordBatch],
-    transform_output_metadata: DatasetMetadata,
-    analyzed_logical_metadata: beam.PCollection[DatasetMetadata] | None,
+    logical_metadata: DatasetMetadata | beam.PCollection[DatasetMetadata],
     quantization_spec: FeatureQuantizationSpec,
     logical_feature_keys: list[str],
-    metadata_path: str,
-):
-    if analyzed_logical_metadata is None:
-        logical_metadata = transform_output_metadata
+    quantization_metadata_path: str,
+) -> tuple[beam.PCollection[pa.RecordBatch], DatasetMetadata | beam.pvalue.AsSingleton]:
+    logical_metadata_is_eager = isinstance(logical_metadata, DatasetMetadata)
+    if logical_metadata_is_eager:
+        metadata_for_json = logical_metadata
     else:
-        logical_metadata = beam.pvalue.AsSingleton(analyzed_logical_metadata)
+        metadata_for_json = beam.pvalue.AsSingleton(logical_metadata)
 
     logger.info(f"Applying Beam feature quantization with spec: {quantization_spec}")
     quantization_stats = _build_feature_quantization_stats(
         logical_features, quantization_spec
     )
-    _ = (
+    (
         quantization_stats
         | "Build feature quantization stats JSON"
         >> beam.Map(
             _feature_quantization_stats_to_json,
             quantization_spec=quantization_spec,
             logical_feature_keys=logical_feature_keys,
-            logical_metadata=logical_metadata,
+            logical_metadata=metadata_for_json,
         )
         | "Write feature quantization stats"
         >> beam.io.WriteToText(
-            metadata_path, num_shards=1, shard_name_template=""
+            quantization_metadata_path, num_shards=1, shard_name_template=""
         )
     )
 
@@ -60,16 +60,14 @@ def apply_feature_quantization_transform(
         )
     )
 
-    # Encode TFRecords with the compact physical schema. The persisted schema remains
-    # the original logical TFT schema because dequantization scatters features back.
-    if analyzed_logical_metadata is None:
+    if logical_metadata_is_eager:
         physical_feature_metadata = DatasetMetadata(
             _apply_feature_quantization_schema(
-                transform_output_metadata.schema, quantization_spec
+                logical_metadata.schema, quantization_spec
             )
         )
     else:
-        physical_feature_metadata = analyzed_logical_metadata | (
+        physical_feature_metadata = logical_metadata | (
             "Apply feature quantization schema"
             >> beam.Map(
                 lambda metadata, quantization_spec: DatasetMetadata(
@@ -96,7 +94,7 @@ def _build_feature_quantization_stats(
         return (
             logical_features
             | "Compute single bit quantization stats"
-            >> beam.CombineGlobally(_SingleBitStatsFn(quantization_spec.feature_keys))
+            >> beam.CombineGlobally(_PosNegMeanFn(quantization_spec.feature_keys))
         )
     return (
         logical_features
@@ -148,24 +146,23 @@ def _feature_quantization_stats_to_json(
     logical_feature_keys: list[str],
     logical_metadata: DatasetMetadata,
 ) -> str:
+    missing = set(quantization_spec.feature_keys) - set(logical_feature_keys)
+    if missing:
+        raise ValueError(f"Quantized features missing: {missing}")
+
     raw_feature_spec = schema_utils.schema_as_feature_spec(
         logical_metadata.schema
     ).feature_spec
-    missing_feature_keys = set(quantization_spec.feature_keys) - set(
-        logical_feature_keys
-    )
-    if missing_feature_keys:
-        raise ValueError(
-            f"Quantized features missing from feature outputs: {missing_feature_keys}"
-        )
     logical_feature_spec = {key: raw_feature_spec[key] for key in logical_feature_keys}
     logical_feature_index = feature_spec_to_feature_index_map(logical_feature_spec)
+
     quantized_feature_indices: List[int] = []
     for key in quantization_spec.feature_keys:
         start, end = logical_feature_index[key]
         if end - start != 1:
             raise ValueError(f"Quantization expects scalar features, got {key}.")
         quantized_feature_indices.append(start)
+
     metadata = {
         "packed_feature_key": _NODE_PACKED_FEATURE_KEY,
         "quantized_feature_indices": quantized_feature_indices,
@@ -208,18 +205,20 @@ def _flatten_feature_values(
 def _build_feature_matrix(
     batch: pa.RecordBatch, quantized_feature_keys: list[str]
 ) -> np.ndarray:
-    key_to_idx = {name: i for i, name in enumerate(batch.schema.names)}
+    key_to_idx: dict[str, int] = {name: i for i, name in enumerate(batch.schema.names)}
     cols: list[np.ndarray] = []
     for key in quantized_feature_keys:
         if key not in key_to_idx:
             raise ValueError(f"Feature key {key} not found in RecordBatch.")
+
         col = batch.column(key_to_idx[key])
         values = np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float32)
         if values.ndim != 1:
             raise ValueError(
-                f"Feature quantization expects scalar features, got {key} with shape {values.shape}."
+                f"Quantization expects scalar features, got {key} with shape {values.shape}."
             )
         cols.append(values)
+
     feature_matrix = np.stack(cols, axis=1)
     if not np.isfinite(feature_matrix).all():
         raise ValueError("Feature quantization expects finite feature values.")
@@ -239,21 +238,16 @@ def _multi_bit_stats_from_quantiles(quantiles: list[float]) -> dict[str, float]:
     return stats
 
 
-class _SingleBitStatsFn(beam.CombineFn):
-    """Beam CombineFn that accumulates sums and counts across batches.
-
-    Used to derive the mean of positive and negative feature values for 1-bit quantization.
-    """
+class _PosNegMeanFn(beam.CombineFn):
+    """Accumulates mean positive and negative feature values for 1-bit quantization."""
 
     def __init__(self, feature_keys: list[str]) -> None:
         self._feature_keys = feature_keys
 
-    def create_accumulator(self) -> _SingleBitAcc:
+    def create_accumulator(self) -> _SignStats:
         return 0.0, 0, 0.0, 0
 
-    def add_input(
-        self, accumulator: _SingleBitAcc, batch: pa.RecordBatch
-    ) -> _SingleBitAcc:
+    def add_input(self, accumulator: _SignStats, batch: pa.RecordBatch) -> _SignStats:
         neg_sum, neg_count, pos_sum, pos_count = accumulator
         values = _build_feature_matrix(batch, self._feature_keys).ravel()
         neg = values <= 0
@@ -265,9 +259,7 @@ class _SingleBitStatsFn(beam.CombineFn):
             pos_count + int(pos.sum()),
         )
 
-    def merge_accumulators(
-        self, accumulators: Iterable[_SingleBitAcc]
-    ) -> _SingleBitAcc:
+    def merge_accumulators(self, accumulators: Iterable[_SignStats]) -> _SignStats:
         neg_sum = neg_count = pos_sum = pos_count = 0
         for n_sum, n_count, p_sum, p_count in accumulators:
             neg_sum += n_sum
@@ -276,7 +268,7 @@ class _SingleBitStatsFn(beam.CombineFn):
             pos_count += p_count
         return neg_sum, neg_count, pos_sum, pos_count
 
-    def extract_output(self, accumulator: _SingleBitAcc) -> dict[str, float]:
+    def extract_output(self, accumulator: _SignStats) -> dict[str, float]:
         neg_sum, neg_count, pos_sum, pos_count = accumulator
         stats = {
             "neg_mean": neg_sum / neg_count if neg_count else 0.0,

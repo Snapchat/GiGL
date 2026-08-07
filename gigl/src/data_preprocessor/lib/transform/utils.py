@@ -36,6 +36,7 @@ from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
 )
 from gigl.src.data_preprocessor.lib.types import (
     EdgeDataPreprocessingSpec,
+    FeatureQuantizationSpec,
     FeatureSpecDict,
     InstanceDict,
     NodeDataPreprocessingSpec,
@@ -365,23 +366,24 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
-        q_spec = None
+        logical_metadata = (
+            transformed_metadata
+            if should_use_existing_transform_fn
+            else analyzed_transform_fn[1].deferred_metadata  # type: ignore
+        )
+        quantization_spec: FeatureQuantizationSpec | None = None
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
-            q_spec = preprocessing_spec.feature_quantization_spec
-        if q_spec is not None:
-            if should_use_existing_transform_fn:
-                analyzed_metadata = None
-            else:
-                analyzed_metadata = analyzed_transform_fn[1].deferred_metadata  # type: ignore
-
+            quantization_spec = preprocessing_spec.feature_quantization_spec
+        if quantization_spec is not None:
             transformed_features, resolved_transformed_metadata = (
                 apply_feature_quantization_transform(
-                    transformed_features,
-                    transformed_metadata,
-                    analyzed_metadata,
-                    q_spec,
-                    list(preprocessing_spec.features_outputs or []),
-                    transformed_features_info.feature_quantization_metadata_path.uri,
+                    logical_features=transformed_features,
+                    logical_metadata=logical_metadata,
+                    quantization_spec=quantization_spec,
+                    logical_feature_keys=list(
+                        preprocessing_spec.features_outputs or []
+                    ),
+                    metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
                 )
             )
 
