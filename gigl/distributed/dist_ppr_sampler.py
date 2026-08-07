@@ -212,10 +212,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         include_original_edges_in_ppr_subgraph: Whether heterogeneous PPR output
             should include original graph edges that were already fetched during
             PPR traversal, in addition to virtual PPR edges. Preserved original
-            edges are filtered to endpoints already selected by PPR, but they are
-            not a complete induced subgraph when residual/top-up nodes were never
-            expanded or when ``num_neighbors_per_hop`` capped the fetched
-            adjacency.
+            edges are filtered to endpoints already selected by PPR. This is a
+            preserved-fetched-edge view, not a post-hoc induced subgraph: if a
+            residual/top-up node was selected but never expanded as a source, it
+            contributes no original source edges, and if
+            ``num_neighbors_per_hop`` capped a high-degree adjacency row, only
+            the fetched sampled neighbors from that capped row can be emitted.
     """
 
     def __init__(
@@ -861,9 +863,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         """Extract original edges over selected nodes from C++ PPR caches.
 
         This intentionally does not issue another graph-store request. The edge
-        set is limited to adjacency rows already cached while computing PPR, so
-        residual/top-up nodes that were selected but never expanded do not
-        contribute new original edges.
+        set is limited to adjacency rows already cached while computing PPR: a
+        selected residual/top-up node that was never expanded contributes no
+        original source edges, and a capped high-degree row contributes only the
+        sampled neighbors returned by that capped fetch.
         """
         selected_node_ids_by_node_type_id = {
             self._node_type_to_id[node_type]: node_ids.cpu()

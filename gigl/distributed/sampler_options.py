@@ -134,10 +134,14 @@ class PPRSamplerOptions:
             during PPR traversal whose endpoints are both in the PPR-selected node
             set. This gives downstream models a local typed-edge view over the
             selected nodes while keeping the PPR budget as the node-selection
-            boundary and avoiding a second graph-store sampling pass. This is not
-            a complete induced subgraph when residual/top-up nodes were never
-            expanded or ``num_neighbors_per_hop`` capped adjacency. Original
-            edges are emitted through GLT's regular sampled-edge channel, so
+            boundary and avoiding a second graph-store sampling pass. This is a
+            preserved-fetched-edge view, not a post-hoc induced subgraph over
+            every selected node: if a residual/top-up node was selected but never
+            expanded as a source during PPR, that node contributes no original
+            source edges, and if ``num_neighbors_per_hop`` capped a high-degree
+            adjacency row, only the fetched sampled neighbors from that capped
+            row can be emitted. Original edges are emitted through GLT's regular
+            sampled-edge channel, so
             their final HeteroData edge orientation follows the same ``edge_dir``
             convention as k-hop sampling. Homogeneous PPR keeps the default
             PPR-only output because ``Data`` cannot represent virtual PPR and
