@@ -379,11 +379,11 @@ def get_load_data_and_transform_pipeline_component(
                 apply_feature_quantization_transform(
                     logical_features=transformed_features,
                     logical_metadata=logical_metadata,
-                    quantization_spec=quantization_spec,
                     logical_feature_keys=list(
                         preprocessing_spec.features_outputs or []
                     ),
-                    metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    quantization_spec=quantization_spec,
+                    quantization_metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
                 )
             )
 

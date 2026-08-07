@@ -22,8 +22,8 @@ _SignStats: TypeAlias = tuple[float, int, float, int]
 def apply_feature_quantization_transform(
     logical_features: beam.PCollection[pa.RecordBatch],
     logical_metadata: DatasetMetadata | beam.PCollection[DatasetMetadata],
-    quantization_spec: FeatureQuantizationSpec,
     logical_feature_keys: list[str],
+    quantization_spec: FeatureQuantizationSpec,
     quantization_metadata_path: str,
 ) -> tuple[beam.PCollection[pa.RecordBatch], DatasetMetadata | beam.pvalue.AsSingleton]:
     logical_metadata_is_eager = isinstance(logical_metadata, DatasetMetadata)

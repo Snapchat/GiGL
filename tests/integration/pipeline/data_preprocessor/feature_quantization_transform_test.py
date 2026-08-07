@@ -72,10 +72,10 @@ class FeatureQuantizationTransformTest(TestCase):
                         logical_features=pipeline
                         | "Create RecordBatches" >> beam.Create(batches),
                         logical_metadata=transform_output_metadata,
+                        logical_feature_keys=logical_feature_keys,
                         quantization_spec=FeatureQuantizationSpec(
                             feature_keys=logical_feature_keys, bits=bits
                         ),
-                        logical_feature_keys=logical_feature_keys,
                         quantization_metadata_path=metadata_path,
                     )
                 )
