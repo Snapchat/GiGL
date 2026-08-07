@@ -337,11 +337,11 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
                         const int32_t neighborHop = sourceState.minHop + 1;
-                        auto [residualStateIter, inserted] =
+                        auto [residualStateIter, createdResidualState] =
                             dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop});
                         auto& residualState = residualStateIter->second;
                         residualState.residual += residualPerNeighbor;
-                        if (!inserted && neighborHop < residualState.minHop) {
+                        if (!createdResidualState && neighborHop < residualState.minHop) {
                             residualState.minHop = neighborHop;
                         }
 

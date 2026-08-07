@@ -9,6 +9,11 @@
 
 namespace gigl {
 
+constexpr int32_t kTypedPPRBestScoreIndex = 0;
+constexpr int32_t kTypedPPRGlobalHopProximityIndex = 1;
+constexpr int32_t kTypedPPRNumGlobalFeatures = 2;     // best score + global hop proximity
+constexpr int32_t kTypedPPRNumPerChannelFeatures = 3; // score + hop proximity + presence
+
 // Owns the packed edge_attr layout used while merging typed PPR channels.
 //
 // Typed extraction first accumulates one dense feature vector per selected node,
@@ -39,7 +44,7 @@ public:
     }
 
     [[nodiscard]] int32_t numFeatures() const {
-        return kNumGlobalFeatures + (kNumPerChannelFeatures * _numChannels);
+        return kTypedPPRNumGlobalFeatures + (kTypedPPRNumPerChannelFeatures * _numChannels);
     }
 
     // New node feature vectors start empty. Scores, proximities, and presence
@@ -60,8 +65,8 @@ public:
         // Repeated observations keep the strongest score and closest proximity.
         // Current extraction emits at most one row per node per channel, but the
         // monotonic merge keeps this helper safe if that changes.
-        features[kBestScoreIndex] = std::max(features[kBestScoreIndex], score);
-        features[kGlobalHopProximityIndex] = std::max(features[kGlobalHopProximityIndex], hopProximity);
+        features[kTypedPPRBestScoreIndex] = std::max(features[kTypedPPRBestScoreIndex], score);
+        features[kTypedPPRGlobalHopProximityIndex] = std::max(features[kTypedPPRGlobalHopProximityIndex], hopProximity);
         features[channelScoreIndex(channelIndex)] = std::max(features[channelScoreIndex(channelIndex)], score);
         features[channelHopProximityIndex(channelIndex)] =
             std::max(features[channelHopProximityIndex(channelIndex)], hopProximity);
@@ -69,13 +74,8 @@ public:
     }
 
 private:
-    static constexpr int32_t kBestScoreIndex = 0;
-    static constexpr int32_t kGlobalHopProximityIndex = 1;
-    static constexpr int32_t kNumGlobalFeatures = 2;     // best score + global hop proximity
-    static constexpr int32_t kNumPerChannelFeatures = 3; // score + hop proximity + presence
-
     [[nodiscard]] int32_t channelBaseIndex(int32_t channelIndex) const {
-        return kNumGlobalFeatures + (kNumPerChannelFeatures * channelIndex);
+        return kTypedPPRNumGlobalFeatures + (kTypedPPRNumPerChannelFeatures * channelIndex);
     }
     [[nodiscard]] int32_t channelScoreIndex(int32_t channelIndex) const {
         return channelBaseIndex(channelIndex);
