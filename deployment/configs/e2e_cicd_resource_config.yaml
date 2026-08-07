@@ -33,11 +33,6 @@ preprocessor_config:
     max_num_workers: 128
     machine_type: "n2d-highmem-64"
     disk_size_gb: 300
-# n2 rather than n2d for both Dataproc stages: n2d stocks out in us-central1 often
-# enough to fail cluster creation, and every stockout costs a 20-minute retry.
-# Same vCPU and memory, so Spark parallelism and executor sizing are unchanged.
-# Local SSD rules out c3/c4 (their only local-SSD variants end in `-lssd`, which
-# NumCores.scala's trailing-digit regex cannot parse) and e2/n4 (no local SSD).
 subgraph_sampler_config:
   machine_type: "n2-highmem-16"
   num_local_ssds: 2
