@@ -1,6 +1,5 @@
 import asyncio
 from collections import defaultdict
-from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
@@ -48,16 +47,6 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     "to",
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
-
-
-@dataclass(frozen=True)
-class PPRNeighborFetch:
-    """One distributed neighbor-fetch result used by PPR and edge materialization."""
-
-    source_nodes: torch.Tensor
-    neighbors: torch.Tensor
-    neighbor_counts: torch.Tensor
-    edge_ids: Optional[torch.Tensor]
 
 
 PPRForwardPushFetchMap = dict[
@@ -403,7 +392,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     async def _batch_fetch_neighbors(
         self,
         nodes_by_edge_type_id: dict[int, torch.Tensor],
-    ) -> dict[int, PPRNeighborFetch]:
+    ) -> PPRForwardPushFetchMap:
         """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
         Issues one one-hop request per edge type in the frontier. Each node's
@@ -415,10 +404,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ``drain_queue()`` as CPU tensors; node IDs are already deduplicated.
 
         Returns:
-            Dict mapping edge type ID to fetched source nodes, flat neighbors,
-            per-source neighbor counts, and optional edge IDs. ``flat_neighbors``
-            is the flat concatenation of all neighbor lists for that edge type;
-            ``counts[i]`` is the neighbor count for ``node_ids[i]``.
+            Dict mapping edge type ID to ``(source_nodes, flat_neighbors,
+            counts, optional_edge_ids)``. ``flat_neighbors`` is the flat
+            concatenation of all neighbor lists for that edge type; ``counts[i]``
+            is the neighbor count for ``source_nodes[i]``.
 
         Example::
 
@@ -428,18 +417,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             }
             # Might return (neighbor lists depend on graph structure):
             {
-                2: PPRNeighborFetch(
-                    source_nodes=tensor([0, 3]),
-                    neighbors=tensor([5, 9, 2, 1]),
-                    neighbor_counts=tensor([3, 1]),
-                    edge_ids=None,
-                ),
-                5: PPRNeighborFetch(
-                    source_nodes=tensor([7]),
-                    neighbors=tensor([0, 3]),
-                    neighbor_counts=tensor([2]),
-                    edge_ids=None,
-                ),
+                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1]), None),
+                5: (tensor([7]), tensor([0, 3]), tensor([2]), None),
             }
         """
         edge_type_ids: list[int] = []
@@ -467,32 +446,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
         outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
         return {
-            edge_type_id: PPRNeighborFetch(
-                source_nodes=nodes_by_edge_type_id[edge_type_id],
-                neighbors=output.nbr,
-                neighbor_counts=output.nbr_num,
-                edge_ids=(
-                    output.edge
-                    if self._include_original_edges_in_ppr_subgraph
-                    else None
-                ),
+            edge_type_id: (
+                nodes_by_edge_type_id[edge_type_id],
+                output.nbr,
+                output.nbr_num,
+                output.edge if self._include_original_edges_in_ppr_subgraph else None,
             )
             for edge_type_id, output in zip(edge_type_ids, outputs)
-        }
-
-    @staticmethod
-    def _to_forward_push_fetch_map(
-        fetched_by_edge_type_id: dict[int, PPRNeighborFetch],
-    ) -> PPRForwardPushFetchMap:
-        """Convert fetched adjacency into the C++ PPR state input shape."""
-        return {
-            edge_type_id: (
-                fetch.source_nodes,
-                fetch.neighbors,
-                fetch.neighbor_counts,
-                fetch.edge_ids,
-            )
-            for edge_type_id, fetch in fetched_by_edge_type_id.items()
         }
 
     def _extract_ppr_state_top_k(
@@ -707,7 +667,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             await loop.run_in_executor(
                 None,
                 ppr_state.push_residuals,
-                self._to_forward_push_fetch_map(fetched_by_edge_type_id),
+                fetched_by_edge_type_id,
             )
 
         node_ids, weights, valid_counts = await loop.run_in_executor(
@@ -816,12 +776,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     strict=True,
                 ):
                     fetch_iteration_counts[channel_index] += 1
-                    fetched_by_channel[channel_index] = self._to_forward_push_fetch_map(
-                        {
-                            edge_type_id: union_fetched_by_edge_type_id[edge_type_id]
-                            for edge_type_id in edge_type_ids
-                        }
-                    )
+                    fetched_by_channel[channel_index] = {
+                        edge_type_id: union_fetched_by_edge_type_id[edge_type_id]
+                        for edge_type_id in edge_type_ids
+                    }
 
             # Push every non-converged channel. The fetched_by_channel entry is
             # empty for channels that have no new fetch work; PPRForwardPush will

@@ -30,6 +30,14 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
 }
 
 struct OriginalEdgeDedupeKey {
+    // Original-edge extraction merges cached adjacency from several PPR states
+    // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
+    // emitted-edge level rather than skipping a whole cached row.
+    //
+    // When edge IDs are cached, the edge ID is the strongest identity: two
+    // parallel edges with the same (type, src, dst) but different edge IDs should
+    // both be emitted. When edge IDs are unavailable, fall back to the structural
+    // identity (edge type, source node, destination node).
     int32_t edgeTypeId;
     int64_t edgeId;
     int32_t sourceNodeId;
@@ -48,6 +56,9 @@ struct OriginalEdgeDedupeKey {
 };
 
 struct OriginalEdgeDedupeKeyHash {
+    // Must match OriginalEdgeDedupeKey::operator==: edge-ID mode hashes only the
+    // edge type and edge ID, while structural mode hashes edge type plus
+    // endpoints. Including hasEdgeId keeps those two identity modes disjoint.
     size_t operator()(const OriginalEdgeDedupeKey& key) const {
         size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
         auto combine = [&seed](size_t value) { seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2); };
@@ -436,12 +447,6 @@ static std::vector<std::unordered_map<int32_t, int64_t>> buildSelectedLocalIdsBy
         }
     }
     return selectedLocalIdsByNodeType;
-}
-
-OriginalEdgeExtractResult PPRForwardPush::extractOriginalEdgesFromCache(
-    const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId, bool includeEdgeIds) const {
-    return extractOriginalEdgesFromPPRCaches(
-        std::vector<const PPRForwardPush*>{this}, selectedNodeIdsByNodeTypeId, includeEdgeIds);
 }
 
 OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(

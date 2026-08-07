@@ -106,12 +106,6 @@ public:
     // Push residuals given fetched neighbor data.
     void pushResiduals(const NeighborFetchMap& fetchedByEtypeId);
 
-    // Return original graph edges from fetched adjacency whose endpoints are
-    // both in the selected node set. The rows/cols are local indices into the
-    // selected node tensors supplied by node type ID.
-    OriginalEdgeExtractResult extractOriginalEdgesFromCache(
-        const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId, bool includeEdgeIds) const;
-
     // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
     //
     // Residual top-up does not issue new neighbor fetches.  It only reads the
