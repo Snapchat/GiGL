@@ -970,6 +970,48 @@ class WithEdgeDerivationTest(TestCase):
         self.assertTrue(holder["edge_ids_absent"])
 
 
+class SamplingSeedTest(TestCase):
+    """Covers the sampling seed that ``create_sampling_config`` puts on ``SamplingConfig``.
+
+    An unset seed stays unset here and is drawn per worker in ``create_dist_sampler``.
+    Drawing it here instead would make the config differ per rank, which Graph Store mode
+    rejects when several ranks register on one shared sampling backend.
+    """
+
+    @staticmethod
+    def _schema() -> DatasetSchema:
+        return DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=None,
+            edge_dir="out",
+        )
+
+    def test_seed_defaults_to_none(self) -> None:
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=self._schema()
+        )
+        self.assertIsNone(config.seed)
+
+    def test_explicit_seed_is_used_verbatim(self) -> None:
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=self._schema(), seed=123456789
+        )
+        self.assertEqual(config.seed, 123456789)
+
+    def test_independent_calls_produce_equal_configs(self) -> None:
+        """Each rank builds its own config, and Graph Store compares them for equality."""
+        schema = self._schema()
+        first = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        second = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema
+        )
+        self.assertEqual(first, second)
+
+
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess
 # producer, which spawns worker subprocesses with a *fresh* interpreter
 # (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
