@@ -104,25 +104,24 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     **Homogeneous (Data):**
         - ``data.edge_index``: ``[2, N]`` int64 — row 0 is local seed indices,
           row 1 is local neighbor indices.
-        - ``data.edge_attr``: ``[N, 2]`` float — ``[ppr_score, min_hop]`` for
-          each pair. ``min_hop`` is emitted as ``0`` for the anchor, ``1``
-          for 1-hop, ``2`` for 2-hop, and so on.
+        - ``data.edge_attr``: ``[N, 2]`` float — ``[ppr_score, hop_proximity]``
+          for each pair. ``hop_proximity`` is ``1 / (1 + hop)``: ``1.0`` for
+          the anchor, ``0.5`` for 1-hop, and so on.
 
     **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", neighbor_type)].edge_index``: same format as above.
         - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``:
-          ``[ppr_score, min_hop]`` for regular PPR. For typed PPR, edge attrs
-          are multi-column:
-          ``[best_score, min_hop, channel_scores..., channel_hop_proximities...,
+          ``[ppr_score, hop_proximity]`` for regular PPR. For typed PPR, edge
+          attrs are multi-column:
+          ``[best_score, hop_proximity, channel_scores..., channel_hop_proximities...,
           channel_presence_bits...]``.
           Scores use the same PPR mass scale as regular PPR output.
           Channel columns follow the insertion order of
           ``typed_channel_ratios``. Column 0 is the scalar best score for
           consumers that need a single PPR weight, and column 1 is always the
-          global minimum-hop count. Per-channel hop proximity is
-          ``1 / (1 + min_hop)`` when that channel reached the node, and ``0``
-          when it did not.
+          global hop proximity. Per-channel hop proximity is ``1 / (1 + hop)``
+          when that channel reached the node, and ``0`` when it did not.
           For present channels, the original hop count can be recovered as
           ``(1 - proximity) / proximity``; use the presence bit before applying
           this inverse because missing channels have proximity ``0``.
@@ -568,7 +567,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
               score, concatenated across seeds.  For batch of size ``B`` with
               ``C_i`` neighbors for seed ``i``, shape is
               ``[sum(C_0, ..., C_{B-1})]``.
-            - ``flat_edge_attrs``: ``[ppr_score, min_hop]`` rows
+            - ``flat_edge_attrs``: ``[ppr_score, hop_proximity]`` rows
               corresponding to each entry in ``flat_neighbor_ids``, shape
               ``[sum(C_0, ..., C_{B-1}), 2]``.
             - ``valid_counts``: number of PPR neighbors contributed by each
@@ -580,7 +579,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
             # 4 seeds, valid_counts = [1, 3, 2, 0]  →  6 total (seed, neighbor) pairs
             flat_neighbor_ids = tensor([d0, d1a, d1b, d1c, d2a, d2b])
-            flat_edge_attrs   = tensor([[w0, h0], [w1a, h1a], ..., [w2b, h2b]])
+            flat_edge_attrs   = tensor([[w0, p0], [w1a, p1a], ..., [w2b, p2b]])
             valid_counts      = tensor([1, 3, 2, 0])
         """
         if seed_node_type is None:

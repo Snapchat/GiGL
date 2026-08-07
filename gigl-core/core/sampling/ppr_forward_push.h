@@ -117,8 +117,8 @@ public:
     // maxPPRNodes is the final per-seed cap across finalized PPR and residual
     // top-up candidates.
     //
-    // Edge attributes are emitted as [ppr_score, min_hop], where min_hop is the
-    // minimum discovered-hop count: 0=anchor, 1=1-hop, 2=2-hop, and so on.
+    // Edge attributes are emitted as [ppr_score, hop_proximity], where
+    // hop_proximity = 1 / (1 + hop): anchor=1.0, 1-hop=0.5, and so on.
     PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp);
 
     friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
@@ -216,10 +216,10 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // extractTopKWithResidualTopUp:
 //   ids: int64 node IDs, flattened across seeds.
 //   weights: double feature matrix with columns
-//            [best_score, min_hop, per-channel scores...,
+//            [best_score, hop_proximity, per-channel scores...,
 //             per-channel hop proximities..., presence bits...].
-//            Per-channel hop proximity is 1 / (1 + min_hop) when that channel
-//            reached the selected node, and 0 when it did not.
+//            Hop proximity is 1 / (1 + hop). Per-channel proximity is 0 when
+//            that channel did not reach the selected node.
 //            For present channels, the original hop count can be recovered as
 //            (1 - proximity) / proximity; use the presence bit before applying
 //            this inverse because missing channels have proximity 0.

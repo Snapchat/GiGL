@@ -85,7 +85,7 @@ TEST(PPRForwardPush, PprScoreAbsorbsAlpha) {
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     ASSERT_EQ(weights.size(1), 2);
     EXPECT_NEAR(weights[0][0].item<float>(), static_cast<float>(alpha), 1e-5F);
-    EXPECT_NEAR(weights[0][1].item<float>(), 0.0F, 1e-5F);
+    EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F);
 }
 
 // Node 0 (degree 1) pushes (1-alpha)*alpha residual to node 1 (sink).
@@ -111,9 +111,9 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     EXPECT_EQ(ids[1].item<int64_t>(), 1);
     ASSERT_EQ(weights.size(1), 2);
     EXPECT_NEAR(weights[0][0].item<float>(), static_cast<float>(alpha), 1e-5F);
-    EXPECT_NEAR(weights[0][1].item<float>(), 0.0F, 1e-5F);
+    EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F);
     EXPECT_NEAR(weights[1][0].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5F);
-    EXPECT_NEAR(weights[1][1].item<float>(), 1.0F, 1e-5F);
+    EXPECT_NEAR(weights[1][1].item<float>(), 0.5F, 1e-5F);
 }
 
 // Once a (node, edge type) neighbor list is fetched, it should be cached for the
@@ -208,7 +208,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
 
     auto featureAccessor = features.accessor<double, 2>();
     EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
@@ -217,7 +217,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 0.5, 1e-9);
@@ -226,7 +226,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     EXPECT_NEAR(featureAccessor[1][7], 0.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[2][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][1], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[2][1], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[2][2], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[2][3], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[2][4], 0.0, 1e-9);
@@ -258,7 +258,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
 
     auto featureAccessor = features.accessor<double, 2>();
     EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
@@ -267,7 +267,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
 
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
@@ -297,12 +297,12 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
 
     auto featureAccessor = features.accessor<double, 2>();
     EXPECT_NEAR(featureAccessor[0][0], 0.625, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 0.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][2], 0.625, 1e-9);
     EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
     EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 1.0, 1e-9);
+    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
     EXPECT_NEAR(featureAccessor[1][3], 0.5, 1e-9);
     EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
@@ -401,7 +401,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     ASSERT_EQ(weights.size(1), 2);
     EXPECT_NEAR(weights[0][0].item<float>(), static_cast<float>(alpha), 1e-5F);
-    EXPECT_NEAR(weights[0][1].item<float>(), 0.0F, 1e-5F);
+    EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F);
 
     std::unordered_map<int64_t, float> residualWeights;
     residualWeights[ids[1].item<int64_t>()] = weights[1][0].item<float>();
@@ -440,19 +440,19 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpSortsSelectedResultsByScore) {
     }
 
     std::unordered_map<int64_t, float> weightsByNodeId;
-    std::unordered_map<int64_t, float> hopsByNodeId;
+    std::unordered_map<int64_t, float> proximitiesByNodeId;
     for (int64_t index = 0; index < counts[0].item<int64_t>(); ++index) {
         weightsByNodeId[ids[index].item<int64_t>()] = weights[index][0].item<float>();
-        hopsByNodeId[ids[index].item<int64_t>()] = weights[index][1].item<float>();
+        proximitiesByNodeId[ids[index].item<int64_t>()] = weights[index][1].item<float>();
     }
     EXPECT_NEAR(weightsByNodeId[0], static_cast<float>(alpha), 1e-5F);
     EXPECT_NEAR(weightsByNodeId[1], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
     EXPECT_NEAR(weightsByNodeId[2], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
     EXPECT_NEAR(weightsByNodeId[3], static_cast<float>((1.0 - alpha) * (1.0 - alpha) * alpha / 2.0), 1e-5F);
-    EXPECT_NEAR(hopsByNodeId[0], 0.0F, 1e-5F);
-    EXPECT_NEAR(hopsByNodeId[1], 1.0F, 1e-5F);
-    EXPECT_NEAR(hopsByNodeId[2], 1.0F, 1e-5F);
-    EXPECT_NEAR(hopsByNodeId[3], 2.0F, 1e-5F);
+    EXPECT_NEAR(proximitiesByNodeId[0], 1.0F, 1e-5F);
+    EXPECT_NEAR(proximitiesByNodeId[1], 0.5F, 1e-5F);
+    EXPECT_NEAR(proximitiesByNodeId[2], 0.5F, 1e-5F);
+    EXPECT_NEAR(proximitiesByNodeId[3], 1.0F / 3.0F, 1e-5F);
 }
 
 // maxPPRNodes is the total output cap across finalized PPR and residual top-up
@@ -473,7 +473,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpUsesMaxPPRNodesAsTotalCap) {
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     ASSERT_EQ(weights.size(1), 2);
     EXPECT_NEAR(weights[0][0].item<float>(), static_cast<float>(alpha), 1e-5F);
-    EXPECT_NEAR(weights[0][1].item<float>(), 0.0F, 1e-5F);
+    EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F);
 }
 
 TEST(PPRForwardPush, ExtractTopKWithResidualTopUpRejectsNegativeMaxPPRNodes) {

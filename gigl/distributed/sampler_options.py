@@ -41,16 +41,16 @@ class PPRSamplerOptions:
 
     - ``edge_index``: ``[2, N]`` int64 — row 0 is local seed indices, row 1 is local
       neighbor indices.
-    - ``edge_attr``: ``[N, 2]`` float — PPR score and minimum discovered-hop
-      count for each (seed, neighbor) pair: ``[ppr_score, min_hop]``.
-      ``min_hop`` is emitted as ``0`` for the anchor, ``1`` for 1-hop, ``2``
-      for 2-hop, and so on.
+    - ``edge_attr``: ``[N, 2]`` float — PPR score and hop proximity for each
+      (seed, neighbor) pair: ``[ppr_score, hop_proximity]``.
+      ``hop_proximity`` is ``1 / (1 + hop)``: ``1.0`` for the anchor, ``0.5``
+      for 1-hop, and so on.
       Typed PPR emits additional channel columns:
-      ``[best_score, min_hop, channel_scores..., channel_hop_proximities...,
+      ``[best_score, hop_proximity, channel_scores..., channel_hop_proximities...,
       channel_presence_bits...]``.
       Column 0 is the scalar best score for consumers that need a single PPR
-      weight, and column 1 is always the global minimum-hop count.
-      Per-channel hop proximity is ``1 / (1 + min_hop)`` when that channel
+      weight, and column 1 is always the global hop proximity.
+      Per-channel hop proximity is ``1 / (1 + hop)`` when that channel
       reached the node, and ``0`` when it did not.
       For present channels, the original hop count can be recovered as
       ``(1 - proximity) / proximity``; use the presence bit before applying

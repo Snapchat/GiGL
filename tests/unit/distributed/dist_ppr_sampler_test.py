@@ -252,9 +252,9 @@ def _extract_hetero_ppr_scores(
         assert ppr_edge_attr.size(1) == 2
         assert ppr_edge_index.size(1) == ppr_edge_attr.size(0)
         ppr_weights = ppr_edge_attr[:, 0]
-        ppr_hops = ppr_edge_attr[:, 1]
+        ppr_hop_proximities = ppr_edge_attr[:, 1]
         assert (ppr_weights > 0).all(), f"PPR weights for {ntype} must be positive"
-        _assert_valid_min_hops(ppr_hops)
+        _assert_valid_hop_proximities(ppr_hop_proximities)
         assert (ppr_edge_index[0] == 0).all(), (
             "All src indices must be 0 for batch_size=1"
         )
@@ -270,10 +270,12 @@ def _extract_hetero_ppr_scores(
     return ntype_to_sampler_ppr
 
 
-def _assert_valid_min_hops(min_hops: torch.Tensor) -> None:
-    """Assert PPR min-hop features are emitted as non-negative hop counts."""
-    assert (min_hops >= 0).all()
-    assert torch.allclose(min_hops, min_hops.round())
+def _assert_valid_hop_proximities(hop_proximities: torch.Tensor) -> None:
+    """Assert PPR hop proximity is bounded and invertible for emitted rows."""
+    assert (hop_proximities > 0).all()
+    assert (hop_proximities <= 1).all()
+    recovered_hops = (1 - hop_proximities) / hop_proximities
+    assert torch.allclose(recovered_hops, recovered_hops.round())
 
 
 def _assert_typed_channel_hop_proximities(
@@ -361,7 +363,7 @@ def _assert_typed_ppr_edge_attrs(
             continue
 
         best_scores = ppr_edge_attr[:, 0]
-        min_hops = ppr_edge_attr[:, 1]
+        hop_proximities = ppr_edge_attr[:, 1]
         channel_scores = ppr_edge_attr[:, 2 : 2 + num_channels]
         channel_hop_proximities = ppr_edge_attr[
             :, 2 + num_channels : 2 + (2 * num_channels)
@@ -369,7 +371,7 @@ def _assert_typed_ppr_edge_attrs(
         channel_presence = ppr_edge_attr[:, 2 + (2 * num_channels) :]
         assert (best_scores >= 0).all()
         assert (best_scores <= 1).all()
-        _assert_valid_min_hops(min_hops)
+        _assert_valid_hop_proximities(hop_proximities)
         assert (channel_scores >= 0).all()
         assert (channel_scores <= 1).all()
         _assert_typed_channel_hop_proximities(channel_hop_proximities, channel_presence)
@@ -443,9 +445,9 @@ def _run_ppr_loader_correctness_check(
             f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_edge_attr.size(0)}"
         )
         ppr_weights = ppr_edge_attr[:, 0]
-        ppr_hops = ppr_edge_attr[:, 1]
+        ppr_hop_proximities = ppr_edge_attr[:, 1]
         assert (ppr_weights > 0).all(), "PPR weights must be positive"
-        _assert_valid_min_hops(ppr_hops)
+        _assert_valid_hop_proximities(ppr_hop_proximities)
         assert (ppr_edge_index[0] == 0).all(), (
             "All src indices must be 0 for batch_size=1"
         )
@@ -749,9 +751,9 @@ def _run_ppr_ablp_loader_correctness_check(
             assert ppr_edge_index.size(1) == ppr_edge_attr.size(0)
             if ppr_edge_attr.numel() > 0:
                 ppr_weights = ppr_edge_attr[:, 0]
-                ppr_hops = ppr_edge_attr[:, 1]
+                ppr_hop_proximities = ppr_edge_attr[:, 1]
                 assert (ppr_weights > 0).all()
-                _assert_valid_min_hops(ppr_hops)
+                _assert_valid_hop_proximities(ppr_hop_proximities)
             assert (ppr_edge_index[1] >= 0).all()
             assert (ppr_edge_index[1] < datum[ntype].node.size(0)).all()
 
