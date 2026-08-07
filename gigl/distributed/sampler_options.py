@@ -34,10 +34,11 @@ class KHopNeighborSamplerOptions:
 class PPRSamplerOptions:
     """Sampler options for PPR-based neighbor sampling using DistPPRNeighborSampler.
 
-    **Output format:** When this sampler is active, each output Data/HeteroData batch
-    contains *only* PPR edges — no message-passing edges from the original graph are
-    included.  For each ``(seed_type, neighbor_type)`` pair reachable via PPR walks,
-    the batch will have an edge type ``(seed_type, "ppr", neighbor_type)`` with:
+    **Output format:** By default, each output Data/HeteroData batch contains
+    *only* virtual PPR edges — no message-passing edges from the original graph
+    are included. For each ``(seed_type, neighbor_type)`` pair reachable via PPR
+    walks, the batch will have an edge type ``(seed_type, "ppr", neighbor_type)``
+    with:
 
     - ``edge_index``: ``[2, N]`` int64 — row 0 is local seed indices, row 1 is local
       neighbor indices.
@@ -128,6 +129,27 @@ class PPRSamplerOptions:
             same mass scale as finalized PPR scores: ``ppr_score + residual``.
             Residual candidates follow the same channel targets as finalized
             PPR candidates.
+        include_original_edges_in_ppr_subgraph: Whether heterogeneous PPR output
+            batches should also include original graph edge types already fetched
+            during PPR traversal whose endpoints are both in the PPR-selected node
+            set. This gives downstream models a local typed-edge view over the
+            selected nodes while keeping the PPR budget as the node-selection
+            boundary and avoiding a second graph-store sampling pass. This is a
+            preserved-fetched-edge view, not a post-hoc induced subgraph over
+            every selected node: if a residual/top-up node was selected but never
+            expanded as a source during PPR, that node contributes no original
+            source edges, and if ``num_neighbors_per_hop`` capped a high-degree
+            adjacency row, only the fetched sampled neighbors from that capped
+            row can be emitted. Original edges are emitted through GLT's regular
+            sampled-edge channel, so
+            their final HeteroData edge orientation follows the same ``edge_dir``
+            convention as k-hop sampling. Homogeneous PPR keeps the default
+            PPR-only output because ``Data`` cannot represent virtual PPR and
+            original edges as separate edge types. The default ``False`` path is
+            also more faithful to PyG's ``get_ppr`` API, which returns virtual
+            seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
+            an induced message-passing subgraph:
+            https://pytorch-geometric.readthedocs.io/en/2.5.3/_modules/torch_geometric/utils/ppr.html
     """
 
     alpha: float = 0.5
@@ -137,6 +159,7 @@ class PPRSamplerOptions:
     num_neighbors_per_hop: int = 1_000
     max_fetch_iterations: Optional[int] = None
     typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None
+    include_original_edges_in_ppr_subgraph: bool = False
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

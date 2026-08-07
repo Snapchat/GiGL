@@ -16,7 +16,11 @@ class PPRForwardPush:
     def drain_queue(self) -> dict[int, torch.Tensor] | None: ...
     def push_residuals(
         self,
-        fetched_by_etype_id: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        fetched_by_etype_id: dict[
+            int,
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None],
+        ],
     ) -> None: ...
     def extract_top_k_with_residual_top_up(
         self,
@@ -34,3 +38,8 @@ def extract_typed_top_k_with_residual_top_up(
     channel_target_counts: Sequence[int],
     enable_residual_topup: bool,
 ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+def extract_original_edges_from_ppr_caches(
+    states: Sequence[PPRForwardPush],
+    selected_node_ids_by_node_type_id: dict[int, torch.Tensor],
+    include_edge_ids: bool,
+) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]]: ...

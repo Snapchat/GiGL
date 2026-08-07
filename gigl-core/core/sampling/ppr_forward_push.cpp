@@ -21,6 +21,58 @@ static uint64_t packKey(int32_t nodeId, int32_t edgeTypeId) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(nodeId)) << 32) | static_cast<uint32_t>(edgeTypeId);
 }
 
+static int32_t unpackNodeId(uint64_t key) {
+    return static_cast<int32_t>(static_cast<uint32_t>(key >> 32));
+}
+
+static int32_t unpackEdgeTypeId(uint64_t key) {
+    return static_cast<int32_t>(static_cast<uint32_t>(key));
+}
+
+struct OriginalEdgeDedupeKey {
+    // Original-edge extraction merges cached adjacency from several PPR states
+    // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
+    // emitted-edge level rather than skipping a whole cached row.
+    //
+    // When edge IDs are cached, the edge ID is the strongest identity: two
+    // parallel edges with the same (type, src, dst) but different edge IDs should
+    // both be emitted. When edge IDs are unavailable, fall back to the structural
+    // identity (edge type, source node, destination node).
+    int32_t edgeTypeId;
+    int64_t edgeId;
+    int32_t sourceNodeId;
+    int32_t destinationNodeId;
+    bool hasEdgeId;
+
+    bool operator==(const OriginalEdgeDedupeKey& other) const {
+        if (edgeTypeId != other.edgeTypeId || hasEdgeId != other.hasEdgeId) {
+            return false;
+        }
+        if (hasEdgeId) {
+            return edgeId == other.edgeId;
+        }
+        return sourceNodeId == other.sourceNodeId && destinationNodeId == other.destinationNodeId;
+    }
+};
+
+struct OriginalEdgeDedupeKeyHash {
+    // Must match OriginalEdgeDedupeKey::operator==: edge-ID mode hashes only the
+    // edge type and edge ID, while structural mode hashes edge type plus
+    // endpoints. Including hasEdgeId keeps those two identity modes disjoint.
+    size_t operator()(const OriginalEdgeDedupeKey& key) const {
+        size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
+        auto combine = [&seed](size_t value) { seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2); };
+        combine(std::hash<bool>{}(key.hasEdgeId));
+        if (key.hasEdgeId) {
+            combine(std::hash<int64_t>{}(key.edgeId));
+        } else {
+            combine(std::hash<int32_t>{}(key.sourceNodeId));
+            combine(std::hash<int32_t>{}(key.destinationNodeId));
+        }
+        return seed;
+    }
+};
+
 PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                                int32_t seedNodeTypeId,
                                double alpha,
@@ -45,6 +97,7 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
     TORCH_CHECK(
         seedNodeTypeId < _numNodeTypes, "seedNodeTypeId ", seedNodeTypeId, " out of range [0, ", _numNodeTypes, ").");
     auto numEdgeTypes = static_cast<int32_t>(_edgeTypeToDstNtypeId.size());
+    _edgeTypeToSrcNtypeId.assign(static_cast<size_t>(numEdgeTypes), -1);
     for (int32_t edgeTypeId = 0; edgeTypeId < numEdgeTypes; ++edgeTypeId) {
         int32_t dstNodeTypeId = _edgeTypeToDstNtypeId[edgeTypeId];
         TORCH_CHECK(dstNodeTypeId >= 0, "edgeTypeToDstNtypeId[", edgeTypeId, "] = ", dstNodeTypeId, " is negative.");
@@ -73,9 +126,13 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                         " out of range [0, ",
                         numEdgeTypes,
                         ").");
+            TORCH_CHECK(_edgeTypeToSrcNtypeId[edgeTypeId] == -1 || _edgeTypeToSrcNtypeId[edgeTypeId] == nodeTypeId,
+                        "edge type id ",
+                        edgeTypeId,
+                        " is assigned to multiple source node types.");
+            _edgeTypeToSrcNtypeId[edgeTypeId] = nodeTypeId;
         }
     }
-
     // Allocate per-seed, per-node-type state.
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
@@ -238,12 +295,27 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
         const auto& nodeIdsTensor = std::get<0>(neighborTensors);
         const auto& flatNeighborIdsTensor = std::get<1>(neighborTensors);
         const auto& countsTensor = std::get<2>(neighborTensors);
+        const auto& edgeIdsTensor = std::get<3>(neighborTensors);
+
+        if (edgeIdsTensor.has_value()) {
+            TORCH_CHECK(edgeIdsTensor->dim() == 1, "edge_ids must be 1D.");
+            TORCH_CHECK(edgeIdsTensor->size(0) == flatNeighborIdsTensor.size(0),
+                        "edge_ids size ",
+                        edgeIdsTensor->size(0),
+                        " must match flat neighbor size ",
+                        flatNeighborIdsTensor.size(0),
+                        ".");
+        }
 
         // accessor<int64_t, 1>() gives a bounds-checked, typed 1-D view into
         // each tensor's data — equivalent to iterating over a NumPy array.
         auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
         auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
         auto countsAccessor = countsTensor.accessor<int64_t, 1>();
+        std::optional<torch::TensorAccessor<int64_t, 1>> edgeIdsAccessor = std::nullopt;
+        if (edgeIdsTensor.has_value()) {
+            edgeIdsAccessor = edgeIdsTensor->accessor<int64_t, 1>();
+        }
 
         // Walk the flat neighbor list, slicing out each node's neighbors using
         // the running offset into the concatenated flat buffer.
@@ -252,12 +324,19 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
             auto nodeId = static_cast<int32_t>(nodeIdsAccessor[nodeIdx]);
             int64_t count = countsAccessor[nodeIdx];
             std::vector<int32_t> neighborIds(count);
+            std::optional<std::vector<int64_t>> edgeIds = std::nullopt;
+            if (edgeIdsAccessor.has_value()) {
+                edgeIds = std::vector<int64_t>(static_cast<size_t>(count));
+            }
             for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
                 neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
+                if (edgeIds.has_value()) {
+                    (*edgeIds)[static_cast<size_t>(neighborIdx)] = (*edgeIdsAccessor)[offset + neighborIdx];
+                }
             }
             uint64_t cacheKey = packKey(nodeId, edgeTypeId);
             if (_neighborCache.find(cacheKey) == _neighborCache.end()) {
-                _neighborCache.emplace(cacheKey, std::move(neighborIds));
+                _neighborCache.emplace(cacheKey, CachedNeighborList{std::move(neighborIds), std::move(edgeIds)});
             }
             offset += count;
         }
@@ -292,7 +371,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
                     auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
                     if (cachedEntry != _neighborCache.end()) {
-                        totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.size());
+                        totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.neighborIds.size());
                     }
                 }
                 // Two cases reach here:
@@ -318,7 +397,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
                     auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
                     if (cachedEntry != _neighborCache.end()) {
-                        neighborList = std::cref(cachedEntry->second);
+                        neighborList = std::cref(cachedEntry->second.neighborIds);
                     }
                     if (!neighborList || neighborList->get().empty()) {
                         continue;
@@ -345,6 +424,158 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
             }
         }
     }
+}
+
+static std::vector<std::unordered_map<int32_t, int64_t>> buildSelectedLocalIdsByNodeType(
+    const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId, int32_t numNodeTypes) {
+    std::vector<std::unordered_map<int32_t, int64_t>> selectedLocalIdsByNodeType(static_cast<size_t>(numNodeTypes));
+    for (const auto& [nodeTypeId, selectedNodeIds] : selectedNodeIdsByNodeTypeId) {
+        TORCH_CHECK(
+            nodeTypeId >= 0, "selected node type id ", nodeTypeId, " is negative, which indicates a sampler bug.");
+        TORCH_CHECK(nodeTypeId < numNodeTypes,
+                    "selected node type id ",
+                    nodeTypeId,
+                    " is out of range [0, ",
+                    numNodeTypes,
+                    ").");
+        TORCH_CHECK(selectedNodeIds.dim() == 1, "selected node ids must be 1D.");
+        auto& selectedLocalIds = selectedLocalIdsByNodeType[static_cast<size_t>(nodeTypeId)];
+        selectedLocalIds.reserve(static_cast<size_t>(selectedNodeIds.size(0)));
+        auto selectedNodeIdsAccessor = selectedNodeIds.accessor<int64_t, 1>();
+        for (int64_t localNodeIndex = 0; localNodeIndex < selectedNodeIds.size(0); ++localNodeIndex) {
+            selectedLocalIds.emplace(static_cast<int32_t>(selectedNodeIdsAccessor[localNodeIndex]), localNodeIndex);
+        }
+    }
+    return selectedLocalIdsByNodeType;
+}
+
+OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+    const std::vector<const PPRForwardPush*>& states,
+    const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+    bool includeEdgeIds) {
+    TORCH_CHECK(!states.empty(), "extractOriginalEdgesFromPPRCaches requires at least one PPR state.");
+
+    // All states are expected to come from the same sampler invocation. Typed
+    // PPR creates one state per traversal channel, so verify that those channels
+    // agree on the compact node/edge-type IDs before merging their caches.
+    const auto* firstState = states.front();
+    int32_t numNodeTypes = firstState->_numNodeTypes;
+    const auto& edgeTypeToDestinationNodeTypeId = firstState->_edgeTypeToDstNtypeId;
+
+    for (const auto* state : states) {
+        TORCH_CHECK(state != nullptr, "extractOriginalEdgesFromPPRCaches received a null PPR state.");
+        TORCH_CHECK(state->_numNodeTypes == numNodeTypes,
+                    "All PPR states must share the same node type schema for original-edge extraction.");
+        TORCH_CHECK(state->_edgeTypeToDstNtypeId == edgeTypeToDestinationNodeTypeId,
+                    "All PPR states must share the same edge destination-type schema for original-edge extraction.");
+    }
+
+    // Convert each selected global node ID to its local HeteroData index. The
+    // output rows/cols are local indices, while the cache stores global IDs.
+    auto selectedLocalIdsByNodeType = buildSelectedLocalIdsByNodeType(selectedNodeIdsByNodeTypeId, numNodeTypes);
+
+    std::unordered_map<int32_t, std::vector<int64_t>> rowsByEdgeType;
+    std::unordered_map<int32_t, std::vector<int64_t>> colsByEdgeType;
+    std::unordered_map<int32_t, std::vector<int64_t>> edgeIdsByEdgeType;
+    std::unordered_set<OriginalEdgeDedupeKey, OriginalEdgeDedupeKeyHash> emittedEdges;
+
+    for (const auto* state : states) {
+        for (const auto& [cacheKey, cachedNeighbors] : state->_neighborCache) {
+            // The cache is keyed by (source node, edge type). Reconstruct the
+            // source and destination node types so we can filter against the
+            // selected node set for each endpoint type.
+            int32_t sourceNodeId = unpackNodeId(cacheKey);
+            int32_t edgeTypeId = unpackEdgeTypeId(cacheKey);
+            const auto& stateEdgeTypeToSourceNodeTypeId = state->_edgeTypeToSrcNtypeId;
+            TORCH_CHECK(edgeTypeId >= 0 && edgeTypeId < static_cast<int32_t>(stateEdgeTypeToSourceNodeTypeId.size()),
+                        "Cached edge type id ",
+                        edgeTypeId,
+                        " is out of range for original-edge extraction.");
+
+            int32_t sourceNodeTypeId = stateEdgeTypeToSourceNodeTypeId[static_cast<size_t>(edgeTypeId)];
+            int32_t destinationNodeTypeId = edgeTypeToDestinationNodeTypeId[static_cast<size_t>(edgeTypeId)];
+            TORCH_CHECK(sourceNodeTypeId >= 0,
+                        "Cached edge type id ",
+                        edgeTypeId,
+                        " has no source node type for original-edge extraction.");
+            const auto& selectedSourceLocalIds = selectedLocalIdsByNodeType[static_cast<size_t>(sourceNodeTypeId)];
+            const auto& selectedDestinationLocalIds =
+                selectedLocalIdsByNodeType[static_cast<size_t>(destinationNodeTypeId)];
+
+            auto sourceLocalIter = selectedSourceLocalIds.find(sourceNodeId);
+            if (sourceLocalIter == selectedSourceLocalIds.end() || selectedDestinationLocalIds.empty()) {
+                // Preserve only edges whose endpoints are both in the final
+                // PPR-selected node set. A cached row for an unselected source
+                // can still exist because it was expanded before top-k pruning.
+                continue;
+            }
+
+            if (includeEdgeIds) {
+                // Edge IDs are optional cache payload. If the Python caller
+                // asks us to preserve them, every cached neighbor in this row
+                // must have the corresponding edge ID.
+                TORCH_CHECK(cachedNeighbors.edgeIds.has_value(),
+                            "Original edge ids are required but were not cached for edge type id ",
+                            edgeTypeId,
+                            ".");
+                TORCH_CHECK(cachedNeighbors.edgeIds->size() == cachedNeighbors.neighborIds.size(),
+                            "Cached edge ids do not align with cached neighbors for edge type id ",
+                            edgeTypeId,
+                            ".");
+            }
+
+            auto& rows = rowsByEdgeType[edgeTypeId];
+            auto& cols = colsByEdgeType[edgeTypeId];
+            for (size_t neighborIndex = 0; neighborIndex < cachedNeighbors.neighborIds.size(); ++neighborIndex) {
+                int32_t destinationNodeId = cachedNeighbors.neighborIds[neighborIndex];
+                auto destinationLocalIter = selectedDestinationLocalIds.find(destinationNodeId);
+                if (destinationLocalIter == selectedDestinationLocalIds.end()) {
+                    // This is the edge-level endpoint filter: the source row was
+                    // fetched, but this particular neighbor may not be part of
+                    // the selected PPR output nodes.
+                    continue;
+                }
+
+                // Multiple typed PPR states can fetch overlapping adjacency, so
+                // dedupe after endpoint filtering and before appending output.
+                // This keeps distinct fetched neighbors from the same row while
+                // avoiding duplicate emitted edges across states.
+                OriginalEdgeDedupeKey dedupeKey{
+                    edgeTypeId,
+                    includeEdgeIds ? cachedNeighbors.edgeIds->at(neighborIndex) : 0,
+                    sourceNodeId,
+                    destinationNodeId,
+                    includeEdgeIds,
+                };
+                if (!emittedEdges.insert(dedupeKey).second) {
+                    continue;
+                }
+
+                rows.push_back(sourceLocalIter->second);
+                cols.push_back(destinationLocalIter->second);
+                if (includeEdgeIds) {
+                    edgeIdsByEdgeType[edgeTypeId].push_back(cachedNeighbors.edgeIds->at(neighborIndex));
+                }
+            }
+        }
+    }
+
+    OriginalEdgeExtractResult result;
+    for (const auto& [edgeTypeId, rows] : rowsByEdgeType) {
+        if (rows.empty()) {
+            continue;
+        }
+        // Materialize one tensor tuple per original edge type. These tensors are
+        // handed back to Python and then attached through GLT's normal
+        // HeteroSamplerOutput row/col/edge channels.
+        const auto& cols = colsByEdgeType.at(edgeTypeId);
+        std::optional<torch::Tensor> edgeIds = std::nullopt;
+        if (includeEdgeIds) {
+            edgeIds = torch::tensor(edgeIdsByEdgeType.at(edgeTypeId), torch::kLong);
+        }
+        result[edgeTypeId] = {torch::tensor(rows, torch::kLong), torch::tensor(cols, torch::kLong), edgeIds};
+    }
+    return result;
 }
 
 // Helper function for selecting one seed/node-type's finalized PPR rows.
