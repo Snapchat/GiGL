@@ -455,6 +455,9 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     bool includeEdgeIds) {
     TORCH_CHECK(!states.empty(), "extractOriginalEdgesFromPPRCaches requires at least one PPR state.");
 
+    // All states are expected to come from the same sampler invocation. Typed
+    // PPR creates one state per traversal channel, so verify that those channels
+    // agree on the compact node/edge-type IDs before merging their caches.
     const auto* firstState = states.front();
     int32_t numNodeTypes = firstState->_numNodeTypes;
     const auto& edgeTypeToDestinationNodeTypeId = firstState->_edgeTypeToDstNtypeId;
@@ -467,6 +470,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                     "All PPR states must share the same edge destination-type schema for original-edge extraction.");
     }
 
+    // Convert each selected global node ID to its local HeteroData index. The
+    // output rows/cols are local indices, while the cache stores global IDs.
     auto selectedLocalIdsByNodeType = buildSelectedLocalIdsByNodeType(selectedNodeIdsByNodeTypeId, numNodeTypes);
 
     std::unordered_map<int32_t, std::vector<int64_t>> rowsByEdgeType;
@@ -476,6 +481,9 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
 
     for (const auto* state : states) {
         for (const auto& [cacheKey, cachedNeighbors] : state->_neighborCache) {
+            // The cache is keyed by (source node, edge type). Reconstruct the
+            // source and destination node types so we can filter against the
+            // selected node set for each endpoint type.
             int32_t sourceNodeId = unpackNodeId(cacheKey);
             int32_t edgeTypeId = unpackEdgeTypeId(cacheKey);
             const auto& stateEdgeTypeToSourceNodeTypeId = state->_edgeTypeToSrcNtypeId;
@@ -496,10 +504,16 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
 
             auto sourceLocalIter = selectedSourceLocalIds.find(sourceNodeId);
             if (sourceLocalIter == selectedSourceLocalIds.end() || selectedDestinationLocalIds.empty()) {
+                // Preserve only edges whose endpoints are both in the final
+                // PPR-selected node set. A cached row for an unselected source
+                // can still exist because it was expanded before top-k pruning.
                 continue;
             }
 
             if (includeEdgeIds) {
+                // Edge IDs are optional cache payload. If the Python caller
+                // asks us to preserve them, every cached neighbor in this row
+                // must have the corresponding edge ID.
                 TORCH_CHECK(cachedNeighbors.edgeIds.has_value(),
                             "Original edge ids are required but were not cached for edge type id ",
                             edgeTypeId,
@@ -516,9 +530,16 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                 int32_t destinationNodeId = cachedNeighbors.neighborIds[neighborIndex];
                 auto destinationLocalIter = selectedDestinationLocalIds.find(destinationNodeId);
                 if (destinationLocalIter == selectedDestinationLocalIds.end()) {
+                    // This is the edge-level endpoint filter: the source row was
+                    // fetched, but this particular neighbor may not be part of
+                    // the selected PPR output nodes.
                     continue;
                 }
 
+                // Multiple typed PPR states can fetch overlapping adjacency, so
+                // dedupe after endpoint filtering and before appending output.
+                // This keeps distinct fetched neighbors from the same row while
+                // avoiding duplicate emitted edges across states.
                 OriginalEdgeDedupeKey dedupeKey{
                     edgeTypeId,
                     includeEdgeIds ? cachedNeighbors.edgeIds->at(neighborIndex) : 0,
@@ -544,6 +565,9 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
         if (rows.empty()) {
             continue;
         }
+        // Materialize one tensor tuple per original edge type. These tensors are
+        // handed back to Python and then attached through GLT's normal
+        // HeteroSamplerOutput row/col/edge channels.
         const auto& cols = colsByEdgeType.at(edgeTypeId);
         std::optional<torch::Tensor> edgeIds = std::nullopt;
         if (includeEdgeIds) {
