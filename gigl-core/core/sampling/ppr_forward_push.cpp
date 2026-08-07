@@ -337,13 +337,12 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
                         const int32_t neighborHop = sourceState.minHop + 1;
-                        auto [residualStateIter, createdResidualState] =
-                            dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop});
+                        auto residualStateIter =
+                            dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop})
+                                .first;
                         auto& residualState = residualStateIter->second;
                         residualState.residual += residualPerNeighbor;
-                        if (!createdResidualState && neighborHop < residualState.minHop) {
-                            residualState.minHop = neighborHop;
-                        }
+                        residualState.minHop = std::min(residualState.minHop, neighborHop);
 
                         double threshold = _requeueThresholdFactor *
                                            static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
