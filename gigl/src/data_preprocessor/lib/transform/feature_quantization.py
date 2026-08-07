@@ -26,6 +26,28 @@ def apply_feature_quantization_transform(
     quantization_spec: FeatureQuantizationSpec,
     quantization_metadata_path: str,
 ) -> tuple[beam.PCollection[pa.RecordBatch], DatasetMetadata | beam.pvalue.AsSingleton]:
+    """Quantizes selected feature columns and bit-packs each record's values.
+
+    Stores the packed bytes in ``node_packed_features`` and computes global
+    quantization statistics with Beam.
+
+    Side Effects:
+        Writes the quantization statistics JSON that ``data_preprocessor.py``
+        reads and serializes into the preprocessing metadata protobuf.
+
+    Args:
+        logical_features: RecordBatches containing the logical feature columns.
+        logical_metadata: Eager or deferred metadata for the logical schema.
+        logical_feature_keys: Logical feature columns in original feature-vector order.
+        quantization_spec: Feature keys and bit width to quantize.
+        quantization_metadata_path: Destination for the quantization statistics JSON.
+
+    Returns:
+        Quantized RecordBatches and eager or deferred physical I/O metadata.
+        That metadata removes quantized feature columns and adds
+        ``node_packed_features``. It affects serialized-record I/O only; the
+        logical model schema remains unchanged.
+    """
     missing = set(quantization_spec.feature_keys) - set(logical_feature_keys)
     if missing:
         raise ValueError(f"Quantized features missing: {missing}")
