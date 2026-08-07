@@ -338,59 +338,57 @@ def get_load_data_and_transform_pipeline_component(
         )
 
         # Apply TransformFn over raw features
-        logical_features, transform_output_metadata = (
+        transformed_features, transformed_metadata = (
             (raw_features, raw_tensor_adapter_config),
             resolved_transform_fn,
         ) | "Transform raw features dataset" >> tft_beam.TransformDataset(
             output_record_batches=True
         )
 
-        # The feature batches returned by tft_beam.TransformDataset are a
+        # The transformed_features returned by tft_beam.TransformDataset is a
         # PCollection of Tuple[pa.RecordBatch, dict[str, pa.Array]]. The first
-        # item contains logical features. The second one contains passthrough
+        # one are the transformed features. The second one are the passthrough
         # features, which doesn't apply here since we do not specify passthrough_keys
         # in tft_beam.Context. Hence we drop the second one in the tuple.
-        logical_features = logical_features | "Extract RecordBatch" >> beam.Map(
+        transformed_features = transformed_features | "Extract RecordBatch" >> beam.Map(
             lambda element: element[0]
         )
 
-        # The transform output metadata returned by tft_beam.TransformDataset can only
+        # The transformed_metadata returned by tft_beam.TransformDataset can only
         # be relied on for encoding purposes when reusing a pretrained transform_fn,
         # yet it could be inaccurate when using a new transform_fn built by
-        # tft_beam.AnalyzeDataset. For the later case, we do not use transform output metadata
+        # tft_beam.AnalyzeDataset. For the later case, we do not use transformed_metadata
         # returned by tft_beam.TransformDataset, but use deferred_metadata from
         # transform_fn instead.
-        tfrecord_metadata = (
-            transform_output_metadata
+        resolved_transformed_metadata = (
+            transformed_metadata
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
-        quantization_spec = None
+        q_spec = None
         if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
-            quantization_spec = preprocessing_spec.feature_quantization_spec
-        if quantization_spec is not None:
+            q_spec = preprocessing_spec.feature_quantization_spec
+        if q_spec is not None:
             if should_use_existing_transform_fn:
-                analyzed_logical_metadata = None
+                analyzed_metadata = None
             else:
-                analyzed_logical_metadata = analyzed_transform_fn[1].deferred_metadata  # type: ignore
+                analyzed_metadata = analyzed_transform_fn[1].deferred_metadata  # type: ignore
 
-            quantized_features, tfrecord_metadata = (
+            transformed_features, resolved_transformed_metadata = (
                 apply_feature_quantization_transform(
-                    logical_features=logical_features,
-                    transform_output_metadata=transform_output_metadata,
-                    analyzed_logical_metadata=analyzed_logical_metadata,
-                    quantization_spec=quantization_spec,
-                    logical_feature_keys=list(preprocessing_spec.features_outputs or []),
-                    metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    transformed_features,
+                    transformed_metadata,
+                    analyzed_metadata,
+                    q_spec,
+                    list(preprocessing_spec.features_outputs or []),
+                    transformed_features_info.feature_quantization_metadata_path.uri,
                 )
             )
-        else:
-            quantized_features = logical_features
 
-        quantized_features | "Write tf record files" >> BetterWriteToTFRecord(
+        transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
             file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,
             max_bytes_per_shard=int(2e8),  # 200mb,
-            transformed_metadata=tfrecord_metadata,
+            transformed_metadata=resolved_transformed_metadata,
             # TODO(mkolodner-sc): Right now, a non-zero value for num_shards overrides the max_bytes_per_shard condition. We need to implement
             # a solution where num_shards specified is just a minimum, causing the max_bytes_per_shard rule taking precedent over the num_shards rule. This will require
             # dynamically determining the number of shards produced by max_bytes_per_shard and setting it to be equal to min_num_shards if the value is less than it.
