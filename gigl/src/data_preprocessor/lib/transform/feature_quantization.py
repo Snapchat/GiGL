@@ -1,5 +1,5 @@
 import json
-from typing import Final, Iterable, List, TypeAlias
+from typing import Final, Iterable, TypeAlias
 
 import apache_beam as beam
 import numpy as np
@@ -26,26 +26,28 @@ def apply_feature_quantization_transform(
     quantization_spec: FeatureQuantizationSpec,
     quantization_metadata_path: str,
 ) -> tuple[beam.PCollection[pa.RecordBatch], DatasetMetadata | beam.pvalue.AsSingleton]:
+    missing = set(quantization_spec.feature_keys) - set(logical_feature_keys)
+    if missing:
+        raise ValueError(f"Quantized features missing: {missing}")
+
     logical_metadata_is_eager = isinstance(logical_metadata, DatasetMetadata)
     if logical_metadata_is_eager:
         metadata_for_json = logical_metadata
     else:
         metadata_for_json = beam.pvalue.AsSingleton(logical_metadata)
 
-    logger.info(f"Applying Beam feature quantization with spec: {quantization_spec}")
-    quantization_stats = _build_feature_quantization_stats(
-        logical_features, quantization_spec
-    )
+    logger.info(f"Applying feature quantization with spec: {quantization_spec}")
+    quantization_stats = _build_quantization_stats(logical_features, quantization_spec)
     (
         quantization_stats
-        | "Build feature quantization stats JSON"
+        | "Build quantization stats JSON"
         >> beam.Map(
-            _feature_quantization_stats_to_json,
+            _quantization_stats_to_json,
             quantization_spec=quantization_spec,
             logical_feature_keys=logical_feature_keys,
             logical_metadata=metadata_for_json,
         )
-        | "Write feature quantization stats"
+        | "Write quantization stats"
         >> beam.io.WriteToText(
             quantization_metadata_path, num_shards=1, shard_name_template=""
         )
@@ -62,18 +64,14 @@ def apply_feature_quantization_transform(
 
     if logical_metadata_is_eager:
         physical_feature_metadata = DatasetMetadata(
-            _apply_feature_quantization_schema(
-                logical_metadata.schema, quantization_spec
-            )
+            _apply_quantization_schema(logical_metadata.schema, quantization_spec)
         )
     else:
         physical_feature_metadata = logical_metadata | (
             "Apply feature quantization schema"
             >> beam.Map(
                 lambda metadata, quantization_spec: DatasetMetadata(
-                    _apply_feature_quantization_schema(
-                        metadata.schema, quantization_spec
-                    )
+                    _apply_quantization_schema(metadata.schema, quantization_spec)
                 ),
                 quantization_spec=quantization_spec,
             )
@@ -82,7 +80,7 @@ def apply_feature_quantization_transform(
     return quantized_features, physical_feature_metadata
 
 
-def _build_feature_quantization_stats(
+def _build_quantization_stats(
     logical_features: beam.PCollection[pa.RecordBatch],
     quantization_spec: FeatureQuantizationSpec,
 ) -> beam.PCollection[dict[str, float]]:
@@ -140,32 +138,17 @@ def _quantize_record_batch(
     return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
-def _feature_quantization_stats_to_json(
+def _quantization_stats_to_json(
     quantization_stats: dict[str, float],
     quantization_spec: FeatureQuantizationSpec,
     logical_feature_keys: list[str],
     logical_metadata: DatasetMetadata,
 ) -> str:
-    missing = set(quantization_spec.feature_keys) - set(logical_feature_keys)
-    if missing:
-        raise ValueError(f"Quantized features missing: {missing}")
-
-    raw_feature_spec = schema_utils.schema_as_feature_spec(
-        logical_metadata.schema
-    ).feature_spec
-    logical_feature_spec = {key: raw_feature_spec[key] for key in logical_feature_keys}
-    logical_feature_index = feature_spec_to_feature_index_map(logical_feature_spec)
-
-    quantized_feature_indices: List[int] = []
-    for key in quantization_spec.feature_keys:
-        start, end = logical_feature_index[key]
-        if end - start != 1:
-            raise ValueError(f"Quantization expects scalar features, got {key}.")
-        quantized_feature_indices.append(start)
-
     metadata = {
         "packed_feature_key": _NODE_PACKED_FEATURE_KEY,
-        "quantized_feature_indices": quantized_feature_indices,
+        "quantized_feature_indices": _quantized_feature_indices(
+            logical_metadata, logical_feature_keys, quantization_spec.feature_keys
+        ),
         "bits": quantization_spec.bits,
         **quantization_stats,
     }
@@ -173,7 +156,27 @@ def _feature_quantization_stats_to_json(
     return json.dumps(metadata)
 
 
-def _apply_feature_quantization_schema(
+def _quantized_feature_indices(
+    logical_metadata: DatasetMetadata,
+    logical_feature_keys: list[str],
+    quantized_feature_keys: list[str],
+) -> list[int]:
+    raw_feature_spec = schema_utils.schema_as_feature_spec(
+        logical_metadata.schema
+    ).feature_spec
+    logical_feature_spec = {key: raw_feature_spec[key] for key in logical_feature_keys}
+    logical_feature_index = feature_spec_to_feature_index_map(logical_feature_spec)
+
+    feature_indices: list[int] = []
+    for key in quantized_feature_keys:
+        start, end = logical_feature_index[key]
+        if end - start != 1:
+            raise ValueError(f"Quantization expects scalar features, got {key}")
+        feature_indices.append(start)
+    return feature_indices
+
+
+def _apply_quantization_schema(
     schema: schema_pb2.Schema, quantization_spec: FeatureQuantizationSpec
 ) -> schema_pb2.Schema:
     drop_keys = set(quantization_spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
