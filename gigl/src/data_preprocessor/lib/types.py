@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
@@ -48,9 +49,16 @@ class NodeOutputIdentifier(str):
     """
 
 
-class FeatureQuantizationSpec(NamedTuple):
+@dataclass(frozen=True)
+class FeatureQuantizationSpec:
     feature_keys: list[str]
     bits: int
+
+    def __post_init__(self) -> None:
+        if not self.feature_keys:
+            raise ValueError("Feature quantization expects at least one feature key.")
+        if self.bits not in (1, 2, 4, 8):
+            raise ValueError(f"bits must be one of 1, 2, 4, or 8, got {self.bits}.")
 
 
 class EdgeOutputIdentifier(NamedTuple):

@@ -45,7 +45,7 @@ class FeatureQuantizationTransformTest(TestCase):
                 ],
                 names=["node_id", "f0", "f1", "label"],
             )
-            transformed_metadata = DatasetMetadata.from_feature_spec(
+            transform_output_metadata = DatasetMetadata.from_feature_spec(
                 {
                     "node_id": tf.io.FixedLenFeature(shape=[], dtype=tf.int64),
                     "f0": tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
@@ -57,12 +57,14 @@ class FeatureQuantizationTransformTest(TestCase):
             with TestPipeline() as pipeline:
                 transformed_batches, physical_metadata = (
                     apply_feature_quantization_transform(
-                        transformed_features=pipeline
+                        logical_features=pipeline
                         | "Create RecordBatch" >> beam.Create([batch]),
-                        transformed_metadata=transformed_metadata,
-                        analyzed_metadata=None,
-                        spec=FeatureQuantizationSpec(feature_keys=["f0", "f1"], bits=2),
-                        feature_keys=["f0", "f1"],
+                        transform_output_metadata=transform_output_metadata,
+                        analyzed_logical_metadata=None,
+                        quantization_spec=FeatureQuantizationSpec(
+                            feature_keys=["f0", "f1"], bits=2
+                        ),
+                        logical_feature_keys=["f0", "f1"],
                         metadata_path=metadata_path,
                     )
                 )
