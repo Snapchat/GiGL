@@ -237,7 +237,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
 
 // Extract original graph edges from one or more completed PPR states. Multiple
 // states are used for typed PPR, where each channel owns its own cache. Duplicate
-// fetched rows shared by channels are emitted once.
+// emitted edges shared by channels are emitted once.
 OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     const std::vector<const PPRForwardPush*>& states,
     const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,

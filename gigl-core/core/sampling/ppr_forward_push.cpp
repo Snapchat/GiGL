@@ -29,6 +29,39 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
     return static_cast<int32_t>(static_cast<uint32_t>(key));
 }
 
+struct OriginalEdgeDedupeKey {
+    int32_t edgeTypeId;
+    int64_t edgeId;
+    int32_t sourceNodeId;
+    int32_t destinationNodeId;
+    bool hasEdgeId;
+
+    bool operator==(const OriginalEdgeDedupeKey& other) const {
+        if (edgeTypeId != other.edgeTypeId || hasEdgeId != other.hasEdgeId) {
+            return false;
+        }
+        if (hasEdgeId) {
+            return edgeId == other.edgeId;
+        }
+        return sourceNodeId == other.sourceNodeId && destinationNodeId == other.destinationNodeId;
+    }
+};
+
+struct OriginalEdgeDedupeKeyHash {
+    size_t operator()(const OriginalEdgeDedupeKey& key) const {
+        size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
+        auto combine = [&seed](size_t value) { seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2); };
+        combine(std::hash<bool>{}(key.hasEdgeId));
+        if (key.hasEdgeId) {
+            combine(std::hash<int64_t>{}(key.edgeId));
+        } else {
+            combine(std::hash<int32_t>{}(key.sourceNodeId));
+            combine(std::hash<int32_t>{}(key.destinationNodeId));
+        }
+        return seed;
+    }
+};
+
 PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                                int32_t seedNodeTypeId,
                                double alpha,
@@ -434,14 +467,10 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     std::unordered_map<int32_t, std::vector<int64_t>> rowsByEdgeType;
     std::unordered_map<int32_t, std::vector<int64_t>> colsByEdgeType;
     std::unordered_map<int32_t, std::vector<int64_t>> edgeIdsByEdgeType;
-    std::unordered_set<uint64_t> emittedCacheKeys;
+    std::unordered_set<OriginalEdgeDedupeKey, OriginalEdgeDedupeKeyHash> emittedEdges;
 
     for (const auto* state : states) {
         for (const auto& [cacheKey, cachedNeighbors] : state->_neighborCache) {
-            if (!emittedCacheKeys.insert(cacheKey).second) {
-                continue;
-            }
-
             int32_t sourceNodeId = unpackNodeId(cacheKey);
             int32_t edgeTypeId = unpackEdgeTypeId(cacheKey);
             const auto& stateEdgeTypeToSourceNodeTypeId = state->_edgeTypeToSrcNtypeId;
@@ -482,6 +511,17 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                 int32_t destinationNodeId = cachedNeighbors.neighborIds[neighborIndex];
                 auto destinationLocalIter = selectedDestinationLocalIds.find(destinationNodeId);
                 if (destinationLocalIter == selectedDestinationLocalIds.end()) {
+                    continue;
+                }
+
+                OriginalEdgeDedupeKey dedupeKey{
+                    edgeTypeId,
+                    includeEdgeIds ? cachedNeighbors.edgeIds->at(neighborIndex) : 0,
+                    sourceNodeId,
+                    destinationNodeId,
+                    includeEdgeIds,
+                };
+                if (!emittedEdges.insert(dedupeKey).second) {
                     continue;
                 }
 

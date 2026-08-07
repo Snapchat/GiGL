@@ -186,7 +186,7 @@ TEST(PPRForwardPush, ExtractOriginalEdgesPreservesEdgeIds) {
     EXPECT_EQ(tensorToInt64Vector(edgeIds.value()), std::vector<int64_t>({10, 11}));
 }
 
-TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesFetchedRowsAcrossStates) {
+TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesDuplicateEdgesAcrossStates) {
     auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 0});
     auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{1, 0});
 
@@ -204,6 +204,62 @@ TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesFetchedRowsAcrossStates) {
     EXPECT_EQ(tensorToInt64Vector(rows), std::vector<int64_t>({0}));
     EXPECT_EQ(tensorToInt64Vector(cols), std::vector<int64_t>({1}));
     EXPECT_FALSE(edgeIds.has_value());
+}
+
+TEST(PPRForwardPush, ExtractOriginalEdgesKeepsDifferentNeighborsFromSameRowAcrossStates) {
+    auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0, 0});
+    auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0, 0});
+
+    channel0.drainQueue();
+    channel0.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{1}, /*counts=*/{1}));
+    channel1.drainQueue();
+    channel1.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0}, /*flatNeighborIds=*/{2}, /*counts=*/{1}));
+
+    auto result = extractOriginalEdgesFromPPRCaches(std::vector<const PPRForwardPush*>{&channel0, &channel1},
+                                                    {{0, torch::tensor({0, 1, 2}, torch::kLong)}},
+                                                    /*includeEdgeIds=*/false);
+
+    ASSERT_NE(result.find(0), result.end());
+    const auto& [rows, cols, edgeIds] = result.at(0);
+    EXPECT_EQ(tensorToInt64Vector(rows), std::vector<int64_t>({0, 0}));
+    EXPECT_EQ(tensorToInt64Vector(cols), std::vector<int64_t>({1, 2}));
+    EXPECT_FALSE(edgeIds.has_value());
+}
+
+TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesByEdgeIdWhenAvailable) {
+    auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0});
+    auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0});
+    auto channel2 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0});
+
+    channel0.drainQueue();
+    channel0.pushResiduals(makeFetchedWithEdgeIds(/*edgeTypeId=*/0,
+                                                  /*nodeIds=*/{0},
+                                                  /*flatNeighborIds=*/{1},
+                                                  /*counts=*/{1},
+                                                  /*edgeIds=*/{10}));
+    channel1.drainQueue();
+    channel1.pushResiduals(makeFetchedWithEdgeIds(/*edgeTypeId=*/0,
+                                                  /*nodeIds=*/{0},
+                                                  /*flatNeighborIds=*/{1},
+                                                  /*counts=*/{1},
+                                                  /*edgeIds=*/{10}));
+    channel2.drainQueue();
+    channel2.pushResiduals(makeFetchedWithEdgeIds(/*edgeTypeId=*/0,
+                                                  /*nodeIds=*/{0},
+                                                  /*flatNeighborIds=*/{1},
+                                                  /*counts=*/{1},
+                                                  /*edgeIds=*/{11}));
+
+    auto result = extractOriginalEdgesFromPPRCaches(std::vector<const PPRForwardPush*>{&channel0, &channel1, &channel2},
+                                                    {{0, torch::tensor({0, 1}, torch::kLong)}},
+                                                    /*includeEdgeIds=*/true);
+
+    ASSERT_NE(result.find(0), result.end());
+    const auto& [rows, cols, edgeIds] = result.at(0);
+    ASSERT_TRUE(edgeIds.has_value());
+    EXPECT_EQ(tensorToInt64Vector(rows), std::vector<int64_t>({0, 0}));
+    EXPECT_EQ(tensorToInt64Vector(cols), std::vector<int64_t>({1, 1}));
+    EXPECT_EQ(tensorToInt64Vector(edgeIds.value()), std::vector<int64_t>({10, 11}));
 }
 
 TEST(PPRForwardPush, DrainTypedPPRChannelQueuesUnionsChannelFrontiers) {
