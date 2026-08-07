@@ -1,4 +1,5 @@
 #include "ppr_forward_push.h"
+#include "typed_ppr_feature_layout.h"
 
 #include <torch/torch.h>
 
@@ -479,87 +480,6 @@ static double getNodeHopProximity(const SeedNodeTypeState& nodeTypeState, int32_
     return 1.0 / (1.0 + static_cast<double>(hop));
 }
 
-// Owns the packed edge_attr layout used while merging typed PPR channels.
-//
-// Typed extraction first accumulates one dense feature vector per selected node,
-// then copies those vectors into the final tensor. Keeping the offsets here
-// keeps addTypedPPRSeedFeaturesAndCandidates focused on merge policy instead of
-// repeating manual column math.
-//
-// The width is 2 + (3 * numChannels):
-//   - 2 global columns:
-//       [best_score, hop_proximity]
-//     These preserve the regular PPR edge_attr contract at the front of the row.
-//   - 3 columns per typed channel:
-//       [channel_score, channel_hop_proximity, channel_presence]
-//     The per-channel score supports channel attribution/ranking, the per-channel
-//     hop proximity gives models a bounded closeness signal, and the presence bit
-//     is the explicit channel-reachability mask.
-//
-// Hop proximity is 1 / (1 + hop) when a channel reaches the node:
-// anchor=1.0, 1-hop=0.5, 2-hop ~= 0.333, and so on. Missing channels remain 0,
-// which is finite, bounded, and never looks closer than a reached channel. For
-// present channels, callers can recover the original hop count as
-// (1 - proximity) / proximity; use the presence bit before applying this
-// inverse because proximity 0 means the channel is missing.
-class TypedPPRFeatureLayout {
-public:
-    explicit TypedPPRFeatureLayout(int32_t numChannels) : _numChannels(numChannels) {
-        TORCH_CHECK(numChannels > 0, "Typed PPR feature layout requires at least one channel.");
-    }
-
-    [[nodiscard]] int32_t numFeatures() const {
-        return kNumGlobalFeatures + (kNumPerChannelFeatures * _numChannels);
-    }
-
-    // New node feature vectors start empty. Scores, proximities, and presence
-    // bits all use 0 as their absent-channel value.
-    [[nodiscard]] std::vector<double> makeFeatureVector() const {
-        return std::vector<double>(numFeatures(), 0.0);
-    }
-
-    // Merge one channel's emitted score/proximity into an existing node feature row.
-    //
-    // A node can be seen in multiple typed channels. The scalar score column keeps
-    // the best emitted PPR score for downstream consumers that expect one weight,
-    // while the global proximity keeps the closest discovered distance.
-    void updateScores(std::vector<double>& features, int32_t channelIndex, double score, double hopProximity) const {
-        // The extraction loop bounds channelIndex, and getNodeHopProximity
-        // validates the underlying hop before this call.
-        features[kBestScoreIndex] = std::max(features[kBestScoreIndex], score);
-        features[kGlobalHopProximityIndex] = std::max(features[kGlobalHopProximityIndex], hopProximity);
-        features[channelScoreIndex(channelIndex)] = score;
-        features[channelHopProximityIndex(channelIndex)] = hopProximity;
-        features[channelPresenceIndex(channelIndex)] = 1.0;
-    }
-
-private:
-    static constexpr int32_t kBestScoreIndex = 0;
-    static constexpr int32_t kGlobalHopProximityIndex = 1;
-    static constexpr int32_t kNumGlobalFeatures = 2;     // best score + global hop proximity
-    static constexpr int32_t kNumPerChannelFeatures = 3; // score + hop proximity + presence
-
-    [[nodiscard]] int32_t channelScoreIndex(int32_t channelIndex) const {
-        return kNumGlobalFeatures + channelIndex;
-    }
-    [[nodiscard]] int32_t channelHopProximityStartIndex() const {
-        return kNumGlobalFeatures + _numChannels;
-    }
-    [[nodiscard]] int32_t channelHopProximityIndex(int32_t channelIndex) const {
-        return channelHopProximityStartIndex() + channelIndex;
-    }
-    [[nodiscard]] int32_t channelPresenceStartIndex() const {
-        return kNumGlobalFeatures + (2 * _numChannels);
-    }
-    [[nodiscard]] int32_t channelPresenceIndex(int32_t channelIndex) const {
-        return channelPresenceStartIndex() + channelIndex;
-    }
-
-    // The channel count is the only stored layout state. Every offset is derived
-    // from it, so feature width cannot drift from the per-channel blocks.
-    const int32_t _numChannels;
-};
-
 // Helper function for adding one channel's extracted PPR candidates into the
 // emitted typed feature table and a selection candidate list.
 //
@@ -826,13 +746,12 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     //   column 0: best emitted PPR score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction.
     //   column 1: global hop proximity as 1/(1 + closest_hop).
-    //   columns [2, 2 + C): emitted PPR score for each channel.
-    //   columns [2 + C, 2 + 2C): hop proximity for each channel:
-    //                             1/(1 + hop) when present, 0 when missing.
-    //                             For present channels, hop can be recovered
-    //                             as (1 - proximity) / proximity; use the
-    //                             presence bit before applying this inverse.
-    //   columns [2 + 2C, 2 + 3C): presence bit for each channel.
+    //   columns [2, 2 + 3C): per-channel triples:
+    //                         (channel_score, channel_hop_proximity, channel_presence).
+    //                         Proximity is 1/(1 + hop) when present and 0 when
+    //                         missing. For present channels, hop can be recovered
+    //                         as (1 - proximity) / proximity; use the presence
+    //                         bit before applying this inverse.
     TypedPPRFeatureLayout featureLayout(numChannels);
     int32_t numEdgeAttrFeatures = featureLayout.numFeatures();
 

@@ -23,7 +23,7 @@ using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
 struct ResidualState {
     double residual; // unabsorbed mass waiting to push
-    int32_t minHop;  // minimum discovered hop from seed
+    int32_t minHop;  // minimum discovered hop within one seed's traversal
 };
 
 // Per-seed, per-node-type PPR algorithm state.
@@ -216,8 +216,8 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // extractTopKWithResidualTopUp:
 //   ids: int64 node IDs, flattened across seeds.
 //   weights: double feature matrix with columns
-//            [best_score, hop_proximity, per-channel scores...,
-//             per-channel hop proximities..., presence bits...].
+//            [best_score, hop_proximity,
+//             (channel_score, channel_hop_proximity, channel_presence), ...].
 //            Hop proximity is 1 / (1 + hop). Per-channel proximity is 0 when
 //            that channel did not reach the selected node.
 //            For present channels, the original hop count can be recovered as

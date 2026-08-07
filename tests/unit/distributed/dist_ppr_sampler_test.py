@@ -364,11 +364,12 @@ def _assert_typed_ppr_edge_attrs(
 
         best_scores = ppr_edge_attr[:, 0]
         hop_proximities = ppr_edge_attr[:, 1]
-        channel_scores = ppr_edge_attr[:, 2 : 2 + num_channels]
-        channel_hop_proximities = ppr_edge_attr[
-            :, 2 + num_channels : 2 + (2 * num_channels)
-        ]
-        channel_presence = ppr_edge_attr[:, 2 + (2 * num_channels) :]
+        channel_features = ppr_edge_attr[:, 2:].reshape(
+            ppr_edge_attr.size(0), num_channels, 3
+        )
+        channel_scores = channel_features[:, :, 0]
+        channel_hop_proximities = channel_features[:, :, 1]
+        channel_presence = channel_features[:, :, 2]
         assert (best_scores >= 0).all()
         assert (best_scores <= 1).all()
         _assert_valid_hop_proximities(hop_proximities)

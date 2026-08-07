@@ -46,8 +46,8 @@ class PPRSamplerOptions:
       ``hop_proximity`` is ``1 / (1 + hop)``: ``1.0`` for the anchor, ``0.5``
       for 1-hop, and so on.
       Typed PPR emits additional channel columns:
-      ``[best_score, hop_proximity, channel_scores..., channel_hop_proximities...,
-      channel_presence_bits...]``.
+      ``[best_score, hop_proximity, (channel_score, channel_hop_proximity,
+      channel_presence), ...]``.
       Column 0 is the scalar best score for consumers that need a single PPR
       weight, and column 1 is always the global hop proximity.
       Per-channel hop proximity is ``1 / (1 + hop)`` when that channel

@@ -54,6 +54,34 @@ static std::vector<int64_t> tensorToInt64Vector(const torch::Tensor& values) {
     return result;
 }
 
+static void expectTypedPPRFeatureRowNear(const torch::Tensor& features,
+                                         int64_t rowIndex,
+                                         double bestScore,
+                                         double hopProximity,
+                                         const std::vector<double>& channelScores,
+                                         const std::vector<double>& channelHopProximities,
+                                         const std::vector<double>& channelPresence) {
+    SCOPED_TRACE(::testing::Message() << "typed PPR feature row " << rowIndex);
+    ASSERT_EQ(features.dim(), 2);
+    ASSERT_GE(rowIndex, 0);
+    ASSERT_LT(rowIndex, features.size(0));
+    ASSERT_EQ(channelScores.size(), channelHopProximities.size());
+    ASSERT_EQ(channelScores.size(), channelPresence.size());
+
+    const auto numChannels = static_cast<int64_t>(channelScores.size());
+    ASSERT_EQ(features.size(1), 2 + (3 * numChannels));
+
+    auto featureAccessor = features.accessor<double, 2>();
+    EXPECT_NEAR(featureAccessor[rowIndex][0], bestScore, 1e-9);
+    EXPECT_NEAR(featureAccessor[rowIndex][1], hopProximity, 1e-9);
+    for (int64_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
+        const int64_t channelBaseIndex = 2 + (3 * channelIndex);
+        EXPECT_NEAR(featureAccessor[rowIndex][channelBaseIndex], channelScores[channelIndex], 1e-9);
+        EXPECT_NEAR(featureAccessor[rowIndex][channelBaseIndex + 1], channelHopProximities[channelIndex], 1e-9);
+        EXPECT_NEAR(featureAccessor[rowIndex][channelBaseIndex + 2], channelPresence[channelIndex], 1e-9);
+    }
+}
+
 // After construction, drainQueue() returns the seed node under etype 0.
 TEST(PPRForwardPush, DrainQueueReturnsSeedNodeInitially) {
     auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{1});
@@ -114,6 +142,26 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
     EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F);
     EXPECT_NEAR(weights[1][0].item<float>(), static_cast<float>((1.0 - alpha) * alpha), 1e-5F);
     EXPECT_NEAR(weights[1][1].item<float>(), 0.5F, 1e-5F);
+}
+
+TEST(PPRForwardPush, HopProximityIsScopedPerSeed) {
+    auto state = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1.0, /*degrees=*/{1, 0});
+
+    state.drainQueue();
+    state.pushResiduals(makeFetched(/*edgeTypeId=*/0, /*nodeIds=*/{0, 1}, /*flatNeighborIds=*/{1}, /*counts=*/{1, 0}));
+    state.drainQueue();
+    state.pushResiduals({});
+
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
+    ASSERT_NE(topk.find(0), topk.end());
+    const auto& [ids, weights, counts] = topk.at(0);
+
+    EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 1, 1}));
+    EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2, 1}));
+    ASSERT_EQ(weights.size(1), 2);
+    EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F); // seed 0 anchor
+    EXPECT_NEAR(weights[1][1].item<float>(), 0.5F, 1e-5F); // seed 0 reaches node 1 at 1-hop
+    EXPECT_NEAR(weights[2][1].item<float>(), 1.0F, 1e-5F); // seed 1 anchor remains isolated
 }
 
 // Once a (node, edge type) neighbor list is fetched, it should be cached for the
@@ -206,33 +254,27 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
     ASSERT_EQ(features.size(0), 3);
     ASSERT_EQ(features.size(1), 8);
 
-    auto featureAccessor = features.accessor<double, 2>();
-    EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][5], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][6], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
-
-    EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][3], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][4], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][5], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][6], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][7], 0.0, 1e-9);
-
-    EXPECT_NEAR(featureAccessor[2][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][1], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][2], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][3], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][4], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][5], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][6], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[2][7], 1.0, 1e-9);
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/0,
+                                 /*bestScore=*/0.5,
+                                 /*hopProximity=*/1.0,
+                                 /*channelScores=*/{0.5, 0.5},
+                                 /*channelHopProximities=*/{1.0, 1.0},
+                                 /*channelPresence=*/{1.0, 1.0});
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/1,
+                                 /*bestScore=*/0.25,
+                                 /*hopProximity=*/0.5,
+                                 /*channelScores=*/{0.25, 0.0},
+                                 /*channelHopProximities=*/{0.5, 0.0},
+                                 /*channelPresence=*/{1.0, 0.0});
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/2,
+                                 /*bestScore=*/0.25,
+                                 /*hopProximity=*/0.5,
+                                 /*channelScores=*/{0.0, 0.25},
+                                 /*channelHopProximities=*/{0.0, 0.5},
+                                 /*channelPresence=*/{0.0, 1.0});
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows) {
@@ -256,24 +298,20 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
     ASSERT_EQ(features.size(0), 2);
     ASSERT_EQ(features.size(1), 8);
 
-    auto featureAccessor = features.accessor<double, 2>();
-    EXPECT_NEAR(featureAccessor[0][0], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][2], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][5], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][6], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][7], 1.0, 1e-9);
-
-    EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][2], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][3], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][4], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][5], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][6], 0.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][7], 1.0, 1e-9);
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/0,
+                                 /*bestScore=*/0.5,
+                                 /*hopProximity=*/1.0,
+                                 /*channelScores=*/{0.5, 0.5},
+                                 /*channelHopProximities=*/{1.0, 1.0},
+                                 /*channelPresence=*/{1.0, 1.0});
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/1,
+                                 /*bestScore=*/0.25,
+                                 /*hopProximity=*/0.5,
+                                 /*channelScores=*/{0.0, 0.25},
+                                 /*channelHopProximities=*/{0.0, 0.5},
+                                 /*channelPresence=*/{0.0, 1.0});
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows) {
@@ -295,17 +333,20 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
     ASSERT_EQ(features.size(0), 2);
     ASSERT_EQ(features.size(1), 5);
 
-    auto featureAccessor = features.accessor<double, 2>();
-    EXPECT_NEAR(featureAccessor[0][0], 0.625, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][1], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][2], 0.625, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][3], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[0][4], 1.0, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][0], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][1], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][2], 0.25, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][3], 0.5, 1e-9);
-    EXPECT_NEAR(featureAccessor[1][4], 1.0, 1e-9);
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/0,
+                                 /*bestScore=*/0.625,
+                                 /*hopProximity=*/1.0,
+                                 /*channelScores=*/{0.625},
+                                 /*channelHopProximities=*/{1.0},
+                                 /*channelPresence=*/{1.0});
+    expectTypedPPRFeatureRowNear(features,
+                                 /*rowIndex=*/1,
+                                 /*bestScore=*/0.25,
+                                 /*hopProximity=*/0.5,
+                                 /*channelScores=*/{0.25},
+                                 /*channelHopProximities=*/{0.5},
+                                 /*channelPresence=*/{1.0});
 }
 
 TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
