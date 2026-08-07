@@ -6,10 +6,16 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
+from gigl.distributed.base_dist_loader import BaseDistLoader
+from gigl.distributed.dist_ppr_sampler import (
+    PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_WEIGHT_METADATA_KEY,
+)
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
 )
+from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.distributed.utils.neighborloader import (
     attach_ppr_outputs,
     extract_edge_type_metadata,
@@ -247,6 +253,58 @@ class LoaderUtilsTest(TestCase):
         self.assertNotIn(_REV_EDGE_TYPE, result.edge_types)
         self.assertIn(_PPR_U2I, result.edge_types)
         self.assertIn(_PPR_U2U, result.edge_types)
+
+    def test_apply_ppr_outputs_with_original_edges_strips_empty_edge_stores(self):
+        ppr_edge_type = ("user", "ppr", "item")
+        original_edge_type = ("user", "to", "item")
+        feature_only_edge_type = ("item", "feature_only", "user")
+        empty_edge_index_edge_type = ("item", "empty", "user")
+
+        data = HeteroData()
+        data[original_edge_type].edge_index = torch.tensor([[0, 1], [1, 0]])
+        data[original_edge_type].edge_attr = torch.tensor([[1.0], [2.0]])
+        data[feature_only_edge_type].edge_attr = torch.empty((0, 4))
+        data[empty_edge_index_edge_type].edge_index = torch.empty(
+            (2, 0), dtype=torch.long
+        )
+        data[empty_edge_index_edge_type].edge_attr = torch.empty((0, 4))
+        data.num_sampled_edges = {
+            original_edge_type: torch.tensor([2]),
+            feature_only_edge_type: torch.tensor([0]),
+            empty_edge_index_edge_type: torch.tensor([0]),
+        }
+        metadata = {
+            f"{PPR_EDGE_INDEX_METADATA_KEY}{repr(ppr_edge_type)}": torch.tensor(
+                [[0], [1]]
+            ),
+            f"{PPR_WEIGHT_METADATA_KEY}{repr(ppr_edge_type)}": torch.tensor([0.7]),
+            "unrelated_metadata": torch.tensor([1]),
+        }
+        loader = object.__new__(BaseDistLoader)
+        loader._sampler_options = PPRSamplerOptions(  # ty: ignore[invalid-assignment] TODO(ty-object-new): test-only partial loader.
+            include_original_edges_in_ppr_subgraph=True
+        )
+        loader._is_homogeneous_with_labeled_edge_type = False
+        loader._shutdowned = True
+
+        result, remaining_metadata = loader._apply_ppr_outputs(data, metadata)
+
+        self.assertIs(result, data)
+        self.assertEqual(set(result.edge_types), {ppr_edge_type, original_edge_type})
+        self.assertTrue(
+            torch.equal(result[ppr_edge_type].edge_index, torch.tensor([[0], [1]]))
+        )
+        self.assertTrue(
+            torch.equal(result[ppr_edge_type].edge_attr, torch.tensor([0.7]))
+        )
+        self.assertTrue(
+            torch.equal(
+                result[original_edge_type].edge_index, torch.tensor([[0, 1], [1, 0]])
+            )
+        )
+        self.assertNotIn(feature_only_edge_type, result.num_sampled_edges)
+        self.assertNotIn(empty_edge_index_edge_type, result.num_sampled_edges)
+        self.assertEqual(set(remaining_metadata.keys()), {"unrelated_metadata"})
 
     def test_attach_ppr_outputs_requires_one_homogeneous_edge_type(self):
         with self.assertRaises(ValueError):
