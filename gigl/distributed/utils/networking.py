@@ -328,6 +328,11 @@ def _get_graph_store_shape_and_readiness() -> tuple[int, int, Uri]:
                 "GraphStore topology environment configuration is incomplete. "
                 f"Missing required environment variables: {missing_keys}."
             )
+        if is_currently_running_in_vertex_ai_job():
+            logger.warning(
+                "Using explicit GiGL GraphStore environment variables instead of "
+                "Vertex AI cluster information."
+            )
         return _get_graph_store_shape_and_readiness_from_environment()
 
     if is_currently_running_in_vertex_ai_job():
@@ -363,8 +368,9 @@ def get_graph_store_info() -> GraphStoreInfo:
     MUST be called with a torch.distributed process group initialized, for the *entire* training cluster.
     E.g. the process group *must* include both the compute and storage nodes.
 
-    Explicit ``GIGL_GRAPH_STORE_*`` environment variables provide the
-    compute/storage counts and readiness URI, and take precedence over Vertex
+    Custom launchers are expected to set the explicit
+    ``GIGL_GRAPH_STORE_*`` environment variables, which provide the
+    compute/storage counts and readiness URI. They take precedence over Vertex
     AI topology discovery. When they are absent, Vertex AI topology is
     discovered from its cluster spec.
 

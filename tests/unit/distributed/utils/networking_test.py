@@ -555,12 +555,18 @@ class TestGetGraphStoreInfo(TestCase):
                 "gigl.distributed.utils.networking.get_free_ports_from_node",
                 side_effect=([1000, 1001], [1002, 1003, 1004]),
             ),
+            self.assertLogs("root", level="WARNING") as logs,
         ):
             info = get_graph_store_info()
 
         self.assertEqual(info.num_compute_nodes, 1)
         self.assertEqual(info.num_storage_nodes, 1)
         self.assertEqual(info.readiness_uri, LocalUri("/tmp/gigl-graph-store-ready"))
+        self.assertIn(
+            "Using explicit GiGL GraphStore environment variables instead of "
+            "Vertex AI cluster information.",
+            logs.output[0],
+        )
 
     def test_partial_graph_store_environment_raises_on_vertex_ai(self):
         env = {GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready"}
