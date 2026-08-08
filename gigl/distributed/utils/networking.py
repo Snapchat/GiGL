@@ -6,7 +6,7 @@ from typing import Optional
 
 import torch
 
-from gigl.common import Uri
+from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.vertex_ai_context import (
     ClusterSpec,
@@ -17,12 +17,21 @@ from gigl.common.utils.vertex_ai_context import (
 from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
+    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY,
+    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY,
+    GRAPH_STORE_READINESS_URI_ENV_KEY,
     GraphStoreInfo,
 )
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.utils.file_loader import FileLoader
 
 logger = Logger()
+
+_GRAPH_STORE_TOPOLOGY_ENV_KEYS = (
+    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY,
+    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY,
+    GRAPH_STORE_READINESS_URI_ENV_KEY,
+)
 
 
 def get_free_port() -> int:
@@ -273,6 +282,85 @@ def wait_for_readiness_signal(
         time.sleep(poll_interval)
 
 
+def _positive_int_from_env(key: str) -> int:
+    raw_value = os.environ.get(key)
+    if raw_value is None:
+        raise ValueError(f"Missing required environment variable {key}.")
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ValueError(
+            f"Environment variable {key} must be a positive integer, got {raw_value!r}."
+        ) from error
+    if value < 1:
+        raise ValueError(f"Environment variable {key} must be at least 1, got {value}.")
+    return value
+
+
+def _get_graph_store_shape_and_readiness_from_environment() -> tuple[int, int, Uri]:
+    """Resolve GraphStore topology from explicit environment variables."""
+    num_compute_nodes = _positive_int_from_env(GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY)
+    num_storage_nodes = _positive_int_from_env(GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY)
+    readiness_uri_raw = os.environ[GRAPH_STORE_READINESS_URI_ENV_KEY]
+    if not readiness_uri_raw:
+        raise ValueError(
+            f"Environment variable {GRAPH_STORE_READINESS_URI_ENV_KEY} must be non-empty."
+        )
+    return (
+        num_compute_nodes,
+        num_storage_nodes,
+        UriFactory.create_uri(readiness_uri_raw),
+    )
+
+
+def _get_graph_store_shape_and_readiness() -> tuple[int, int, Uri]:
+    """Resolve GraphStore topology from explicit settings or Vertex AI."""
+    present_environment_keys = [
+        key for key in _GRAPH_STORE_TOPOLOGY_ENV_KEYS if key in os.environ
+    ]
+    if present_environment_keys:
+        missing_environment_keys = [
+            key for key in _GRAPH_STORE_TOPOLOGY_ENV_KEYS if key not in os.environ
+        ]
+        if missing_environment_keys:
+            missing_keys = ", ".join(missing_environment_keys)
+            raise ValueError(
+                "GraphStore topology environment configuration is incomplete. "
+                f"Missing required environment variables: {missing_keys}."
+            )
+        if is_currently_running_in_vertex_ai_job():
+            logger.warning(
+                "Using explicit GiGL GraphStore environment variables instead of "
+                "Vertex AI cluster information."
+            )
+        return _get_graph_store_shape_and_readiness_from_environment()
+
+    if is_currently_running_in_vertex_ai_job():
+        cluster_spec = get_cluster_spec()
+        _validate_cluster_spec(cluster_spec)
+        if "workerpool1" in cluster_spec.cluster:
+            num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
+                cluster_spec.cluster["workerpool1"]
+            )
+        else:
+            num_compute_nodes = len(cluster_spec.cluster["workerpool0"])
+        num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
+        readiness_uri = (
+            get_resource_config().temp_assets_bucket_path
+            / "gigl"
+            / "graph_store"
+            / get_vertex_ai_job_id()
+            / "graph_store_readiness.txt"
+        )
+        return num_compute_nodes, num_storage_nodes, readiness_uri
+
+    required_environment_keys = ", ".join(_GRAPH_STORE_TOPOLOGY_ENV_KEYS)
+    raise ValueError(
+        "Unable to resolve GraphStore topology. Set all required environment "
+        f"variables ({required_environment_keys}) or run in a supported Vertex AI job."
+    )
+
+
 def get_graph_store_info() -> GraphStoreInfo:
     """
     Get the information about the graph store cluster.
@@ -280,30 +368,39 @@ def get_graph_store_info() -> GraphStoreInfo:
     MUST be called with a torch.distributed process group initialized, for the *entire* training cluster.
     E.g. the process group *must* include both the compute and storage nodes.
 
-    This function should only be called on clusters that are setup by GiGL.
-    E.g. when GiGLResourceConfig.trainer_resource_config.vertex_ai_graph_store_trainer_config is set.
+    Custom launchers are expected to set the explicit
+    ``GIGL_GRAPH_STORE_*`` environment variables, which provide the
+    compute/storage counts and readiness URI. They take precedence over Vertex
+    AI topology discovery. When they are absent, Vertex AI topology is
+    discovered from its cluster spec.
 
     Returns:
         GraphStoreInfo: The information about the graph store cluster.
 
     Raises:
         ValueError: If a torch distributed environment is not initialized.
-        ValueError: If not running running in a supported environment.
+        ValueError: If the process-group size and declared topology disagree,
+            or required topology inputs are invalid.
     """
-    # If we want to ever support other (non-VAI) environments,
-    # we must switch here depending on the environment.
-    if not is_currently_running_in_vertex_ai_job():
-        raise ValueError("get_graph_store_info must be called in a Vertex AI job.")
-    cluster_spec = get_cluster_spec()
-    _validate_cluster_spec(cluster_spec)
-
-    if "workerpool1" in cluster_spec.cluster:
-        num_compute_nodes = len(cluster_spec.cluster["workerpool0"]) + len(
-            cluster_spec.cluster["workerpool1"]
+    if not torch.distributed.is_initialized():
+        raise ValueError(
+            "get_graph_store_info requires an initialized cluster-wide "
+            "torch.distributed process group."
         )
-    else:
-        num_compute_nodes = len(cluster_spec.cluster["workerpool0"])
-    num_storage_nodes = len(cluster_spec.cluster["workerpool2"])
+    (
+        num_compute_nodes,
+        num_storage_nodes,
+        readiness_uri,
+    ) = _get_graph_store_shape_and_readiness()
+    expected_world_size = num_compute_nodes + num_storage_nodes
+    actual_world_size = torch.distributed.get_world_size()
+    if actual_world_size != expected_world_size:
+        raise ValueError(
+            "GraphStore topology does not match the initialized process group: "
+            f"expected world size {expected_world_size} from "
+            f"{num_compute_nodes} compute + {num_storage_nodes} storage nodes, "
+            f"got {actual_world_size}."
+        )
 
     cluster_master_ip = get_internal_ip_from_master_node()
     # We assume that the compute cluster nodes come first, followed by the storage nodes.
@@ -329,14 +426,6 @@ def get_graph_store_info() -> GraphStoreInfo:
 
     num_processes_per_compute = int(
         os.environ.get(COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY, "1")
-    )
-
-    readiness_uri = (
-        get_resource_config().temp_assets_bucket_path
-        / "gigl"
-        / "graph_store"
-        / get_vertex_ai_job_id()
-        / "graph_store_readiness.txt"
     )
 
     return GraphStoreInfo(
