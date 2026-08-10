@@ -21,7 +21,7 @@ namespace gigl {
 // pushResiduals receives Python-owned containers, so convert them while the GIL
 // is held and release only around the C++ state update.
 static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> neighborTensorsByEtypeId;
+    NeighborFetchMap neighborTensorsByEtypeId;
     // Dict iteration touches Python objects — GIL must be held here.
     for (auto item : fetchedByEtypeId) {
         auto edgeTypeId = item.first.cast<int32_t>();
@@ -43,25 +43,77 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
 }
 
 static std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueueWrapper(PPRForwardPush& state) {
-    std::optional<std::unordered_map<int32_t, torch::Tensor>> drained;
+    std::optional<std::unordered_map<int32_t, torch::Tensor>> queueDrainResult;
     // drainQueue mutates only this PPRForwardPush instance and materializes CPU
     // tensors for frontier node IDs. pybind converts those tensor handles back
     // to Python tensors after return without copying the underlying storage.
     {
         py::gil_scoped_release release;
-        drained = state.drainQueue();
+        queueDrainResult = state.drainQueue();
     }
-    return drained;
+    return queueDrainResult;
 }
 
-static std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>
-extractTopKWithResidualTopUpWrapper(PPRForwardPush& state, int32_t maxPPRNodes, bool enableResidualTopUp) {
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> result;
+static PPRExtractResult extractTopKWithResidualTopUpWrapper(PPRForwardPush& state,
+                                                            int32_t maxPPRNodes,
+                                                            bool enableResidualTopUp) {
+    PPRExtractResult result;
     // Extraction walks C++ state and builds torch tensors. Returning through
     // pybind creates Python container/wrapper objects, not tensor data copies.
     {
         py::gil_scoped_release release;
         result = state.extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp);
+    }
+    return result;
+}
+
+static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
+                                                   const std::vector<int32_t>& fetchIterationCounts,
+                                                   int32_t maxFetchIterations) {
+    std::vector<PPRForwardPush*> statePtrs;
+    statePtrs.reserve(py::len(states));
+    // Sequence iteration and casting touch Python objects, so keep the GIL
+    // while copying raw C++ state pointers out of the Python container.
+    for (py::handle stateObj : states) {
+        statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
+    }
+
+    // C++ typed drain only reads/mutates PPRForwardPush states and builds C++
+    // containers. Reacquire the GIL before constructing the Python tuple.
+    // REQUIREMENT: no other thread may read or mutate these channel states
+    // while the GIL is released. The typed sampler drains and pushes each
+    // channel in a single sequenced loop iteration.
+    TypedPPRQueueDrainResult queueDrainResult;
+    {
+        py::gil_scoped_release release;
+        queueDrainResult = drainTypedPPRChannelQueues(statePtrs, fetchIterationCounts, maxFetchIterations);
+    }
+    // Pybind converts the temporary C++ containers into Python objects. Tensor
+    // values are handles, so this does not copy tensor storage across the
+    // Python/C++ boundary.
+    return py::make_tuple(queueDrainResult.drainedChannelIndices,
+                          queueDrainResult.fetchChannelIndices,
+                          queueDrainResult.edgeTypeIdsByFetchChannel,
+                          queueDrainResult.unionedNodeIdsByEdgeTypeId);
+}
+
+static PPRExtractResult extractTypedTopKWithResidualTopUpWrapper(const py::sequence& states,
+                                                                 const std::vector<int32_t>& channelTargetCounts,
+                                                                 bool enableResidualTopUp) {
+    std::vector<PPRForwardPush*> statePtrs;
+    statePtrs.reserve(py::len(states));
+    // Sequence iteration and casting touch Python objects, so keep the GIL
+    // while copying raw C++ state pointers out of the Python container.
+    for (py::handle stateObj : states) {
+        statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
+    }
+
+    // C++ extraction only reads the completed channel states and builds C++
+    // tensors/containers. Reacquire the GIL before pybind converts the return.
+    PPRExtractResult result;
+    {
+        py::gil_scoped_release release;
+        result = extractTypedTopKWithResidualTopUp(statePtrs, channelTargetCounts, enableResidualTopUp);
     }
     return result;
 }
@@ -85,7 +137,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("drain_queue", gigl::drainQueueWrapper)
         .def("push_residuals", gigl::pushResidualsWrapper)
         .def("extract_top_k_with_residual_top_up",
-             gigl::extractTopKWithResidualTopUpWrapper,
+             &gigl::extractTopKWithResidualTopUpWrapper,
              py::arg("max_ppr_nodes"),
              py::arg("enable_residual_topup"));
+    m.def("drain_typed_ppr_channel_queues",
+          &gigl::drainTypedPPRChannelQueuesWrapper,
+          py::arg("states"),
+          py::arg("fetch_iteration_counts"),
+          py::arg("max_fetch_iterations") = -1);
+    m.def("extract_typed_top_k_with_residual_top_up",
+          &gigl::extractTypedTopKWithResidualTopUpWrapper,
+          py::arg("states"),
+          py::arg("channel_target_counts"),
+          py::arg("enable_residual_topup"));
 }
