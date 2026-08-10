@@ -9,7 +9,6 @@
 #include <future>
 #include <numeric>
 #include <optional>
-#include <sstream>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -450,19 +449,6 @@ static std::vector<std::unordered_map<int32_t, int64_t>> buildSelectedLocalIdsBy
     return selectedLocalIdsByNodeType;
 }
 
-static std::string formatIntVector(const std::vector<int32_t>& values) {
-    std::ostringstream out;
-    out << "[";
-    for (size_t index = 0; index < values.size(); ++index) {
-        if (index > 0) {
-            out << ", ";
-        }
-        out << values[index];
-    }
-    out << "]";
-    return out.str();
-}
-
 OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     const std::vector<const PPRForwardPush*>& states,
     const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
@@ -493,13 +479,9 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                     ".");
         TORCH_CHECK(state->_edgeTypeToDstNtypeId == edgeTypeToDestinationNodeTypeId,
                     "All PPR states must share the same edge destination-type schema for original-edge extraction. "
-                    "Expected ",
-                    formatIntVector(edgeTypeToDestinationNodeTypeId),
-                    " from state 0, received ",
-                    formatIntVector(state->_edgeTypeToDstNtypeId),
-                    " from state ",
+                    "State ",
                     stateIndex,
-                    ".");
+                    " differs from state 0.");
     }
 
     // Convert each selected global node ID to its local HeteroData index. The
