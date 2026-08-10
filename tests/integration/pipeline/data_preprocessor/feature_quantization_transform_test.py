@@ -72,8 +72,10 @@ class FeatureQuantizationTransformTest(TestCase):
             with TestPipeline() as pipeline:
                 logical_metadata = transform_output_metadata
                 if use_deferred_metadata:
-                    logical_metadata = pipeline | "Create deferred metadata" >> beam.Create(
-                        [transform_output_metadata]
+                    logical_metadata = (
+                        pipeline
+                        | "Create deferred metadata"
+                        >> beam.Create([transform_output_metadata])
                     )
                 transformed_batches, physical_metadata = (
                     apply_feature_quantization_transform(
