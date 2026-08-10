@@ -216,11 +216,20 @@ class DataPreprocessor:
                 f"Got {type(data_reference)}."
             )
 
+        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
+            feature_quantization_enabled = (
+                preprocessing_spec.feature_quantization_spec is not None
+            )
+        else:
+            # TODO(quantization): Support quantization for edge features.
+            feature_quantization_enabled = False
+
         transformed_features_info = TransformedFeaturesInfo(
             applied_task_identifier=self.applied_task_identifier,
             feature_type=feature_type,
             entity_type=entity_type,
             custom_identifier=custom_identifier,
+            feature_quantization_enabled=feature_quantization_enabled,
         )
 
         def __get_feature_preprocessing_job_msgs(
@@ -482,10 +491,15 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
-            metadata_path = (
-                node_transformed_features_info.feature_quantization_metadata_path.uri
-            )
-            if tf.io.gfile.exists(metadata_path):
+            if node_transformed_features_info.feature_quantization_enabled:
+                metadata_path = (
+                    node_transformed_features_info.feature_quantization_metadata_path.uri
+                )
+                if not tf.io.gfile.exists(metadata_path):
+                    raise RuntimeError(
+                        f"Quantization metadata was expected for node type {node_type}, "
+                        f"but was not produced at {metadata_path}."
+                    )
                 logger.info(f"Loading node quantization metadata from {metadata_path}")
                 with tf.io.gfile.GFile(metadata_path) as f:
                     metadata = json.loads(f.read())
@@ -507,6 +521,8 @@ class DataPreprocessor:
                 node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
                     quantized_feature_metadata_pb
                 )
+            else:
+                logger.info(f"Node feature quantization is disabled for {node_type}")
             preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
                 int(condensed_node_type)
             ].CopyFrom(node_metadata_output_pb)
