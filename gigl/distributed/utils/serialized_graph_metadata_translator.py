@@ -41,6 +41,7 @@ def _build_serialized_tfrecord_entity_info(
         if not isinstance(
             preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput
         ):
+            # TODO(quantization): Support edge feature quantization.
             raise ValueError("Quantization is supported only for node entities.")
         packed_feature_key = (
             preprocessed_metadata.quantized_feature_metadata.packed_feature_key
@@ -97,7 +98,10 @@ def _build_feature_quantization_metadata(
 ) -> FeatureQuantizationMetadata:
     state = quantized_metadata.WhichOneof("state")
 
-    neg_mean = pos_mean = clip_min = clip_max = None
+    neg_mean: Optional[float] = None
+    pos_mean: Optional[float] = None
+    clip_min: Optional[float] = None
+    clip_max: Optional[float] = None
     if state == "single_bit_state":
         bits = 1
         neg_mean = quantized_metadata.single_bit_state.neg_mean
