@@ -142,16 +142,13 @@ class PPRSamplerOptions:
             also include original graph edge types alongside virtual PPR edges.
             The sampler emits only original edges that were fetched during PPR
             traversal and whose source and destination are both in the final
-            PPR-selected node set. It does not run a second induced subgraph pass:
-            fetched edges to unselected nodes are omitted, selected residual/top-up
-            nodes that were never expanded contribute no source edges, and capped
-            high-degree rows can emit only the sampled neighbors that were actually
-            fetched. Original edges are emitted through GLT's regular sampled-edge
-            channel, so their final HeteroData edge orientation follows the same
-            ``edge_dir`` convention as k-hop sampling. Homogeneous PPR keeps the
-            default PPR-only output because ``Data`` cannot represent virtual PPR
-            and original edges as separate edge types. The default ``False`` path
-            is also more faithful to PyG's ``get_ppr`` API, which returns virtual
+            PPR-selected node set. Original edges are emitted through GLT's
+            regular sampled-edge channel, so their final HeteroData edge
+            orientation follows the same ``edge_dir`` convention as k-hop
+            sampling. Homogeneous PPR keeps the default PPR-only output because
+            ``Data`` cannot represent virtual PPR and original edges as separate
+            edge types. The default ``False`` path is also more faithful to PyG's
+            ``get_ppr`` API, which returns virtual
             seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
             an induced message-passing subgraph:
             https://pytorch-geometric.readthedocs.io/en/2.5.3/_modules/torch_geometric/utils/ppr.html

@@ -138,10 +138,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         - When ``include_sampled_edges`` is enabled, original graph edge types are
           included alongside virtual PPR edges. The sampler emits only original
           edges that were fetched during PPR traversal and whose source and
-          destination are both in the final PPR-selected node set. It does not run
-          a second induced-subgraph pass. These original edges are emitted through
-          GLT's regular sampled-edge channel, so their final HeteroData edge
-          orientation follows the same ``edge_dir`` convention as k-hop sampling.
+          destination are both in the final PPR-selected node set. These original
+          edges are emitted through GLT's regular sampled-edge channel, so their
+          final HeteroData edge orientation follows the same ``edge_dir``
+          convention as k-hop sampling.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -209,11 +209,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         include_sampled_edges: Whether heterogeneous PPR output should include
             original graph edges alongside virtual PPR edges. The sampler emits
             only original edges that were fetched during PPR traversal and whose
-            source and destination are both in the final PPR-selected node set. It
-            does not run a second induced-subgraph pass: fetched edges to
-            unselected nodes are omitted, selected residual/top-up nodes that were
-            never expanded contribute no source edges, and capped high-degree rows
-            can emit only the sampled neighbors that were actually fetched.
+            source and destination are both in the final PPR-selected node set.
     """
 
     def __init__(
@@ -826,11 +822,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     ]:
         """Extract original edges over selected nodes from C++ PPR caches.
 
-        This intentionally does not issue another graph-store request. The edge
-        set is limited to adjacency rows already cached while computing PPR: a
-        selected residual/top-up node that was never expanded contributes no
-        original source edges, and a capped high-degree row contributes only the
-        sampled neighbors returned by that capped fetch.
+        This intentionally does not issue another graph-store request; it extracts
+        sampled edge rows already cached while computing PPR.
 
         Returns:
             A 4-tuple of GLT sampled-edge dictionaries:
