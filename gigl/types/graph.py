@@ -167,11 +167,14 @@ class FeatureQuantizationMetadata:
         """Number of logical features that remain in raw form."""
         return len(self.raw_feature_indices)
 
-    @lru_cache(maxsize=2)
+    # One cache entry matches the expected single-device dataloader call path.
+    @lru_cache(maxsize=1)
     def scatter_index_tensors(
         self, device: torch.device
     ) -> FeatureQuantizationIndexTensors:
-        """Device-local indices for scattering quantized and raw features."""
+        """Device-local scatter indices for the single-device hot path."""
+        # The logical indices never change across batches, so cache their
+        # device-local tensors for repeated quantized/raw feature scatter writes.
         quantized = torch.tensor(
             self.quantized_feature_indices, dtype=torch.long, device=device
         )
