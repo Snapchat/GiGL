@@ -12,15 +12,19 @@ from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
-from gigl.env.pipelines_config import get_resource_config
+from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
+from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
+    GiglResourceConfigWrapper,
+)
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
+from snapchat.research.gbml.gigl_resource_config_pb2 import GiglResourceConfig
 
 logger = Logger()
 
@@ -143,6 +147,12 @@ class KfpOrchestrator:
         )
         logger.info(f"Skipping pipeline compilation; will use {compiled_pipeline_path}")
 
+        resource_config = GiglResourceConfigWrapper(
+            ProtoUtils().compose_proto_from_yaml(
+                uri=resource_config_uri,
+                proto_cls=GiglResourceConfig,
+            )
+        )
         run_keyword_args = {
             "job_name": applied_task_identifier,
             "start_at": start_at,
@@ -157,15 +167,12 @@ class KfpOrchestrator:
             run_keyword_args["notification_emails"] = notification_emails
         else:
             run_keyword_args["notification_emails"] = [
-                get_resource_config(
-                    resource_config_uri=resource_config_uri
-                ).service_account_email
+                resource_config.service_account_email
             ]
         if stop_after is not None:
             run_keyword_args["stop_after"] = stop_after
 
         logger.info(f"Running pipeline with args: {run_keyword_args}")
-        resource_config = get_resource_config(resource_config_uri=resource_config_uri)
         vertex_ai_service = VertexAIService(
             project=resource_config.project,
             location=resource_config.region,
