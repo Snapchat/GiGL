@@ -52,14 +52,14 @@ def _build_serialized_tfrecord_entity_info(
         )
 
         feature_keys_to_load: list[str] = []
-        # Keep only wholly unquantized fields: TFRecord decoding cannot split one
-        # field between float and packed storage.
+        # Identify non-quantized feature fields to load from float storage.
         for key in preprocessed_metadata.feature_keys:
             key_indices = set(range(*feature_index[key]))
             quantized_key_indices = key_indices.intersection(quantized_indices)
             if not quantized_key_indices:
                 feature_keys_to_load.append(key)
             elif quantized_key_indices != key_indices:
+                # TFRecord decoding cannot split a field between float and packed storage.
                 raise ValueError(f"Partial quantization not supported for {key}")
         feature_dim = quantization_metadata.raw_feature_dim
     else:
