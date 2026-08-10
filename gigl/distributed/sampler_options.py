@@ -147,8 +147,11 @@ class PPRSamplerOptions:
             orientation follows the same ``edge_dir`` convention as k-hop
             sampling. Homogeneous PPR keeps the default PPR-only output because
             ``Data`` cannot represent virtual PPR and original edges as separate
-            edge types. The default ``False`` path is also more faithful to PyG's
-            ``get_ppr`` API, which returns virtual
+            edge types. This also applies to labeled-homogeneous ABLP loaders,
+            where label edges make the sampler graph heterogeneous internally but
+            the output is still converted back to homogeneous ``Data``. The
+            default ``False`` path is also more faithful to PyG's ``get_ppr`` API,
+            which returns virtual
             seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
             an induced message-passing subgraph:
             https://pytorch-geometric.readthedocs.io/en/2.5.3/_modules/torch_geometric/utils/ppr.html

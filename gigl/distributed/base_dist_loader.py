@@ -247,16 +247,21 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
 
         self._sampler_options = sampler_options
+        # Labeled-homogeneous ABLP is represented as hetero internally so label
+        # edges can be carried through sampling, but the final batch is converted
+        # back to homogeneous Data. That output shape cannot carry virtual PPR
+        # edge types and original sampled edge types at the same time.
         if (
             isinstance(sampler_options, PPRSamplerOptions)
             and sampler_options.include_sampled_edges
             and self._is_homogeneous_with_labeled_edge_type
         ):
             raise ValueError(
-                "include_sampled_edges is only supported for "
-                "heterogeneous PPR output. Labeled homogeneous graphs are "
-                "converted to homogeneous Data and cannot represent virtual PPR "
-                "and original edges as separate edge types."
+                "include_sampled_edges is only supported for pure heterogeneous "
+                "PPR output. Labeled-homogeneous ABLP graphs are heterogeneous "
+                "inside the sampler to carry label edges, but their final output "
+                "is homogeneous Data and cannot represent virtual PPR and "
+                "original edges as separate edge types."
             )
         self._non_blocking_transfers = non_blocking_transfers
         self._backend_key = backend_key
