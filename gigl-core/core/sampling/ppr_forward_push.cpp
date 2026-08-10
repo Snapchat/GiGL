@@ -1,4 +1,5 @@
 #include "ppr_forward_push.h"
+#include "typed_ppr_feature_layout.h"
 
 #include <torch/torch.h>
 
@@ -146,7 +147,7 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
         // PPR initialisation: each seed starts with residual = alpha (the
         // restart probability).  The first push will move alpha into ppr_score
         // and distribute (1-alpha)*alpha to the seed's neighbors.
-        _state[seedIdx][seedNodeTypeId].residuals[seedNodeId] = _alpha;
+        _state[seedIdx][seedNodeTypeId].residualStates[seedNodeId] = ResidualState{_alpha, 0};
         _state[seedIdx][seedNodeTypeId].queue.insert(seedNodeId);
     }
 }
@@ -355,12 +356,17 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
             }
 
             for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
-                auto residualIter = srcNodeTypeState.residuals.find(sourceNodeId);
-                double sourceResidual = (residualIter != srcNodeTypeState.residuals.end()) ? residualIter->second : 0.0;
+                auto sourceStateIter = srcNodeTypeState.residualStates.find(sourceNodeId);
+                TORCH_CHECK(sourceStateIter != srcNodeTypeState.residualStates.end(),
+                            "PPR push expected residual state for queued node ",
+                            sourceNodeId,
+                            ".");
+                auto& sourceState = sourceStateIter->second;
+                const double sourceResidual = sourceState.residual;
 
                 // a. Absorb: move residual into the PPR score.
                 srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
-                srcNodeTypeState.residuals[sourceNodeId] = 0.0;
+                sourceState.residual = 0.0;
 
                 // b. Count total cached neighbors across all edge types for
                 // this source node.  We normalise by the number of neighbors we
@@ -409,13 +415,19 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     // exceeded.
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
-                        dstNodeTypeState.residuals[neighborNodeId] += residualPerNeighbor;
+                        const int32_t neighborHop = sourceState.minHop + 1;
+                        auto residualStateIter =
+                            dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop})
+                                .first;
+                        auto& residualState = residualStateIter->second;
+                        residualState.residual += residualPerNeighbor;
+                        residualState.minHop = std::min(residualState.minHop, neighborHop);
 
                         double threshold = _requeueThresholdFactor *
                                            static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
 
                         if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
-                            dstNodeTypeState.residuals[neighborNodeId] >= threshold) {
+                            residualState.residual >= threshold) {
                             dstNodeTypeState.queue.insert(neighborNodeId);
                             ++_numNodesInQueue;
                         }
@@ -636,8 +648,9 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         }
 
         std::vector<std::pair<int32_t, double>> residualPairs;
-        residualPairs.reserve(nodeTypeState.residuals.size());
-        for (const auto& [nodeId, residual] : nodeTypeState.residuals) {
+        residualPairs.reserve(nodeTypeState.residualStates.size());
+        for (const auto& [nodeId, residualState] : nodeTypeState.residualStates) {
+            double residual = residualState.residual;
             // Forward push residuals are non-negative in normal operation. Pushed
             // nodes remain in the map with zero residual, so skip drained entries
             // and any unexpected non-positive values.
@@ -679,11 +692,22 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
 static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
                                       std::vector<std::pair<int32_t, double>>& selectedPairs) {
     for (auto& [nodeId, score] : selectedPairs) {
-        auto residualIter = nodeTypeState.residuals.find(nodeId);
-        if (residualIter != nodeTypeState.residuals.end()) {
-            score += residualIter->second;
+        auto residualStateIter = nodeTypeState.residualStates.find(nodeId);
+        if (residualStateIter != nodeTypeState.residualStates.end()) {
+            score += residualStateIter->second.residual;
         }
     }
+}
+
+static double getNodeHopProximity(const SeedNodeTypeState& nodeTypeState, int32_t nodeId) {
+    auto residualStateIter = nodeTypeState.residualStates.find(nodeId);
+    TORCH_CHECK(residualStateIter != nodeTypeState.residualStates.end(),
+                "PPR extraction expected a discovered hop for emitted node ",
+                nodeId,
+                ".");
+    int32_t hop = residualStateIter->second.minHop;
+    TORCH_CHECK(hop >= 0, "PPR discovered hop must be non-negative, got ", hop, ".");
+    return 1.0 / (1.0 + static_cast<double>(hop));
 }
 
 // Helper function for adding one channel's extracted PPR candidates into the
@@ -696,48 +720,36 @@ static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
 //
 // Inputs:
 //   nodesAndScores: extracted (node_id, score) candidates for one channel.
+//   nodeTypeState: completed PPR state for this seed/node-type/channel.
 //   channelIndex: index of the typed PPR channel being added.
-//   numChannels: total typed PPR channels, used to derive feature width.
+//   featureLayout: typed edge-attribute layout and update helper.
 //   outputScoresByNodeId: mutable map from node ID to emitted edge_attr features.
 //   channelOutputCandidates: mutable sortable candidates for target-count selection.
 //
-// Expected output: outputScoresByNodeId has this channel's score/presence
-// features merged in, and channelOutputCandidates contains this channel's
+// Expected output: outputScoresByNodeId has this channel's score, proximity,
+// and presence features merged in, and channelOutputCandidates contains this channel's
 // candidates on the emitted PPR score scale.
 static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int32_t, double>>& nodesAndScores,
+                                                 const SeedNodeTypeState& nodeTypeState,
                                                  int32_t channelIndex,
-                                                 int32_t numChannels,
+                                                 const TypedPPRFeatureLayout& featureLayout,
                                                  std::unordered_map<int32_t, std::vector<double>>& outputScoresByNodeId,
                                                  std::vector<std::pair<int32_t, double>>& channelOutputCandidates) {
     if (nodesAndScores.empty()) {
         return;
     }
 
-    // Feature width is 1 + 2C:
-    //   column 0: best emitted PPR score across channels, used as the scalar
-    //             PPR weight by downstream ranking/sequence construction. This
-    //             stays on the same score scale as untyped PPR output.
-    //   columns [1, C]: emitted PPR score for each channel.
-    //   columns [1 + C, 1 + 2C): presence bit for each channel.
-    int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
     for (const auto& [nodeId, score] : nodesAndScores) {
         auto scoreIter = outputScoresByNodeId.find(nodeId);
         if (scoreIter == outputScoresByNodeId.end()) {
-            scoreIter = outputScoresByNodeId.emplace(nodeId, std::vector<double>(numEdgeAttrFeatures, 0.0)).first;
+            scoreIter = outputScoresByNodeId.emplace(nodeId, featureLayout.makeFeatureVector()).first;
         }
         auto& scoreFeatures = scoreIter->second;
-
-        // Feature layout:
-        // [best_score, per-channel scores..., channel presence bits...].
-        scoreFeatures[0] = std::max(scoreFeatures[0], score);
-        int32_t channelScoreIndex = 1 + channelIndex;
-        int32_t channelPresenceIndex = 1 + numChannels + channelIndex;
 
         // Record this node's score for the current channel and mark that the
         // channel reached the node. Current extraction emits one row per node
         // per channel, so no intra-channel merge is needed here.
-        scoreFeatures[channelScoreIndex] = score;
-        scoreFeatures[channelPresenceIndex] = 1.0;
+        featureLayout.updateScores(scoreFeatures, channelIndex, score, getNodeHopProximity(nodeTypeState, nodeId));
 
         // Keep a per-channel sortable candidate list so target counts can be
         // applied after cross-channel attribution.
@@ -900,7 +912,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
     // downstream model architectures see a fixed set of PPR edge types every iteration.
     for (int32_t nodeTypeId = 0; nodeTypeId < _numNodeTypes; ++nodeTypeId) {
         std::vector<int64_t> flatIds;
-        std::vector<double> flatWeights;
+        std::vector<double> flatFeatureValues;
         std::vector<int64_t> validCounts;
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
@@ -924,14 +936,16 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
 
             for (const auto& [nodeId, score] : selectedPairs) {
                 flatIds.push_back(static_cast<int64_t>(nodeId));
-                flatWeights.push_back(score);
+                flatFeatureValues.push_back(score);
+                flatFeatureValues.push_back(getNodeHopProximity(nodeTypeState, nodeId));
             }
             validCounts.push_back(static_cast<int64_t>(selectedPairs.size()));
         }
 
-        extractedPPRByNodeTypeId[nodeTypeId] = {torch::tensor(flatIds, torch::kLong),
-                                                torch::tensor(flatWeights, torch::kDouble),
-                                                torch::tensor(validCounts, torch::kLong)};
+        auto flatWeights = torch::tensor(flatFeatureValues, torch::kDouble)
+                               .reshape({static_cast<int64_t>(flatIds.size()), /*numEdgeAttrFeatures=*/2});
+        extractedPPRByNodeTypeId[nodeTypeId] = {
+            torch::tensor(flatIds, torch::kLong), flatWeights, torch::tensor(validCounts, torch::kLong)};
     }
     return extractedPPRByNodeTypeId;
 }
@@ -958,12 +972,18 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     int32_t numNodeTypes = firstState->_numNodeTypes;
     auto numChannels = static_cast<int32_t>(states.size());
     int32_t maxPPRNodes = std::accumulate(channelTargetCounts.begin(), channelTargetCounts.end(), 0);
-    // Feature width is 1 + 2C:
+    // Typed edge_attr feature width is 2 + 3C:
     //   column 0: best emitted PPR score across channels, used as the scalar
     //             PPR weight by downstream ranking/sequence construction.
-    //   columns [1, C]: emitted PPR score for each channel.
-    //   columns [1 + C, 1 + 2C): presence bit for each channel.
-    int32_t numEdgeAttrFeatures = 1 + (2 * numChannels);
+    //   column 1: global hop proximity as 1/(1 + closest_hop).
+    //   columns [2, 2 + 3C): per-channel triples:
+    //                         (channel_score, channel_hop_proximity, channel_presence).
+    //                         Proximity is 1/(1 + hop) when present and 0 when
+    //                         missing. For present channels, hop can be recovered
+    //                         as (1 - proximity) / proximity; use the presence
+    //                         bit before applying this inverse.
+    TypedPPRFeatureLayout featureLayout(numChannels);
+    int32_t numEdgeAttrFeatures = featureLayout.numFeatures();
 
     // Pre-size the per-seed feature map below. Each channel can contribute up
     // to maxPPRNodes candidates before cross-channel dedup and target filling.
@@ -997,8 +1017,9 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
 
                 outputCandidatesByChannel[channelIndex].reserve(outputNodesAndScores.size());
                 addTypedPPRSeedFeaturesAndCandidates(outputNodesAndScores,
+                                                     nodeTypeState,
                                                      channelIndex,
-                                                     numChannels,
+                                                     featureLayout,
                                                      outputScores,
                                                      outputCandidatesByChannel[channelIndex]);
             }

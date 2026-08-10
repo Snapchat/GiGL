@@ -6,7 +6,9 @@ import common.types.pb_wrappers.TaskMetadataPbWrapper
 import common.types.pb_wrappers.TaskMetadataType
 import libs.task.SubgraphSamplerTask
 import libs.task.graphdb.GraphDBNodeAnchorBasedLinkPredictionTask
+import libs.task.pureSpark.NodeAnchorBasedLinkPredictionTask
 import libs.task.pureSpark.SupervisedNodeClassificationTask
+import libs.task.pureSpark.UserDefinedLabelsNodeAnchorBasedLinkPredictionTask
 import libs.task.pureSparkV2.EgoNetGeneration
 
 object TaskRunner {
@@ -67,9 +69,27 @@ object TaskRunner {
             giglResourceConfigWrapper = giglResourceConfigWrapper,
           )
         } else {
-          throw new Exception(
-            "PureSpark SGS not supported in spark35 yet.",
-          )
+          // TODO for heterogeneous will have to update this to be more flexible to detect UDL for different edge types
+          val defaultCondensedEdgeType: Int =
+            gbmlConfigWrapper.preprocessedMetadataWrapper.preprocessedMetadataPb.condensedEdgeTypeToPreprocessedMetadata.keysIterator
+              .next()
+          val isPosUserDefined: Boolean = !gbmlConfigWrapper.preprocessedMetadataWrapper
+            .isPosUserDefinedForCondensedEdgeType(condensedEdgeType = defaultCondensedEdgeType)
+          val isNegUserDefined: Boolean = !gbmlConfigWrapper.preprocessedMetadataWrapper
+            .isNegUserDefinedForCondensedEdgeType(condensedEdgeType = defaultCondensedEdgeType)
+          if (isPosUserDefined || isNegUserDefined) {
+            new UserDefinedLabelsNodeAnchorBasedLinkPredictionTask(
+              gbmlConfigWrapper = gbmlConfigWrapper,
+              graphMetadataPbWrapper = gbmlConfigWrapper.graphMetadataPbWrapper,
+              isPosUserDefined = isPosUserDefined,
+              isNegUserDefined = isNegUserDefined,
+            )
+          } else {
+            new NodeAnchorBasedLinkPredictionTask(
+              gbmlConfigWrapper = gbmlConfigWrapper,
+              graphMetadataPbWrapper = gbmlConfigWrapper.graphMetadataPbWrapper,
+            )
+          }
         }
       } else {
         // TODO: (svij) Note this implementation is copy from spark 3.2 implementation but untested

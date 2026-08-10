@@ -26,18 +26,23 @@ using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 using OriginalEdgeExtractTensors = std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>>;
 using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
+struct ResidualState {
+    double residual; // unabsorbed mass waiting to push
+    int32_t minHop;  // minimum discovered hop within one seed's traversal
+};
+
 // Per-seed, per-node-type PPR algorithm state.
-// Grouping all four tables into one struct is a logical convenience: a single
-// _state[seedIdx][nodeTypeId] access reaches all four tables for a given (seed, ntype)
+// Grouping all four containers into one struct is a logical convenience: a single
+// _state[seedIdx][nodeTypeId] access reaches all state for a given (seed, ntype)
 // pair, rather than indexing four separate 2D arrays.  Note that unordered_map and
 // unordered_set heap-allocate their bucket storage, so the actual key-value data is
 // not co-located in memory — only the control-plane metadata (size, bucket pointer)
 // lives inside the struct.
 struct SeedNodeTypeState {
-    std::unordered_map<int32_t, double> pprScores; // absorbed PPR mass
-    std::unordered_map<int32_t, double> residuals; // unabsorbed mass waiting to push
-    std::unordered_set<int32_t> queue;             // nodes queued for the next drain
-    std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
+    std::unordered_map<int32_t, double> pprScores;             // absorbed PPR mass
+    std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
+    std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
+    std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
 };
 
 struct CachedNeighborList {
@@ -121,6 +126,9 @@ public:
     // it is not a global top-k over ppr_score + residual when maxPPRNodes is tight.
     // maxPPRNodes is the final per-seed cap across finalized PPR and residual
     // top-up candidates.
+    //
+    // Edge attributes are emitted as [ppr_score, hop_proximity], where
+    // hop_proximity = 1 / (1 + hop): anchor=1.0, 1-hop=0.5, and so on.
     PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp);
 
     friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
@@ -223,7 +231,13 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 // extractTopKWithResidualTopUp:
 //   ids: int64 node IDs, flattened across seeds.
 //   weights: double feature matrix with columns
-//            [best_score, per-channel scores..., presence bits...].
+//            [best_score, hop_proximity,
+//             (channel_score, channel_hop_proximity, channel_presence), ...].
+//            Hop proximity is 1 / (1 + hop). Per-channel proximity is 0 when
+//            that channel did not reach the selected node.
+//            For present channels, the original hop count can be recovered as
+//            (1 - proximity) / proximity; use the presence bit before applying
+//            this inverse because missing channels have proximity 0.
 //   valid_counts: int64 count of selected nodes per seed.
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,

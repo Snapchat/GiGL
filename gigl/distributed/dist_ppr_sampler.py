@@ -48,16 +48,16 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-
 PPRForwardPushFetchMap = dict[
     int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
 ]
 PPRCacheState = Optional[Union[PPRForwardPush, list[PPRForwardPush]]]
 
 
-# Sampler PPR output: flat node IDs, flat weights, per-seed valid counts, and
-# optional completed C++ PPR cache state(s). Homogeneous extraction uses tensors
-# directly; heterogeneous extraction uses dictionaries keyed by node type.
+# C++ PPR extraction output: flat node IDs, flat edge-attribute rows, and
+# per-seed valid counts, plus optional completed C++ PPR cache state(s).
+# Homogeneous extraction uses tensors directly; heterogeneous extraction uses
+# dictionaries keyed by node type.
 PPRResult = tuple[
     Union[torch.Tensor, dict[NodeType, torch.Tensor]],
     Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -114,18 +114,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     **Homogeneous (Data):**
         - ``data.edge_index``: ``[2, N]`` int64 — row 0 is local seed indices,
           row 1 is local neighbor indices.
-        - ``data.edge_attr``: ``[N]`` float — PPR score for each pair.
+        - ``data.edge_attr``: ``[N, 2]`` float — ``[ppr_score, hop_proximity]``
+          for each pair. ``hop_proximity`` is ``1 / (1 + hop)``: ``1.0`` for
+          the anchor, ``0.5`` for 1-hop, and so on.
 
     **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", neighbor_type)].edge_index``: same format as above.
-        - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``: scalar PPR
-          score for regular PPR. For typed PPR, edge attrs are multi-column:
-          ``[best_score, channel_scores..., channel_presence_bits...]``.
-          Scores use the same PPR mass scale as regular scalar PPR output.
+        - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``:
+          ``[ppr_score, hop_proximity]`` for regular PPR. For typed PPR, edge
+          attrs are multi-column:
+          ``[best_score, hop_proximity, (channel_score, channel_hop_proximity,
+          channel_presence), ...]``.
+          Scores use the same PPR mass scale as regular PPR output.
           Channel columns follow the insertion order of
           ``typed_channel_ratios``. Column 0 is the scalar best score for
-          consumers that need a single PPR weight.
+          consumers that need a single PPR weight, and column 1 is always the
+          global hop proximity. Per-channel hop proximity is ``1 / (1 + hop)``
+          when that channel reached the node, and ``0`` when it did not.
+          For present channels, the original hop count can be recovered as
+          ``(1 - proximity) / proximity``; use the presence bit before applying
+          this inverse because missing channels have proximity ``0``.
         - When ``include_original_edges_in_ppr_subgraph`` is enabled, original
           graph edge types whose endpoints are both in the PPR-selected node set
           are also included when those adjacency rows were already fetched during
@@ -586,9 +595,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 homogeneous graphs (internally mapped to a sentinel type).
 
         Returns:
-            A 4-tuple ``(flat_neighbor_ids, flat_weights, valid_counts,
+            A 4-tuple ``(flat_neighbor_ids, flat_edge_attrs, valid_counts,
             ppr_state_or_none)``. For homogeneous graphs the first three
-            elements are 1-D tensors; for heterogeneous graphs they are
+            elements are tensors; for heterogeneous graphs they are
             ``dict[NodeType, Tensor]`` objects where each tensor has the same
             structure as the homogeneous case.
 
@@ -596,8 +605,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
               score, concatenated across seeds.  For batch of size ``B`` with
               ``C_i`` neighbors for seed ``i``, shape is
               ``[sum(C_0, ..., C_{B-1})]``.
-            - ``flat_weights``: PPR scores corresponding to each entry in
-              ``flat_neighbor_ids``, same shape.
+            - ``flat_edge_attrs``: ``[ppr_score, hop_proximity]`` rows
+              corresponding to each entry in ``flat_neighbor_ids``, shape
+              ``[sum(C_0, ..., C_{B-1}), 2]``.
             - ``valid_counts``: number of PPR neighbors contributed by each
               seed, shape ``[batch_size]``.  Used to slice the flat tensors into
               per-seed groups: seed ``i``'s neighbors are at
@@ -612,8 +622,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
             # 4 seeds, valid_counts = [1, 3, 2, 0]  →  6 total (seed, neighbor) pairs
             flat_neighbor_ids = tensor([d0, d1a, d1b, d1c, d2a, d2b])
-            flat_weights      = tensor([w0, w1a, w1b, w1c, w2a, w2b])
-            valid_counts      = tensor([1,  3,   2,   0])
+            flat_edge_attrs   = tensor([[w0, p0], [w1a, p1a], ..., [w2b, p2b]])
+            valid_counts      = tensor([1, 3, 2, 0])
         """
         if seed_node_type is None:
             seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
