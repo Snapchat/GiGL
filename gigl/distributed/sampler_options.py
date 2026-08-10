@@ -139,18 +139,15 @@ class PPRSamplerOptions:
             Residual candidates follow the same channel targets as finalized
             PPR candidates.
         include_original_edges_in_ppr_subgraph: Whether heterogeneous PPR output
-            batches should also include original graph edge types already fetched
-            during PPR traversal whose endpoints are both in the PPR-selected node
-            set. This gives downstream models a local typed-edge view over the
-            selected nodes while keeping the PPR budget as the node-selection
-            boundary and avoiding a second graph-store sampling pass. This is a
-            preserved-fetched-edge view, not a post-hoc induced subgraph over
-            every selected node: if a residual/top-up node was selected but never
-            expanded as a source during PPR, that node contributes no original
-            source edges, and if ``num_neighbors_per_hop`` capped a high-degree
-            adjacency row, only the fetched sampled neighbors from that capped
-            row can be emitted. Original edges are emitted through GLT's regular
-            sampled-edge channel, so
+            batches should also include original graph edge types alongside
+            virtual PPR edges. The sampler emits only original edges that were
+            fetched during PPR traversal and whose source and destination are both
+            in the final PPR-selected node set. It does not run a second induced
+            subgraph pass: fetched edges to unselected nodes are omitted, selected
+            residual/top-up nodes that were never expanded contribute no source
+            edges, and capped high-degree rows can emit only the sampled neighbors
+            that were actually fetched. Original edges are emitted through GLT's
+            regular sampled-edge channel, so
             their final HeteroData edge orientation follows the same ``edge_dir``
             convention as k-hop sampling. Homogeneous PPR keeps the default
             PPR-only output because ``Data`` cannot represent virtual PPR and

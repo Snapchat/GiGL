@@ -9,6 +9,7 @@
 #include <future>
 #include <numeric>
 #include <optional>
+#include <sstream>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +28,8 @@ static int32_t unpackNodeId(uint64_t key) {
 }
 
 static int32_t unpackEdgeTypeId(uint64_t key) {
+    // Match packKey(): discard the high source-node bits, then interpret the
+    // low 32 bits using the original signed int32_t edge-type representation.
     return static_cast<int32_t>(static_cast<uint32_t>(key));
 }
 
@@ -35,10 +38,10 @@ struct OriginalEdgeDedupeKey {
     // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
     // emitted-edge level rather than skipping a whole cached row.
     //
-    // When edge IDs are cached, the edge ID is the strongest identity: two
-    // parallel edges with the same (type, src, dst) but different edge IDs should
-    // both be emitted. When edge IDs are unavailable, fall back to the structural
-    // identity (edge type, source node, destination node).
+    // When edge IDs are cached, they are the best edge identity available. Some
+    // graph sources can represent repeated (type, src, dst) rows as distinct
+    // edges; edge IDs preserve that distinction. Without edge IDs, fall back to
+    // the structural identity (edge type, source node, destination node).
     int32_t edgeTypeId;
     int64_t edgeId;
     int32_t sourceNodeId;
@@ -461,6 +464,19 @@ static std::vector<std::unordered_map<int32_t, int64_t>> buildSelectedLocalIdsBy
     return selectedLocalIdsByNodeType;
 }
 
+static std::string formatIntVector(const std::vector<int32_t>& values) {
+    std::ostringstream out;
+    out << "[";
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            out << ", ";
+        }
+        out << values[index];
+    }
+    out << "]";
+    return out.str();
+}
+
 OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     const std::vector<const PPRForwardPush*>& states,
     const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
@@ -471,15 +487,33 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     // PPR creates one state per traversal channel, so verify that those channels
     // agree on the compact node/edge-type IDs before merging their caches.
     const auto* firstState = states.front();
+    TORCH_CHECK(firstState != nullptr, "extractOriginalEdgesFromPPRCaches received a null first PPR state.");
     int32_t numNodeTypes = firstState->_numNodeTypes;
     const auto& edgeTypeToDestinationNodeTypeId = firstState->_edgeTypeToDstNtypeId;
 
-    for (const auto* state : states) {
-        TORCH_CHECK(state != nullptr, "extractOriginalEdgesFromPPRCaches received a null PPR state.");
+    for (size_t stateIndex = 0; stateIndex < states.size(); ++stateIndex) {
+        const auto* state = states[stateIndex];
+        TORCH_CHECK(state != nullptr,
+                    "extractOriginalEdgesFromPPRCaches received a null PPR state at index ",
+                    stateIndex,
+                    ".");
         TORCH_CHECK(state->_numNodeTypes == numNodeTypes,
-                    "All PPR states must share the same node type schema for original-edge extraction.");
+                    "All PPR states must share the same node type schema for original-edge extraction. Expected ",
+                    numNodeTypes,
+                    " node types from state 0, received ",
+                    state->_numNodeTypes,
+                    " from state ",
+                    stateIndex,
+                    ".");
         TORCH_CHECK(state->_edgeTypeToDstNtypeId == edgeTypeToDestinationNodeTypeId,
-                    "All PPR states must share the same edge destination-type schema for original-edge extraction.");
+                    "All PPR states must share the same edge destination-type schema for original-edge extraction. "
+                    "Expected ",
+                    formatIntVector(edgeTypeToDestinationNodeTypeId),
+                    " from state 0, received ",
+                    formatIntVector(state->_edgeTypeToDstNtypeId),
+                    " from state ",
+                    stateIndex,
+                    ".");
     }
 
     // Convert each selected global node ID to its local HeteroData index. The

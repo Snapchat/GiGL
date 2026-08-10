@@ -143,6 +143,8 @@ static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& sta
         result = extractOriginalEdgesFromPPRCaches(statePtrs, selectedNodeTensorsByNodeTypeId, includeEdgeIds);
     }
 
+    // Building py::dict/py::tuple objects and pybind tensor wrappers touches the
+    // Python C API, so the GIL must be held after the C++ extraction completes.
     py::dict pyResult;
     for (const auto& [edgeTypeId, tensors] : result) {
         const auto& [rows, cols, edgeIds] = tensors;

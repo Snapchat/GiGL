@@ -136,13 +136,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           ``(1 - proximity) / proximity``; use the presence bit before applying
           this inverse because missing channels have proximity ``0``.
         - When ``include_original_edges_in_ppr_subgraph`` is enabled, original
-          graph edge types whose endpoints are both in the PPR-selected node set
-          are also included when those adjacency rows were already fetched during
-          PPR traversal. These original edges do not expand the selected node set
-          and do not trigger a second graph-store sampling pass. They are emitted
-          through GLT's regular sampled-edge channel, so their final HeteroData
-          edge orientation follows the same ``edge_dir`` convention as k-hop
-          sampling.
+          graph edge types are included alongside virtual PPR edges. The sampler
+          emits only original edges that were fetched during PPR traversal and
+          whose source and destination are both in the final PPR-selected node
+          set. It does not run a second induced-subgraph pass. These original
+          edges are emitted through GLT's regular sampled-edge channel, so their
+          final HeteroData edge orientation follows the same ``edge_dir``
+          convention as k-hop sampling.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -208,14 +208,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             these through ``DistDataset.degree_tensor`` and move them to shared
             memory before worker handoff.
         include_original_edges_in_ppr_subgraph: Whether heterogeneous PPR output
-            should include original graph edges that were already fetched during
-            PPR traversal, in addition to virtual PPR edges. Preserved original
-            edges are filtered to endpoints already selected by PPR. This is a
-            preserved-fetched-edge view, not a post-hoc induced subgraph: if a
-            residual/top-up node was selected but never expanded as a source, it
-            contributes no original source edges, and if
-            ``num_neighbors_per_hop`` capped a high-degree adjacency row, only
-            the fetched sampled neighbors from that capped row can be emitted.
+            should include original graph edges alongside virtual PPR edges. The
+            sampler emits only original edges that were fetched during PPR
+            traversal and whose source and destination are both in the final
+            PPR-selected node set. It does not run a second induced-subgraph pass:
+            fetched edges to unselected nodes are omitted, selected residual/top-up
+            nodes that were never expanded contribute no source edges, and capped
+            high-degree rows can emit only the sampled neighbors that were actually
+            fetched.
     """
 
     def __init__(
@@ -835,6 +835,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         selected residual/top-up node that was never expanded contributes no
         original source edges, and a capped high-degree row contributes only the
         sampled neighbors returned by that capped fetch.
+
+        Returns:
+            A 4-tuple of GLT sampled-edge dictionaries:
+            rows_dict maps each original edge type to local source indices.
+            cols_dict maps each original edge type to local destination indices.
+            edge_dict maps each original edge type to edge IDs when ``with_edge``
+            is enabled, otherwise it is ``None``.
+            num_sampled_edges maps each original edge type to GLT's per-hop edge
+            counts list, using one count because these edges are attached as a
+            single sampled-edge layer.
         """
         selected_node_ids_by_node_type_id = {
             self._node_type_to_id[node_type]: node_ids.cpu()
@@ -860,7 +870,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 edge_dict[output_edge_type] = edge_ids.to(self.device)
 
         if not rows_dict:
-            return {}, {}, {} if self.with_edge else None, {}
+            empty_edge_dict = {} if self.with_edge else None
+            return {}, {}, empty_edge_dict, {}
 
         num_sampled_edges = {
             edge_type: [int(cols.size(0))] for edge_type, cols in cols_dict.items()
@@ -1061,10 +1072,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ppr_cache_states: list[PPRForwardPush] = []
                 for ppr_result in ppr_results:
                     ppr_cache_state = ppr_result[3]
-                    if isinstance(ppr_cache_state, list):
-                        ppr_cache_states.extend(ppr_cache_state)
-                    elif ppr_cache_state is not None:
+                    if isinstance(ppr_cache_state, PPRForwardPush):
                         ppr_cache_states.append(ppr_cache_state)
+                    elif ppr_cache_state is not None:
+                        ppr_cache_states.extend(ppr_cache_state)
                 # Keep the cache scan off the asyncio event-loop thread. The
                 # pybind wrapper releases the GIL around the C++ extraction.
                 (

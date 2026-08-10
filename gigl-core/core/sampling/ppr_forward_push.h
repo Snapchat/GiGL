@@ -45,6 +45,9 @@ struct SeedNodeTypeState {
     std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
 };
 
+// Cached adjacency payload stored in PPRForwardPush::_neighborCache. This lives
+// in the header because the cache is a class member; std::unordered_map requires
+// the complete value type wherever PPRForwardPush is instantiated/destroyed.
 struct CachedNeighborList {
     std::vector<int32_t> neighborIds;
     std::optional<std::vector<int64_t>> edgeIds;

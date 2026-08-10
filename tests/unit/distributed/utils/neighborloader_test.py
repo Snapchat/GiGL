@@ -281,7 +281,7 @@ class LoaderUtilsTest(TestCase):
             "unrelated_metadata": torch.tensor([1]),
         }
         loader = object.__new__(BaseDistLoader)
-        loader._sampler_options = PPRSamplerOptions(  # ty: ignore[invalid-assignment] TODO(ty-object-new): test-only partial loader.
+        loader._sampler_options = PPRSamplerOptions(
             include_original_edges_in_ppr_subgraph=True
         )
         loader._is_homogeneous_with_labeled_edge_type = False
