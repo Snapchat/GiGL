@@ -37,7 +37,12 @@ def apply_feature_quantization_transform(
 
     Args:
         logical_features: RecordBatches containing the logical feature columns.
-        logical_metadata: Eager or deferred metadata for the logical schema.
+        logical_metadata: Metadata for the logical schema.
+            When reusing a pretrained TFTransform model, its schema is available
+            immediately from the saved model as a DatasetMetadata object.
+            When analyzing a new TFTransform model, Beam produces its output
+            metadata during pipeline execution, after this pipeline has been built.
+            It is therefore supplied as a PCollection for downstream transforms.
         logical_feature_keys: Logical feature columns in original feature-vector order.
         quantization_spec: Feature keys and bit width to quantize.
         quantization_metadata_path: Destination for the quantization statistics JSON.
