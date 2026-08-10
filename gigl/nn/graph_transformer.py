@@ -1949,6 +1949,10 @@ class GraphTransformerEncoder(nn.Module):
                 valid_mask=valid_mask,
             )
 
+        # ``anchor_only`` readout returns only position zero. In the final layer,
+        # non-anchor outputs cannot affect that result, but the anchor still
+        # attends over the full sequence as keys and values. Compute only the
+        # anchor query/output and shorten the mask to match that one-token result.
         output_valid_mask = valid_mask
         if final_encoder_layer is not None:
             x = final_encoder_layer._forward_anchor_only(
