@@ -293,12 +293,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 raise ValueError(
                     "Typed PPR channel ratios are only supported for heterogeneous PPR sampling."
                 )
-        if include_sampled_edges and self._is_homogeneous:
-            raise ValueError(
-                "include_sampled_edges is only supported for "
-                "heterogeneous PPR sampling."
-            )
-
         # Convert the public homogeneous/heterogeneous degree-tensor shape to
         # the node-type keyed form used internally by PPR.
         self._node_type_to_total_degree = self._convert_degree_tensors_to_dict(
