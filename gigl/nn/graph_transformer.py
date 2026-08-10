@@ -446,6 +446,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         attn_bias: Optional[Tensor] = None,
         valid_mask: Optional[Tensor] = None,
         pairwise_relation_indices: Optional[Tensor] = None,
+        query_seq_len: Optional[int] = None,
     ) -> Tensor:
         """Forward pass.
 
@@ -459,46 +460,15 @@ class GraphTransformerEncoderLayer(nn.Module):
             pairwise_relation_indices: Optional long tensor of shape
                 ``(num_relation_edges, 4)`` with sparse
                 ``(batch_idx, query_pos, key_pos, relation_idx)`` coordinates.
+            query_seq_len: Number of leading query positions to compute. Defaults
+                to the full input sequence length.
 
         Returns:
-            Output tensor of shape ``(batch, seq, model_dim)``.
+            Output tensor of shape ``(batch, query_seq_len, model_dim)``.
         """
         return self._forward_query_prefix(
             x=x,
-            seq_len=x.size(1),
-            attn_bias=attn_bias,
-            valid_mask=valid_mask,
-            pairwise_relation_indices=pairwise_relation_indices,
-        )
-
-    def _forward_anchor_only(
-        self,
-        x: Tensor,
-        attn_bias: Optional[Tensor] = None,
-        valid_mask: Optional[Tensor] = None,
-        pairwise_relation_indices: Optional[Tensor] = None,
-    ) -> Tensor:
-        """Compute the final layer output for the anchor token only.
-
-        Keys and values still cover the complete sequence because every token
-        can contribute to the anchor. Query-side attention, relation messages,
-        output projection, and feed-forward work are restricted to position
-        zero because later token outputs cannot affect the anchor.
-
-        Args:
-            x: Input tensor of shape ``(batch, seq, model_dim)``.
-            attn_bias: Optional attention bias broadcastable to
-                ``(batch, num_heads, seq, seq)``.
-            valid_mask: Optional boolean tensor of shape ``(batch, seq)``.
-            pairwise_relation_indices: Optional sparse relation coordinates
-                shaped ``(num_relation_edges, 4)``.
-
-        Returns:
-            Anchor output of shape ``(batch, 1, model_dim)``.
-        """
-        return self._forward_query_prefix(
-            x=x,
-            seq_len=1,
+            seq_len=x.size(1) if query_seq_len is None else query_seq_len,
             attn_bias=attn_bias,
             valid_mask=valid_mask,
             pairwise_relation_indices=pairwise_relation_indices,
@@ -1935,13 +1905,14 @@ class GraphTransformerEncoder(nn.Module):
             if use_anchor_only_final_layer
             else None
         )
-        for encoder_layer_module in encoder_layers:
+        normal_encoder_layer_count = len(encoder_layers) - int(
+            final_encoder_layer is not None
+        )
+        for encoder_layer_index in range(normal_encoder_layer_count):
             encoder_layer = cast(
                 GraphTransformerEncoderLayer,
-                encoder_layer_module,
+                encoder_layers[encoder_layer_index],
             )
-            if encoder_layer is final_encoder_layer:
-                break
             x = encoder_layer(
                 x,
                 attn_bias=attn_bias,
@@ -1955,11 +1926,12 @@ class GraphTransformerEncoder(nn.Module):
         # anchor query/output and shorten the mask to match that one-token result.
         output_valid_mask = valid_mask
         if final_encoder_layer is not None:
-            x = final_encoder_layer._forward_anchor_only(
+            x = final_encoder_layer(
                 x,
                 attn_bias=attn_bias,
                 pairwise_relation_indices=pairwise_relation_indices,
                 valid_mask=valid_mask,
+                query_seq_len=1,
             )
             output_valid_mask = valid_mask[:, :1]
 
