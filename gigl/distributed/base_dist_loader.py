@@ -249,11 +249,11 @@ class BaseDistLoader(DistLoader):
         self._sampler_options = sampler_options
         if (
             isinstance(sampler_options, PPRSamplerOptions)
-            and sampler_options.include_original_edges_in_ppr_subgraph
+            and sampler_options.include_sampled_edges
             and self._is_homogeneous_with_labeled_edge_type
         ):
             raise ValueError(
-                "include_original_edges_in_ppr_subgraph is only supported for "
+                "include_sampled_edges is only supported for "
                 "heterogeneous PPR output. Labeled homogeneous graphs are "
                 "converted to homogeneous Data and cannot represent virtual PPR "
                 "and original edges as separate edge types."
@@ -1028,7 +1028,7 @@ class BaseDistLoader(DistLoader):
             attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
             if isinstance(data, HeteroData):
                 edge_types_to_keep = set(ppr_edge_indices.keys())
-                if self._sampler_options.include_original_edges_in_ppr_subgraph:
+                if self._sampler_options.include_sampled_edges:
                     # Original edges emitted by the sampler arrive through GLT's
                     # normal edge stores. Empty feature-only stores can also be
                     # created for configured edge types, so keep only original

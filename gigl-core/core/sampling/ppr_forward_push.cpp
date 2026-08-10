@@ -36,43 +36,29 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
 struct OriginalEdgeDedupeKey {
     // Original-edge extraction merges cached adjacency from several PPR states
     // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
-    // emitted-edge level rather than skipping a whole cached row.
-    //
-    // When edge IDs are cached, they are the best edge identity available. Some
-    // graph sources can represent repeated (type, src, dst) rows as distinct
-    // edges; edge IDs preserve that distinction. Without edge IDs, fall back to
-    // the structural identity (edge type, source node, destination node).
+    // emitted-edge level rather than skipping a whole cached row. GiGL's logical
+    // edge identity is structural: edge type, source node, and destination node.
+    // Edge IDs are optional payload for edge features, not a separate identity.
     int32_t edgeTypeId;
-    int64_t edgeId;
     int32_t sourceNodeId;
     int32_t destinationNodeId;
-    bool hasEdgeId;
 
     bool operator==(const OriginalEdgeDedupeKey& other) const {
-        if (edgeTypeId != other.edgeTypeId || hasEdgeId != other.hasEdgeId) {
-            return false;
-        }
-        if (hasEdgeId) {
-            return edgeId == other.edgeId;
-        }
-        return sourceNodeId == other.sourceNodeId && destinationNodeId == other.destinationNodeId;
+        return edgeTypeId == other.edgeTypeId && sourceNodeId == other.sourceNodeId &&
+               destinationNodeId == other.destinationNodeId;
     }
 };
 
 struct OriginalEdgeDedupeKeyHash {
-    // Must match OriginalEdgeDedupeKey::operator==: edge-ID mode hashes only the
-    // edge type and edge ID, while structural mode hashes edge type plus
-    // endpoints. Including hasEdgeId keeps those two identity modes disjoint.
+    // Must match OriginalEdgeDedupeKey::operator==: hash the structural edge
+    // identity that GiGL uses to dedupe sampled edges.
     size_t operator()(const OriginalEdgeDedupeKey& key) const {
         size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
-        auto combine = [&seed](size_t value) { seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2); };
-        combine(std::hash<bool>{}(key.hasEdgeId));
-        if (key.hasEdgeId) {
-            combine(std::hash<int64_t>{}(key.edgeId));
-        } else {
-            combine(std::hash<int32_t>{}(key.sourceNodeId));
-            combine(std::hash<int32_t>{}(key.destinationNodeId));
-        }
+        auto combine = [&seed](size_t value) {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+        };
+        combine(std::hash<int32_t>{}(key.sourceNodeId));
+        combine(std::hash<int32_t>{}(key.destinationNodeId));
         return seed;
     }
 };
@@ -588,10 +574,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                 // avoiding duplicate emitted edges across states.
                 OriginalEdgeDedupeKey dedupeKey{
                     edgeTypeId,
-                    includeEdgeIds ? cachedNeighbors.edgeIds->at(neighborIndex) : 0,
                     sourceNodeId,
                     destinationNodeId,
-                    includeEdgeIds,
                 };
                 if (!emittedEdges.insert(dedupeKey).second) {
                     continue;

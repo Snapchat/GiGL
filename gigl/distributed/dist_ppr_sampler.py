@@ -135,14 +135,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           For present channels, the original hop count can be recovered as
           ``(1 - proximity) / proximity``; use the presence bit before applying
           this inverse because missing channels have proximity ``0``.
-        - When ``include_original_edges_in_ppr_subgraph`` is enabled, original
-          graph edge types are included alongside virtual PPR edges. The sampler
-          emits only original edges that were fetched during PPR traversal and
-          whose source and destination are both in the final PPR-selected node
-          set. It does not run a second induced-subgraph pass. These original
-          edges are emitted through GLT's regular sampled-edge channel, so their
-          final HeteroData edge orientation follows the same ``edge_dir``
-          convention as k-hop sampling.
+        - When ``include_sampled_edges`` is enabled, original graph edge types are
+          included alongside virtual PPR edges. The sampler emits only original
+          edges that were fetched during PPR traversal and whose source and
+          destination are both in the final PPR-selected node set. It does not run
+          a second induced-subgraph pass. These original edges are emitted through
+          GLT's regular sampled-edge channel, so their final HeteroData edge
+          orientation follows the same ``edge_dir`` convention as k-hop sampling.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -207,15 +206,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             by NodeType. The colocated and graph-store loader paths retrieve
             these through ``DistDataset.degree_tensor`` and move them to shared
             memory before worker handoff.
-        include_original_edges_in_ppr_subgraph: Whether heterogeneous PPR output
-            should include original graph edges alongside virtual PPR edges. The
-            sampler emits only original edges that were fetched during PPR
-            traversal and whose source and destination are both in the final
-            PPR-selected node set. It does not run a second induced-subgraph pass:
-            fetched edges to unselected nodes are omitted, selected residual/top-up
-            nodes that were never expanded contribute no source edges, and capped
-            high-degree rows can emit only the sampled neighbors that were actually
-            fetched.
+        include_sampled_edges: Whether heterogeneous PPR output should include
+            original graph edges alongside virtual PPR edges. The sampler emits
+            only original edges that were fetched during PPR traversal and whose
+            source and destination are both in the final PPR-selected node set. It
+            does not run a second induced-subgraph pass: fetched edges to
+            unselected nodes are omitted, selected residual/top-up nodes that were
+            never expanded contribute no source edges, and capped high-degree rows
+            can emit only the sampled neighbors that were actually fetched.
     """
 
     def __init__(
@@ -229,7 +227,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         max_fetch_iterations: Optional[int] = None,
         typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None,
-        include_original_edges_in_ppr_subgraph: bool = False,
+        include_sampled_edges: bool = False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -243,9 +241,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
-        self._include_original_edges_in_ppr_subgraph = (
-            include_original_edges_in_ppr_subgraph
-        )
+        self._include_sampled_edges = include_sampled_edges
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -294,9 +290,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 raise ValueError(
                     "Typed PPR channel ratios are only supported for heterogeneous PPR sampling."
                 )
-        if include_original_edges_in_ppr_subgraph and self._is_homogeneous:
+        if include_sampled_edges and self._is_homogeneous:
             raise ValueError(
-                "include_original_edges_in_ppr_subgraph is only supported for "
+                "include_sampled_edges is only supported for "
                 "heterogeneous PPR sampling."
             )
 
@@ -459,7 +455,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 nodes_by_edge_type_id[edge_type_id],
                 output.nbr,
                 output.nbr_num,
-                output.edge if self._include_original_edges_in_ppr_subgraph else None,
+                output.edge if self._include_sampled_edges else None,
             )
             for edge_type_id, output in zip(edge_type_ids, outputs)
         }
@@ -613,7 +609,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
               per-seed groups: seed ``i``'s neighbors are at
               ``flat_neighbor_ids[sum(valid_counts[:i]) : sum(valid_counts[:i+1])]``.
             - ``ppr_state_or_none``: the completed C++ PPR state when
-              ``include_original_edges_in_ppr_subgraph`` is enabled, otherwise
+              ``include_sampled_edges`` is enabled, otherwise
               ``None``. Its neighbor cache is used by the optional
               original-edge output path without triggering extra graph-store
               reads.
@@ -690,7 +686,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             node_ids,
             weights,
             valid_counts,
-            ppr_state if self._include_original_edges_in_ppr_subgraph else None,
+            ppr_state if self._include_sampled_edges else None,
         )
 
     async def _compute_typed_ppr_scores(
@@ -723,7 +719,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         Returns:
             Heterogeneous PPR extraction output with typed edge-attribute
             feature vectors, plus completed C++ PPR states when
-            ``include_original_edges_in_ppr_subgraph`` is enabled, otherwise
+            ``include_sampled_edges`` is enabled, otherwise
             ``None``. Their neighbor caches are used by the optional
             original-edge output path without triggering extra graph-store
             reads.
@@ -815,7 +811,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             node_ids,
             weights,
             valid_counts,
-            ppr_states if self._include_original_edges_in_ppr_subgraph else None,
+            ppr_states if self._include_sampled_edges else None,
         )
 
     def _extract_original_edges_from_ppr_caches(
@@ -1068,7 +1064,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 original_edge_ids,
                 original_num_sampled_edges,
             ) = ({}, {}, {} if self.with_edge else None, {})
-            if self._include_original_edges_in_ppr_subgraph:
+            if self._include_sampled_edges:
                 ppr_cache_states: list[PPRForwardPush] = []
                 for ppr_result in ppr_results:
                     ppr_cache_state = ppr_result[3]

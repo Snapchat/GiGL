@@ -888,7 +888,7 @@ def _run_ppr_loader_preserves_original_edges_for_selected_nodes(_: int) -> None:
             alpha=_TEST_ALPHA,
             eps=_TEST_EPS,
             max_ppr_nodes=2,
-            include_original_edges_in_ppr_subgraph=True,
+            include_sampled_edges=True,
         ),
         pin_memory_device=torch.device("cpu"),
         batch_size=1,

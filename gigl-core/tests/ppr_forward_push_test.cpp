@@ -279,7 +279,7 @@ TEST(PPRForwardPush, ExtractOriginalEdgesKeepsDifferentNeighborsFromSameRowAcros
     EXPECT_FALSE(edgeIds.has_value());
 }
 
-TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesByEdgeIdWhenAvailable) {
+TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesStructurallyWhenEdgeIdsAreAvailable) {
     auto channel0 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0});
     auto channel1 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0});
     auto channel2 = makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-9, /*degrees=*/{2, 0});
@@ -310,9 +310,9 @@ TEST(PPRForwardPush, ExtractOriginalEdgesDeduplicatesByEdgeIdWhenAvailable) {
     ASSERT_NE(result.find(0), result.end());
     const auto& [rows, cols, edgeIds] = result.at(0);
     ASSERT_TRUE(edgeIds.has_value());
-    EXPECT_EQ(tensorToInt64Vector(rows), std::vector<int64_t>({0, 0}));
-    EXPECT_EQ(tensorToInt64Vector(cols), std::vector<int64_t>({1, 1}));
-    EXPECT_EQ(tensorToInt64Vector(edgeIds.value()), std::vector<int64_t>({10, 11}));
+    EXPECT_EQ(tensorToInt64Vector(rows), std::vector<int64_t>({0}));
+    EXPECT_EQ(tensorToInt64Vector(cols), std::vector<int64_t>({1}));
+    EXPECT_EQ(tensorToInt64Vector(edgeIds.value()), std::vector<int64_t>({10}));
 }
 
 TEST(PPRForwardPush, DrainTypedPPRChannelQueuesUnionsChannelFrontiers) {
