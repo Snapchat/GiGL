@@ -1,11 +1,49 @@
+import numpy as np
 import torch
 
+from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.types.graph import FeatureQuantizationMetadata
 from tests.test_assets.test_case import TestCase
 
 
 class TorchFeatureQuantizationOpsTest(TestCase):
+    def test_quantize_numpy_dequantize_torch_round_trip_single_bit(self) -> None:
+        features = np.array([[-2.0, -0.5, 0.5, 3.0, -3.0]], dtype=np.float32)
+        metadata = FeatureQuantizationMetadata(
+            bits=1,
+            feature_dim=features.shape[1],
+            quantized_feature_indices=tuple(range(features.shape[1])),
+            neg_mean=-1.25,
+            pos_mean=1.75,
+        )
+
+        packed = quantize_ndarray(features, bits=metadata.bits)
+        actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
+
+        torch.testing.assert_close(
+            actual, torch.tensor([[-1.25, -1.25, 1.75, 1.75, -1.25]])
+        )
+
+    def test_quantize_numpy_dequantize_torch_round_trip_multi_bit(self) -> None:
+        features = np.array([[-1.0, 0.0, 1.0, 2.0, 4.0]], dtype=np.float32)
+        clip_min = 0.0
+        clip_max = 3.0
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=features.shape[1],
+            quantized_feature_indices=tuple(range(features.shape[1])),
+            clip_min=clip_min,
+            clip_max=clip_max,
+        )
+
+        packed = quantize_ndarray(
+            features, bits=metadata.bits, clip_min=clip_min, clip_max=clip_max
+        )
+        actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
+
+        torch.testing.assert_close(actual, torch.tensor([[0.0, 0.0, 1.0, 2.0, 3.0]]))
+
     def test_dequantize_torch_tensor_single_bit_unpacks_full_byte(self) -> None:
         # 0b10101010 = 170 unpacks high-bits-first to [1, 0, 1, 0, 1, 0, 1, 0].
         # Code 1 maps to pos_mean and code 0 maps to neg_mean.
