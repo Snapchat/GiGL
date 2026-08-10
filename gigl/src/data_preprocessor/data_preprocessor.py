@@ -492,9 +492,7 @@ class DataPreprocessor:
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
             if node_transformed_features_info.feature_quantization_enabled:
-                metadata_path = (
-                    node_transformed_features_info.feature_quantization_metadata_path.uri
-                )
+                metadata_path = node_transformed_features_info.feature_quantization_metadata_path.uri
                 if not tf.io.gfile.exists(metadata_path):
                     raise RuntimeError(
                         f"Quantization metadata was expected for node type {node_type}, "
