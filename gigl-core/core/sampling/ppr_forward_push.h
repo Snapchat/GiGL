@@ -7,6 +7,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace gigl {
@@ -43,14 +44,6 @@ struct SeedNodeTypeState {
     std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
     std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
     std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
-};
-
-// Cached adjacency payload stored in PPRForwardPush::_neighborCache. This lives
-// in the header because the cache is a class member; std::unordered_map requires
-// the complete value type wherever PPRForwardPush is instantiated/destroyed.
-struct CachedNeighborList {
-    std::vector<int32_t> neighborIds;
-    std::optional<std::vector<int64_t>> edgeIds;
 };
 
 // Batched drain result for typed-PPR channels.
@@ -181,7 +174,7 @@ private:
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
-    std::unordered_map<uint64_t, CachedNeighborList> _neighborCache;
+    std::unordered_map<uint64_t, std::pair<std::vector<int32_t>, std::optional<std::vector<int64_t>>>> _neighborCache;
 };
 
 // Helper function for draining several independent channel states for one
