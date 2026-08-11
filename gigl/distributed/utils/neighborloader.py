@@ -404,9 +404,7 @@ def materialize_quantized_node_features(
             materialize(data[node_type], packed_features, quantization_metadata)
 
     materialize_time = time.perf_counter() - materialize_start_time
-    logger.debug(
-        f"Quantized node feature materialization time: {materialize_time:.3f}s"
-    )
+    logger.debug("Quantized node feature materialization time: %.3fs", materialize_time)
     return data, metadata
 
 

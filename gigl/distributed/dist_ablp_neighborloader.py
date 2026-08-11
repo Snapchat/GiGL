@@ -933,7 +933,8 @@ class DistABLPLoader(BaseDistLoader):
         data = super()._collate_fn(stripped_msg)
         base_collate_time = time.perf_counter() - base_collate_start_time
         logger.debug(
-            f"Distributed ABLPNeighborLoader GLT base collate time: {base_collate_time:.3f}s"
+            "Distributed ABLPNeighborLoader GLT base collate time: %.3fs",
+            base_collate_time,
         )
 
         data = set_missing_features(
@@ -987,6 +988,7 @@ class DistABLPLoader(BaseDistLoader):
 
         collate_time = time.perf_counter() - collate_start_time
         logger.debug(
-            f"Distributed ABLPNeighborLoader end-to-end collate time: {collate_time:.3f}s"
+            "Distributed ABLPNeighborLoader end-to-end collate time: %.3fs",
+            collate_time,
         )
         return data

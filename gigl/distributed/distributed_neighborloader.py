@@ -552,7 +552,8 @@ class DistNeighborLoader(BaseDistLoader):
         data = super()._collate_fn(stripped_msg)
         base_collate_time = time.perf_counter() - base_collate_start_time
         logger.debug(
-            f"Distributed NeighborLoader GLT base collate time: {base_collate_time:.3f}s"
+            "Distributed NeighborLoader GLT base collate time: %.3fs",
+            base_collate_time,
         )
         data = set_missing_features(
             data=data,
@@ -579,6 +580,7 @@ class DistNeighborLoader(BaseDistLoader):
 
         collate_time = time.perf_counter() - collate_start_time
         logger.debug(
-            f"Distributed NeighborLoader end-to-end collate time: {collate_time:.3f}s"
+            "Distributed NeighborLoader end-to-end collate time: %.3fs",
+            collate_time,
         )
         return data
