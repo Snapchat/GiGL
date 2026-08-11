@@ -502,11 +502,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             valid_counts,
         ) in extracted_results.items():
             node_type = self._ntype_id_to_ntype[node_type_id]
-            # TODO: If these copies become a bottleneck, evaluate
-            # non_blocking=True together with pinned extraction output tensors.
-            node_type_to_flat_ids[node_type] = flat_ids.to(device)
-            node_type_to_flat_weights[node_type] = flat_weights.to(device)
-            node_type_to_valid_counts[node_type] = valid_counts.to(device)
+            node_type_to_flat_ids[node_type] = self._move_extracted_tensor_to_device(
+                flat_ids, device
+            )
+            node_type_to_flat_weights[node_type] = (
+                self._move_extracted_tensor_to_device(flat_weights, device)
+            )
+            node_type_to_valid_counts[node_type] = (
+                self._move_extracted_tensor_to_device(valid_counts, device)
+            )
 
         if self._is_homogeneous:
             return (
@@ -520,6 +524,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 node_type_to_flat_weights,
                 node_type_to_valid_counts,
             )
+
+    @staticmethod
+    def _move_extracted_tensor_to_device(
+        tensor: torch.Tensor, device: torch.device
+    ) -> torch.Tensor:
+        """Move a tensor materialized by C++ PPR extraction to the sampler device."""
+        if tensor.device.type == "cpu" and device.type == "cuda":
+            return tensor.pin_memory().to(device, non_blocking=True)
+        return tensor.to(device)
 
     def _extract_typed_ppr_state_top_k(
         self,
@@ -546,9 +559,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             valid_counts,
         ) in extracted_results.items():
             node_type = self._ntype_id_to_ntype[node_type_id]
-            node_type_to_flat_ids[node_type] = flat_ids.to(device)
-            node_type_to_flat_weights[node_type] = flat_weights.to(device)
-            node_type_to_valid_counts[node_type] = valid_counts.to(device)
+            node_type_to_flat_ids[node_type] = self._move_extracted_tensor_to_device(
+                flat_ids, device
+            )
+            node_type_to_flat_weights[node_type] = (
+                self._move_extracted_tensor_to_device(flat_weights, device)
+            )
+            node_type_to_valid_counts[node_type] = (
+                self._move_extracted_tensor_to_device(valid_counts, device)
+            )
         return (
             node_type_to_flat_ids,
             node_type_to_flat_weights,
@@ -839,10 +858,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             output_edge_type = (
                 reverse_edge_type(edge_type) if self.edge_dir == "in" else edge_type
             )
-            rows_dict[output_edge_type] = rows.to(self.device)
-            cols_dict[output_edge_type] = cols.to(self.device)
+            rows_dict[output_edge_type] = self._move_extracted_tensor_to_device(
+                rows, self.device
+            )
+            cols_dict[output_edge_type] = self._move_extracted_tensor_to_device(
+                cols, self.device
+            )
             if edge_ids is not None:
-                edge_dict[output_edge_type] = edge_ids.to(self.device)
+                edge_dict[output_edge_type] = self._move_extracted_tensor_to_device(
+                    edge_ids, self.device
+                )
 
         if not rows_dict:
             empty_edge_dict = {} if self.with_edge else None

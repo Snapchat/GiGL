@@ -578,7 +578,7 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
         if (rows.empty()) {
             continue;
         }
-        // Materialize one tensor tuple per original edge type. These tensors are
+        // Materialize one tensor bundle per original edge type. These tensors are
         // handed back to Python and then attached through GLT's normal
         // HeteroSamplerOutput row/col/edge channels.
         const auto& cols = colsByEdgeType.at(edgeTypeId);
@@ -586,7 +586,11 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
         if (includeEdgeIds) {
             edgeIds = torch::tensor(edgeIdsByEdgeType.at(edgeTypeId), torch::kLong);
         }
-        result[edgeTypeId] = {torch::tensor(rows, torch::kLong), torch::tensor(cols, torch::kLong), edgeIds};
+        result[edgeTypeId] = OriginalEdgeExtractTensors{
+            torch::tensor(rows, torch::kLong),
+            torch::tensor(cols, torch::kLong),
+            edgeIds,
+        };
     }
     return result;
 }

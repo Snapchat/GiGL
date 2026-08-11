@@ -152,12 +152,11 @@ static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& sta
     // Python C API, so the GIL must be held after the C++ extraction completes.
     py::dict pyResult;
     for (const auto& [edgeTypeId, tensors] : result) {
-        const auto& [rows, cols, edgeIds] = tensors;
         py::object edgeIdsObject = py::none();
-        if (edgeIds.has_value()) {
-            edgeIdsObject = py::cast(edgeIds.value());
+        if (tensors.edgeIds.has_value()) {
+            edgeIdsObject = py::cast(tensors.edgeIds.value());
         }
-        pyResult[py::int_(edgeTypeId)] = py::make_tuple(rows, cols, edgeIdsObject);
+        pyResult[py::int_(edgeTypeId)] = py::make_tuple(tensors.rows, tensors.cols, edgeIdsObject);
     }
     return pyResult;
 }

@@ -23,7 +23,11 @@ using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
 // Original-edge extraction output, keyed by integer edge type ID:
 //   rows, cols, optional edge_ids.
-using OriginalEdgeExtractTensors = std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>>;
+struct OriginalEdgeExtractTensors {
+    torch::Tensor rows;
+    torch::Tensor cols;
+    std::optional<torch::Tensor> edgeIds;
+};
 using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
 struct ResidualState {
