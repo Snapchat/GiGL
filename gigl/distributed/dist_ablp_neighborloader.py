@@ -608,7 +608,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
-                node_quantization_metadata=dataset.node_quantization_metadata,
+                node_quantization_metadata=dataset.fetch_node_quantization_metadata(),
                 edge_dir=dataset.edge_dir,
             ),
         )
@@ -798,7 +798,7 @@ class DistABLPLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
-                node_quantization_metadata=dataset.node_quantization_metadata,
+                node_quantization_metadata=dataset.fetch_node_quantization_metadata(),
                 edge_dir=edge_dir,
             ),
             backend_key,

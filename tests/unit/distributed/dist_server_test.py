@@ -98,7 +98,9 @@ class TestRemoteDataset(TestCase):
         ) as request_server:
             remote_dataset = RemoteDistDataset(cluster_info=MagicMock(), local_rank=0)
 
-            self.assertEqual(remote_dataset.node_quantization_metadata, metadata)
+            self.assertEqual(
+                remote_dataset.fetch_node_quantization_metadata(), metadata
+            )
 
         request_server.assert_called_once_with(
             0, dist_server.DistServer.get_node_quantization_metadata

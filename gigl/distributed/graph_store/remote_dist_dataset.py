@@ -80,16 +80,6 @@ class RemoteDistDataset:
             DistServer.get_node_quantization_metadata,
         )
 
-    @property
-    def node_quantization_metadata(
-        self,
-    ) -> Union[
-        FeatureQuantizationMetadata,
-        dict[NodeType, FeatureQuantizationMetadata],
-        None,
-    ]:
-        return self.fetch_node_quantization_metadata()
-
     def fetch_edge_feature_info(
         self,
     ) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:
