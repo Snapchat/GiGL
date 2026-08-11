@@ -1078,7 +1078,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of validation nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
-            Optional node quantization metadata.
+            Optional[Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]]: Node quantization metadata.
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Degree tensors
             Optional[int]: Optional per-anchor label cap for ABLP label fetching
