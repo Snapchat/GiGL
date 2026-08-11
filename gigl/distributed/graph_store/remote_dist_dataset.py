@@ -67,22 +67,6 @@ class RemoteDistDataset:
             DistServer.get_node_feature_info,
         )
 
-    def fetch_node_quantized_feature_info(
-        self,
-    ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
-        """Fetch packed node feature information from the registered dataset."""
-        return request_server(
-            0,
-            DistServer.get_node_quantized_feature_info,
-        )
-
-    @property
-    def node_quantized_feature_info(
-        self,
-    ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
-        """Return packed node feature information from the storage cluster."""
-        return self.fetch_node_quantized_feature_info()
-
     def fetch_node_quantization_metadata(
         self,
     ) -> Union[

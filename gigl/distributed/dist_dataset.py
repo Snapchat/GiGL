@@ -81,9 +81,6 @@ class DistDataset(glt.distributed.DistDataset):
         node_feature_info: Optional[
             Union[FeatureInfo, dict[NodeType, FeatureInfo]]
         ] = None,
-        node_quantized_feature_info: Optional[
-            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
-        ] = None,
         node_quantization_metadata: Optional[
             Union[
                 FeatureQuantizationMetadata,
@@ -125,7 +122,6 @@ class DistDataset(glt.distributed.DistDataset):
             num_test: (Optional[Union[int, dict[NodeType, int]]]): Number of test nodes on the current machine. Will be a dict if heterogeneous.
             node_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension of node features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no node features, or will only contain node types with node features in the heterogeneous case.
-            node_quantized_feature_info: Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Dimension and dtype for packed uint8 node features.
             edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Dimension of edge features and its data type, will be a dict if heterogeneous.
                 Note this will be None in the homogeneous case if the data has no edge features, or will only contain edge types with edge features in the heterogeneous case.
             degree_tensor: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Pre-computed degree tensor. Lazily computed on first access via the degree_tensor property.
@@ -168,7 +164,6 @@ class DistDataset(glt.distributed.DistDataset):
         self._node_feature_info = node_feature_info
         self._edge_feature_info = edge_feature_info
 
-        self._node_quantized_feature_info = node_quantized_feature_info
         self._node_quantized_features = node_quantized_feature_partition
         self._node_quantization_metadata = node_quantization_metadata
 
@@ -336,12 +331,6 @@ class DistDataset(glt.distributed.DistDataset):
         Contains information about the dimension and dtype for the node features in the graph
         """
         return self._node_feature_info
-
-    @property
-    def node_quantized_feature_info(
-        self,
-    ) -> Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]:
-        return self._node_quantized_feature_info
 
     @property
     def node_quantization_metadata(
@@ -812,13 +801,6 @@ class DistDataset(glt.distributed.DistDataset):
                 )
                 for node_type, features_per_node_type in node_quantized_features.items()
             }
-            self._node_quantized_feature_info = {}
-            for node_type, features_per_node_type in node_quantized_features.items():
-                assert not isinstance(node_type, EdgeType)
-                self._node_quantized_feature_info[node_type] = FeatureInfo(
-                    dim=features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized node quantized features for heterogeneous graph to dataset with node types: {node_quantized_features.keys()}"
             )
@@ -829,10 +811,6 @@ class DistDataset(glt.distributed.DistDataset):
                 id2index=node_quantized_feature_id_to_index,
                 with_gpu=False,
                 dtype=torch.uint8,
-            )
-            self._node_quantized_feature_info = FeatureInfo(
-                dim=node_quantized_features.size(1),
-                dtype=node_quantized_features.dtype,
             )
             logger.info(
                 "Initialized node quantized features for homogeneous graph to dataset"
@@ -1135,7 +1113,6 @@ class DistDataset(glt.distributed.DistDataset):
             self._num_val,  # Additional field unique to DistDataset class
             self._num_test,  # Additional field unique to DistDataset class
             self._node_feature_info,  # Additional field unique to DistDataset class
-            self._node_quantized_feature_info,  # Additional field unique to DistDataset class
             self._node_quantization_metadata,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
             self._degree_tensor,  # Additional field unique to DistDataset class

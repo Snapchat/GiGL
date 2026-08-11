@@ -611,10 +611,6 @@ class DistributedDatasetTestCase(TestCase):
             dataset.node_quantized_features[torch.tensor([7, 3])],
             packed_features.flip(0),
         )
-        self.assertEqual(
-            dataset.node_quantized_feature_info,
-            FeatureInfo(dim=1, dtype=torch.uint8),
-        )
         self.assertEqual(dataset.node_quantization_metadata, quantization_metadata)
 
     def test_building_heterogeneous_dataset_preserves_node_features_and_labels(self):
