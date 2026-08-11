@@ -1,7 +1,6 @@
 """Utils for Neighbor loaders."""
 
 import ast
-import time
 from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -346,7 +345,6 @@ def materialize_quantized_node_features(
     """Materialize packed quantized node features into PyG node feature tensors."""
     if node_quantization_metadata is None:
         return data, metadata
-    materialize_start_time = time.perf_counter()
 
     def materialize(
         store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
@@ -403,8 +401,6 @@ def materialize_quantized_node_features(
                 continue
             materialize(data[node_type], packed_features, quantization_metadata)
 
-    materialize_time = time.perf_counter() - materialize_start_time
-    logger.debug("Quantized node feature materialization time: %.3fs", materialize_time)
     return data, metadata
 
 
