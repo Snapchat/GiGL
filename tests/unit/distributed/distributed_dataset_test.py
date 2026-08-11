@@ -39,6 +39,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     FeatureInfo,
     FeaturePartitionData,
+    FeatureQuantizationMetadata,
     GraphPartitionData,
     PartitionOutput,
 )
@@ -568,6 +569,49 @@ class DistributedDatasetTestCase(TestCase):
         self.assert_tensor_equality(
             dataset.node_features.feature_tensor, torch.zeros(10, 2)
         )
+
+    def test_building_dataset_preserves_packed_node_features_and_metadata(self) -> None:
+        packed_features = torch.tensor([[48], [144]], dtype=torch.uint8)
+        quantization_metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=4,
+            quantized_feature_indices=(0, 2),
+            clip_min=0.0,
+            clip_max=3.0,
+        )
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(2),
+            edge_partition_book=torch.zeros(1),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0], [1]]), edge_ids=None
+            ),
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+            partitioned_node_quantized_features=FeaturePartitionData(
+                feats=packed_features, ids=torch.arange(2)
+            ),
+        )
+
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata=quantization_metadata,
+        )
+        dataset.build(partition_output=partition_output)
+
+        assert isinstance(dataset.node_quantized_features, Feature)
+        self.assert_tensor_equality(
+            dataset.node_quantized_features.feature_tensor, packed_features
+        )
+        self.assertEqual(
+            dataset.node_quantized_feature_info,
+            FeatureInfo(dim=1, dtype=torch.uint8),
+        )
+        self.assertEqual(dataset.node_quantization_metadata, quantization_metadata)
 
     def test_building_heterogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(

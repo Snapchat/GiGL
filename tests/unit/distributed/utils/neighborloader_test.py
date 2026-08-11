@@ -8,6 +8,7 @@ from torch_geometric.typing import EdgeType
 
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
 )
 from gigl.distributed.utils.neighborloader import (
@@ -15,13 +16,18 @@ from gigl.distributed.utils.neighborloader import (
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_node_features,
     patch_fanout_for_sampling,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
     strip_non_ppr_edge_types,
 )
-from gigl.types.graph import FeatureInfo, message_passing_to_positive_label
+from gigl.types.graph import (
+    FeatureInfo,
+    FeatureQuantizationMetadata,
+    message_passing_to_positive_label,
+)
 from tests.test_assets.test_case import TestCase
 
 _U2U_EDGE_TYPE = ("user", "to", "user")
@@ -64,6 +70,68 @@ class LoaderUtilsTest(TestCase):
             local_process_world_size=local_process_world_size,
         )
         self.assert_tensor_equality(sharded_tensor, expected_sharded_tensor)
+
+    def test_materialize_quantized_node_features_reconstructs_feature_order(
+        self,
+    ) -> None:
+        data = Data(x=torch.tensor([[10.0, 20.0], [30.0, 40.0]]))
+        metadata = {
+            NODE_PACKED_FEATURES_METADATA_KEY: torch.tensor(
+                [[48], [144]], dtype=torch.uint8
+            ),
+            "request_id": torch.tensor([7]),
+        }
+
+        materialized_data, remaining_metadata = materialize_quantized_node_features(
+            data=data,
+            metadata=metadata,
+            node_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=4,
+                quantized_feature_indices=(0, 2),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+
+        self.assert_tensor_equality(
+            materialized_data.x,
+            torch.tensor([[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]]),
+        )
+        self.assertEqual(set(remaining_metadata), {"request_id"})
+
+    def test_materialize_quantized_node_features_uses_per_node_type_metadata(
+        self,
+    ) -> None:
+        data = HeteroData()
+        metadata = {
+            f"{NODE_PACKED_FEATURES_METADATA_KEY}.user": torch.tensor(
+                [[48]], dtype=torch.uint8
+            ),
+            "request_id": torch.tensor([7]),
+        }
+        quantization_metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=2,
+            quantized_feature_indices=(0, 1),
+            clip_min=0.0,
+            clip_max=3.0,
+        )
+
+        materialized_data, remaining_metadata = materialize_quantized_node_features(
+            data=data,
+            metadata=metadata,
+            node_quantization_metadata={
+                "user": quantization_metadata,
+                "item": quantization_metadata,
+            },
+        )
+
+        self.assert_tensor_equality(
+            materialized_data["user"].x, torch.tensor([[0.0, 3.0]])
+        )
+        self.assertFalse(hasattr(materialized_data["item"], "x"))
+        self.assertEqual(set(remaining_metadata), {"request_id"})
 
     @parameterized.expand(
         [
