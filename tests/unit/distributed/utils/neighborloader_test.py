@@ -99,6 +99,7 @@ class LoaderUtilsTest(TestCase):
             torch.tensor([[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]]),
         )
         self.assertEqual(set(remaining_metadata), {"request_id"})
+        self.assert_tensor_equality(remaining_metadata["request_id"], torch.tensor([7]))
 
     def test_materialize_quantized_node_features_uses_per_node_type_metadata(
         self,
@@ -132,6 +133,7 @@ class LoaderUtilsTest(TestCase):
         )
         self.assertFalse(hasattr(materialized_data["item"], "x"))
         self.assertEqual(set(remaining_metadata), {"request_id"})
+        self.assert_tensor_equality(remaining_metadata["request_id"], torch.tensor([7]))
 
     @parameterized.expand(
         [

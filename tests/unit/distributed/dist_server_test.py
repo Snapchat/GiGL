@@ -5,6 +5,7 @@ import torch
 from absl.testing import absltest
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store import dist_server
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
@@ -12,8 +13,10 @@ from gigl.distributed.graph_store.messages import (
     InitSamplingBackendRequest,
     RegisterBackendRequest,
 )
+from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import Relation
+from gigl.types.graph import FeatureQuantizationMetadata
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -61,6 +64,45 @@ class TestRemoteDataset(TestCase):
 
         # Verify it returns the correct feature info
         self.assertIsNone(node_feature_info)
+
+    def test_get_node_quantization_metadata(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=2,
+            quantized_feature_indices=(0, 1),
+            clip_min=0.0,
+            clip_max=3.0,
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata=metadata,
+        )
+
+        server = dist_server.DistServer(dataset)
+
+        self.assertEqual(server.get_node_quantization_metadata(), metadata)
+
+    def test_remote_dataset_fetches_node_quantization_metadata(self) -> None:
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=2,
+            quantized_feature_indices=(0, 1),
+            clip_min=0.0,
+            clip_max=3.0,
+        )
+        with patch(
+            "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+            return_value=metadata,
+        ) as request_server:
+            remote_dataset = RemoteDistDataset(cluster_info=MagicMock(), local_rank=0)
+
+            self.assertEqual(remote_dataset.node_quantization_metadata, metadata)
+
+        request_server.assert_called_once_with(
+            0, dist_server.DistServer.get_node_quantization_metadata
+        )
 
     def test_get_edge_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_edge_feature_info with a heterogeneous dataset."""

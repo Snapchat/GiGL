@@ -280,7 +280,7 @@ class DistRandomPartitionerTestCase(TestCase):
         ],
         expected_node_types: list[NodeType],
         expected_edge_types: list[EdgeType],
-        entity_name: Literal["features", "labels"],
+        entity_name: Literal["features", "quantized_features", "labels"],
     ) -> None:
         """
         Checks correctness for node feature or label outputs of partitioning
@@ -384,7 +384,7 @@ class DistRandomPartitionerTestCase(TestCase):
                         tensor_a=node_data.feats[idx],
                         tensor_b=torch.tensor([n_id], dtype=torch.int64),
                     )
-            else:
+            elif entity_name == "features":
                 # We expect the shape of the node features to be equal to the expected node feature dimension
                 self.assertEqual(
                     node_data.feats.size(1),
@@ -400,6 +400,14 @@ class DistRandomPartitionerTestCase(TestCase):
                         )
                         * n_id
                         * 0.1,
+                    )
+            else:
+                self.assertEqual(node_data.feats.dtype, torch.uint8)
+                self.assertEqual(node_data.feats.size(1), 1)
+                for idx, n_id in enumerate(node_data_ids):
+                    self.assert_tensor_equality(
+                        tensor_a=node_data.feats[idx],
+                        tensor_b=torch.tensor([n_id], dtype=torch.uint8),
                     )
 
     def _assert_edge_feature_outputs(
@@ -621,6 +629,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 should_assign_edges_by_src_node=True,
                 partitioner_class=DistPartitioner,
                 expected_pb_dtype=torch.uint8,
+                include_quantized_features=True,
             ),
             param(
                 "Homogeneous Partitioning By Dest Node- Register All Entites together through Constructor",
@@ -661,6 +670,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 should_assign_edges_by_src_node=True,
                 partitioner_class=DistRangePartitioner,
                 expected_pb_dtype=torch.int64,
+                include_quantized_features=True,
             ),
             param(
                 "Heterogeneous Partitioning By Source Node - Range Partitioning",
@@ -688,6 +698,7 @@ class DistRandomPartitionerTestCase(TestCase):
         should_assign_edges_by_src_node: bool,
         partitioner_class: Type[DistPartitioner],
         expected_pb_dtype: torch.dtype,
+        include_quantized_features: bool = False,
     ) -> None:
         """
         Tests partitioning functionality and correctness on mocked inputs
@@ -717,6 +728,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 master_port,
                 input_data_strategy,
                 partitioner_class,
+                include_quantized_features,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
             join=True,
@@ -821,6 +833,22 @@ class DistRandomPartitionerTestCase(TestCase):
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                     entity_name="features",
                 )
+
+                if include_quantized_features:
+                    assert (
+                        partition_output.partitioned_node_quantized_features is not None
+                    )
+                    self._assert_node_data_outputs(
+                        rank=rank,
+                        is_heterogeneous=is_heterogeneous,
+                        is_range_based_partition=is_range_based_partition,
+                        should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+                        output_graph=partitioned_edge_index,
+                        output_node_data=partition_output.partitioned_node_quantized_features,
+                        expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
+                        expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
+                        entity_name="quantized_features",
+                    )
 
                 if isinstance(partition_output.partitioned_node_features, abc.Mapping):
                     for (
