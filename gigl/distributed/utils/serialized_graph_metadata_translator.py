@@ -42,7 +42,9 @@ def _build_serialized_tfrecord_entity_info(
             preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput
         ):
             # TODO(quantization): Support edge feature quantization.
-            raise ValueError("Quantization is supported only for node entities.")
+            raise NotImplementedError(
+                "Feature quantization is not supported for edge entities."
+            )
         packed_feature_key = (
             preprocessed_metadata.quantized_feature_metadata.packed_feature_key
         )
@@ -165,9 +167,11 @@ def convert_pb_to_serialized_graph_metadata(
 
         node_key = node_metadata.node_id_key
         if node_metadata.HasField("quantized_feature_metadata"):
-            node_quantization_metadata[node_type] = _build_feature_quantization_metadata(
-                quantized_metadata=node_metadata.quantized_feature_metadata,
-                feature_dim=node_metadata.feature_dim,
+            node_quantization_metadata[node_type] = (
+                _build_feature_quantization_metadata(
+                    quantized_metadata=node_metadata.quantized_feature_metadata,
+                    feature_dim=node_metadata.feature_dim,
+                )
             )
 
         node_entity_info[node_type] = _build_serialized_tfrecord_entity_info(

@@ -203,6 +203,7 @@ def _data_loading_process(
                 serialized_entity_tf_record_info.packed_feature_key is not None
                 and not serialized_entity_tf_record_info.is_node_entity
             ):
+                # TODO(quantization): Support feature quantization for edge features.
                 raise NotImplementedError(
                     "Packed feature keys are not supported for edge entities"
                 )
