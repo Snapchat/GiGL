@@ -10,10 +10,7 @@ from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
-from gigl.distributed.dataset_factory import (
-    _validate_node_quantization_metadata_representation,
-    build_dataset,
-)
+from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
@@ -792,10 +789,6 @@ class DistABLPLoaderTest(TestCase):
 
         loaded_graph_tensors.treat_labels_as_edges(edge_dir="out")
         promoted_metadata = {DEFAULT_HOMOGENEOUS_NODE_TYPE: quantization_metadata}
-        _validate_node_quantization_metadata_representation(
-            node_quantized_features=loaded_graph_tensors.node_quantized_features,
-            node_quantization_metadata=promoted_metadata,
-        )
 
         assert isinstance(loaded_graph_tensors.edge_index, dict)
         assert isinstance(loaded_graph_tensors.node_features, dict)
@@ -809,10 +802,7 @@ class DistABLPLoaderTest(TestCase):
         )
         partition_output = PartitionOutput(
             node_partition_book={DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3)},
-            edge_partition_book={
-                edge_type: torch.zeros(3)
-                for edge_type in edge_index
-            },
+            edge_partition_book={edge_type: torch.zeros(3) for edge_type in edge_index},
             partitioned_edge_index={
                 edge_type: GraphPartitionData(
                     edge_tensor, torch.arange(edge_tensor.size(1))

@@ -44,6 +44,10 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureQuantizationMetadata,
+)
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
@@ -51,10 +55,6 @@ from gigl.utils.data_splitters import (
     NodeSplitter,
     get_max_labels_per_anchor_node_from_runtime_args,
     select_ssl_positive_label_edges,
-)
-from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
-    FeatureQuantizationMetadata,
 )
 
 logger = Logger()
@@ -68,7 +68,9 @@ def _normalize_node_quantization_metadata(
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ],
     labels_converted_to_edges: bool,
-) -> Optional[Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]]:
+) -> Optional[
+    Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+]:
     """Align node quantization metadata with packed feature representation."""
     if (
         labels_converted_to_edges
