@@ -1079,7 +1079,6 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of validation nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
-            Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Packed uint8 node feature dim and dtype
             Optional node quantization metadata.
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Degree tensors
@@ -1373,9 +1372,6 @@ def _rebuild_distributed_dataset(
         Optional[
             Union[FeatureInfo, dict[NodeType, FeatureInfo]]
         ],  # Node feature dim and its data type
-        Optional[
-            Union[FeatureInfo, dict[NodeType, FeatureInfo]]
-        ],  # Packed uint8 node feature dim and dtype
         Optional[
             Union[
                 FeatureQuantizationMetadata,
