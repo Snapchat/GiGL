@@ -56,6 +56,36 @@ struct CachedNeighborList {
     std::optional<std::vector<int64_t>> edgeIds;
 };
 
+struct OriginalEdgeDedupeKey {
+    // Original-edge extraction merges cached adjacency from several PPR states
+    // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
+    // emitted-edge level rather than skipping a whole cached row. GiGL's logical
+    // edge identity is structural: edge type, source node, and destination node.
+    // Edge IDs are optional payload for edge features, not a separate identity.
+    int32_t edgeTypeId;
+    int32_t sourceNodeId;
+    int32_t destinationNodeId;
+
+    bool operator==(const OriginalEdgeDedupeKey& other) const {
+        return edgeTypeId == other.edgeTypeId && sourceNodeId == other.sourceNodeId &&
+               destinationNodeId == other.destinationNodeId;
+    }
+};
+
+struct OriginalEdgeDedupeKeyHash {
+    // Must match OriginalEdgeDedupeKey::operator==: hash the structural edge
+    // identity that GiGL uses to dedupe sampled edges.
+    size_t operator()(const OriginalEdgeDedupeKey& key) const {
+        size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
+        auto combine = [&seed](size_t value) {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+        };
+        combine(std::hash<int32_t>{}(key.sourceNodeId));
+        combine(std::hash<int32_t>{}(key.destinationNodeId));
+        return seed;
+    }
+};
+
 // Batched drain result for typed-PPR channels.
 //
 // Typed PPR keeps one PPRForwardPush state per channel.  During an iteration,
