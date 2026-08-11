@@ -226,6 +226,10 @@ class LoadedGraphTensors:
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
+    # Unpartitioned packed uint8 node features.
+    node_quantized_features: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
@@ -324,6 +328,9 @@ class LoadedGraphTensors:
 
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
+        self.node_quantized_features = to_heterogeneous_node(
+            self.node_quantized_features
+        )
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
         self.edge_weights = to_heterogeneous_edge(self.edge_weights)
