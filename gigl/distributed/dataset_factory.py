@@ -159,7 +159,11 @@ def _load_and_build_partitioned_dataset(
     if labels_converted_to_edges:
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
+    packed_node_features = loaded_graph_tensors.node_quantized_features
     node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
+    # Quantization metadata is serialization configuration, not a loaded graph
+    # tensor. ``treat_labels_as_edges`` converts the tensors to per-node-type
+    # form, so convert the metadata separately to keep them aligned.
     if (
         labels_converted_to_edges
         and node_quantization_metadata is not None
@@ -168,16 +172,16 @@ def _load_and_build_partitioned_dataset(
         node_quantization_metadata = {
             DEFAULT_HOMOGENEOUS_NODE_TYPE: node_quantization_metadata
         }
-    if (
-        loaded_graph_tensors.node_quantized_features is not None
-        and node_quantization_metadata is not None
-        and isinstance(loaded_graph_tensors.node_quantized_features, Mapping)
-        != isinstance(node_quantization_metadata, Mapping)
-    ):
-        raise ValueError(
-            "Packed node features and node quantization metadata must both be "
-            "scalar or both be keyed by node type."
-        )
+    if packed_node_features is not None and node_quantization_metadata is not None:
+        packed_features_are_mapping = isinstance(packed_node_features, Mapping)
+        metadata_is_mapping = isinstance(node_quantization_metadata, Mapping)
+        if packed_features_are_mapping != metadata_is_mapping:
+            raise ValueError(
+                "Packed node features and node quantization metadata must both be "
+                "scalar or keyed by node type. "
+                f"Got packed node features of type {type(packed_node_features)} "
+                f"and node quantization metadata {node_quantization_metadata}."
+            )
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
