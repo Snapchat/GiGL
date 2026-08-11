@@ -34,7 +34,6 @@ def run_distributed_partitioner(
     master_port: int,
     input_data_strategy: InputDataStrategy,
     partitioner_class: Type[DistPartitioner],
-    include_quantized_features: bool = False,
     rank_to_edge_weights: Optional[
         dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     ] = None,
@@ -51,7 +50,6 @@ def run_distributed_partitioner(
         master_port (int): Master port for initializing rpc for partitioning
         input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
         partitioner_class (Type[DistPartitioner]): The class to use for partitioning
-        include_quantized_features: Whether to register one packed uint8 feature per node.
         rank_to_edge_weights (Optional[dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]]): Optional mapping of rank to 1D edge weight tensor (or dict per EdgeType for heterogeneous). Only supported with REGISTER_ALL_ENTITIES_SEPARATELY strategy.
     """
 
@@ -63,9 +61,7 @@ def run_distributed_partitioner(
     positive_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     negative_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    node_quantized_features: Optional[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
-    ] = None
+    node_quantized_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
 
     if not is_heterogeneous:
         node_ids = input_graph.node_ids[USER_NODE_TYPE]
@@ -84,15 +80,14 @@ def run_distributed_partitioner(
         negative_labels = input_graph.negative_labels
         node_labels = input_graph.node_labels
 
-    if include_quantized_features:
-        if isinstance(node_ids, dict):
-            node_ids_by_type = cast(dict[NodeType, torch.Tensor], node_ids)
-            node_quantized_features = {
-                node_type: node_type_ids.to(torch.uint8).unsqueeze(1)
-                for node_type, node_type_ids in node_ids_by_type.items()
-            }
-        else:
-            node_quantized_features = node_ids.to(torch.uint8).unsqueeze(1)
+    if isinstance(node_ids, dict):
+        node_ids_by_type = cast(dict[NodeType, torch.Tensor], node_ids)
+        node_quantized_features = {
+            node_type: node_type_ids.to(torch.uint8).unsqueeze(1)
+            for node_type, node_type_ids in node_ids_by_type.items()
+        }
+    else:
+        node_quantized_features = node_ids.to(torch.uint8).unsqueeze(1)
 
     partition_output: PartitionOutput
 
@@ -130,10 +125,9 @@ def run_distributed_partitioner(
         )
 
         dist_partitioner.register_node_features(node_features=node_features)
-        if node_quantized_features is not None:
-            dist_partitioner.register_node_quantized_features(
-                node_quantized_features=node_quantized_features
-            )
+        dist_partitioner.register_node_quantized_features(
+            node_quantized_features=node_quantized_features
+        )
         dist_partitioner.register_node_labels(node_labels=node_labels)
         del node_labels
         del node_features
