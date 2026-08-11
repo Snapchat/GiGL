@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
@@ -8,6 +9,7 @@ from tensorflow_metadata.proto.v0.schema_pb2 import Feature
 from tensorflow_transform import common_types
 
 from gigl.common import Uri
+from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 
 # TODO (mkolodner-sc): Move these variables to a more general location, as they are used even outside of context of data preprocessor
 
@@ -48,9 +50,24 @@ class NodeOutputIdentifier(str):
     """
 
 
-class FeatureQuantizationSpec(NamedTuple):
+@dataclass(frozen=True)
+class FeatureQuantizationSpec:
+    """Selects logical feature fields to pack at a fixed bit width."""
+
     feature_keys: list[str]
     bits: int
+
+    def __post_init__(self) -> None:
+        if not self.feature_keys:
+            raise ValueError("Feature quantization expects at least one feature key.")
+        if len(set(self.feature_keys)) != len(self.feature_keys):
+            raise ValueError(
+                f"Feature quantization feature_keys contains duplicates: {self.feature_keys}"
+            )
+        if self.bits not in SUPPORTED_QUANTIZATION_BITS:
+            raise ValueError(
+                f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}."
+            )
 
 
 class EdgeOutputIdentifier(NamedTuple):

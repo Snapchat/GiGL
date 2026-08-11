@@ -529,7 +529,7 @@ class TFRecordDataLoader:
         if quantized_feature_tensors:
             output_quantized_feature_tensor = _tf_tensor_to_torch_tensor(
                 tf.concat(quantized_feature_tensors, axis=0)
-            ).to(torch.uint8)
+            )
         if label_tensors:
             output_label_tensor = _tf_tensor_to_torch_tensor(
                 tf.concat(label_tensors, axis=0)

@@ -9,6 +9,9 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
+    PreprocessedMetadataPbWrapper,
+)
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import (
     MockedDatasetArtifactMetadata,
@@ -20,6 +23,8 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
     DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
+from gigl.types.graph import FeatureQuantizationMetadata
+from snapchat.research.gbml import preprocessed_metadata_pb2
 from tests.test_assets.test_case import TestCase
 
 
@@ -64,6 +69,64 @@ class TranslatorTestCase(TestCase):
             self.assertTrue(sorted(entity_info.keys()) == sorted(expected_entity_types))
         else:
             self.assertNotIsInstance(entity_info, abc.Mapping)
+
+    def test_translates_quantized_node_metadata(self) -> None:
+        mocked_dataset_artifact_metadata = self._name_to_mocked_dataset_map[
+            CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
+        ]
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=mocked_dataset_artifact_metadata.frozen_gbml_config_uri
+            )
+        )
+        preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
+        preprocessed_metadata_pb.CopyFrom(
+            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
+        )
+        condensed_node_type = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_node_type
+        node_metadata = (
+            preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
+                condensed_node_type
+            ]
+        )
+        node_metadata.quantized_feature_metadata.CopyFrom(
+            preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
+                packed_feature_key="packed_features",
+                quantized_feature_indices=[0, 1],
+                multi_bit_state=preprocessed_metadata_pb2.PreprocessedMetadata.MultiBitQuantizationState(
+                    bits=2,
+                    clip_min=-1.0,
+                    clip_max=1.0,
+                ),
+            )
+        )
+
+        serialized_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=PreprocessedMetadataPbWrapper(
+                preprocessed_metadata_pb
+            ),
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        )
+
+        self.assertEqual(
+            serialized_metadata.node_quantization_metadata,
+            FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=node_metadata.feature_dim,
+                quantized_feature_indices=(0, 1),
+                clip_min=-1.0,
+                clip_max=1.0,
+            ),
+        )
+        node_entity_info = serialized_metadata.node_entity_info
+        self.assertIsInstance(node_entity_info, SerializedTFRecordInfo)
+        assert isinstance(node_entity_info, SerializedTFRecordInfo)
+        self.assertEqual(
+            node_entity_info.feature_keys, list(node_metadata.feature_keys)[2:]
+        )
+        self.assertEqual(node_entity_info.feature_dim, node_metadata.feature_dim - 2)
+        self.assertEqual(node_entity_info.packed_feature_key, "packed_features")
+        self.assertEqual(node_entity_info.packed_feature_dim, 1)
 
     @parameterized.expand(
         [

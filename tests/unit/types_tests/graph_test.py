@@ -1,4 +1,4 @@
-from typing import Literal, Union
+from typing import Literal, Union, cast
 
 import torch
 from absl.testing import absltest
@@ -421,6 +421,30 @@ class GraphTypesTyest(TestCase):
         assert not isinstance(edge_weights, torch.Tensor) and edge_weights is not None
         self.assertIn(DEFAULT_HOMOGENEOUS_EDGE_TYPE, edge_weights)
         torch.testing.assert_close(edge_weights[DEFAULT_HOMOGENEOUS_EDGE_TYPE], weights)
+
+    def test_treat_labels_as_edges_converts_quantized_node_features(self) -> None:
+        quantized_features = torch.tensor([[1], [2], [3]], dtype=torch.uint8)
+        graph_tensors = LoadedGraphTensors(
+            node_ids=torch.tensor([0, 1, 2]),
+            node_features=None,
+            node_labels=None,
+            edge_index=torch.tensor([[0, 1], [1, 2]]),
+            edge_features=None,
+            positive_label=torch.tensor([[0], [2]]),
+            negative_label=None,
+            node_quantized_features=quantized_features,
+        )
+
+        graph_tensors.treat_labels_as_edges(edge_dir="out")
+
+        heterogeneous_quantized_features = cast(
+            dict[NodeType, torch.Tensor], graph_tensors.node_quantized_features
+        )
+        self.assertIsInstance(heterogeneous_quantized_features, dict)
+        torch.testing.assert_close(
+            heterogeneous_quantized_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            quantized_features,
+        )
 
     def test_select_label_edge_types(self):
         message_passing_edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE

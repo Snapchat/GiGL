@@ -389,6 +389,7 @@ class BaseDistLoader(DistLoader):
         shuffle: bool = False,
         drop_last: bool = False,
         with_weight: bool = False,
+        seed: Optional[int] = None,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -406,9 +407,23 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
+            seed: Sampling RNG seed. Leave unset unless you want to pin sampling
+                deliberately; an unset seed is derived per sampling worker at sampler
+                construction, in ``gigl.distributed.utils.dist_sampler.create_dist_sampler``.
 
         Returns:
             A fully configured SamplingConfig.
+
+        Note:
+            The returned config must be identical across all ranks that share a sampling
+            backend. Graph Store mode keys one backend per ``backend_key`` and rejects any
+            rank whose config differs, in
+            ``gigl.distributed.graph_store.shared_dist_sampling_producer.SharedDistSamplingBackend.register_input``.
+
+            ``SamplingConfig`` is a dataclass, so every field participates in that equality
+            check. Do not populate a field here with a per-rank value -- deriving the seed in
+            this function, for instance, breaks every rank but the one that wins the
+            initialization race.
         """
         num_neighbors = patch_fanout_for_sampling(
             edge_types=dataset_schema.edge_types,
@@ -425,7 +440,7 @@ class BaseDistLoader(DistLoader):
             with_neg=False,
             with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
-            seed=None,
+            seed=seed,
         )
 
     @staticmethod

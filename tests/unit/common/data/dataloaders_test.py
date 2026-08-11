@@ -309,7 +309,52 @@ class TFRecordDataLoaderTest(TestCase):
 
         assert_close(loaded.features, expected_feature_tensor)
 
+        self.assertIsNone(loaded.quantized_features)
+
         assert_close(loaded.labels, expected_label_tensor)
+
+    def test_load_as_torch_tensors_decodes_packed_node_features(self) -> None:
+        packed_feature_values = [[1, 2], [254, 255]]
+        with tf.io.TFRecordWriter(str(self.data_dir / "packed.tfrecord")) as writer:
+            for node_id, packed_features in enumerate(packed_feature_values):
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(
+                            feature={
+                                "node_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[node_id])
+                                ),
+                                "packed_features": tf.train.Feature(
+                                    bytes_list=tf.train.BytesList(
+                                        value=[bytes(packed_features)]
+                                    )
+                                ),
+                            }
+                        )
+                    ).SerializeToString()
+                )
+
+        loaded = TFRecordDataLoader(rank=0, world_size=1).load_as_torch_tensors(
+            serialized_tf_record_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+                packed_feature_key="packed_features",
+                packed_feature_dim=2,
+                tfrecord_uri_pattern="packed.tfrecord",
+            ),
+            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        )
+
+        assert_close(loaded.ids, torch.tensor([0, 1]))
+        self.assertIsNone(loaded.features)
+        assert_close(
+            loaded.quantized_features,
+            torch.tensor(packed_feature_values, dtype=torch.uint8),
+        )
+        self.assertIsNone(loaded.labels)
 
     def test_build_dataset_for_uris(self):
         dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -410,6 +455,7 @@ class TFRecordDataLoaderTest(TestCase):
 
         assert_close(loaded.ids, expected_node_ids)
         assert_close(loaded.features, expected_features)
+        self.assertIsNone(loaded.quantized_features)
         assert_close(loaded.labels, expected_label_tensor)
 
     @parameterized.expand(
