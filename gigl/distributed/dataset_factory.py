@@ -41,7 +41,7 @@ from gigl.distributed.utils import (
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
 from gigl.utils.data_splitters import (
@@ -52,8 +52,44 @@ from gigl.utils.data_splitters import (
     get_max_labels_per_anchor_node_from_runtime_args,
     select_ssl_positive_label_edges,
 )
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureQuantizationMetadata,
+)
 
 logger = Logger()
+
+
+def _normalize_node_quantization_metadata(
+    node_quantized_features: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ],
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ],
+    labels_converted_to_edges: bool,
+) -> Optional[Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]]:
+    """Align node quantization metadata with packed feature representation."""
+    if (
+        labels_converted_to_edges
+        and node_quantization_metadata is not None
+        and not isinstance(node_quantization_metadata, Mapping)
+    ):
+        node_quantization_metadata = {
+            DEFAULT_HOMOGENEOUS_NODE_TYPE: node_quantization_metadata
+        }
+
+    if node_quantized_features is None or node_quantization_metadata is None:
+        return node_quantization_metadata
+
+    packed_features_are_typed = isinstance(node_quantized_features, Mapping)
+    metadata_is_typed = isinstance(node_quantization_metadata, Mapping)
+    if packed_features_are_typed != metadata_is_typed:
+        raise ValueError(
+            "Packed node features and node quantization metadata must both be "
+            "scalar or both be keyed by node type."
+        )
+    return node_quantization_metadata
 
 
 @tf_on_cpu
@@ -151,11 +187,18 @@ def _load_and_build_partitioned_dataset(
 
         loaded_graph_tensors.positive_label = positive_label_edges
 
-    if (
+    labels_converted_to_edges = (
         isinstance(splitter, NodeAnchorLinkSplitter)
         and splitter.should_convert_labels_to_edges
-    ):
+    )
+    if labels_converted_to_edges:
         loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
+
+    node_quantization_metadata = _normalize_node_quantization_metadata(
+        node_quantized_features=loaded_graph_tensors.node_quantized_features,
+        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
+        labels_converted_to_edges=labels_converted_to_edges,
+    )
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -226,7 +269,7 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         world_size=world_size,
         edge_dir=edge_dir,
-        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
+        node_quantization_metadata=node_quantization_metadata,
     )
 
     dataset.build(
