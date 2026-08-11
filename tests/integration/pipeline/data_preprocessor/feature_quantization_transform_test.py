@@ -26,12 +26,14 @@ class FeatureQuantizationTransformTest(TestCase):
                 2,
                 [(-2.0, -2.0), (8.0, 8.0)],
                 {"clip_min": -2.0, "clip_max": 8.0},
+                False,
             ),
             (
                 "single_bit",
                 1,
                 [(-4.0, -2.0), (4.0, 8.0)],
                 {"neg_mean": -3.0, "pos_mean": 6.0},
+                True,
             ),
         ]
     )
@@ -41,6 +43,7 @@ class FeatureQuantizationTransformTest(TestCase):
         bits: int,
         feature_values: list[tuple[float, float]],
         expected_stats: dict[str, float],
+        use_deferred_metadata: bool,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             metadata_path = os.path.join(temp_dir, "feature_quantization_metadata.json")
@@ -67,11 +70,18 @@ class FeatureQuantizationTransformTest(TestCase):
             )
 
             with TestPipeline() as pipeline:
+                logical_metadata = transform_output_metadata
+                if use_deferred_metadata:
+                    logical_metadata = (
+                        pipeline
+                        | "Create deferred metadata"
+                        >> beam.Create([transform_output_metadata])
+                    )
                 transformed_batches, physical_metadata = (
                     apply_feature_quantization_transform(
                         logical_features=pipeline
                         | "Create RecordBatches" >> beam.Create(batches),
-                        logical_metadata=transform_output_metadata,
+                        logical_metadata=logical_metadata,
                         logical_feature_keys=logical_feature_keys,
                         quantization_spec=FeatureQuantizationSpec(
                             feature_keys=logical_feature_keys, bits=bits
@@ -79,22 +89,39 @@ class FeatureQuantizationTransformTest(TestCase):
                         quantization_metadata_path=metadata_path,
                     )
                 )
-                physical_features = {
-                    feature.name: feature
-                    for feature in physical_metadata.schema.feature
-                }
-                self.assertEqual(
-                    set(physical_features), {"node_id", "label", "node_packed_features"}
-                )
-                packed_feature = physical_features["node_packed_features"]
-                self.assertEqual(
-                    (
-                        packed_feature.type,
-                        packed_feature.value_count.min,
-                        packed_feature.value_count.max,
-                    ),
-                    (schema_pb2.BYTES, 1, 1),
-                )
+                if use_deferred_metadata:
+                    assert isinstance(physical_metadata, beam.pvalue.AsSingleton)
+                    assert_that(
+                        pipeline
+                        | "Create metadata validation input" >> beam.Create([None])
+                        | "Extract deferred physical feature names"
+                        >> beam.Map(
+                            lambda _, metadata: sorted(
+                                feature.name for feature in metadata.schema.feature
+                            ),
+                            metadata=physical_metadata,
+                        ),
+                        equal_to([["label", "node_id", "node_packed_features"]]),
+                        label="assert_deferred_physical_feature_names",
+                    )
+                else:
+                    physical_features = {
+                        feature.name: feature
+                        for feature in physical_metadata.schema.feature
+                    }
+                    self.assertEqual(
+                        set(physical_features),
+                        {"node_id", "label", "node_packed_features"},
+                    )
+                    packed_feature = physical_features["node_packed_features"]
+                    self.assertEqual(
+                        (
+                            packed_feature.type,
+                            packed_feature.value_count.min,
+                            packed_feature.value_count.max,
+                        ),
+                        (schema_pb2.BYTES, 1, 1),
+                    )
 
                 assert_that(
                     transformed_batches
@@ -103,6 +130,7 @@ class FeatureQuantizationTransformTest(TestCase):
                     equal_to(
                         [["node_id", "label", "node_packed_features"]] * len(batches)
                     ),
+                    label="assert_quantized_feature_names",
                 )
 
             with open(metadata_path) as metadata_file:

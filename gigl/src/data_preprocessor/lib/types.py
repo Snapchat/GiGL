@@ -60,6 +60,10 @@ class FeatureQuantizationSpec:
     def __post_init__(self) -> None:
         if not self.feature_keys:
             raise ValueError("Feature quantization expects at least one feature key.")
+        if len(set(self.feature_keys)) != len(self.feature_keys):
+            raise ValueError(
+                f"Feature quantization feature_keys contains duplicates: {self.feature_keys}"
+            )
         if self.bits not in SUPPORTED_QUANTIZATION_BITS:
             raise ValueError(
                 f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}."
