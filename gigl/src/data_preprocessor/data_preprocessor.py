@@ -1,5 +1,6 @@
 import argparse
 import concurrent.futures
+import json
 import sys
 import threading
 from collections import defaultdict
@@ -215,11 +216,20 @@ class DataPreprocessor:
                 f"Got {type(data_reference)}."
             )
 
+        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
+            feature_quantization_enabled = (
+                preprocessing_spec.feature_quantization_spec is not None
+            )
+        else:
+            # TODO(quantization): Support quantization for edge features.
+            feature_quantization_enabled = False
+
         transformed_features_info = TransformedFeaturesInfo(
             applied_task_identifier=self.applied_task_identifier,
             feature_type=feature_type,
             entity_type=entity_type,
             custom_identifier=custom_identifier,
+            feature_quantization_enabled=feature_quantization_enabled,
         )
 
         def __get_feature_preprocessing_job_msgs(
@@ -481,6 +491,36 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
+            if node_transformed_features_info.feature_quantization_enabled:
+                metadata_path = node_transformed_features_info.feature_quantization_metadata_path.uri
+                if not tf.io.gfile.exists(metadata_path):
+                    raise RuntimeError(
+                        f"Quantization metadata was expected for node type {node_type}, "
+                        f"but was not produced at {metadata_path}."
+                    )
+                logger.info(f"Loading node quantization metadata from {metadata_path}")
+                with tf.io.gfile.GFile(metadata_path) as f:
+                    metadata = json.loads(f.read())
+                logger.info(f"Loaded node quantization metadata {metadata}")
+                bits = metadata["bits"]
+                quantized_feature_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
+                    packed_feature_key=metadata["packed_feature_key"],
+                    quantized_feature_indices=metadata["quantized_feature_indices"],
+                )
+                if bits == 1:
+                    single_bit_state = quantized_feature_metadata_pb.single_bit_state
+                    single_bit_state.neg_mean = metadata["neg_mean"]
+                    single_bit_state.pos_mean = metadata["pos_mean"]
+                else:
+                    multi_bit_state = quantized_feature_metadata_pb.multi_bit_state
+                    multi_bit_state.bits = bits
+                    multi_bit_state.clip_min = metadata["clip_min"]
+                    multi_bit_state.clip_max = metadata["clip_max"]
+                node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
+                    quantized_feature_metadata_pb
+                )
+            else:
+                logger.info(f"Node feature quantization is disabled for {node_type}")
             preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
                 int(condensed_node_type)
             ].CopyFrom(node_metadata_output_pb)
@@ -698,6 +738,7 @@ class DataPreprocessor:
                 pretrained_tft_model_uri=input_node_preprocessing_spec.pretrained_tft_model_uri,
                 features_outputs=input_node_preprocessing_spec.features_outputs,
                 labels_outputs=input_node_preprocessing_spec.labels_outputs,
+                feature_quantization_spec=input_node_preprocessing_spec.feature_quantization_spec,
             )
             enumerated_node_refs_to_preprocessing_specs[
                 enumerated_node_metadata.enumerated_node_data_reference
