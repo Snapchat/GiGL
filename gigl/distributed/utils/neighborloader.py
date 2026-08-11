@@ -388,9 +388,8 @@ def materialize_quantized_node_features(
             )
         materialize(data, packed_features, quantization_metadata)
     else:
-        assert isinstance(node_quantization_metadata, dict), (
-            "Expected per-node-type quantization metadata for heterogeneous data."
-        )
+        if not isinstance(node_quantization_metadata, dict):
+            raise ValueError("Expected per-node-type metadata for heterogeneous data.")
         node_quantization_metadata = cast(
             dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
         )

@@ -135,6 +135,22 @@ class LoaderUtilsTest(TestCase):
         self.assertEqual(set(remaining_metadata), {"request_id"})
         self.assert_tensor_equality(remaining_metadata["request_id"], torch.tensor([7]))
 
+    def test_materialize_quantized_node_features_rejects_scalar_metadata_for_heterogeneous_data(
+        self,
+    ) -> None:
+        with self.assertRaises(ValueError):
+            materialize_quantized_node_features(
+                data=HeteroData(),
+                metadata={},
+                node_quantization_metadata=FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=2,
+                    quantized_feature_indices=(0, 1),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                ),
+            )
+
     @parameterized.expand(
         [
             param(
