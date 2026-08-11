@@ -102,6 +102,7 @@ class FeatureQuantizationTransformTest(TestCase):
                             metadata=physical_metadata,
                         ),
                         equal_to([["label", "node_id", "node_packed_features"]]),
+                        label="assert_deferred_physical_feature_names",
                     )
                 else:
                     physical_features = {
@@ -129,6 +130,7 @@ class FeatureQuantizationTransformTest(TestCase):
                     equal_to(
                         [["node_id", "label", "node_packed_features"]] * len(batches)
                     ),
+                    label="assert_quantized_feature_names",
                 )
 
             with open(metadata_path) as metadata_file:
