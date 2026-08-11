@@ -1,5 +1,4 @@
 import sys
-import time
 from collections import abc
 from itertools import count
 from typing import Optional, Tuple, Union
@@ -546,15 +545,8 @@ class DistNeighborLoader(BaseDistLoader):
         # as edge types and fails when edge_dir="out" (tries to call
         # reverse_edge_type on them).  We strip them here and re-apply after.
         # TODO (mkolodner-sc): Remove once GLT's to_hetero_data is fixed.
-        collate_start_time = time.perf_counter()
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
-        base_collate_start_time = time.perf_counter()
         data = super()._collate_fn(stripped_msg)
-        base_collate_time = time.perf_counter() - base_collate_start_time
-        logger.debug(
-            "Distributed NeighborLoader GLT base collate time: %.3fs",
-            base_collate_time,
-        )
         data = set_missing_features(
             data=data,
             node_feature_info=self._node_feature_info,
@@ -578,9 +570,4 @@ class DistNeighborLoader(BaseDistLoader):
         for key, value in metadata.items():
             data[key] = value
 
-        collate_time = time.perf_counter() - collate_start_time
-        logger.debug(
-            "Distributed NeighborLoader end-to-end collate time: %.3fs",
-            collate_time,
-        )
         return data

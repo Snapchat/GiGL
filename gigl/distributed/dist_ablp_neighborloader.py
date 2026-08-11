@@ -1,4 +1,3 @@
-import time
 import warnings
 from collections import abc
 from itertools import count
@@ -926,16 +925,9 @@ class DistABLPLoader(BaseDistLoader):
         # around a GLT bug in to_hetero_data.  extract_edge_type_metadata then
         # pulls out labels by prefix.
         # TODO (mkolodner-sc): Remove the need to extract metadata once GLT's `to_hetero_data` function is fixed
-        collate_start_time = time.perf_counter()
         metadata, stripped_msg = extract_metadata(msg, self.to_device)
 
-        base_collate_start_time = time.perf_counter()
         data = super()._collate_fn(stripped_msg)
-        base_collate_time = time.perf_counter() - base_collate_start_time
-        logger.debug(
-            "Distributed ABLPNeighborLoader GLT base collate time: %.3fs",
-            base_collate_time,
-        )
 
         data = set_missing_features(
             data=data,
@@ -986,9 +978,4 @@ class DistABLPLoader(BaseDistLoader):
         for key, value in metadata.items():
             data[key] = value
 
-        collate_time = time.perf_counter() - collate_start_time
-        logger.debug(
-            "Distributed ABLPNeighborLoader end-to-end collate time: %.3fs",
-            collate_time,
-        )
         return data
