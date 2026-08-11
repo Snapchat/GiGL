@@ -1047,7 +1047,6 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[int, dict[NodeType, int]]],
         Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
-        Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]],
         Optional[
             Union[
                 FeatureQuantizationMetadata,
