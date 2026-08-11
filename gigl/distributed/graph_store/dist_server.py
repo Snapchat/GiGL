@@ -410,6 +410,12 @@ class DistServer:
         """
         return self.dataset.node_feature_info
 
+    def get_node_quantized_feature_info(
+        self,
+    ) -> Union[FeatureInfo, dict[NodeType, FeatureInfo], None]:
+        """Get packed node feature information from the dataset."""
+        return self.dataset.node_quantized_feature_info
+
     def get_node_quantization_metadata(
         self,
     ) -> Union[
