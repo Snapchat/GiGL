@@ -140,9 +140,11 @@ class PPRSamplerOptions:
             PPR candidates.
         include_sampled_edges: Whether heterogeneous PPR output batches should
             also include original graph edge types alongside virtual PPR edges.
-            The sampler emits only original edges that were fetched during PPR
-            traversal and whose source and destination are both in the final
-            PPR-selected node set. Original edges are emitted through GLT's
+            The sampler emits original edges from adjacency rows fetched while
+            running PPR and whose source and destination are both in the final
+            PPR-selected node set; an emitted edge does not have to be the
+            relation that uniquely caused the destination's PPR score. Original
+            edges are emitted through GLT's
             regular sampled-edge channel, so their final HeteroData edge
             orientation follows the same ``edge_dir`` convention as k-hop
             sampling. Homogeneous PPR keeps the default PPR-only output because

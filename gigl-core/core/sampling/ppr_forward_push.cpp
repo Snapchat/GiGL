@@ -326,7 +326,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
             }
             uint64_t cacheKey = packKey(nodeId, edgeTypeId);
             if (_neighborCache.find(cacheKey) == _neighborCache.end()) {
-                _neighborCache.emplace(cacheKey, std::make_pair(std::move(neighborIds), std::move(edgeIds)));
+                _neighborCache.emplace(cacheKey, CachedNeighborList{std::move(neighborIds), std::move(edgeIds)});
             }
             offset += count;
         }
@@ -366,7 +366,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
                     auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
                     if (cachedEntry != _neighborCache.end()) {
-                        totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.first.size());
+                        totalCachedNeighbors += static_cast<int32_t>(cachedEntry->second.neighborIds.size());
                     }
                 }
                 // Two cases reach here:
@@ -392,7 +392,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     std::optional<std::reference_wrapper<const std::vector<int32_t>>> neighborList;
                     auto cachedEntry = _neighborCache.find(packKey(sourceNodeId, edgeTypeId));
                     if (cachedEntry != _neighborCache.end()) {
-                        neighborList = std::cref(cachedEntry->second.first);
+                        neighborList = std::cref(cachedEntry->second.neighborIds);
                     }
                     if (!neighborList || neighborList->get().empty()) {
                         continue;
@@ -459,13 +459,13 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     // All states are expected to come from the same sampler invocation. Typed
     // PPR creates one state per traversal channel, so verify that those channels
     // agree on the compact node/edge-type IDs before merging their caches.
-    const auto* firstState = states.front();
+    const auto* const firstState = states.front();
     TORCH_CHECK(firstState != nullptr, "extractOriginalEdgesFromPPRCaches received a null first PPR state.");
     int32_t numNodeTypes = firstState->_numNodeTypes;
     const auto& edgeTypeToDestinationNodeTypeId = firstState->_edgeTypeToDstNtypeId;
 
     for (size_t stateIndex = 0; stateIndex < states.size(); ++stateIndex) {
-        const auto* state = states[stateIndex];
+        const auto* const state = states[stateIndex];
         TORCH_CHECK(state != nullptr,
                     "extractOriginalEdgesFromPPRCaches received a null PPR state at index ",
                     stateIndex,
@@ -494,11 +494,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
     std::unordered_map<int32_t, std::vector<int64_t>> edgeIdsByEdgeType;
     std::unordered_set<OriginalEdgeDedupeKey, OriginalEdgeDedupeKeyHash> emittedEdges;
 
-    for (const auto* state : states) {
+    for (const auto* const state : states) {
         for (const auto& [cacheKey, cachedNeighbors] : state->_neighborCache) {
-            const auto& cachedNeighborIds = cachedNeighbors.first;
-            const auto& cachedEdgeIds = cachedNeighbors.second;
-
             // The cache is keyed by (source node, edge type). Reconstruct the
             // source and destination node types so we can filter against the
             // selected node set for each endpoint type.
@@ -532,11 +529,11 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                 // Edge IDs are optional cache payload. If the Python caller
                 // asks us to preserve them, every cached neighbor in this row
                 // must have the corresponding edge ID.
-                TORCH_CHECK(cachedEdgeIds.has_value(),
+                TORCH_CHECK(cachedNeighbors.edgeIds.has_value(),
                             "Original edge ids are required but were not cached for edge type id ",
                             edgeTypeId,
                             ".");
-                TORCH_CHECK(cachedEdgeIds->size() == cachedNeighborIds.size(),
+                TORCH_CHECK(cachedNeighbors.edgeIds->size() == cachedNeighbors.neighborIds.size(),
                             "Cached edge ids do not align with cached neighbors for edge type id ",
                             edgeTypeId,
                             ".");
@@ -544,8 +541,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
 
             auto& rows = rowsByEdgeType[edgeTypeId];
             auto& cols = colsByEdgeType[edgeTypeId];
-            for (size_t neighborIndex = 0; neighborIndex < cachedNeighborIds.size(); ++neighborIndex) {
-                int32_t destinationNodeId = cachedNeighborIds[neighborIndex];
+            for (size_t neighborIndex = 0; neighborIndex < cachedNeighbors.neighborIds.size(); ++neighborIndex) {
+                int32_t destinationNodeId = cachedNeighbors.neighborIds[neighborIndex];
                 auto destinationLocalIter = selectedDestinationLocalIds.find(destinationNodeId);
                 if (destinationLocalIter == selectedDestinationLocalIds.end()) {
                     // This is the edge-level endpoint filter: the source row was
@@ -570,7 +567,7 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                 rows.push_back(sourceLocalIter->second);
                 cols.push_back(destinationLocalIter->second);
                 if (includeEdgeIds) {
-                    edgeIdsByEdgeType[edgeTypeId].push_back(cachedEdgeIds->at(neighborIndex));
+                    edgeIdsByEdgeType[edgeTypeId].push_back(cachedNeighbors.edgeIds->at(neighborIndex));
                 }
             }
         }

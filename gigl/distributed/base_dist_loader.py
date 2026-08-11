@@ -252,6 +252,9 @@ class BaseDistLoader(DistLoader):
         # types. Pure homogeneous graphs and labeled-homogeneous ABLP both
         # produce homogeneous Data batches, even though labeled-homogeneous ABLP
         # is represented as hetero internally to carry label edges.
+        # TODO(mkolodner-sc): Consider supporting homogeneous PPR sampled-edge
+        # output once we have a Data-compatible representation for both virtual
+        # PPR edges and original graph edges.
         if (
             isinstance(sampler_options, PPRSamplerOptions)
             and sampler_options.include_sampled_edges

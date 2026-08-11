@@ -143,11 +143,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           ``(1 - proximity) / proximity``; use the presence bit before applying
           this inverse because missing channels have proximity ``0``.
         - When ``include_sampled_edges`` is enabled, original graph edge types are
-          included alongside virtual PPR edges. The sampler emits only original
-          edges that were fetched during PPR traversal and whose source and
-          destination are both in the final PPR-selected node set. These original
-          edges are emitted through GLT's regular sampled-edge channel, so their
-          final HeteroData edge orientation follows the same ``edge_dir``
+          included alongside virtual PPR edges. The sampler emits original edges
+          from adjacency rows fetched while running PPR and whose source and
+          destination are both in the final PPR-selected node set; an emitted edge
+          does not have to be the relation that uniquely caused the destination's
+          PPR score. These original edges are emitted through GLT's regular
+          sampled-edge channel, so their final HeteroData edge orientation follows
+          the same ``edge_dir``
           convention as k-hop sampling.
 
     Args:
@@ -215,7 +217,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             memory before worker handoff.
         include_sampled_edges: Whether heterogeneous PPR output should include
             original graph edges alongside virtual PPR edges. The sampler emits
-            only original edges that were fetched during PPR traversal and whose
+            original edges from adjacency rows fetched while running PPR and whose
             source and destination are both in the final PPR-selected node set.
     """
 
@@ -754,7 +756,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 break
 
             fetched_by_channel: list[PPRForwardPushFetchMap] = [
-                dict() for _ in ppr_states
+                PPRForwardPushFetchMap() for _ in ppr_states
             ]
 
             if unioned_node_ids_by_edge_type_id:
@@ -1067,6 +1069,28 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     ppr_cache_states,
                 )
 
+            if sampled_edges.num_sampled_edges:
+                num_sampled_nodes = {
+                    node_type: [
+                        (
+                            int(source_dict[node_type].size(0))
+                            if node_type in source_dict
+                            else 0
+                        ),
+                        (
+                            int(new_nodes_dict[node_type].size(0))
+                            if node_type in new_nodes_dict
+                            else 0
+                        ),
+                    ]
+                    for node_type in node_dict
+                }
+            else:
+                num_sampled_nodes = {
+                    node_type: [int(nodes.size(0))]
+                    for node_type, nodes in node_dict.items()
+                }
+
             # Build PyG-style edge-index output per PPR edge type.
             # rows_dict and cols_dict are keyed by PPR edge type and give
             # flat local source/destination indices respectively, aligned with
@@ -1096,9 +1120,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 col=sampled_edges.cols,
                 edge=sampled_edges.edge_ids,
                 batch={input_type: input_seeds},
-                num_sampled_nodes={
-                    node_type: [nodes.size(0)] for node_type, nodes in node_dict.items()
-                },
+                num_sampled_nodes=num_sampled_nodes,
                 num_sampled_edges=sampled_edges.num_sampled_edges,
                 input_type=input_type,
                 metadata=metadata,

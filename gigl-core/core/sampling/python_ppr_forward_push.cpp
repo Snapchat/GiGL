@@ -26,8 +26,13 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
     for (auto item : fetchedByEtypeId) {
         auto edgeTypeId = item.first.cast<int32_t>();
         auto neighborTensors = item.second.cast<py::tuple>();
+        auto neighborTensorCount = neighborTensors.size();
+        TORCH_CHECK(neighborTensorCount == 3 || neighborTensorCount == 4,
+                    "Expected neighbor fetch tuple of length 3 or 4, received ",
+                    neighborTensorCount,
+                    ".");
         std::optional<torch::Tensor> edgeIds = std::nullopt;
-        if (py::len(neighborTensors) > 3 && !neighborTensors[3].is_none()) {
+        if (neighborTensorCount == 4 && !neighborTensors[3].is_none()) {
             edgeIds = neighborTensors[3].cast<torch::Tensor>();
         }
         neighborTensorsByEtypeId[edgeTypeId] = {neighborTensors[0].cast<torch::Tensor>(),

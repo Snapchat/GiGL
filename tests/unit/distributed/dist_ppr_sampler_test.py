@@ -920,6 +920,14 @@ def _run_ppr_loader_preserves_original_edges_for_selected_nodes(_: int) -> None:
     assert original_story_ids
     assert original_story_ids <= ppr_story_ids
     assert len(original_story_ids) < edge_index.size(1)
+    assert [int(count) for count in datum.num_sampled_nodes[USER]] == [1, 0]
+    assert [int(count) for count in datum.num_sampled_nodes[STORY]] == [
+        0,
+        story_node_ids.size(0),
+    ]
+    assert [int(count) for count in datum.num_sampled_edges[original_output_edge_type]] == [
+        original_edge_index.size(1)
+    ]
 
     shutdown_rpc()
 
