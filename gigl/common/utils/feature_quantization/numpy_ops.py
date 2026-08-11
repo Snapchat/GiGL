@@ -7,6 +7,8 @@ the dataloader collate path operates on torch tensors that may already be on GPU
 
 import numpy as np
 
+from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
+
 
 def quantize_ndarray(
     features: np.ndarray,
@@ -21,9 +23,10 @@ def quantize_ndarray(
     define the min-max scaling range: values are clipped to that range, scaled
     to `[0, 2**bits - 1]`, rounded to integer codes, then packed into bytes.
     """
-    valid_bits = (1, 2, 4, 8)
-    if bits not in valid_bits:
-        raise ValueError(f"bits must be one of {valid_bits}, got {bits}")
+    if bits not in SUPPORTED_QUANTIZATION_BITS:
+        raise ValueError(
+            f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {bits}"
+        )
     if features.ndim != 2:
         raise ValueError(f"Expected a 2D feature array, got shape {features.shape}.")
     if not np.isfinite(features).all():

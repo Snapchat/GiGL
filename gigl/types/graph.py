@@ -9,6 +9,7 @@ from graphlearn_torch.partition import PartitionBook
 
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -129,9 +130,10 @@ class FeatureQuantizationMetadata:
     pos_mean: Optional[float] = None
 
     def __post_init__(self) -> None:
-        valid_bits = (1, 2, 4, 8)
-        if self.bits not in valid_bits:
-            raise ValueError(f"bits must be one of {valid_bits}, got {self.bits}")
+        if self.bits not in SUPPORTED_QUANTIZATION_BITS:
+            raise ValueError(
+                f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}"
+            )
         if any(i < 0 or i >= self.feature_dim for i in self.quantized_feature_indices):
             raise ValueError(
                 f"quantized_feature_indices must be in [0, {self.feature_dim}), got {self.quantized_feature_indices}"
