@@ -548,7 +548,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         dict[NodeType, torch.Tensor],
         dict[NodeType, torch.Tensor],
     ]:
-        """Extract typed PPR results and move output tensors to the sampler device."""
+        """Extract typed PPR results and translate C++ node-type IDs."""
         extracted_results = extract_typed_top_k_with_residual_top_up(
             ppr_states,
             typed_ppr_channel_target_counts,
