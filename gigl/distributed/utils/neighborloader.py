@@ -17,6 +17,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.sampler import NODE_PACKED_FEATURES_METADATA_KEY
 from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
     FeatureQuantizationIndexTensors,
     FeatureQuantizationMetadata,
@@ -374,9 +375,18 @@ def materialize_quantized_node_features(
         if isinstance(node_quantization_metadata, dict):
             raise ValueError("Expect scalar quantization metadata for homogeneous data")
         packed_features = metadata.pop(NODE_PACKED_FEATURES_METADATA_KEY, None)
+        labeled_homogeneous_packed_features_key = (
+            f"{NODE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
+        )
+        if packed_features is None:
+            # Labeled homogeneous graphs are sampled as heterogeneous graphs, so
+            # the packed-feature transport key retains the default node type.
+            packed_features = metadata.pop(
+                labeled_homogeneous_packed_features_key, None
+            )
         if packed_features is None:
             raise ValueError(
-                f"Missing packed quantized features in metadata key {NODE_PACKED_FEATURES_METADATA_KEY}"
+                f"Missing packed quantized features in metadata keys {NODE_PACKED_FEATURES_METADATA_KEY} or {labeled_homogeneous_packed_features_key}"
             )
         materialize(data, packed_features, node_quantization_metadata)
     else:
