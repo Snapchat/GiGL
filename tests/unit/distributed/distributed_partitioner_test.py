@@ -1383,6 +1383,32 @@ class DistRandomPartitionerTestCase(TestCase):
         ):
             partitioner.register_edge_features(edge_features=edge_features)
 
+    def test_register_edge_quantized_features_rejects_malformed_sidecars(
+        self,
+    ) -> None:
+        master_port = get_free_port()
+        init_worker_group(world_size=1, rank=0, group_name=get_process_group_name(0))
+        init_rpc(
+            master_addr=self._master_ip_address,
+            master_port=master_port,
+            num_rpc_threads=4,
+        )
+
+        edge_index = torch.tensor([[0, 1], [1, 0]])
+        malformed_features = [
+            torch.ones((2, 1), dtype=torch.float32),
+            torch.ones(2, dtype=torch.uint8),
+            torch.ones((1, 1), dtype=torch.uint8),
+        ]
+        for features in malformed_features:
+            with self.subTest(shape=features.shape, dtype=features.dtype):
+                partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+                partitioner.register_edge_index(edge_index=edge_index)
+                with self.assertRaises(ValueError):
+                    partitioner.register_edge_quantized_features(
+                        edge_quantized_features=features
+                    )
+
     def test_positive_labels_re_registration(self) -> None:
         """Test that re-registering labels raises an error."""
         master_port = get_free_port()

@@ -378,8 +378,8 @@ class DistRangePartitioner(DistPartitioner):
         res_list.clear()
         gc.collect()
 
-        # Generate range-based edge partition book and infer edge IDs.
-        # Only needed when edge features are present — weights use positional IDs.
+        # Generate range-based edge partition book and infer edge IDs for every
+        # sidecar that requires sampled edge lookup.
         num_edges_on_each_rank: list[tuple[int, int]] = sorted(
             all_gather((self._rank, partitioned_edge_index.size(1))).values(),
             key=lambda x: x[0],
@@ -391,7 +391,11 @@ class DistRangePartitioner(DistPartitioner):
             partition_ranges.append((start, end))
             start = end
 
-        if edge_feat_dim is not None or edge_quantized_feature_dim is not None:
+        if (
+            edge_feat_dim is not None
+            or edge_quantized_feature_dim is not None
+            or has_edge_weights
+        ):
             edge_partition_book = RangePartitionBook(
                 partition_ranges=partition_ranges, partition_idx=self._rank
             )

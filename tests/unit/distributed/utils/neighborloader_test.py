@@ -27,6 +27,7 @@ from gigl.distributed.utils.neighborloader import (
     strip_non_ppr_edge_types,
 )
 from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     FeatureInfo,
     FeatureQuantizationMetadata,
     message_passing_to_positive_label,
@@ -130,6 +131,47 @@ class LoaderUtilsTest(TestCase):
             torch.tensor([[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]]),
         )
         self.assertEqual(set(remaining_metadata), {"request_id"})
+
+    def test_materialize_quantized_edge_features_uses_labeled_homogeneous_key(
+        self,
+    ) -> None:
+        data = Data(edge_index=torch.tensor([[0], [1]]))
+        typed_key = (
+            f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_EDGE_TYPE}"
+        )
+
+        materialized_data, remaining_metadata = materialize_quantized_edge_features(
+            data=data,
+            metadata={typed_key: torch.tensor([[48]], dtype=torch.uint8)},
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=2,
+                quantized_feature_indices=(0, 1),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+
+        self.assert_tensor_equality(
+            materialized_data.edge_attr, torch.tensor([[0.0, 3.0]])
+        )
+        self.assertEqual(remaining_metadata, {})
+
+    def test_materialize_quantized_edge_features_rejects_packed_data_without_metadata(
+        self,
+    ) -> None:
+        data = Data(edge_index=torch.tensor([[0], [1]]))
+
+        with self.assertRaises(ValueError):
+            materialize_quantized_edge_features(
+                data=data,
+                metadata={
+                    EDGE_PACKED_FEATURES_METADATA_KEY: torch.tensor(
+                        [[48]], dtype=torch.uint8
+                    )
+                },
+                edge_quantization_metadata=None,
+            )
 
     def test_materialize_quantized_edge_features_uses_effective_edge_type(
         self,

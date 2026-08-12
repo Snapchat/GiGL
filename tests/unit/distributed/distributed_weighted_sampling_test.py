@@ -553,6 +553,11 @@ class WeightedEdgePartitionerTestCase(TestCase):
             )
             assert edge_ids is not None
 
+            self.assertIsNotNone(
+                partition_output.edge_partition_book,
+                msg=f"Rank {rank}: edge partition book must be retained for weights",
+            )
+
             self.assertEqual(weights.shape, edge_ids.shape)
             expected_weights = edge_ids.float() * 0.1
             torch.testing.assert_close(
@@ -732,7 +737,7 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 True,  # should_assign_edges_by_src_node
                 self._master_ip_address,
                 master_port,
-                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
+                InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
                 DistRangePartitioner,
                 rank_to_edge_weights,
             ),
@@ -758,6 +763,11 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 msg=f"Rank {rank}: edge_ids must be present when features are registered",
             )
             assert edge_ids is not None
+
+            self.assertIsNotNone(
+                partition_output.edge_partition_book,
+                msg=f"Rank {rank}: edge partition book must be retained for weights",
+            )
 
             self.assertEqual(
                 weights.shape,

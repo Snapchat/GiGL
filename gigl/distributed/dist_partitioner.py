@@ -681,14 +681,43 @@ class DistPartitioner:
         self._assert_and_get_rpc_setup()
         if self._edge_quantized_feat is not None:
             raise ValueError("Edge quantized features have already been registered.")
+        if self._edge_index is None:
+            raise ValueError(
+                "Register edge indices before registering packed edge features."
+            )
         packed_features = self._convert_edge_entity_to_heterogeneous_format(
             input_edge_entity=edge_quantized_features
         )
         if not packed_features:
             raise ValueError("Edge quantized features cannot be empty.")
-        self._edge_quantized_feat = convert_to_tensor(
-            packed_features, dtype=torch.uint8
-        )
+        unknown_edge_types = set(packed_features) - set(self._edge_index)
+        if unknown_edge_types:
+            raise ValueError(
+                "Packed edge features contain unregistered edge types: "
+                f"{unknown_edge_types}"
+            )
+        for edge_type, features in packed_features.items():
+            if not isinstance(features, torch.Tensor):
+                raise ValueError(
+                    f"Packed edge features for {edge_type} must be a torch.Tensor."
+                )
+            if features.dtype != torch.uint8:
+                raise ValueError(
+                    f"Packed edge features for {edge_type} must use torch.uint8, "
+                    f"got {features.dtype}."
+                )
+            if features.ndim != 2:
+                raise ValueError(
+                    f"Packed edge features for {edge_type} must be 2-D, got "
+                    f"shape {tuple(features.shape)}."
+                )
+            expected_rows = self._edge_index[edge_type].size(1)
+            if features.size(0) != expected_rows:
+                raise ValueError(
+                    f"Packed edge features for {edge_type} have {features.size(0)} "
+                    f"rows, expected {expected_rows}."
+                )
+        self._edge_quantized_feat = convert_to_tensor(packed_features)
         self._edge_quantized_feat_dim = {
             edge_type: features.shape[1]
             for edge_type, features in packed_features.items()
@@ -1490,7 +1519,7 @@ class DistPartitioner:
                 current_quantized_feat_part
             )
         persistent_edge_partition_book = (
-            edge_partition_book if has_edge_feats or has_edge_quantized_feats else None
+            edge_partition_book if should_generate_partition_book else None
         )
         return current_graph_part, current_feat_part, persistent_edge_partition_book
 

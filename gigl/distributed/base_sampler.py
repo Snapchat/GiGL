@@ -1,7 +1,7 @@
 import asyncio
 import traceback
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Union
 
 import torch
@@ -393,14 +393,29 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             ]
             if self.dist_node_feature is not None:
                 if self.use_all2all:
-                    sorted_ntype = sorted(self.dist_node_feature.feature_pb.keys())
+                    sorted_ntype = sorted(self.dist_node_feature.local_feature.keys())
+                    # GLT get_all2all() iterates every type in output.node, not
+                    # just sorted_ntype. feature_pb contains partition books for
+                    # every node type, while local_feature contains only types
+                    # registered in this feature store, such as when only some
+                    # heterogeneous node types have quantized features.
+                    feature_output = replace(
+                        output,
+                        node={
+                            ntype: nodes
+                            for ntype, nodes in output.node.items()
+                            if ntype in sorted_ntype
+                        },
+                    )
                     nfeat_dict = self.dist_node_feature.get_all2all(
-                        output, sorted_ntype
+                        feature_output, sorted_ntype
                     )
                     for ntype, nfeats in nfeat_dict.items():
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
                 else:
                     for ntype, nodes in output.node.items():
+                        if ntype not in self.dist_node_feature.local_feature:
+                            continue
                         nodes = nodes.to(torch.long)
                         futs[f"{as_str(ntype)}.nfeats"] = wrap_torch_future(
                             self.dist_node_feature.async_get(nodes, ntype)
@@ -408,10 +423,18 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if self.dist_node_quantized_feature is not None:
                 if self.use_all2all:
                     sorted_ntype = sorted(
-                        self.dist_node_quantized_feature.feature_pb.keys()
+                        self.dist_node_quantized_feature.local_feature.keys()
+                    )
+                    feature_output = replace(
+                        output,
+                        node={
+                            ntype: nodes
+                            for ntype, nodes in output.node.items()
+                            if ntype in sorted_ntype
+                        },
                     )
                     quantized_nfeat_dict = self.dist_node_quantized_feature.get_all2all(
-                        output, sorted_ntype
+                        feature_output, sorted_ntype
                     )
                     for ntype, quantized_nfeats in quantized_nfeat_dict.items():
                         result_map[
@@ -419,6 +442,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         ] = quantized_nfeats
                 else:
                     for ntype, nodes in output.node.items():
+                        if ntype not in self.dist_node_quantized_feature.local_feature:
+                            continue
                         nodes = nodes.to(torch.long)
                         futs[
                             f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
@@ -427,6 +452,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             if self.dist_edge_feature is not None and self.with_edge:
                 for etype in self.edge_types:
+                    if etype not in self.dist_edge_feature.local_feature:
+                        continue
                     if self.edge_dir == "in":
                         eids = result_map.get(
                             f"{as_str(reverse_edge_type(etype))}.eids", None
@@ -444,6 +471,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             if self.dist_edge_quantized_feature is not None and self.with_edge:
                 for etype in self.edge_types:
+                    # Like node features, an edge partition book covers every
+                    # edge type while a feature store may register only some.
+                    if etype not in self.dist_edge_quantized_feature.local_feature:
+                        continue
                     result_edge_type = (
                         reverse_edge_type(etype) if self.edge_dir == "in" else etype
                     )
