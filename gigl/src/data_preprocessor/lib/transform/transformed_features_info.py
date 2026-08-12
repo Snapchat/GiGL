@@ -22,6 +22,8 @@ class TransformedFeaturesInfo:
     raw_data_schema_file_path: GcsUri
     tft_temp_directory_path: GcsUri
     transformed_features_file_prefix: GcsUri
+    feature_quantization_metadata_path: GcsUri
+    feature_quantization_enabled: bool
     transformed_features_schema_path: GcsUri
     transform_directory_path: GcsUri
     dataflow_console_uri: Optional[HttpUri] = None
@@ -39,6 +41,7 @@ class TransformedFeaturesInfo:
         feature_type: FeatureTypes,
         entity_type: Union[NodeType, EdgeType],
         custom_identifier: str = "",
+        feature_quantization_enabled: bool = False,
     ) -> None:
         self.feature_type = feature_type
         self.entity_type = entity_type
@@ -92,6 +95,10 @@ class TransformedFeaturesInfo:
                 custom_identifier=custom_identifier,
             )
         )
+        self.feature_quantization_metadata_path = GcsUri.join(
+            self.transform_directory_path, "feature_quantization_metadata.json"
+        )
+        self.feature_quantization_enabled = feature_quantization_enabled
 
         self.transformed_features_schema_path = (
             gcs_constants.get_tf_transformed_features_schema_path(

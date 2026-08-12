@@ -1905,13 +1905,13 @@ class GraphTransformerEncoder(nn.Module):
             if use_anchor_only_final_layer
             else None
         )
-        normal_encoder_layer_count = len(encoder_layers) - int(
-            final_encoder_layer is not None
-        )
-        for encoder_layer_index in range(normal_encoder_layer_count):
+        if final_encoder_layer is not None:
+            encoder_layers = encoder_layers[:-1]
+
+        for encoder_layer_module in encoder_layers:
             encoder_layer = cast(
                 GraphTransformerEncoderLayer,
-                encoder_layers[encoder_layer_index],
+                encoder_layer_module,
             )
             x = encoder_layer(
                 x,
