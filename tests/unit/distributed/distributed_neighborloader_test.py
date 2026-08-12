@@ -450,6 +450,27 @@ def _run_quantized_feature_neighbor_loader(
     shutdown_rpc()
 
 
+def _run_heterogeneous_partially_quantized_neighbor_loader(
+    _: int,
+    dataset: DistDataset,
+    expected_features: dict[NodeType, torch.Tensor],
+) -> None:
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, torch.tensor([0])),
+        num_neighbors=[1],
+        batch_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    batch = next(iter(loader))
+    assert isinstance(batch, HeteroData)
+    for node_type, expected_features_for_node_type in expected_features.items():
+        assert_tensor_equality(batch[node_type].x, expected_features_for_node_type)
+    shutdown_rpc()
+
+
 class DistributedNeighborLoaderTest(TestCase):
     def setUp(self):
         super().setUp()
@@ -809,9 +830,7 @@ class DistributedNeighborLoaderTest(TestCase):
         # codes are scattered into feature indices 0 and 2; the remaining two
         # codes are padding. 48 (0b00_11_00_00) yields [0, 3], while 144
         # (0b10_01_00_00) yields [2, 1].
-        packed_quantized_node_features = torch.tensor(
-            [[48], [144]], dtype=torch.uint8
-        )
+        packed_quantized_node_features = torch.tensor([[48], [144]], dtype=torch.uint8)
         expected_features = torch.tensor(
             [[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]]
         )
@@ -850,6 +869,64 @@ class DistributedNeighborLoaderTest(TestCase):
 
         mp.spawn(
             fn=_run_quantized_feature_neighbor_loader,
+            args=(dataset, expected_features),
+        )
+
+    def test_heterogeneous_loader_supports_partially_quantized_node_types(
+        self,
+    ) -> None:
+        expected_features = {
+            _USER: torch.tensor([[0.0, 10.0]]),
+            _STORY: torch.tensor([[20.0]]),
+        }
+        partition_output = PartitionOutput(
+            node_partition_book={
+                _USER: torch.zeros(1),
+                _STORY: torch.zeros(1),
+            },
+            edge_partition_book={_USER_TO_STORY: torch.zeros(1)},
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0], [0]]), edge_ids=None
+                )
+            },
+            partitioned_node_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.tensor([[10.0]]), ids=torch.tensor([0])
+                ),
+                _STORY: FeaturePartitionData(
+                    feats=torch.tensor([[20.0]]), ids=torch.tensor([0])
+                ),
+            },
+            partitioned_node_quantized_features={
+                _USER: FeaturePartitionData(
+                    feats=torch.tensor([[0]], dtype=torch.uint8),
+                    ids=torch.tensor([0]),
+                )
+            },
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata={
+                _USER: FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=2,
+                    quantized_feature_indices=(0,),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                )
+            },
+        )
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_heterogeneous_partially_quantized_neighbor_loader,
             args=(dataset, expected_features),
         )
 
