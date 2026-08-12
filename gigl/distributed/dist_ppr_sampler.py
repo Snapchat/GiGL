@@ -488,38 +488,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ``flat_ids`` and ``flat_weights`` are concatenated across seeds;
             ``valid_counts`` stores how many selected nodes belong to each seed.
         """
-        # Translate integer node-type IDs back to NodeType strings for the rest
-        # of the pipeline, and move tensors to the correct device.
-        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
-        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
-        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-
         extracted_results = ppr_state.extract_top_k_with_residual_top_up(
             self._max_ppr_nodes,
             self._enable_residual_topup,
         )
-
-        extracted_items: list[
-            tuple[NodeType, torch.Tensor, torch.Tensor, torch.Tensor]
-        ] = []
-        extracted_tensors: list[torch.Tensor] = []
-        for node_type_id, (
-            flat_ids,
-            flat_weights,
-            valid_counts,
-        ) in extracted_results.items():
-            node_type = self._ntype_id_to_ntype[node_type_id]
-            extracted_items.append((node_type, flat_ids, flat_weights, valid_counts))
-            extracted_tensors.extend([flat_ids, flat_weights, valid_counts])
-
-        moved_tensors = self._move_extracted_tensors_to_device(
-            extracted_tensors, device
-        )
-        moved_tensor_iter = iter(moved_tensors)
-        for node_type, _, _, _ in extracted_items:
-            node_type_to_flat_ids[node_type] = next(moved_tensor_iter)
-            node_type_to_flat_weights[node_type] = next(moved_tensor_iter)
-            node_type_to_valid_counts[node_type] = next(moved_tensor_iter)
+        (
+            node_type_to_flat_ids,
+            node_type_to_flat_weights,
+            node_type_to_valid_counts,
+        ) = self._move_top_k_extraction_results_to_device(extracted_results, device)
 
         if self._is_homogeneous:
             return (
@@ -544,6 +521,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         if device.type != "cuda":
             return [tensor.to(device) for tensor in tensors]
 
+        # Standard distributed loaders construct sampler workers on CPU and rely
+        # on the pinned output channel plus loader collate for the H2D copy. This
+        # branch supports direct CUDA sampler use without adding an extra pass.
         moved_tensors = [
             (
                 tensor.pin_memory().to(device, non_blocking=True)
@@ -554,6 +534,45 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ]
         torch.cuda.current_stream(device).synchronize()
         return moved_tensors
+
+    def _move_top_k_extraction_results_to_device(
+        self,
+        extracted_results: dict[
+            int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ],
+        device: torch.device,
+    ) -> tuple[
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+    ]:
+        """Translate C++ node-type IDs and batch-move top-k tensors."""
+        node_types: list[NodeType] = []
+        extracted_tensors: list[torch.Tensor] = []
+        for node_type_id, (
+            flat_ids,
+            flat_weights,
+            valid_counts,
+        ) in extracted_results.items():
+            node_types.append(self._ntype_id_to_ntype[node_type_id])
+            extracted_tensors.extend((flat_ids, flat_weights, valid_counts))
+
+        moved_tensors = self._move_extracted_tensors_to_device(
+            extracted_tensors, device
+        )
+        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+        for item_index, node_type in enumerate(node_types):
+            tensor_offset = item_index * 3
+            node_type_to_flat_ids[node_type] = moved_tensors[tensor_offset]
+            node_type_to_flat_weights[node_type] = moved_tensors[tensor_offset + 1]
+            node_type_to_valid_counts[node_type] = moved_tensors[tensor_offset + 2]
+        return (
+            node_type_to_flat_ids,
+            node_type_to_flat_weights,
+            node_type_to_valid_counts,
+        )
 
     def _extract_typed_ppr_state_top_k(
         self,
@@ -571,34 +590,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             typed_ppr_channel_target_counts,
             self._enable_residual_topup,
         )
-        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
-        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
-        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-        extracted_items: list[
-            tuple[NodeType, torch.Tensor, torch.Tensor, torch.Tensor]
-        ] = []
-        extracted_tensors: list[torch.Tensor] = []
-        for node_type_id, (
-            flat_ids,
-            flat_weights,
-            valid_counts,
-        ) in extracted_results.items():
-            node_type = self._ntype_id_to_ntype[node_type_id]
-            extracted_items.append((node_type, flat_ids, flat_weights, valid_counts))
-            extracted_tensors.extend([flat_ids, flat_weights, valid_counts])
-
-        moved_tensors = self._move_extracted_tensors_to_device(
-            extracted_tensors, device
-        )
-        moved_tensor_iter = iter(moved_tensors)
-        for node_type, _, _, _ in extracted_items:
-            node_type_to_flat_ids[node_type] = next(moved_tensor_iter)
-            node_type_to_flat_weights[node_type] = next(moved_tensor_iter)
-            node_type_to_valid_counts[node_type] = next(moved_tensor_iter)
-        return (
-            node_type_to_flat_ids,
-            node_type_to_flat_weights,
-            node_type_to_valid_counts,
+        return self._move_top_k_extraction_results_to_device(
+            extracted_results, device
         )
 
     async def _compute_ppr_scores(
@@ -880,29 +873,29 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         rows_dict: dict[EdgeType, torch.Tensor] = {}
         cols_dict: dict[EdgeType, torch.Tensor] = {}
         edge_dict: dict[EdgeType, torch.Tensor] = {}
-        extracted_edge_items: list[
-            tuple[EdgeType, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-        ] = []
+        extracted_edge_items: list[tuple[EdgeType, bool]] = []
         extracted_edge_tensors: list[torch.Tensor] = []
         for edge_type_id, (rows, cols, edge_ids) in extracted_edges.items():
             edge_type = self._etype_id_to_etype[edge_type_id]
             output_edge_type = (
                 reverse_edge_type(edge_type) if self.edge_dir == "in" else edge_type
             )
-            extracted_edge_items.append((output_edge_type, rows, cols, edge_ids))
-            extracted_edge_tensors.extend([rows, cols])
+            extracted_edge_items.append((output_edge_type, edge_ids is not None))
+            extracted_edge_tensors.extend((rows, cols))
             if edge_ids is not None:
                 extracted_edge_tensors.append(edge_ids)
 
         moved_edge_tensors = self._move_extracted_tensors_to_device(
             extracted_edge_tensors, self.device
         )
-        moved_edge_tensor_iter = iter(moved_edge_tensors)
-        for output_edge_type, _, _, edge_ids in extracted_edge_items:
-            rows_dict[output_edge_type] = next(moved_edge_tensor_iter)
-            cols_dict[output_edge_type] = next(moved_edge_tensor_iter)
-            if edge_ids is not None:
-                edge_dict[output_edge_type] = next(moved_edge_tensor_iter)
+        tensor_offset = 0
+        for output_edge_type, has_edge_ids in extracted_edge_items:
+            rows_dict[output_edge_type] = moved_edge_tensors[tensor_offset]
+            cols_dict[output_edge_type] = moved_edge_tensors[tensor_offset + 1]
+            tensor_offset += 2
+            if has_edge_ids:
+                edge_dict[output_edge_type] = moved_edge_tensors[tensor_offset]
+                tensor_offset += 1
 
         if not rows_dict:
             empty_edge_dict = {} if self.with_edge else None
