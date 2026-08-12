@@ -516,24 +516,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         tensors: list[torch.Tensor], device: torch.device
     ) -> list[torch.Tensor]:
         """Move tensors materialized by C++ PPR extraction to the sampler device."""
-        if not tensors:
-            return []
-        if device.type != "cuda":
-            return [tensor.to(device) for tensor in tensors]
-
-        # Standard distributed loaders construct sampler workers on CPU and rely
-        # on the pinned output channel plus loader collate for the H2D copy. This
-        # branch supports direct CUDA sampler use without adding an extra pass.
-        moved_tensors = [
-            (
-                tensor.pin_memory().to(device, non_blocking=True)
-                if tensor.device.type == "cpu"
-                else tensor.to(device, non_blocking=True)
-            )
-            for tensor in tensors
-        ]
-        torch.cuda.current_stream(device).synchronize()
-        return moved_tensors
+        # Keep pinning in the loader/channel pipeline, matching the pre-existing
+        # distributed sampler pattern.
+        return [tensor.to(device) for tensor in tensors]
 
     def _move_top_k_extraction_results_to_device(
         self,
