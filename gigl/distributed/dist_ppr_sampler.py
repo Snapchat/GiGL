@@ -49,9 +49,12 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-PPRForwardPushFetchMap = dict[
-    int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+# Python normalizes neighbor fetches to four items. The C++ binding also accepts
+# a three-item tuple from callers that omit edge IDs and treats it as None.
+PPRForwardPushFetchTensors = tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]
 ]
+PPRForwardPushFetchMap = dict[int, PPRForwardPushFetchTensors]
 PPRTensorOutput = Union[torch.Tensor, dict[NodeType, torch.Tensor]]
 PPRCacheState = Optional[Union[PPRForwardPush, list[PPRForwardPush]]]
 
@@ -496,21 +499,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             self._enable_residual_topup,
         )
 
+        extracted_items: list[
+            tuple[NodeType, torch.Tensor, torch.Tensor, torch.Tensor]
+        ] = []
+        extracted_tensors: list[torch.Tensor] = []
         for node_type_id, (
             flat_ids,
             flat_weights,
             valid_counts,
         ) in extracted_results.items():
             node_type = self._ntype_id_to_ntype[node_type_id]
-            node_type_to_flat_ids[node_type] = self._move_extracted_tensor_to_device(
-                flat_ids, device
-            )
-            node_type_to_flat_weights[node_type] = (
-                self._move_extracted_tensor_to_device(flat_weights, device)
-            )
-            node_type_to_valid_counts[node_type] = (
-                self._move_extracted_tensor_to_device(valid_counts, device)
-            )
+            extracted_items.append((node_type, flat_ids, flat_weights, valid_counts))
+            extracted_tensors.extend([flat_ids, flat_weights, valid_counts])
+
+        moved_tensors = self._move_extracted_tensors_to_device(
+            extracted_tensors, device
+        )
+        moved_tensor_iter = iter(moved_tensors)
+        for node_type, _, _, _ in extracted_items:
+            node_type_to_flat_ids[node_type] = next(moved_tensor_iter)
+            node_type_to_flat_weights[node_type] = next(moved_tensor_iter)
+            node_type_to_valid_counts[node_type] = next(moved_tensor_iter)
 
         if self._is_homogeneous:
             return (
@@ -526,13 +535,25 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
 
     @staticmethod
-    def _move_extracted_tensor_to_device(
-        tensor: torch.Tensor, device: torch.device
-    ) -> torch.Tensor:
-        """Move a tensor materialized by C++ PPR extraction to the sampler device."""
-        if tensor.device.type == "cpu" and device.type == "cuda":
-            return tensor.pin_memory().to(device, non_blocking=True)
-        return tensor.to(device)
+    def _move_extracted_tensors_to_device(
+        tensors: list[torch.Tensor], device: torch.device
+    ) -> list[torch.Tensor]:
+        """Move tensors materialized by C++ PPR extraction to the sampler device."""
+        if not tensors:
+            return []
+        if device.type != "cuda":
+            return [tensor.to(device) for tensor in tensors]
+
+        moved_tensors = [
+            (
+                tensor.pin_memory().to(device, non_blocking=True)
+                if tensor.device.type == "cpu"
+                else tensor.to(device, non_blocking=True)
+            )
+            for tensor in tensors
+        ]
+        torch.cuda.current_stream(device).synchronize()
+        return moved_tensors
 
     def _extract_typed_ppr_state_top_k(
         self,
@@ -553,21 +574,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
         node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
         node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+        extracted_items: list[
+            tuple[NodeType, torch.Tensor, torch.Tensor, torch.Tensor]
+        ] = []
+        extracted_tensors: list[torch.Tensor] = []
         for node_type_id, (
             flat_ids,
             flat_weights,
             valid_counts,
         ) in extracted_results.items():
             node_type = self._ntype_id_to_ntype[node_type_id]
-            node_type_to_flat_ids[node_type] = self._move_extracted_tensor_to_device(
-                flat_ids, device
-            )
-            node_type_to_flat_weights[node_type] = (
-                self._move_extracted_tensor_to_device(flat_weights, device)
-            )
-            node_type_to_valid_counts[node_type] = (
-                self._move_extracted_tensor_to_device(valid_counts, device)
-            )
+            extracted_items.append((node_type, flat_ids, flat_weights, valid_counts))
+            extracted_tensors.extend([flat_ids, flat_weights, valid_counts])
+
+        moved_tensors = self._move_extracted_tensors_to_device(
+            extracted_tensors, device
+        )
+        moved_tensor_iter = iter(moved_tensors)
+        for node_type, _, _, _ in extracted_items:
+            node_type_to_flat_ids[node_type] = next(moved_tensor_iter)
+            node_type_to_flat_weights[node_type] = next(moved_tensor_iter)
+            node_type_to_valid_counts[node_type] = next(moved_tensor_iter)
         return (
             node_type_to_flat_ids,
             node_type_to_flat_weights,
@@ -853,21 +880,29 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         rows_dict: dict[EdgeType, torch.Tensor] = {}
         cols_dict: dict[EdgeType, torch.Tensor] = {}
         edge_dict: dict[EdgeType, torch.Tensor] = {}
+        extracted_edge_items: list[
+            tuple[EdgeType, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
+        ] = []
+        extracted_edge_tensors: list[torch.Tensor] = []
         for edge_type_id, (rows, cols, edge_ids) in extracted_edges.items():
             edge_type = self._etype_id_to_etype[edge_type_id]
             output_edge_type = (
                 reverse_edge_type(edge_type) if self.edge_dir == "in" else edge_type
             )
-            rows_dict[output_edge_type] = self._move_extracted_tensor_to_device(
-                rows, self.device
-            )
-            cols_dict[output_edge_type] = self._move_extracted_tensor_to_device(
-                cols, self.device
-            )
+            extracted_edge_items.append((output_edge_type, rows, cols, edge_ids))
+            extracted_edge_tensors.extend([rows, cols])
             if edge_ids is not None:
-                edge_dict[output_edge_type] = self._move_extracted_tensor_to_device(
-                    edge_ids, self.device
-                )
+                extracted_edge_tensors.append(edge_ids)
+
+        moved_edge_tensors = self._move_extracted_tensors_to_device(
+            extracted_edge_tensors, self.device
+        )
+        moved_edge_tensor_iter = iter(moved_edge_tensors)
+        for output_edge_type, _, _, edge_ids in extracted_edge_items:
+            rows_dict[output_edge_type] = next(moved_edge_tensor_iter)
+            cols_dict[output_edge_type] = next(moved_edge_tensor_iter)
+            if edge_ids is not None:
+                edge_dict[output_edge_type] = next(moved_edge_tensor_iter)
 
         if not rows_dict:
             empty_edge_dict = {} if self.with_edge else None
@@ -1095,6 +1130,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 )
 
             if sampled_edges.num_sampled_edges:
+                # GLT treats sampled edges as one sampled layer and right-pads
+                # num_sampled_nodes to ``num_hops + 1``. Split the node counts
+                # into seed nodes and PPR-introduced nodes so destination-only
+                # PPR nodes are attributed to the represented edge layer instead
+                # of being classified as roots after GLT padding.
                 num_sampled_nodes = {
                     node_type: [
                         (
