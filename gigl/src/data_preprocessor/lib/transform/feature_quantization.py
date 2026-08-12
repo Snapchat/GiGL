@@ -16,6 +16,7 @@ from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
 _NODE_PACKED_FEATURE_KEY: Final[str] = "node_packed_features"
+EDGE_PACKED_FEATURE_KEY: Final[str] = "edge_packed_features"
 _SignStats: TypeAlias = tuple[float, int, float, int]
 
 
@@ -25,11 +26,14 @@ def apply_feature_quantization_transform(
     logical_feature_keys: list[str],
     quantization_spec: FeatureQuantizationSpec,
     quantization_metadata_path: str,
+    packed_feature_key: str = _NODE_PACKED_FEATURE_KEY,
 ) -> tuple[beam.PCollection[pa.RecordBatch], DatasetMetadata | beam.pvalue.AsSingleton]:
     """Quantizes selected feature columns and bit-packs each record's values.
 
-    Stores the packed bytes in ``node_packed_features`` and computes global
-    quantization statistics with Beam.
+    Stores packed bytes under ``packed_feature_key`` and computes global
+    quantization statistics with Beam. Node preprocessing uses
+    ``node_packed_features``; main-edge preprocessing uses
+    ``edge_packed_features``.
 
     Side Effects:
         Writes the quantization statistics JSON that ``data_preprocessor.py``
@@ -46,13 +50,25 @@ def apply_feature_quantization_transform(
         logical_feature_keys: Logical feature columns in original feature-vector order.
         quantization_spec: Feature keys and bit width to quantize.
         quantization_metadata_path: Destination for the quantization statistics JSON.
+        packed_feature_key: Reserved physical field used for packed values.
 
     Returns:
         Quantized RecordBatches and eager or deferred physical I/O metadata.
         That metadata removes quantized feature columns and adds
-        ``node_packed_features``. It affects serialized-record I/O only; the
+        ``packed_feature_key``. It affects serialized-record I/O only; the
         logical model schema remains unchanged.
+
+    Raises:
+        ValueError: If the reserved packed key already exists, a selected feature
+            is absent or non-scalar, or feature values cannot be quantized.
     """
+    if isinstance(logical_metadata, DatasetMetadata) and any(
+        feature.name == packed_feature_key
+        for feature in logical_metadata.schema.feature
+    ):
+        raise ValueError(
+            f"Reserved packed feature key {packed_feature_key} already exists in the logical schema."
+        )
     missing = set(quantization_spec.feature_keys) - set(logical_feature_keys)
     if missing:
         raise ValueError(f"Quantized features missing: {missing}")
@@ -73,6 +89,7 @@ def apply_feature_quantization_transform(
             quantization_spec=quantization_spec,
             logical_feature_keys=logical_feature_keys,
             logical_metadata=metadata_for_json,
+            packed_feature_key=packed_feature_key,
         )
         | "Write quantization stats"
         >> beam.io.WriteToText(
@@ -86,19 +103,24 @@ def apply_feature_quantization_transform(
             _quantize_record_batch,
             quantization_spec=quantization_spec,
             quantization_stats=beam.pvalue.AsSingleton(quantization_stats),
+            packed_feature_key=packed_feature_key,
         )
     )
 
     if logical_metadata_is_eager:
         physical_feature_metadata = DatasetMetadata(
-            _apply_quantization_schema(logical_metadata.schema, quantization_spec)
+            _apply_quantization_schema(
+                logical_metadata.schema, quantization_spec, packed_feature_key
+            )
         )
     else:
         physical_feature_metadata = logical_metadata | (
             "Apply feature quantization schema"
             >> beam.Map(
                 lambda metadata, quantization_spec: DatasetMetadata(
-                    _apply_quantization_schema(metadata.schema, quantization_spec)
+                    _apply_quantization_schema(
+                        metadata.schema, quantization_spec, packed_feature_key
+                    )
                 ),
                 quantization_spec=quantization_spec,
             )
@@ -139,7 +161,12 @@ def _quantize_record_batch(
     batch: pa.RecordBatch,
     quantization_spec: FeatureQuantizationSpec,
     quantization_stats: dict[str, float],
+    packed_feature_key: str,
 ) -> pa.RecordBatch:
+    if packed_feature_key in batch.schema.names:
+        raise ValueError(
+            f"Reserved packed feature key {packed_feature_key} already exists in the logical schema."
+        )
     feature_matrix = _build_feature_matrix(batch, quantization_spec.feature_keys)
     if quantization_spec.bits == 1:
         packed = quantize_ndarray(feature_matrix, bits=quantization_spec.bits)
@@ -161,7 +188,7 @@ def _quantize_record_batch(
     arrays.append(
         pa.array([[row.tobytes()] for row in packed], type=pa.list_(pa.binary()))
     )
-    names.append(_NODE_PACKED_FEATURE_KEY)
+    names.append(packed_feature_key)
     return pa.RecordBatch.from_arrays(arrays, names=names)
 
 
@@ -170,9 +197,10 @@ def _quantization_stats_to_json(
     quantization_spec: FeatureQuantizationSpec,
     logical_feature_keys: list[str],
     logical_metadata: DatasetMetadata,
+    packed_feature_key: str,
 ) -> str:
     metadata = {
-        "packed_feature_key": _NODE_PACKED_FEATURE_KEY,
+        "packed_feature_key": packed_feature_key,
         "quantized_feature_indices": _quantized_feature_indices(
             logical_metadata, logical_feature_keys, quantization_spec.feature_keys
         ),
@@ -204,9 +232,15 @@ def _quantized_feature_indices(
 
 
 def _apply_quantization_schema(
-    schema: schema_pb2.Schema, quantization_spec: FeatureQuantizationSpec
+    schema: schema_pb2.Schema,
+    quantization_spec: FeatureQuantizationSpec,
+    packed_feature_key: str,
 ) -> schema_pb2.Schema:
-    drop_keys = set(quantization_spec.feature_keys) | {_NODE_PACKED_FEATURE_KEY}
+    if any(feature.name == packed_feature_key for feature in schema.feature):
+        raise ValueError(
+            f"Reserved packed feature key {packed_feature_key} already exists in the logical schema."
+        )
+    drop_keys = set(quantization_spec.feature_keys)
     quantized_schema = schema_pb2.Schema()
     quantized_schema.CopyFrom(schema)
     del quantized_schema.feature[:]
@@ -214,14 +248,14 @@ def _apply_quantization_schema(
         feature for feature in schema.feature if feature.name not in drop_keys
     )
     packed_feature = quantized_schema.feature.add()
-    packed_feature.name = _NODE_PACKED_FEATURE_KEY
+    packed_feature.name = packed_feature_key
     packed_feature.type = schema_pb2.BYTES
     packed_feature.value_count.min = 1
     packed_feature.value_count.max = 1
     logger.info(
         f"Updated transformed schema for feature quantization: dropped "
         f"{len(quantization_spec.feature_keys)} features and added bytes feature "
-        f"{_NODE_PACKED_FEATURE_KEY}."
+        f"{packed_feature_key}."
     )
     return quantized_schema
 

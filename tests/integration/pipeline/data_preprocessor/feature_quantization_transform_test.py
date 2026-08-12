@@ -19,6 +19,40 @@ from tests.test_assets.test_case import TestCase
 
 
 class FeatureQuantizationTransformTest(TestCase):
+    def test_apply_feature_quantization_transform_rejects_reserved_schema_key(
+        self,
+    ) -> None:
+        logical_metadata = DatasetMetadata.from_feature_spec(
+            {
+                "f0": tf.io.FixedLenFeature(shape=[], dtype=tf.float32),
+                "edge_packed_features": tf.io.FixedLenFeature(
+                    shape=[], dtype=tf.string
+                ),
+            }
+        )
+
+        with (
+            self.assertRaisesRegex(ValueError, "Reserved packed feature key"),
+            TestPipeline() as pipeline,
+        ):
+            apply_feature_quantization_transform(
+                logical_features=pipeline
+                | "Create collision input"
+                >> beam.Create(
+                    [
+                        pa.RecordBatch.from_arrays(
+                            [pa.array([1.0]), pa.array([b"existing"])],
+                            names=["f0", "edge_packed_features"],
+                        )
+                    ]
+                ),
+                logical_metadata=logical_metadata,
+                logical_feature_keys=["f0"],
+                quantization_spec=FeatureQuantizationSpec(feature_keys=["f0"], bits=2),
+                quantization_metadata_path="unused",
+                packed_feature_key="edge_packed_features",
+            )
+
     @parameterized.expand(
         [
             (

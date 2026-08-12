@@ -120,6 +120,7 @@ class EdgeDataPreprocessingSpec(NamedTuple):
     pretrained_tft_model_uri: Optional[Uri] = None
     features_outputs: Optional[list[str]] = None
     labels_outputs: Optional[list[str]] = None
+    feature_quantization_spec: Optional[FeatureQuantizationSpec] = None
 
     def __repr__(self) -> str:
         return f"""EdgeDataPreprocessingSpec(

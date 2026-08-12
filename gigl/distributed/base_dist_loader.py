@@ -56,6 +56,7 @@ from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
+    _map_to_effective_edge_types,
     attach_ppr_outputs,
     extract_edge_type_metadata,
     patch_fanout_for_sampling,
@@ -244,8 +245,13 @@ class BaseDistLoader(DistLoader):
             dataset_schema.is_homogeneous_with_labeled_edge_type
         )
         self._node_feature_info = dataset_schema.node_feature_info
-        self._edge_feature_info = dataset_schema.edge_feature_info
+        self._edge_feature_info = _map_to_effective_edge_types(
+            dataset_schema.edge_feature_info, dataset_schema.edge_dir
+        )
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
+        self._edge_quantization_metadata = _map_to_effective_edge_types(
+            dataset_schema.edge_quantization_metadata, dataset_schema.edge_dir
+        )
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers

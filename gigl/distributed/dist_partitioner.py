@@ -208,6 +208,11 @@ class DistPartitioner:
         self._edge_ids: Optional[dict[EdgeType, tuple[int, int]]] = None
         self._edge_feat: Optional[dict[EdgeType, torch.Tensor]] = None
         self._edge_feat_dim: Optional[dict[EdgeType, int]] = None
+        self._edge_quantized_feat: Optional[dict[EdgeType, torch.Tensor]] = None
+        self._edge_quantized_feat_dim: Optional[dict[EdgeType, int]] = None
+        self._partitioned_edge_quantized_features: dict[
+            EdgeType, FeaturePartitionData
+        ] = {}
         self._edge_weights: Optional[dict[EdgeType, torch.Tensor]] = None
 
         # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
@@ -668,6 +673,26 @@ class DistPartitioner:
         self._edge_feat_dim = {}
         for edge_type in input_edge_features:
             self._edge_feat_dim[edge_type] = input_edge_features[edge_type].shape[1]
+
+    def register_edge_quantized_features(
+        self, edge_quantized_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    ) -> None:
+        """Register packed uint8 main-edge features for co-partitioning."""
+        self._assert_and_get_rpc_setup()
+        if self._edge_quantized_feat is not None:
+            raise ValueError("Edge quantized features have already been registered.")
+        packed_features = self._convert_edge_entity_to_heterogeneous_format(
+            input_edge_entity=edge_quantized_features
+        )
+        if not packed_features:
+            raise ValueError("Edge quantized features cannot be empty.")
+        self._edge_quantized_feat = convert_to_tensor(
+            packed_features, dtype=torch.uint8
+        )
+        self._edge_quantized_feat_dim = {
+            edge_type: features.shape[1]
+            for edge_type, features in packed_features.items()
+        }
 
     def register_edge_weights(
         self, edge_weights: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
@@ -1225,11 +1250,17 @@ class DistPartitioner:
         ), "Must have registered edges prior to partitioning them"
 
         has_edge_feats = self._edge_feat is not None and edge_type in self._edge_feat
+        has_edge_quantized_feats = (
+            self._edge_quantized_feat is not None
+            and edge_type in self._edge_quantized_feat
+        )
         has_weights_for_edge_type = (
             self._edge_weights is not None and edge_type in self._edge_weights
         )
         # Need a partition book if we have features or weights to reindex.
-        should_generate_partition_book = has_edge_feats or has_weights_for_edge_type
+        should_generate_partition_book = (
+            has_edge_feats or has_edge_quantized_feats or has_weights_for_edge_type
+        )
 
         # Partitioning Edge Indices
 
@@ -1289,6 +1320,7 @@ class DistPartitioner:
         # IDs are always at r[-1]; features at r[0]; weights at r[1] when
         # features are also present, else r[0].
         current_feat_part: Optional[FeaturePartitionData] = None
+        current_quantized_feat_part: Optional[FeaturePartitionData] = None
         partitioned_weights: Optional[torch.Tensor] = None
         partitioned_edge_ids: Optional[torch.Tensor] = None
 
@@ -1309,6 +1341,8 @@ class DistPartitioner:
             edge_feat: Optional[torch.Tensor] = None
             edge_feat_dim: Optional[int] = None
             edge_weights_tensor: Optional[torch.Tensor] = None
+            edge_quantized_features: Optional[torch.Tensor] = None
+            edge_quantized_feature_dim: Optional[int] = None
             if has_edge_feats:
                 assert self._edge_feat is not None and edge_type in self._edge_feat
                 assert (
@@ -1316,6 +1350,11 @@ class DistPartitioner:
                 )
                 edge_feat = self._edge_feat[edge_type]
                 edge_feat_dim = self._edge_feat_dim[edge_type]
+            if has_edge_quantized_feats:
+                assert self._edge_quantized_feat is not None
+                assert self._edge_quantized_feat_dim is not None
+                edge_quantized_features = self._edge_quantized_feat[edge_type]
+                edge_quantized_feature_dim = self._edge_quantized_feat_dim[edge_type]
             if has_weights_for_edge_type:
                 assert self._edge_weights is not None
                 edge_weights_tensor = self._edge_weights[edge_type]
@@ -1323,15 +1362,20 @@ class DistPartitioner:
             input_parts: list[torch.Tensor] = []
             if edge_feat is not None:
                 input_parts.append(edge_feat)
+            if edge_quantized_features is not None:
+                input_parts.append(edge_quantized_features)
             if edge_weights_tensor is not None:
                 input_parts.append(edge_weights_tensor)
             input_parts.append(edge_ids)
 
             # Positional indices: features first, weights next, ids always last.
             feat_idx: Optional[int] = 0 if has_edge_feats else None
+            quantized_feat_idx: Optional[int] = 1 if has_edge_feats else 0
+            if not has_edge_quantized_feats:
+                quantized_feat_idx = None
             weight_idx: Optional[int] = None
             if has_weights_for_edge_type:
-                weight_idx = 1 if has_edge_feats else 0
+                weight_idx = int(has_edge_feats) + int(has_edge_quantized_feats)
 
             def _edge_feat_weight_pfn(
                 ids_chunk: torch.Tensor, _: object
@@ -1360,6 +1404,21 @@ class DistPartitioner:
                 if len(self._edge_feat) == 0 and len(self._edge_feat_dim) == 0:
                     self._edge_feat = None
                     self._edge_feat_dim = None
+            if has_edge_quantized_feats:
+                assert edge_quantized_features is not None
+                assert self._edge_quantized_feat is not None
+                assert self._edge_quantized_feat_dim is not None
+                del edge_quantized_features
+                del (
+                    self._edge_quantized_feat[edge_type],
+                    self._edge_quantized_feat_dim[edge_type],
+                )
+                if (
+                    len(self._edge_quantized_feat) == 0
+                    and len(self._edge_quantized_feat_dim) == 0
+                ):
+                    self._edge_quantized_feat = None
+                    self._edge_quantized_feat_dim = None
             if has_weights_for_edge_type:
                 assert edge_weights_tensor is not None
                 assert self._edge_weights is not None
@@ -1377,6 +1436,14 @@ class DistPartitioner:
                         feats=torch.empty(0, edge_feat_dim),
                         ids=partitioned_edge_ids,
                     )
+                if has_edge_quantized_feats:
+                    assert edge_quantized_feature_dim is not None
+                    current_quantized_feat_part = FeaturePartitionData(
+                        feats=torch.empty(
+                            0, edge_quantized_feature_dim, dtype=torch.uint8
+                        ),
+                        ids=partitioned_edge_ids,
+                    )
                 if has_weights_for_edge_type:
                     partitioned_weights = torch.empty(0)
             else:
@@ -1385,6 +1452,14 @@ class DistPartitioner:
                     assert feat_idx is not None and edge_feat_dim is not None
                     current_feat_part = FeaturePartitionData(
                         feats=torch.cat([r[feat_idx] for r in feat_weight_res_list]),
+                        ids=partitioned_edge_ids,
+                    )
+                if has_edge_quantized_feats:
+                    assert quantized_feat_idx is not None
+                    current_quantized_feat_part = FeaturePartitionData(
+                        feats=torch.cat(
+                            [r[quantized_feat_idx] for r in feat_weight_res_list]
+                        ),
                         ids=partitioned_edge_ids,
                     )
                 if has_weights_for_edge_type:
@@ -1410,7 +1485,14 @@ class DistPartitioner:
             weights=partitioned_weights,
         )
 
-        return current_graph_part, current_feat_part, edge_partition_book
+        if current_quantized_feat_part is not None:
+            self._partitioned_edge_quantized_features[edge_type] = (
+                current_quantized_feat_part
+            )
+        persistent_edge_partition_book = (
+            edge_partition_book if has_edge_feats or has_edge_quantized_feats else None
+        )
+        return current_graph_part, current_feat_part, persistent_edge_partition_book
 
     def _partition_label_edge_index(
         self,
@@ -1757,9 +1839,9 @@ class DistPartitioner:
                 node_partition_book=transformed_node_partition_book, edge_type=edge_type
             )
             partitioned_edge_index[edge_type] = partitioned_edge_index_per_edge_type
-            if partitioned_edge_features_per_edge_type is not None:
-                assert edge_partition_book_per_edge_type is not None
+            if edge_partition_book_per_edge_type is not None:
                 edge_partition_book[edge_type] = edge_partition_book_per_edge_type
+            if partitioned_edge_features_per_edge_type is not None:
                 partitioned_edge_features[edge_type] = (
                     partitioned_edge_features_per_edge_type
                 )
@@ -1936,6 +2018,12 @@ class DistPartitioner:
             partitioned_node_features=partitioned_node_features,
             partitioned_node_quantized_features=partitioned_node_quantized_features,
             partitioned_edge_features=partitioned_edge_features,
+            partitioned_edge_quantized_features=(
+                to_homogeneous(self._partitioned_edge_quantized_features)
+                if self._is_input_homogeneous
+                and self._partitioned_edge_quantized_features
+                else self._partitioned_edge_quantized_features or None
+            ),
             partitioned_positive_labels=partitioned_positive_edge_index,
             partitioned_negative_labels=partitioned_negative_edge_index,
             partitioned_node_labels=partitioned_node_labels,

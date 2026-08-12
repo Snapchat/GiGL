@@ -22,11 +22,11 @@ this as a useful tradeoff for GiGL.
 The built-in flow is:
 
 1. The data preprocessor computes feature summary statistics offline.
-2. The preprocessor quantizes selected scalar feature columns with NumPy.
+2. The preprocessor quantizes selected scalar node or main-edge feature columns with NumPy.
 3. The packed `uint8` feature sidecar is written to TFRecords.
 4. Distributed dataset construction partitions and samples the packed bytes.
 5. The dataloader collate path dequantizes sampled packed features with Torch.
-6. Dequantized columns are scattered back into the logical `x` feature matrix.
+6. Dequantized columns are scattered back into the logical `x` or `edge_attr` feature matrix.
 
 The NumPy/Torch split is intentional:
 
