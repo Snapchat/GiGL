@@ -427,7 +427,11 @@ def _run_featureless_edge_ids_absent(
     shutdown_rpc()
 
 
-def _run_quantized_feature_neighbor_loader(_: int, dataset: DistDataset) -> None:
+def _run_quantized_feature_neighbor_loader(
+    _: int,
+    dataset: DistDataset,
+    expected_features: torch.Tensor,
+) -> None:
     create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
@@ -437,7 +441,6 @@ def _run_quantized_feature_neighbor_loader(_: int, dataset: DistDataset) -> None
         pin_memory_device=torch.device("cpu"),
     )
 
-    expected_features = torch.tensor([[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]])
     batch_count = 0
     for batch in loader:
         assert isinstance(batch, Data)
@@ -801,6 +804,17 @@ class DistributedNeighborLoaderTest(TestCase):
     def test_distributed_neighbor_loader_materializes_quantized_node_features(
         self,
     ) -> None:
+        raw_node_features = torch.tensor([[10.0, 20.0], [30.0, 40.0]])
+        # Each row is one node with one packed uint8. Its two high-order 2-bit
+        # codes are scattered into feature indices 0 and 2; the remaining two
+        # codes are padding. 48 (0b00_11_00_00) yields [0, 3], while 144
+        # (0b10_01_00_00) yields [2, 1].
+        packed_quantized_node_features = torch.tensor(
+            [[48], [144]], dtype=torch.uint8
+        )
+        expected_features = torch.tensor(
+            [[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]]
+        )
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(2),
             edge_partition_book=torch.zeros(2),
@@ -808,11 +822,11 @@ class DistributedNeighborLoaderTest(TestCase):
                 edge_index=torch.tensor([[0, 1], [1, 0]]), edge_ids=None
             ),
             partitioned_node_features=FeaturePartitionData(
-                feats=torch.tensor([[10.0, 20.0], [30.0, 40.0]]),
+                feats=raw_node_features,
                 ids=torch.arange(2),
             ),
             partitioned_node_quantized_features=FeaturePartitionData(
-                feats=torch.tensor([[48], [144]], dtype=torch.uint8),
+                feats=packed_quantized_node_features,
                 ids=torch.arange(2),
             ),
             partitioned_edge_features=None,
@@ -834,7 +848,10 @@ class DistributedNeighborLoaderTest(TestCase):
         )
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(fn=_run_quantized_feature_neighbor_loader, args=(dataset,))
+        mp.spawn(
+            fn=_run_quantized_feature_neighbor_loader,
+            args=(dataset, expected_features),
+        )
 
     @parameterized.expand(
         [
