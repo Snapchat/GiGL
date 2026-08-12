@@ -1075,16 +1075,13 @@ class BaseDistLoader(DistLoader):
             and self.to_device is not None
             and self.to_device.type == "cuda"
         ):
-            launched_transfer = False
             for k, v in msg.items():
                 if isinstance(v, torch.Tensor) and v.device != self.to_device:
                     msg[k] = v.to(self.to_device, non_blocking=True)
-                    launched_transfer = True
-            if launched_transfer:
-                # Synchronize the current CUDA stream to ensure all non-blocking
-                # transfers are complete before the parent _collate_fn processes
-                # the message.
-                torch.cuda.current_stream(self.to_device).synchronize()
+            # Synchronize the current CUDA stream to ensure all non-blocking
+            # transfers are complete before the parent _collate_fn processes
+            # the message.
+            torch.cuda.current_stream().synchronize()
         return super()._collate_fn(msg)
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls

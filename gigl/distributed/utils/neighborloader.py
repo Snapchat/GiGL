@@ -351,8 +351,7 @@ def extract_metadata(
     stripped_msg: SampleMessage = {}
     for k, v in msg.items():
         if k.startswith(meta_prefix):
-            metadata_value = v if v.device == device else v.to(device)
-            metadata[k[len(meta_prefix) :]] = metadata_value
+            metadata[k[len(meta_prefix) :]] = v.to(device)
         else:
             stripped_msg[k] = v
     return metadata, stripped_msg
