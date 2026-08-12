@@ -24,7 +24,6 @@ from gigl.distributed.utils.neighborloader import (
     strip_non_ppr_edge_types,
 )
 from gigl.types.graph import (
-    DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
     FeatureQuantizationMetadata,
     message_passing_to_positive_label,
@@ -101,34 +100,6 @@ class LoaderUtilsTest(TestCase):
         )
         self.assertEqual(set(remaining_metadata), {"request_id"})
         self.assert_tensor_equality(remaining_metadata["request_id"], torch.tensor([7]))
-
-    def test_materialize_quantized_node_features_accepts_labeled_homogeneous_key(
-        self,
-    ) -> None:
-        data = Data()
-        metadata = {
-            f"{NODE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_NODE_TYPE}": torch.tensor(
-                [[27]], dtype=torch.uint8
-            )
-        }
-        quantization_metadata = FeatureQuantizationMetadata(
-            bits=2,
-            feature_dim=4,
-            quantized_feature_indices=(0, 1, 2, 3),
-            clip_min=0.0,
-            clip_max=3.0,
-        )
-
-        materialized_data, remaining_metadata = materialize_quantized_node_features(
-            data=data,
-            metadata=metadata,
-            node_quantization_metadata=quantization_metadata,
-        )
-
-        self.assert_tensor_equality(
-            materialized_data.x, torch.tensor([[0.0, 1.0, 2.0, 3.0]])
-        )
-        self.assertEmpty(remaining_metadata)
 
     def test_materialize_quantized_node_features_uses_per_node_type_metadata(
         self,
