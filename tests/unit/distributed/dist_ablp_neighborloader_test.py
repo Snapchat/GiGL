@@ -766,7 +766,7 @@ class DistABLPLoaderTest(TestCase):
         )
 
     def test_homogeneous_ablp_materializes_quantized_features(self) -> None:
-        """Promoted metadata supports quantized homogeneous ABLP batches."""
+        """Scalar metadata supports quantized homogeneous ABLP batches."""
         loaded_graph_tensors = LoadedGraphTensors(
             node_ids=torch.arange(3),
             node_features=torch.tensor([[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]),
@@ -788,7 +788,6 @@ class DistABLPLoaderTest(TestCase):
         )
 
         loaded_graph_tensors.treat_labels_as_edges(edge_dir="out")
-        promoted_metadata = {DEFAULT_HOMOGENEOUS_NODE_TYPE: quantization_metadata}
 
         assert isinstance(loaded_graph_tensors.edge_index, dict)
         assert isinstance(loaded_graph_tensors.node_features, dict)
@@ -830,7 +829,7 @@ class DistABLPLoaderTest(TestCase):
             rank=0,
             world_size=1,
             edge_dir="out",
-            node_quantization_metadata=promoted_metadata,
+            node_quantization_metadata=quantization_metadata,
         )
         dataset.build(partition_output=partition_output)
 

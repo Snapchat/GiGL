@@ -44,7 +44,6 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
@@ -152,36 +151,11 @@ def _load_and_build_partitioned_dataset(
 
         loaded_graph_tensors.positive_label = positive_label_edges
 
-    labels_converted_to_edges = (
+    if (
         isinstance(splitter, NodeAnchorLinkSplitter)
         and splitter.should_convert_labels_to_edges
-    )
-    if labels_converted_to_edges:
-        loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
-
-    packed_node_features = loaded_graph_tensors.node_quantized_features
-    node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
-    # Quantization metadata is serialization configuration, not a loaded graph
-    # tensor. ``treat_labels_as_edges`` converts the tensors to per-node-type
-    # form, so convert the metadata separately to keep them aligned.
-    if (
-        labels_converted_to_edges
-        and node_quantization_metadata is not None
-        and not isinstance(node_quantization_metadata, Mapping)
     ):
-        node_quantization_metadata = {
-            DEFAULT_HOMOGENEOUS_NODE_TYPE: node_quantization_metadata
-        }
-    if packed_node_features is not None and node_quantization_metadata is not None:
-        packed_features_are_mapping = isinstance(packed_node_features, Mapping)
-        metadata_is_mapping = isinstance(node_quantization_metadata, Mapping)
-        if packed_features_are_mapping != metadata_is_mapping:
-            raise ValueError(
-                "Packed node features and node quantization metadata must both be "
-                "scalar or keyed by node type. "
-                f"Got packed node features of type {type(packed_node_features)} "
-                f"and node quantization metadata {node_quantization_metadata}."
-            )
+        loaded_graph_tensors.treat_labels_as_edges(edge_dir=edge_dir)
 
     should_assign_edges_by_src_node: bool = False if edge_dir == "in" else True
 
@@ -252,7 +226,7 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         world_size=world_size,
         edge_dir=edge_dir,
-        node_quantization_metadata=node_quantization_metadata,
+        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
     )
 
     dataset.build(
