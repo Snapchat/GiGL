@@ -18,6 +18,7 @@ from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_te
 from gigl.distributed.sampler import NODE_PACKED_FEATURES_METADATA_KEY
 from gigl.types.graph import (
     FeatureInfo,
+    FeatureQuantizationIndexTensors,
     FeatureQuantizationMetadata,
     is_label_edge_type,
 )
@@ -354,18 +355,19 @@ def materialize_quantized_node_features(
         dequantized = dequantize_torch_tensor(packed_features, metadata=q)
         x = getattr(store, "x", None)
         out = dequantized.new_empty((dequantized.size(0), q.feature_dim))
-        scatter_indices = q.scatter_index_tensors(out.device)
-        out[:, scatter_indices.quantized] = dequantized
+        scatter_idx: FeatureQuantizationIndexTensors = q.scatter_index_tensors(
+            out.device
+        )
+        out[:, scatter_idx.quantized] = dequantized
 
         if x is None and q.raw_feature_dim:
             raise ValueError(f"Missing {q.raw_feature_dim} unquantized features")
         if x is not None:
             if x.size(1) != q.raw_feature_dim:
                 raise ValueError(
-                    f"Expected {q.raw_feature_dim} raw node feature columns before "
-                    f"dequantization, got {x.size(1)}."
+                    f"Expected {q.raw_feature_dim} raw node features before dequantization, got {x.size(1)}"
                 )
-            out[:, scatter_indices.raw] = x
+            out[:, scatter_idx.raw] = x
         store.x = out
 
     if isinstance(data, Data):
@@ -374,8 +376,7 @@ def materialize_quantized_node_features(
         packed_features = metadata.pop(NODE_PACKED_FEATURES_METADATA_KEY, None)
         if packed_features is None:
             raise ValueError(
-                f"Missing packed quantized features in metadata key "
-                f"{NODE_PACKED_FEATURES_METADATA_KEY}"
+                f"Missing packed quantized features in metadata key {NODE_PACKED_FEATURES_METADATA_KEY}"
             )
         materialize(data, packed_features, node_quantization_metadata)
     else:
