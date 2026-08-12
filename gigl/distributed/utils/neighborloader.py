@@ -10,6 +10,7 @@ from typing import Literal, Optional, TypeVar, Union, cast
 import torch
 from graphlearn_torch.channel import SampleMessage
 from torch_geometric.data import Data, HeteroData
+from torch_geometric.data.storage import NodeStorage
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
@@ -347,7 +348,9 @@ def materialize_quantized_node_features(
         return data, metadata
 
     def materialize(
-        store, packed_features: torch.Tensor, q: FeatureQuantizationMetadata
+        store: Union[Data, NodeStorage],
+        packed_features: torch.Tensor,
+        q: FeatureQuantizationMetadata,
     ) -> None:
         dequantized = dequantize_torch_tensor(packed_features, metadata=q)
         x = getattr(store, "x", None)
