@@ -8,6 +8,7 @@ from graphlearn_torch.data import Dataset, Topology
 from parameterized import param, parameterized
 from torch.testing import assert_close
 
+from gigl.distributed.utils.topology import OffsetTopology
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
 from gigl.utils.data_splitters import (
@@ -1085,6 +1086,76 @@ class SelectSSLPositiveLabelEdgesTest(TestCase):
                 edge_index=edge_index,
                 positive_label_percentage=positive_label_percentage,
             )
+
+
+class OffsetTopologyPaddedLabelsTest(TestCase):
+    """Tests _get_padded_labels against offset-rebased label topologies.
+
+    The anchor dimension of an OffsetTopology covers global ids
+    [offset, offset + num_nodes); lookups subtract the offset, out-of-range
+    positives stay loud, and out-of-range negatives are padded rather than
+    silently wrapping around as negative indices.
+    """
+
+    # Anchor ids [100, 103); anchors 100 and 101 have labels, 102 has none.
+    _OFFSET = 100
+    _NUM_NODES = 3
+    _EDGE_INDEX = torch.tensor([[100, 100, 101], [1, 2, 2]], dtype=torch.int64)
+
+    def _offset_topology(self) -> OffsetTopology:
+        return OffsetTopology(
+            edge_index=self._EDGE_INDEX,
+            layout="CSR",
+            offset=self._OFFSET,
+            num_nodes=self._NUM_NODES,
+        )
+
+    def test_get_padded_labels_with_offset_topology(self):
+        labels = _get_padded_labels(
+            torch.tensor([100, 101]),
+            self._offset_topology(),
+        )
+        assert_close(
+            labels, torch.tensor([[1, 2], [2, -1]], dtype=torch.int64), rtol=0, atol=0
+        )
+
+    def test_offset_topology_matches_stock_topology_at_offset_zero_ids(self):
+        """The same graph expressed globally (ids rebased to zero) returns the
+        same labels through a stock Topology."""
+        stock_topology = Topology(
+            edge_index=self._EDGE_INDEX - torch.tensor([[self._OFFSET], [0]]),
+            layout="CSR",
+        )
+        stock_labels = _get_padded_labels(torch.tensor([0, 1]), stock_topology)
+        offset_labels = _get_padded_labels(
+            torch.tensor([100, 101]), self._offset_topology()
+        )
+        assert_close(offset_labels, stock_labels, rtol=0, atol=0)
+
+    def test_positive_anchor_below_offset_raises(self):
+        with self.assertRaises(ValueError):
+            _get_padded_labels(
+                torch.tensor([99, 100]),
+                self._offset_topology(),
+                allow_non_existant_node_ids=False,
+            )
+
+    def test_negative_anchors_out_of_range_are_padded_without_wraparound(self):
+        # 99 is below the covered range and 103 above; both must be padded.
+        # A silent negative-index wraparound would give 99 the labels of the
+        # last covered anchor instead.
+        labels = _get_padded_labels(
+            torch.tensor([99, 100, 103]),
+            self._offset_topology(),
+            allow_non_existant_node_ids=True,
+        )
+        # Valid anchors come first, then one padded row per invalid anchor.
+        assert_close(
+            labels,
+            torch.tensor([[1, 2], [-1, -1], [-1, -1]], dtype=torch.int64),
+            rtol=0,
+            atol=0,
+        )
 
 
 if __name__ == "__main__":

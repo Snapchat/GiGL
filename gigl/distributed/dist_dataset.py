@@ -8,7 +8,7 @@ from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
-from graphlearn_torch.data import Feature, Graph
+from graphlearn_torch.data import Feature, Graph, Topology
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
@@ -16,6 +16,7 @@ from graphlearn_torch.utils import id2idx
 from gigl.common.logger import Logger
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.distributed.utils.partition_book import get_ids_on_rank
+from gigl.distributed.utils.topology import OffsetTopology
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
     EdgeType,
     NodeType,
@@ -25,6 +26,7 @@ from gigl.types.graph import (
     FeaturePartitionData,
     GraphPartitionData,
     PartitionOutput,
+    is_label_edge_type,
 )
 from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
@@ -132,6 +134,13 @@ class DistDataset(glt.distributed.DistDataset):
             edge_pb=edge_partition_book,
             edge_dir=edge_dir,
         )
+        # GLT's sampler routes seed ids through ``dataset.id_select`` before
+        # every local or remote one-hop lookup. Sampling workers rebuild this
+        # dataset from its ipc handle (which carries no id_select), so the
+        # translation must be installed here in __init__ — unconditionally —
+        # to survive every rebuild. Whether it actually translates is decided
+        # at call time from the graph topology type.
+        self.id_select = self._select_ids_for_partition
         self._positive_edge_label: Optional[
             Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
         ] = positive_edge_label
@@ -588,89 +597,280 @@ class DistDataset(glt.distributed.DistDataset):
                 self._num_val = num_val_by_node_type
                 self._num_test = num_test_by_node_type
 
+    def _message_passing_topologies_are_rebased(self) -> bool:
+        """True if this dataset's sampler-reachable topologies are offset-rebased.
+
+        Message-passing edge types are rebased all-or-nothing at build time
+        (a partition-range violation raises), so one non-label
+        ``OffsetTopology`` implies all sampler-reachable topologies are
+        rebased. Label edge types are excluded: they are never sampled and may
+        be rebased or global independently, per topology.
+        """
+        graph = self.graph
+        if isinstance(graph, Graph):
+            return isinstance(graph.topo, OffsetTopology)
+        if isinstance(graph, Mapping):
+            return any(
+                isinstance(edge_graph.topo, OffsetTopology)
+                for edge_type, edge_graph in graph.items()
+                if not is_label_edge_type(edge_type)
+            )
+        return False
+
+    def _select_ids_for_partition(
+        self,
+        srcs: torch.Tensor,
+        p_mask: torch.Tensor,
+        node_pb: Optional[PartitionBook] = None,
+    ) -> torch.Tensor:
+        """Selects the ids in ``srcs`` that belong to one partition, in the id
+        space that partition's topology is indexed by.
+
+        Installed as ``self.id_select``; GLT's sampler calls it once per
+        partition before local sampling or the RPC to that partition.
+
+        With global topologies this is a plain masked selection (GLT's
+        default). With rebased (``OffsetTopology``) graphs, each selected id is
+        additionally translated by its own partition's lower bound, derived
+        per element from the ``RangePartitionBook`` bounds (partition 0's
+        lower bound is 0), so both the local and the remote sampling branches
+        index the owning partition's locally-sized index pointer correctly.
+
+        Args:
+            srcs: 1D tensor of global seed node ids.
+            p_mask: Boolean mask over ``srcs`` selecting the ids that belong to
+                one partition.
+            node_pb: The partition book of the seeds' node type.
+
+        Returns:
+            The selected ids, partition-local when translation is active,
+            global otherwise.
+        """
+        selected = torch.masked_select(srcs, p_mask)
+        if (
+            isinstance(node_pb, RangePartitionBook)
+            and self._message_passing_topologies_are_rebased()
+        ):
+            bounds = node_pb.partition_bounds.to(selected.device)
+            partition_ids = torch.searchsorted(bounds, selected, right=True)
+            lower_bounds = torch.where(
+                partition_ids == 0,
+                torch.zeros_like(selected),
+                bounds[(partition_ids - 1).clamp(min=0)],
+            )
+            return selected - lower_bounds
+        return selected
+
+    def _build_graph_for_partition(
+        self,
+        edge_index: torch.Tensor,
+        edge_ids: Optional[torch.Tensor],
+        edge_weights: Optional[torch.Tensor],
+        node_partition_book: PartitionBook,
+        layout: Literal["CSR", "CSC"],
+        is_label_edge: bool,
+    ) -> Graph:
+        """Builds one edge type's ``Graph``, locally sized when range-partitioned.
+
+        When the compressed-dimension node type (rows for CSR, columns for CSC)
+        is range-partitioned, the topology is an ``OffsetTopology`` rebased
+        onto this rank's node range ``[lower, upper)``: its index pointer has
+        ``upper - lower + 1`` entries instead of spanning the global node-id
+        space, while neighbor ids, edge ids, and edge weights stay global.
+        Otherwise the stock globally-sized GLT ``Topology`` is built.
+
+        Message-passing edge types must be partition-aligned; a violation
+        raises so a graph never mixes rebased and global sampler-reachable
+        topologies (the ``id_select`` translation is all-or-nothing per
+        compressed node type).
+
+        Label edge types are not sampler-reachable and are decided per type:
+        partition-aligned label edges are rebased, others fall back to a global
+        topology. Their consumer (``_get_padded_labels``) reads the
+        per-topology offset, so both outcomes are correct.
+
+        Args:
+            edge_index: COO edge index for this edge type.
+            edge_ids: Global edge ids, or None to arange them.
+            edge_weights: Per-edge sampling weights, or None.
+            node_partition_book: Partition book of the compressed-dimension
+                node type.
+            layout: Target layout, "CSR" for edge_dir "out", "CSC" for "in".
+            is_label_edge: Whether this edge type carries supervision labels.
+
+        Returns:
+            An initialized CPU ``Graph``.
+
+        Raises:
+            ValueError: If a message-passing edge type's compressed-dimension
+                ids fall outside this rank's range-partition bounds.
+        """
+        topology: Topology
+        if (
+            isinstance(node_partition_book, RangePartitionBook)
+            and not self.graph_caching
+        ):
+            bounds = node_partition_book.partition_bounds
+            lower = int(bounds[self._rank - 1].item()) if self._rank > 0 else 0
+            upper = int(bounds[self._rank].item())
+            compressed = edge_index[0] if layout == "CSR" else edge_index[1]
+            is_partition_aligned = compressed.numel() == 0 or (
+                int(compressed.min().item()) >= lower
+                and int(compressed.max().item()) < upper
+            )
+            if is_partition_aligned:
+                topology = OffsetTopology(
+                    edge_index=edge_index,
+                    edge_ids=edge_ids,
+                    edge_weights=edge_weights,
+                    input_layout="COO",
+                    layout=layout,
+                    offset=lower,
+                    num_nodes=upper - lower,
+                )
+            elif is_label_edge:
+                # Label tensors partitioned by the side opposite the compressed
+                # dimension land here; they are read by anchor id, not sampled,
+                # so a globally-sized topology is valid for them.
+                topology = Topology(
+                    edge_index=edge_index,
+                    edge_ids=edge_ids,
+                    edge_weights=edge_weights,
+                    input_layout="COO",
+                    layout=layout,
+                )
+            else:
+                raise ValueError(
+                    f"Rank {self._rank} received message-passing edges whose "
+                    f"compressed-dimension ids fall outside its range partition "
+                    f"[{lower}, {upper}). Range-partitioned graphs must be "
+                    f"partition-aligned on the compressed dimension."
+                )
+        else:
+            topology = Topology(
+                edge_index=edge_index,
+                edge_ids=edge_ids,
+                edge_weights=edge_weights,
+                input_layout="COO",
+                layout=layout,
+            )
+        graph = Graph(topology, "CPU")
+        graph.lazy_init()
+        return graph
+
     def _initialize_graph(
         self,
         partitioned_edge_index: Union[
             GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
     ) -> None:
         """Initializes the graph structure from partition output.
 
-        Sets up the GLT graph with edge index, edge IDs, and optional edge weights.
-        For heterogeneous graphs with weights registered on only some edge types, a
-        warning is logged and unweighted edge types fall back to uniform sampling.
+        Builds one topology per edge type with edge index, edge IDs, and
+        optional edge weights. Range-partitioned edge types get an
+        ``OffsetTopology`` whose index pointer covers only this rank's node
+        range; others get the stock globally-sized GLT ``Topology``.
+
+        Heterogeneous inputs are consumed destructively: each edge type's COO
+        tensors are popped from ``partitioned_edge_index`` and released as soon
+        as its topology owns the data, reducing the build's peak memory.
+
+        For heterogeneous graphs with weights registered on only some edge
+        types, a warning is logged and unweighted edge types fall back to
+        uniform sampling.
 
         Args:
             partitioned_edge_index: Partitioned graph data per edge type (heterogeneous)
                 or a single partition (homogeneous).
+            node_partition_book: Node partition book(s) from the partition
+                output. Passed explicitly because ``build()`` initializes the
+                graph before assigning ``self._node_partition_book``.
+
+        Raises:
+            ValueError: If a message-passing edge type violates this rank's
+                range-partition bounds.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
         # Edge IDs refers to the [num_edges] tensor representing the unique integer assigned to each edge
-        if isinstance(partitioned_edge_index, GraphPartitionData):
-            edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]] = (
-                partitioned_edge_index.edge_index
-            )
-            edge_ids: Union[
-                Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]
-            ] = partitioned_edge_index.edge_ids
-            edge_weights: Optional[
-                Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-            ] = partitioned_edge_index.weights
-        else:
-            edge_index = {
-                edge_type: graph_partition_data.edge_index
-                for edge_type, graph_partition_data in partitioned_edge_index.items()
-            }
-            edge_ids = {
-                edge_type: graph_partition_data.edge_ids
-                for edge_type, graph_partition_data in partitioned_edge_index.items()
-            }
-            weights_by_type = {
-                edge_type: graph_partition_data.weights
-                for edge_type, graph_partition_data in partitioned_edge_index.items()
-                if graph_partition_data.weights is not None
-            }
-            if weights_by_type:
-                missing = set(partitioned_edge_index.keys()) - set(
-                    weights_by_type.keys()
-                )
-                if missing:
-                    logger.warning(
-                        f"Edge weights are registered for {set(weights_by_type.keys())} but "
-                        f"not for {missing}. Filling missing edge types with uniform weights "
-                        f"(all 1s) so GLT does not segfault on partial-weight heterogeneous graphs."
-                    )
-                    missing_sorted = sorted(
-                        missing,
-                        key=lambda et: partitioned_edge_index[et].edge_index.size(1),
-                        reverse=True,
-                    )
-                    largest_et = missing_sorted[0]
-                    max_n_edges = partitioned_edge_index[largest_et].edge_index.size(1)
-                    base_ones = torch.ones(max_n_edges)
-                    weights_by_type[largest_et] = base_ones
-                    for edge_type in missing_sorted[1:]:
-                        n_edges = partitioned_edge_index[edge_type].edge_index.size(1)
-                        weights_by_type[edge_type] = base_ones[:n_edges]
-            edge_weights = weights_by_type if weights_by_type else None
+        layout: Literal["CSR", "CSC"] = "CSR" if self._edge_dir == "out" else "CSC"
 
+        if isinstance(partitioned_edge_index, GraphPartitionData):
+            assert not isinstance(node_partition_book, Mapping), (
+                "Found homogeneous graph data with a heterogeneous node partition book."
+            )
+            self._edge_weights = partitioned_edge_index.weights
+            self.graph = self._build_graph_for_partition(
+                edge_index=partitioned_edge_index.edge_index,
+                edge_ids=partitioned_edge_index.edge_ids,
+                edge_weights=partitioned_edge_index.weights,
+                node_partition_book=node_partition_book,
+                layout=layout,
+                is_label_edge=False,
+            )
+            self._directed = True
+            logger.info("Initialized homogeneous graph to dataset")
+            return
+
+        assert isinstance(node_partition_book, Mapping), (
+            "Found heterogeneous graph data with a homogeneous node partition book."
+        )
+        weights_by_type = {
+            edge_type: graph_partition_data.weights
+            for edge_type, graph_partition_data in partitioned_edge_index.items()
+            if graph_partition_data.weights is not None
+        }
+        if weights_by_type:
+            missing = set(partitioned_edge_index.keys()) - set(weights_by_type.keys())
+            if missing:
+                logger.warning(
+                    f"Edge weights are registered for {set(weights_by_type.keys())} but "
+                    f"not for {missing}. Filling missing edge types with uniform weights "
+                    f"(all 1s) so GLT does not segfault on partial-weight heterogeneous graphs."
+                )
+                missing_sorted = sorted(
+                    missing,
+                    key=lambda et: partitioned_edge_index[et].edge_index.size(1),
+                    reverse=True,
+                )
+                largest_et = missing_sorted[0]
+                max_n_edges = partitioned_edge_index[largest_et].edge_index.size(1)
+                base_ones = torch.ones(max_n_edges)
+                weights_by_type[largest_et] = base_ones
+                for edge_type in missing_sorted[1:]:
+                    n_edges = partitioned_edge_index[edge_type].edge_index.size(1)
+                    weights_by_type[edge_type] = base_ones[:n_edges]
+        edge_weights: Optional[dict[EdgeType, torch.Tensor]] = (
+            weights_by_type if weights_by_type else None
+        )
         self._edge_weights = edge_weights
 
-        self.init_graph(
-            edge_index=edge_index,
-            edge_ids=edge_ids,
-            graph_mode="CPU",
-            directed=True,
-            edge_weights=edge_weights,
-        )
-
-        if isinstance(partitioned_edge_index, Mapping):
-            logger.info(
-                f"Initialized heterogeneous graph to dataset with edge types: {partitioned_edge_index.keys()}"
+        edge_types = list(partitioned_edge_index.keys())
+        graph: dict[EdgeType, Graph] = {}
+        for edge_type in edge_types:
+            # Pop so each edge type's COO tensors are released once its
+            # topology owns the data.
+            graph_partition_data = partitioned_edge_index.pop(edge_type)
+            # The compressed dimension is the source side for CSR ("out") and
+            # the destination side for CSC ("in").
+            compressed_node_type = edge_type[0] if layout == "CSR" else edge_type[2]
+            graph[edge_type] = self._build_graph_for_partition(
+                edge_index=graph_partition_data.edge_index,
+                edge_ids=graph_partition_data.edge_ids,
+                edge_weights=edge_weights[edge_type]
+                if edge_weights is not None
+                else None,
+                node_partition_book=node_partition_book[compressed_node_type],
+                layout=layout,
+                is_label_edge=is_label_edge_type(edge_type),
             )
-        else:
-            logger.info("Initialized homogeneous graph to dataset")
+            del graph_partition_data
+        self.graph = graph
+        self._directed = True
+        logger.info(
+            f"Initialized heterogeneous graph to dataset with edge types: {edge_types}"
+        )
 
     def _initialize_node_features(
         self,
@@ -883,9 +1083,12 @@ class DistDataset(glt.distributed.DistDataset):
         del node_ids_on_machine, splits
         gc.collect()
 
-        # Initialize Graph and get edge data for splitting
+        # Initialize Graph and get edge data for splitting. The node partition
+        # books are passed explicitly: they are not assigned to the dataset
+        # until later in build().
         self._initialize_graph(
-            partitioned_edge_index=partition_output.partitioned_edge_index
+            partitioned_edge_index=partition_output.partitioned_edge_index,
+            node_partition_book=partition_output.node_partition_book,
         )
         partition_output.partitioned_edge_index = None
         gc.collect()

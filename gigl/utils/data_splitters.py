@@ -696,13 +696,20 @@ def _get_padded_labels(
 
     Args:
         anchor_node_ids (torch.Tensor): The anchor node ids to use for the labels. [N]
-        topo (Topology): The topology to use for the labels.
+        topo (Topology): The topology to use for the labels. May be offset-rebased
+            (carrying an ``offset`` attribute), in which case its indptr covers
+            the global anchor-id range [offset, offset + num_nodes).
         allow_non_existant_node_ids (bool): If True, will allow anchor node ids that do not exist in the topology.
             This means that the returned tensor will be padded with `PADDING_NODE` for those anchor node ids.
         max_labels_per_anchor_node (Optional[int]): If provided, caps the number of
             labels materialized per anchor node.
     Returns:
         The shape of the returned tensor is [N, max_number_of_labels].
+    Raises:
+        ValueError: If ``allow_non_existant_node_ids`` is False and an anchor
+            node id falls below the topology's offset. (Ids at or above the
+            covered range stay loud through the indexing below; ids below the
+            offset would otherwise wrap around silently as negative indices.)
     """
     validate_max_labels_per_anchor_node(max_labels_per_anchor_node)
     # indptr is the ROW_INDEX of a CSR matrix.
@@ -711,13 +718,25 @@ def _get_padded_labels(
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
+    # Offset-rebased topologies index indptr by (anchor id - offset); stock
+    # topologies have offset 0.
+    offset = getattr(topo, "offset", 0)
     extra_nodes_to_pad = 0
     if allow_non_existant_node_ids:
-        valid_ids = anchor_node_ids < (indptr.size(0) - 1)
+        valid_ids = (anchor_node_ids >= offset) & (
+            anchor_node_ids < offset + indptr.size(0) - 1
+        )
         extra_nodes_to_pad = int(torch.count_nonzero(~valid_ids).item())
         anchor_node_ids = anchor_node_ids[valid_ids]
-    starts = indptr[anchor_node_ids]  # [N]
-    ends = indptr[anchor_node_ids + 1]  # [N]
+    elif bool((anchor_node_ids < offset).any()):
+        raise ValueError(
+            f"Anchor node ids must be >= the topology's offset ({offset}); "
+            f"found minimum anchor id {int(anchor_node_ids.min().item())}. "
+            f"Ids below the offset would wrap around as negative indices."
+        )
+    local_anchor_node_ids = anchor_node_ids - offset
+    starts = indptr[local_anchor_node_ids]  # [N]
+    ends = indptr[local_anchor_node_ids + 1]  # [N]
 
     max_range = int(torch.max(ends - starts).item())
     if max_labels_per_anchor_node is not None:
