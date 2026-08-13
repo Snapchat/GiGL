@@ -1,6 +1,6 @@
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import MutableMapping, Optional, Union, cast
 
 import torch
@@ -211,23 +211,29 @@ def remove_sampling_weight_from_edge_quantization_metadata(
     if isinstance(serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo):
         assert isinstance(quantization_metadata, FeatureQuantizationMetadata)
         assert isinstance(weight_edge_feat_name, str)
-        edge_info_by_type = {
+        edge_info_by_type: dict[EdgeType, SerializedTFRecordInfo] = {
             DEFAULT_HOMOGENEOUS_EDGE_TYPE: serialized_graph_metadata.edge_entity_info
         }
-        metadata_by_type = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: quantization_metadata}
-        weight_by_type = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: weight_edge_feat_name}
+        metadata_by_type: dict[EdgeType, FeatureQuantizationMetadata] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: quantization_metadata
+        }
+        weight_by_type: dict[EdgeType, str] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: weight_edge_feat_name
+        }
         is_homogeneous = True
     else:
         assert isinstance(quantization_metadata, dict)
-        edge_info_by_type = serialized_graph_metadata.edge_entity_info
-        metadata_by_type = cast(
+        edge_info_by_type: dict[EdgeType, SerializedTFRecordInfo] = (
+            serialized_graph_metadata.edge_entity_info
+        )
+        metadata_by_type: dict[EdgeType, FeatureQuantizationMetadata] = cast(
             dict[EdgeType, FeatureQuantizationMetadata], quantization_metadata
         )
         if isinstance(weight_edge_feat_name, str):
             edge_type = next(iter(edge_info_by_type))
-            weight_by_type = {edge_type: weight_edge_feat_name}
+            weight_by_type: dict[EdgeType, str] = {edge_type: weight_edge_feat_name}
         else:
-            weight_by_type = weight_edge_feat_name
+            weight_by_type: dict[EdgeType, str] = weight_edge_feat_name
         is_homogeneous = False
 
     adjusted_metadata: dict[EdgeType, FeatureQuantizationMetadata] = {}
@@ -251,14 +257,10 @@ def remove_sampling_weight_from_edge_quantization_metadata(
             else quantized_feature_index
             for quantized_feature_index in metadata.quantized_feature_indices
         )
-        adjusted_metadata[edge_type] = FeatureQuantizationMetadata(
-            bits=metadata.bits,
+        adjusted_metadata[edge_type] = replace(
+            metadata,
             feature_dim=metadata.feature_dim - 1,
             quantized_feature_indices=adjusted_quantized_feature_indices,
-            clip_min=metadata.clip_min,
-            clip_max=metadata.clip_max,
-            neg_mean=metadata.neg_mean,
-            pos_mean=metadata.pos_mean,
         )
 
     if is_homogeneous:
