@@ -27,9 +27,6 @@ from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrap
 from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
-from gigl.src.data_preprocessor.data_preprocessor import (
-    _load_feature_quantization_metadata_pb,
-)
 from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
     EDGE_PACKED_FEATURE_KEY,
     NODE_PACKED_FEATURE_KEY,
@@ -87,10 +84,23 @@ class FeatureQuantizationTransformTest(TestCase):
                 )
 
             tfdv.write_schema_text(logical_metadata.schema, schema_path)
-            quantization_metadata_pb = _load_feature_quantization_metadata_pb(
-                metadata_path=metadata_path,
-                entity_description="test edge type",
+            with tf.io.gfile.GFile(metadata_path) as metadata_file:
+                quantization_metadata = json.loads(metadata_file.read())
+            quantization_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
+                packed_feature_key=quantization_metadata["packed_feature_key"],
+                quantized_feature_indices=quantization_metadata[
+                    "quantized_feature_indices"
+                ],
             )
+            quantization_metadata_pb.multi_bit_state.bits = quantization_metadata[
+                "bits"
+            ]
+            quantization_metadata_pb.multi_bit_state.clip_min = quantization_metadata[
+                "clip_min"
+            ]
+            quantization_metadata_pb.multi_bit_state.clip_max = quantization_metadata[
+                "clip_max"
+            ]
             self.assertEqual(
                 quantization_metadata_pb.packed_feature_key, "edge_packed_features"
             )

@@ -484,11 +484,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         # GLT maps incoming wire edge types back to the dataset edge
                         # type during collation. Metadata bypasses that mapping, so its
                         # transport key must already match the final output store.
-                        metadata_edge_type = etype
-                        futs[
-                            f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{metadata_edge_type}"
-                        ] = wrap_torch_future(
-                            self.dist_edge_quantized_feature.async_get(eids, etype)
+                        futs[f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{etype}"] = (
+                            wrap_torch_future(
+                                self.dist_edge_quantized_feature.async_get(eids, etype)
+                            )
                         )
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
