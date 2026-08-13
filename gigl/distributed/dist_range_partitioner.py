@@ -465,8 +465,10 @@ class DistRangePartitioner(DistPartitioner):
         for all edge types. You must call `partition_node` first to get the node partition book as input. The difference
         between this function and its parent is that we no longer need to check that the `edge_ids` have been
         pre-computed as a prerequisite for partitioning edges and edge features.
+
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
+
         Returns:
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
