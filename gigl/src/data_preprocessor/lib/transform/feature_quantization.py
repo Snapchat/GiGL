@@ -15,7 +15,7 @@ from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_ma
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
-_NODE_PACKED_FEATURE_KEY: Final[str] = "node_packed_features"
+NODE_PACKED_FEATURE_KEY: Final[str] = "node_packed_features"
 EDGE_PACKED_FEATURE_KEY: Final[str] = "edge_packed_features"
 _SignStats: TypeAlias = tuple[float, int, float, int]
 
@@ -26,7 +26,7 @@ def apply_feature_quantization_transform(
     logical_feature_keys: list[str],
     quantization_spec: FeatureQuantizationSpec,
     quantization_metadata_path: str,
-    packed_feature_key: str = _NODE_PACKED_FEATURE_KEY,
+    packed_feature_key: str,
 ) -> tuple[beam.PCollection[pa.RecordBatch], DatasetMetadata | beam.pvalue.AsSingleton]:
     """Quantizes selected feature columns and bit-packs each record's values.
 
@@ -62,13 +62,6 @@ def apply_feature_quantization_transform(
         ValueError: If the reserved packed key already exists, a selected feature
             is absent or non-scalar, or feature values cannot be quantized.
     """
-    if isinstance(logical_metadata, DatasetMetadata) and any(
-        feature.name == packed_feature_key
-        for feature in logical_metadata.schema.feature
-    ):
-        raise ValueError(
-            f"Reserved packed feature key {packed_feature_key} already exists in the logical schema."
-        )
     missing = set(quantization_spec.feature_keys) - set(logical_feature_keys)
     if missing:
         raise ValueError(f"Quantized features missing: {missing}")

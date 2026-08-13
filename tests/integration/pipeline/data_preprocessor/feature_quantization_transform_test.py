@@ -12,6 +12,7 @@ from tensorflow_metadata.proto.v0 import schema_pb2
 from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    NODE_PACKED_FEATURE_KEY,
     apply_feature_quantization_transform,
 )
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
@@ -121,6 +122,7 @@ class FeatureQuantizationTransformTest(TestCase):
                             feature_keys=logical_feature_keys, bits=bits
                         ),
                         quantization_metadata_path=metadata_path,
+                        packed_feature_key=NODE_PACKED_FEATURE_KEY,
                     )
                 )
                 if use_deferred_metadata:

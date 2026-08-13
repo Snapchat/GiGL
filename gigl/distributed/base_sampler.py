@@ -480,11 +480,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     )
                     eids = result_map.get(f"{as_str(result_edge_type)}.eids")
                     if eids is not None:
+                        eids = eids.to(torch.long)
                         futs[
                             f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{result_edge_type}"
                         ] = wrap_torch_future(
                             self.dist_edge_quantized_feature.async_get(
-                                eids.to(torch.long), etype
+                                eids, etype
                             )
                         )
             if output.batch is not None:

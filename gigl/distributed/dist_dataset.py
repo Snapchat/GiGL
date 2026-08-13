@@ -938,6 +938,7 @@ class DistDataset(glt.distributed.DistDataset):
             partitioned_data=partitioned_edge_quantized_features,
         )
         if features is None or id_to_index is None:
+            logger.info("Found no packed quantized edge features to initialize")
             return
         if isinstance(features, Mapping):
             assert isinstance(id_to_index, Mapping)
