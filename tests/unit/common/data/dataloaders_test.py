@@ -679,7 +679,9 @@ class TFRecordDataLoaderTest(TestCase):
                 weight_edge_feat_name="quantized_weight",
             )
 
-    def test_sampling_weight_is_removed_from_edge_quantization_metadata(self) -> None:
+    def test_sampling_weight_removal_updates_edge_quantization_metadata(
+        self,
+    ) -> None:
         missing_path = UriFactory.create_uri("/does/not/exist")
         serialized_graph_metadata = SerializedGraphMetadata(
             node_entity_info=SerializedTFRecordInfo(
@@ -694,12 +696,12 @@ class TFRecordDataLoaderTest(TestCase):
                 feature_spec={
                     "src_id": tf.io.FixedLenFeature([], tf.int64),
                     "dst_id": tf.io.FixedLenFeature([], tf.int64),
-                    "raw_feature": tf.io.FixedLenFeature([], tf.float32),
+                    "raw_embedding": tf.io.FixedLenFeature([2], tf.float32),
                     "weight": tf.io.FixedLenFeature([], tf.float32),
                     "edge_packed_features": tf.io.FixedLenFeature([], tf.string),
                 },
-                feature_keys=["raw_feature", "weight"],
-                feature_dim=2,
+                feature_keys=["raw_embedding", "weight"],
+                feature_dim=3,
                 entity_key=("src_id", "dst_id"),
                 packed_feature_key="edge_packed_features",
                 packed_feature_dim=1,
@@ -707,7 +709,7 @@ class TFRecordDataLoaderTest(TestCase):
             edge_quantization_metadata=FeatureQuantizationMetadata(
                 bits=2,
                 feature_dim=4,
-                quantized_feature_indices=(0, 2),
+                quantized_feature_indices=(3,),
                 clip_min=0.0,
                 clip_max=3.0,
             ),
@@ -723,7 +725,7 @@ class TFRecordDataLoaderTest(TestCase):
             FeatureQuantizationMetadata(
                 bits=2,
                 feature_dim=3,
-                quantized_feature_indices=(0, 2),
+                quantized_feature_indices=(2,),
                 clip_min=0.0,
                 clip_max=3.0,
             ),

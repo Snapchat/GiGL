@@ -9,7 +9,6 @@ from typing import Literal, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.data.storage import EdgeStorage, NodeStorage
 from torch_geometric.typing import EdgeType, NodeType
@@ -32,7 +31,6 @@ from gigl.types.graph import (
 logger = Logger()
 
 _GraphType = TypeVar("_GraphType", Data, HeteroData)
-_EdgeMetadataValue = TypeVar("_EdgeMetadataValue")
 
 
 class SamplingClusterSetup(Enum):
@@ -68,21 +66,6 @@ class DatasetSchema:
     edge_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
     ] = None
-
-
-def _map_to_effective_edge_types(
-    metadata: Optional[Union[_EdgeMetadataValue, dict[EdgeType, _EdgeMetadataValue]]],
-    edge_dir: Union[str, Literal["in", "out"]],
-) -> Optional[Union[_EdgeMetadataValue, dict[EdgeType, _EdgeMetadataValue]]]:
-    """Map stored heterogeneous metadata to sampled edge-type direction."""
-    if edge_dir != "in" or not isinstance(metadata, dict):
-        return metadata
-    typed_metadata = cast(dict[EdgeType, _EdgeMetadataValue], metadata)
-    return {
-        reverse_edge_type(edge_type): value
-        for edge_type, value in typed_metadata.items()
-    }
-
 
 def patch_fanout_for_sampling(
     edge_types: Optional[list[EdgeType]],

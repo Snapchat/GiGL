@@ -23,6 +23,7 @@ from graphlearn_torch.distributed import (
     get_context,
 )
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
+from graphlearn_torch.utils import reverse_edge_type
 from graphlearn_torch.sampler import (
     EdgeSamplerInput,
     NodeSamplerInput,
@@ -56,7 +57,6 @@ from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
-    _map_to_effective_edge_types,
     attach_ppr_outputs,
     extract_edge_type_metadata,
     patch_fanout_for_sampling,
@@ -245,13 +245,28 @@ class BaseDistLoader(DistLoader):
             dataset_schema.is_homogeneous_with_labeled_edge_type
         )
         self._node_feature_info = dataset_schema.node_feature_info
-        self._edge_feature_info = _map_to_effective_edge_types(
-            dataset_schema.edge_feature_info, dataset_schema.edge_dir
-        )
+        # GLT returns heterogeneous edge stores in the sampled direction. For
+        # incoming sampling, that reverses each stored edge type, so feature
+        # metadata must use the same keys as the returned stores. Otherwise
+        # empty stores miss their feature shape and packed features cannot be
+        # reconstructed into their sampled edge attributes.
+        edge_feature_info = dataset_schema.edge_feature_info
+        if dataset_schema.edge_dir == "in" and isinstance(edge_feature_info, dict):
+            edge_feature_info = {
+                reverse_edge_type(edge_type): feature_info
+                for edge_type, feature_info in edge_feature_info.items()
+            }
+        self._edge_feature_info = edge_feature_info
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
-        self._edge_quantization_metadata = _map_to_effective_edge_types(
-            dataset_schema.edge_quantization_metadata, dataset_schema.edge_dir
-        )
+        edge_quantization_metadata = dataset_schema.edge_quantization_metadata
+        if dataset_schema.edge_dir == "in" and isinstance(
+            edge_quantization_metadata, dict
+        ):
+            edge_quantization_metadata = {
+                reverse_edge_type(edge_type): quantization_metadata
+                for edge_type, quantization_metadata in edge_quantization_metadata.items()
+            }
+        self._edge_quantization_metadata = edge_quantization_metadata
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers

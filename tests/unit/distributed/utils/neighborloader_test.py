@@ -13,7 +13,6 @@ from gigl.distributed.sampler import (
     POSITIVE_LABEL_METADATA_KEY,
 )
 from gigl.distributed.utils.neighborloader import (
-    _map_to_effective_edge_types,
     attach_ppr_outputs,
     extract_edge_type_metadata,
     extract_metadata,
@@ -203,24 +202,6 @@ class LoaderUtilsTest(TestCase):
             torch.tensor([[0.0, 10.0, 3.0]]),
         )
         self.assertEqual(remaining_metadata, {})
-
-    def test_map_to_effective_edge_types_reverses_inbound_metadata(self) -> None:
-        quantization_metadata = FeatureQuantizationMetadata(
-            bits=2,
-            feature_dim=2,
-            quantized_feature_indices=(0, 1),
-            clip_min=0.0,
-            clip_max=3.0,
-        )
-
-        effective_metadata = _map_to_effective_edge_types(
-            {_U2I_EDGE_TYPE: quantization_metadata}, edge_dir="in"
-        )
-
-        self.assertEqual(
-            effective_metadata,
-            {("item", "rev_to", "user"): quantization_metadata},
-        )
 
     def test_materialize_quantized_edge_features_rejects_malformed_sidecars(
         self,
