@@ -18,7 +18,7 @@ from gigl.common.data.dataloaders import (
 )
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
-    _remove_weight_from_edge_quantization_metadata,
+    remove_sampling_weight_from_edge_quantization_metadata,
     load_torch_tensors_from_tf_record,
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -713,7 +713,7 @@ class TFRecordDataLoaderTest(TestCase):
             ),
         )
 
-        adjusted_metadata = _remove_weight_from_edge_quantization_metadata(
+        adjusted_metadata = remove_sampling_weight_from_edge_quantization_metadata(
             serialized_graph_metadata=serialized_graph_metadata,
             weight_edge_feat_name="weight",
         )

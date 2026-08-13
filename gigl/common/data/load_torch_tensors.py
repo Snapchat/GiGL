@@ -184,20 +184,30 @@ def _validate_weight_edge_feature_name(
             )
 
 
-def _remove_weight_from_edge_quantization_metadata(
+def remove_sampling_weight_from_edge_quantization_metadata(
     serialized_graph_metadata: SerializedGraphMetadata,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
 ) -> Optional[
     Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
 ]:
-    """Remove the separately stored sampling-weight column from model metadata."""
+    """Remove separately stored sampling weights from edge reconstruction metadata.
+
+    TFRecord loading removes the sampling-weight column from raw edge features
+    before registering it with the weighted sampler. The resulting metadata
+    must describe the remaining model features so batch reconstruction scatters
+    raw and dequantized columns into the correct positions.
+
+    Args:
+        serialized_graph_metadata: Serialized edge schema and quantization metadata.
+        weight_edge_feat_name: Raw scalar feature configured as sampling weights.
+
+    Returns:
+        Quantization metadata for the model-facing edge features.
+    """
     quantization_metadata = serialized_graph_metadata.edge_quantization_metadata
     if quantization_metadata is None or weight_edge_feat_name is None:
         return quantization_metadata
 
-    edge_info_by_type: dict[EdgeType, SerializedTFRecordInfo]
-    metadata_by_type: dict[EdgeType, FeatureQuantizationMetadata]
-    weight_by_type: dict[EdgeType, str]
     if isinstance(serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo):
         assert isinstance(quantization_metadata, FeatureQuantizationMetadata)
         assert isinstance(weight_edge_feat_name, str)
@@ -235,13 +245,16 @@ def _remove_weight_from_edge_quantization_metadata(
             feature_spec = edge_info.feature_spec[feature_name]
             raw_column_offset += feature_spec.shape[-1] if feature_spec.shape else 1
         weight_logical_index = metadata.raw_feature_indices[raw_column_offset]
+        adjusted_quantized_feature_indices = tuple(
+            quantized_feature_index - 1
+            if quantized_feature_index > weight_logical_index
+            else quantized_feature_index
+            for quantized_feature_index in metadata.quantized_feature_indices
+        )
         adjusted_metadata[edge_type] = FeatureQuantizationMetadata(
             bits=metadata.bits,
             feature_dim=metadata.feature_dim - 1,
-            quantized_feature_indices=tuple(
-                index - int(index > weight_logical_index)
-                for index in metadata.quantized_feature_indices
-            ),
+            quantized_feature_indices=adjusted_quantized_feature_indices,
             clip_min=metadata.clip_min,
             clip_max=metadata.clip_max,
             neg_mean=metadata.neg_mean,
