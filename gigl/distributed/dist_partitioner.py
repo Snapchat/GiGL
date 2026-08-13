@@ -1325,11 +1325,10 @@ class DistPartitioner:
 
         gc.collect()
 
-        # Partition edge features and weights together in a single pass,
+        # Partition edge features, packed features, and weights together in a single pass,
         # mirroring how node features and labels are co-partitioned.
-        # Input tuple layout: (edge_feat?, edge_weights?, edge_ids)
-        # IDs are always at r[-1]; features at r[0]; weights at r[1] when
-        # features are also present, else r[0].
+        # Input tuple layout: (edge_feat?, edge_quantized_feat?, edge_weights?, edge_ids)
+        # IDs are always last; optional tensor indices are recorded when appended.
         current_feat_part: Optional[FeaturePartitionData] = None
         current_quantized_feat_part: Optional[FeaturePartitionData] = None
         partitioned_weights: Optional[torch.Tensor] = None
@@ -1371,30 +1370,28 @@ class DistPartitioner:
                 edge_weights_tensor = self._edge_weights[edge_type]
 
             input_parts: list[torch.Tensor] = []
+            feat_idx: Optional[int] = None
             if edge_feat is not None:
+                feat_idx = len(input_parts)
                 input_parts.append(edge_feat)
+            quantized_feat_idx: Optional[int] = None
             if edge_quantized_features is not None:
+                quantized_feat_idx = len(input_parts)
                 input_parts.append(edge_quantized_features)
+            weight_idx: Optional[int] = None
             if edge_weights_tensor is not None:
+                weight_idx = len(input_parts)
                 input_parts.append(edge_weights_tensor)
             input_parts.append(edge_ids)
 
-            # Positional indices: features first, weights next, ids always last.
-            feat_idx: Optional[int] = 0 if has_edge_feats else None
-            quantized_feat_idx: Optional[int] = 1 if has_edge_feats else 0
-            if not has_edge_quantized_feats:
-                quantized_feat_idx = None
-            weight_idx: Optional[int] = None
-            if has_weights_for_edge_type:
-                weight_idx = int(has_edge_feats) + int(has_edge_quantized_feats)
-
+            # Recorded indices keep result unpacking aligned with optional inputs.
             def _edge_feat_weight_pfn(
                 ids_chunk: torch.Tensor, _: object
             ) -> torch.Tensor:
                 assert edge_partition_book is not None
                 return edge_partition_book[ids_chunk]
 
-            # Each result tuple contains (edge_feat?, edge_weights?, edge_ids).
+            # Each result tuple preserves the input tuple layout.
             feat_weight_res_list, _ = self._partition_by_chunk(
                 input_data=tuple(input_parts),
                 rank_indices=edge_ids,

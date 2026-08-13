@@ -30,7 +30,6 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
@@ -245,28 +244,9 @@ class BaseDistLoader(DistLoader):
             dataset_schema.is_homogeneous_with_labeled_edge_type
         )
         self._node_feature_info = dataset_schema.node_feature_info
-        # GLT returns heterogeneous edge stores in the sampled direction. For
-        # incoming sampling, that reverses each stored edge type, so feature
-        # metadata must use the same keys as the returned stores. Otherwise
-        # empty stores miss their feature shape and packed features cannot be
-        # reconstructed into their sampled edge attributes.
-        edge_feature_info = dataset_schema.edge_feature_info
-        if dataset_schema.edge_dir == "in" and isinstance(edge_feature_info, dict):
-            edge_feature_info = {
-                reverse_edge_type(edge_type): feature_info
-                for edge_type, feature_info in edge_feature_info.items()
-            }
-        self._edge_feature_info = edge_feature_info
+        self._edge_feature_info = dataset_schema.edge_feature_info
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
-        edge_quantization_metadata = dataset_schema.edge_quantization_metadata
-        if dataset_schema.edge_dir == "in" and isinstance(
-            edge_quantization_metadata, dict
-        ):
-            edge_quantization_metadata = {
-                reverse_edge_type(edge_type): quantization_metadata
-                for edge_type, quantization_metadata in edge_quantization_metadata.items()
-            }
-        self._edge_quantization_metadata = edge_quantization_metadata
+        self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
 
         self._sampler_options = sampler_options
         self._non_blocking_transfers = non_blocking_transfers

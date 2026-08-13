@@ -280,8 +280,8 @@ class DistRangePartitioner(DistPartitioner):
             assert self._edge_weights is not None
             edge_weights_tensor = self._edge_weights[edge_type]
 
-        # Build input_data tuple: (src, dst[, feat][, weights])
-        # Track the index of each optional tensor so we can unpack res_list correctly.
+        # Build input_data as (src, dst[, feat][, packed feat][, weights]).
+        # Recorded indices keep result unpacking aligned with optional inputs.
         input_parts: list[torch.Tensor] = [edge_index[0], edge_index[1]]
         feat_idx: Optional[int] = None
         weight_idx: Optional[int] = None

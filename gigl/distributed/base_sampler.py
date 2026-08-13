@@ -481,8 +481,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     eids = result_map.get(f"{as_str(result_edge_type)}.eids")
                     if eids is not None:
                         eids = eids.to(torch.long)
+                        # GLT maps incoming wire edge types back to the dataset edge
+                        # type during collation. Metadata bypasses that mapping, so its
+                        # transport key must already match the final output store.
+                        metadata_edge_type = etype
                         futs[
-                            f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{result_edge_type}"
+                            f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{metadata_edge_type}"
                         ] = wrap_torch_future(
                             self.dist_edge_quantized_feature.async_get(eids, etype)
                         )

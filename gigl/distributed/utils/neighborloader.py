@@ -532,7 +532,11 @@ def materialize_quantized_edge_features(
             metadata_key = f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{edge_type}"
             packed_features = metadata.pop(metadata_key, None)
             if packed_features is None:
-                continue
+                if edge_type not in data.edge_types or data[edge_type].num_edges == 0:
+                    continue
+                raise ValueError(
+                    f"Missing packed quantized edge features for sampled edge type {edge_type}"
+                )
             _materialize_quantized_features(
                 data[edge_type],
                 packed_features,

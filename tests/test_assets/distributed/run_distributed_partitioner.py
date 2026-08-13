@@ -108,14 +108,14 @@ def run_distributed_partitioner(
         dist_partitioner.register_node_ids(node_ids=node_ids)
         dist_partitioner.register_edge_index(edge_index=edge_index)
         edge_quantized_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
-        if isinstance(edge_features, dict):
-            edge_features_by_type = cast(dict[EdgeType, torch.Tensor], edge_features)
+        if isinstance(edge_index, dict):
+            edge_index_by_type = cast(dict[EdgeType, torch.Tensor], edge_index)
             edge_quantized_features = {
-                edge_type: features.to(torch.uint8)
-                for edge_type, features in edge_features_by_type.items()
+                edge_type: indices[0].to(torch.uint8).unsqueeze(1)
+                for edge_type, indices in edge_index_by_type.items()
             }
         else:
-            edge_quantized_features = edge_features.to(torch.uint8)
+            edge_quantized_features = edge_index[0].to(torch.uint8).unsqueeze(1)
         dist_partitioner.register_edge_quantized_features(
             edge_quantized_features=edge_quantized_features
         )

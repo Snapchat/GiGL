@@ -187,6 +187,30 @@ class LoaderUtilsTest(TestCase):
         )
         self.assertEqual(remaining_metadata, {})
 
+    def test_materialize_quantized_edge_features_rejects_missing_packed_features_for_sampled_edge_type(
+        self,
+    ) -> None:
+        data = HeteroData()
+        data[_U2I_EDGE_TYPE].edge_index = torch.tensor([[0], [1]])
+        data[_U2I_EDGE_TYPE].edge_attr = torch.tensor([[10.0]])
+
+        with self.assertRaisesRegex(
+            ValueError, "Missing packed quantized edge features"
+        ):
+            materialize_quantized_edge_features(
+                data=data,
+                metadata={},
+                edge_quantization_metadata={
+                    _U2I_EDGE_TYPE: FeatureQuantizationMetadata(
+                        bits=2,
+                        feature_dim=3,
+                        quantized_feature_indices=(0, 2),
+                        clip_min=0.0,
+                        clip_max=3.0,
+                    )
+                },
+            )
+
     def test_materialize_quantized_node_features_uses_per_node_type_metadata(
         self,
     ) -> None:

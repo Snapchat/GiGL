@@ -815,6 +815,17 @@ class DistRandomPartitionerTestCase(TestCase):
                     packed_features.feats.size(0),
                     partitioned_edge_index.edge_index.size(1),
                 )
+                assert partitioned_edge_index.edge_ids is not None
+                if packed_features.ids is not None:
+                    self.assert_tensor_equality(
+                        tensor_a=packed_features.ids,
+                        tensor_b=partitioned_edge_index.edge_ids,
+                    )
+                for index, edge_id in enumerate(partitioned_edge_index.edge_ids):
+                    self.assert_tensor_equality(
+                        tensor_a=packed_features.feats[index],
+                        tensor_b=edge_id.to(torch.uint8).unsqueeze(0),
+                    )
             elif (
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
