@@ -23,7 +23,6 @@ from graphlearn_torch.distributed import (
     get_context,
 )
 from graphlearn_torch.distributed.rpc import rpc_is_initialized
-from graphlearn_torch.utils import reverse_edge_type
 from graphlearn_torch.sampler import (
     EdgeSamplerInput,
     NodeSamplerInput,
@@ -31,6 +30,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self

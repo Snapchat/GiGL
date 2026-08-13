@@ -24,8 +24,8 @@ from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
-    remove_sampling_weight_from_edge_quantization_metadata,
     load_torch_tensors_from_tf_record,
+    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu

@@ -484,9 +484,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         futs[
                             f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{result_edge_type}"
                         ] = wrap_torch_future(
-                            self.dist_edge_quantized_feature.async_get(
-                                eids, etype
-                            )
+                            self.dist_edge_quantized_feature.async_get(eids, etype)
                         )
             if output.batch is not None:
                 for ntype, batch in output.batch.items():

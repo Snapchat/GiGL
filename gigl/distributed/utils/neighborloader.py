@@ -67,6 +67,7 @@ class DatasetSchema:
         Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
     ] = None
 
+
 def patch_fanout_for_sampling(
     edge_types: Optional[list[EdgeType]],
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
