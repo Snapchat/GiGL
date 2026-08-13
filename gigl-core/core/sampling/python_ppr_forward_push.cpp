@@ -27,10 +27,12 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
         auto edgeTypeId = item.first.cast<int32_t>();
         auto neighborTensors = item.second.cast<py::tuple>();
         auto neighborTensorCount = neighborTensors.size();
-        TORCH_CHECK(neighborTensorCount == 3 || neighborTensorCount == 4,
-                    "Expected neighbor fetch tuple of length 3 or 4, received ",
-                    neighborTensorCount,
-                    ".");
+        if (neighborTensorCount != 3) {
+            TORCH_CHECK(neighborTensorCount == 4,
+                        "Expected neighbor fetch tuple of length 3 or 4, received ",
+                        neighborTensorCount,
+                        ".");
+        }
         std::optional<torch::Tensor> edgeIds = std::nullopt;
         if (neighborTensorCount == 4 && !neighborTensors[3].is_none()) {
             edgeIds = neighborTensors[3].cast<torch::Tensor>();
@@ -153,8 +155,9 @@ static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& sta
     py::dict pyResult;
     for (const auto& [edgeTypeId, tensors] : result) {
         py::object edgeIdsObject = py::none();
-        if (tensors.edgeIds.has_value()) {
-            edgeIdsObject = py::cast(tensors.edgeIds.value());
+        const auto edgeIdsTensor = tensors.edgeIds.value_or(torch::Tensor());
+        if (edgeIdsTensor.defined()) {
+            edgeIdsObject = py::cast(edgeIdsTensor);
         }
         pyResult[py::int_(edgeTypeId)] = py::make_tuple(tensors.rows, tensors.cols, edgeIdsObject);
     }

@@ -86,10 +86,13 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                         " out of range [0, ",
                         numEdgeTypes,
                         ").");
-            TORCH_CHECK(_edgeTypeToSrcNtypeId[edgeTypeId] == -1 || _edgeTypeToSrcNtypeId[edgeTypeId] == nodeTypeId,
-                        "edge type id ",
-                        edgeTypeId,
-                        " is assigned to multiple source node types.");
+            const int32_t existingSourceNodeTypeId = _edgeTypeToSrcNtypeId[edgeTypeId];
+            if (existingSourceNodeTypeId != -1) {
+                TORCH_CHECK(existingSourceNodeTypeId == nodeTypeId,
+                            "edge type id ",
+                            edgeTypeId,
+                            " is assigned to multiple source node types.");
+            }
             _edgeTypeToSrcNtypeId[edgeTypeId] = nodeTypeId;
         }
     }
@@ -255,13 +258,13 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
         const auto& nodeIdsTensor = std::get<0>(neighborTensors);
         const auto& flatNeighborIdsTensor = std::get<1>(neighborTensors);
         const auto& countsTensor = std::get<2>(neighborTensors);
-        const auto& edgeIdsTensor = std::get<3>(neighborTensors);
+        const auto edgeIdsTensor = std::get<3>(neighborTensors).value_or(torch::Tensor());
 
-        if (edgeIdsTensor.has_value()) {
-            TORCH_CHECK(edgeIdsTensor->dim() == 1, "edge_ids must be 1D.");
-            TORCH_CHECK(edgeIdsTensor->size(0) == flatNeighborIdsTensor.size(0),
+        if (edgeIdsTensor.defined()) {
+            TORCH_CHECK(edgeIdsTensor.dim() == 1, "edge_ids must be 1D.");
+            TORCH_CHECK(edgeIdsTensor.size(0) == flatNeighborIdsTensor.size(0),
                         "edge_ids size ",
-                        edgeIdsTensor->size(0),
+                        edgeIdsTensor.size(0),
                         " must match flat neighbor size ",
                         flatNeighborIdsTensor.size(0),
                         ".");
@@ -272,33 +275,43 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
         auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
         auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
         auto countsAccessor = countsTensor.accessor<int64_t, 1>();
-        std::optional<torch::TensorAccessor<int64_t, 1>> edgeIdsAccessor = std::nullopt;
-        if (edgeIdsTensor.has_value()) {
-            edgeIdsAccessor = edgeIdsTensor->accessor<int64_t, 1>();
-        }
-
-        // Walk the flat neighbor list, slicing out each node's neighbors using
-        // the running offset into the concatenated flat buffer.
-        int64_t offset = 0;
-        for (int64_t nodeIdx = 0; nodeIdx < nodeIdsTensor.size(0); ++nodeIdx) {
-            auto nodeId = static_cast<int32_t>(nodeIdsAccessor[nodeIdx]);
-            int64_t count = countsAccessor[nodeIdx];
-            std::vector<int32_t> neighborIds(count);
-            std::optional<std::vector<int64_t>> edgeIds = std::nullopt;
-            if (edgeIdsAccessor.has_value()) {
-                edgeIds = std::vector<int64_t>(static_cast<size_t>(count));
-            }
-            for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
-                neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
-                if (edgeIds.has_value()) {
-                    (*edgeIds)[static_cast<size_t>(neighborIdx)] = (*edgeIdsAccessor)[offset + neighborIdx];
-                }
-            }
+        auto cacheNeighborRow = [this, edgeTypeId](int32_t nodeId,
+                                                   std::vector<int32_t> neighborIds,
+                                                   std::optional<std::vector<int64_t>> edgeIds) {
             uint64_t cacheKey = packKey(nodeId, edgeTypeId);
             if (_neighborCache.find(cacheKey) == _neighborCache.end()) {
                 _neighborCache.emplace(cacheKey, CachedNeighborList{std::move(neighborIds), std::move(edgeIds)});
             }
-            offset += count;
+        };
+
+        // Walk the flat neighbor list, slicing out each node's neighbors using
+        // the running offset into the concatenated flat buffer.
+        int64_t offset = 0;
+        if (edgeIdsTensor.defined()) {
+            auto edgeIdsAccessor = edgeIdsTensor.accessor<int64_t, 1>();
+            for (int64_t nodeIdx = 0; nodeIdx < nodeIdsTensor.size(0); ++nodeIdx) {
+                auto nodeId = static_cast<int32_t>(nodeIdsAccessor[nodeIdx]);
+                int64_t count = countsAccessor[nodeIdx];
+                std::vector<int32_t> neighborIds(count);
+                std::vector<int64_t> edgeIds(static_cast<size_t>(count));
+                for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
+                    neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
+                    edgeIds[static_cast<size_t>(neighborIdx)] = edgeIdsAccessor[offset + neighborIdx];
+                }
+                cacheNeighborRow(nodeId, std::move(neighborIds), std::move(edgeIds));
+                offset += count;
+            }
+        } else {
+            for (int64_t nodeIdx = 0; nodeIdx < nodeIdsTensor.size(0); ++nodeIdx) {
+                auto nodeId = static_cast<int32_t>(nodeIdsAccessor[nodeIdx]);
+                int64_t count = countsAccessor[nodeIdx];
+                std::vector<int32_t> neighborIds(count);
+                for (int64_t neighborIdx = 0; neighborIdx < count; ++neighborIdx) {
+                    neighborIds[neighborIdx] = static_cast<int32_t>(flatNeighborIdsAccessor[offset + neighborIdx]);
+                }
+                cacheNeighborRow(nodeId, std::move(neighborIds), std::nullopt);
+                offset += count;
+            }
         }
     }
 
@@ -470,10 +483,14 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
             int32_t sourceNodeId = unpackNodeId(cacheKey);
             int32_t edgeTypeId = unpackEdgeTypeId(cacheKey);
             const auto& stateEdgeTypeToSourceNodeTypeId = state->_edgeTypeToSrcNtypeId;
-            TORCH_CHECK(edgeTypeId >= 0 && edgeTypeId < static_cast<int32_t>(stateEdgeTypeToSourceNodeTypeId.size()),
-                        "Cached edge type id ",
-                        edgeTypeId,
-                        " is out of range for original-edge extraction.");
+            if (edgeTypeId < 0) {
+                TORCH_CHECK(
+                    false, "Cached edge type id ", edgeTypeId, " is out of range for original-edge extraction.");
+            }
+            if (edgeTypeId >= static_cast<int32_t>(stateEdgeTypeToSourceNodeTypeId.size())) {
+                TORCH_CHECK(
+                    false, "Cached edge type id ", edgeTypeId, " is out of range for original-edge extraction.");
+            }
 
             int32_t sourceNodeTypeId = stateEdgeTypeToSourceNodeTypeId[static_cast<size_t>(edgeTypeId)];
             int32_t destinationNodeTypeId = edgeTypeToDestinationNodeTypeId[static_cast<size_t>(edgeTypeId)];
@@ -493,6 +510,7 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                 continue;
             }
 
+            const std::vector<int64_t>* cachedEdgeIds = nullptr;
             if (includeEdgeIds) {
                 // Edge IDs are optional cache payload. If the Python caller
                 // asks us to preserve them, every cached neighbor in this row
@@ -501,7 +519,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
                             "Original edge ids are required but were not cached for edge type id ",
                             edgeTypeId,
                             ".");
-                TORCH_CHECK(cachedNeighbors.edgeIds->size() == cachedNeighbors.neighborIds.size(),
+                cachedEdgeIds = &cachedNeighbors.edgeIds.value(); // NOLINT(bugprone-unchecked-optional-access)
+                TORCH_CHECK(cachedEdgeIds->size() == cachedNeighbors.neighborIds.size(),
                             "Cached edge ids do not align with cached neighbors for edge type id ",
                             edgeTypeId,
                             ".");
@@ -534,8 +553,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
 
                 rows.push_back(sourceLocalIter->second);
                 cols.push_back(destinationLocalIter->second);
-                if (includeEdgeIds) {
-                    edgeIdsByEdgeType[edgeTypeId].push_back(cachedNeighbors.edgeIds->at(neighborIndex));
+                if (cachedEdgeIds != nullptr) {
+                    edgeIdsByEdgeType[edgeTypeId].push_back(cachedEdgeIds->at(neighborIndex));
                 }
             }
         }
