@@ -221,7 +221,12 @@ class DistRangePartitioner(DistPartitioner):
         Optional[PartitionBook],
     ]:
         """
-        Partition topology and feature sidecars for one edge type.
+        Partition graph topology of a specific edge type. For range-based partitioning, we partition
+        edges and edge features (if they exist) together. Once they have been partitioned across machines,
+        we build the edge partition book based on the number of edges assigned to each machine. Then, we infer
+        the edge IDs from the edge partition book's ranges.
+
+        If there are no edge features for the current edge type, both the returned edge feature and edge partition book will be None.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition books of all graph nodes.
