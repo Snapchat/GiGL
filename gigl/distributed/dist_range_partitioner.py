@@ -215,15 +215,13 @@ class DistRangePartitioner(DistPartitioner):
         node_partition_book: dict[NodeType, PartitionBook],
         edge_type: EdgeType,
     ) -> tuple[
-        GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+        GraphPartitionData,
+        Optional[FeaturePartitionData],
+        Optional[FeaturePartitionData],
+        Optional[PartitionBook],
     ]:
         """
-        Partition graph topology of a specific edge type. For range-based partitioning, we partition
-        edges and edge features (if they exist) together. Once they have been partitioned across machines,
-        we build the edge partition book based on the number of edges assigned to each machine. Then, we infer
-        the edge IDs from the edge partition book's ranges.
-
-        If there are no edge features for the current edge type, both the returned edge feature and edge partition book will be None.
+        Partition topology and feature sidecars for one edge type.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition books of all graph nodes.
@@ -231,8 +229,9 @@ class DistRangePartitioner(DistPartitioner):
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
-            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
+            Optional[FeaturePartitionData]: Standard edge features on the current partition.
+            Optional[FeaturePartitionData]: Quantized edge features on the current partition.
+            Optional[PartitionBook]: The partition book of graph edges.
         """
 
         start_time = time.time()
@@ -412,12 +411,6 @@ class DistRangePartitioner(DistPartitioner):
                 if partitioned_edge_features is not None
                 else None
             )
-            if partitioned_edge_quantized_features is not None:
-                self._partitioned_edge_quantized_features[edge_type] = (
-                    FeaturePartitionData(
-                        feats=partitioned_edge_quantized_features, ids=None
-                    )
-                )
             logger.info(
                 f"Got edge range-based partition book for edge type {edge_type} on rank {self._rank} with partition bounds: {edge_partition_book.partition_bounds}"
             )
@@ -434,33 +427,48 @@ class DistRangePartitioner(DistPartitioner):
             f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
         )
 
-        return current_graph_part, current_feat_part, edge_partition_book
+        current_quantized_feat_part = (
+            FeaturePartitionData(feats=partitioned_edge_quantized_features, ids=None)
+            if partitioned_edge_quantized_features is not None
+            else None
+        )
+        return (
+            current_graph_part,
+            current_feat_part,
+            current_quantized_feat_part,
+            edge_partition_book,
+        )
 
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
     ) -> Union[
         tuple[
-            GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+            GraphPartitionData,
+            Optional[FeaturePartitionData],
+            Optional[FeaturePartitionData],
+            Optional[PartitionBook],
         ],
         tuple[
             dict[EdgeType, GraphPartitionData],
             Optional[dict[EdgeType, FeaturePartitionData]],
+            Optional[dict[EdgeType, FeaturePartitionData]],
             Optional[dict[EdgeType, PartitionBook]],
         ],
     ]:
-        """
-        Partitions edges of a graph, including edge indices and edge features. If heterogeneous, partitions edges
-        for all edge types. You must call `partition_node` first to get the node partition book as input. The difference
-        between this function and its parent is that we no longer need to check that the `edge_ids` have been
-        pre-computed as a prerequisite for partitioning edges and edge features.
+        """Partition edges and feature sidecars using range-based partition books.
+
+        Must call `partition_node` first to get the node partition book as input.
 
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
+
         Returns:
             Union[
-                Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]],
-                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
+                Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
+                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
+            ]: Partitioned graph data, standard edge features, quantized edge features,
+                and the edge partition book. Sidecars and partition books are None
+                when no registered data requires edge lookup.
         """
 
         self._assert_and_get_rpc_setup()
@@ -496,10 +504,12 @@ class DistRangePartitioner(DistPartitioner):
         edge_partition_book: dict[EdgeType, PartitionBook] = {}
         partitioned_edge_index: dict[EdgeType, GraphPartitionData] = {}
         partitioned_edge_features: dict[EdgeType, FeaturePartitionData] = {}
+        partitioned_edge_quantized_features: dict[EdgeType, FeaturePartitionData] = {}
         for edge_type in self._edge_types:
             (
                 partitioned_edge_index_per_edge_type,
                 partitioned_edge_features_per_edge_type,
+                partitioned_edge_quantized_features_per_edge_type,
                 edge_partition_book_per_edge_type,
             ) = self._partition_edge_index_and_edge_features(
                 node_partition_book=transformed_node_partition_book, edge_type=edge_type
@@ -510,6 +520,10 @@ class DistRangePartitioner(DistPartitioner):
             if partitioned_edge_features_per_edge_type is not None:
                 partitioned_edge_features[edge_type] = (
                     partitioned_edge_features_per_edge_type
+                )
+            if partitioned_edge_quantized_features_per_edge_type is not None:
+                partitioned_edge_quantized_features[edge_type] = (
+                    partitioned_edge_quantized_features_per_edge_type
                 )
 
         elapsed_time = time.time() - start_time
@@ -529,6 +543,9 @@ class DistRangePartitioner(DistPartitioner):
                 to_homogeneous(partitioned_edge_features)
                 if partitioned_edge_features
                 else None,
+                to_homogeneous(partitioned_edge_quantized_features)
+                if partitioned_edge_quantized_features
+                else None,
                 to_homogeneous(edge_partition_book) if edge_partition_book else None,
             )
         else:
@@ -536,5 +553,10 @@ class DistRangePartitioner(DistPartitioner):
             return (
                 partitioned_edge_index,
                 partitioned_edge_features if partitioned_edge_features else None,
+                (
+                    partitioned_edge_quantized_features
+                    if partitioned_edge_quantized_features
+                    else None
+                ),
                 edge_partition_book if edge_partition_book else None,
             )

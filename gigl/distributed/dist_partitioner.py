@@ -210,9 +210,6 @@ class DistPartitioner:
         self._edge_feat_dim: Optional[dict[EdgeType, int]] = None
         self._edge_quantized_feat: Optional[dict[EdgeType, torch.Tensor]] = None
         self._edge_quantized_feat_dim: Optional[dict[EdgeType, int]] = None
-        self._partitioned_edge_quantized_features: dict[
-            EdgeType, FeaturePartitionData
-        ] = {}
         self._edge_weights: Optional[dict[EdgeType, torch.Tensor]] = None
 
         # TODO (mkolodner-sc): Deprecate the need for explicitly storing labels are part of this class, leveraging
@@ -1255,10 +1252,12 @@ class DistPartitioner:
         node_partition_book: dict[NodeType, PartitionBook],
         edge_type: EdgeType,
     ) -> Tuple[
-        GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+        GraphPartitionData,
+        Optional[FeaturePartitionData],
+        Optional[FeaturePartitionData],
+        Optional[PartitionBook],
     ]:
-        r"""Partition graph topology and edge features of a specific edge type. If there are no edge features for the current edge type,
-        both the returned edge feature and edge partition book will be None.
+        r"""Partition topology and feature sidecars for one edge type.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition books of all graph nodes.
@@ -1266,8 +1265,9 @@ class DistPartitioner:
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
-            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
+            Optional[FeaturePartitionData]: Standard edge features on the current partition.
+            Optional[FeaturePartitionData]: Quantized edge features on the current partition.
+            Optional[PartitionBook]: The partition book of graph edges.
         """
 
         start_time = time.time()
@@ -1514,14 +1514,15 @@ class DistPartitioner:
             weights=partitioned_weights,
         )
 
-        if current_quantized_feat_part is not None:
-            self._partitioned_edge_quantized_features[edge_type] = (
-                current_quantized_feat_part
-            )
         persistent_edge_partition_book = (
             edge_partition_book if should_generate_partition_book else None
         )
-        return current_graph_part, current_feat_part, persistent_edge_partition_book
+        return (
+            current_graph_part,
+            current_feat_part,
+            current_quantized_feat_part,
+            persistent_edge_partition_book,
+        )
 
     def _partition_label_edge_index(
         self,
@@ -1794,26 +1795,32 @@ class DistPartitioner:
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
     ) -> Union[
         Tuple[
-            GraphPartitionData, Optional[FeaturePartitionData], Optional[PartitionBook]
+            GraphPartitionData,
+            Optional[FeaturePartitionData],
+            Optional[FeaturePartitionData],
+            Optional[PartitionBook],
         ],
         Tuple[
             dict[EdgeType, GraphPartitionData],
             Optional[dict[EdgeType, FeaturePartitionData]],
+            Optional[dict[EdgeType, FeaturePartitionData]],
             Optional[dict[EdgeType, PartitionBook]],
         ],
     ]:
-        """
-        Partitions edges of a graph, including edge indices and edge features. If there are no edge features, only edge indices are partitioned.
-        If heterogeneous, partitions edges/features for all edge types. Must call `partition_node` first to get the node partition book as input.
+        """Partition edges and feature sidecars for all edge types.
+
+        Must call `partition_node` first to get the node partition book as input.
+
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
+
         Returns:
             Union[
-                Tuple[GraphPartitionData, FeaturePartitionData, PartitionBook],
-                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
-            The second and third elements of this tuple are only present if there are edge features to partition, and are None
-            otherwise.
+                Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
+                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
+            ]: Partitioned graph data, standard edge features, quantized edge features,
+                and the edge partition book. Sidecars and partition books are None
+                when no registered data requires edge lookup.
         """
 
         self._assert_and_get_rpc_setup()
@@ -1859,10 +1866,12 @@ class DistPartitioner:
         edge_partition_book: dict[EdgeType, PartitionBook] = {}
         partitioned_edge_index: dict[EdgeType, GraphPartitionData] = {}
         partitioned_edge_features: dict[EdgeType, FeaturePartitionData] = {}
+        partitioned_edge_quantized_features: dict[EdgeType, FeaturePartitionData] = {}
         for edge_type in self._edge_types:
             (
                 partitioned_edge_index_per_edge_type,
                 partitioned_edge_features_per_edge_type,
+                partitioned_edge_quantized_features_per_edge_type,
                 edge_partition_book_per_edge_type,
             ) = self._partition_edge_index_and_edge_features(
                 node_partition_book=transformed_node_partition_book, edge_type=edge_type
@@ -1873,6 +1882,10 @@ class DistPartitioner:
             if partitioned_edge_features_per_edge_type is not None:
                 partitioned_edge_features[edge_type] = (
                     partitioned_edge_features_per_edge_type
+                )
+            if partitioned_edge_quantized_features_per_edge_type is not None:
+                partitioned_edge_quantized_features[edge_type] = (
+                    partitioned_edge_quantized_features_per_edge_type
                 )
 
         elapsed_time = time.time() - start_time
@@ -1895,6 +1908,9 @@ class DistPartitioner:
                 to_homogeneous(partitioned_edge_features)
                 if partitioned_edge_features
                 else None,
+                to_homogeneous(partitioned_edge_quantized_features)
+                if partitioned_edge_quantized_features
+                else None,
                 to_homogeneous(edge_partition_book) if edge_partition_book else None,
             )
         else:
@@ -1902,6 +1918,11 @@ class DistPartitioner:
             return (
                 partitioned_edge_index,
                 partitioned_edge_features if partitioned_edge_features else None,
+                (
+                    partitioned_edge_quantized_features
+                    if partitioned_edge_quantized_features
+                    else None
+                ),
                 edge_partition_book if edge_partition_book else None,
             )
 
@@ -2000,6 +2021,7 @@ class DistPartitioner:
         (
             partitioned_edge_index,
             partitioned_edge_features,
+            partitioned_edge_quantized_features,
             edge_partition_book,
         ) = self.partition_edge_index_and_edge_features(
             node_partition_book=node_partition_book
@@ -2047,12 +2069,7 @@ class DistPartitioner:
             partitioned_node_features=partitioned_node_features,
             partitioned_node_quantized_features=partitioned_node_quantized_features,
             partitioned_edge_features=partitioned_edge_features,
-            partitioned_edge_quantized_features=(
-                to_homogeneous(self._partitioned_edge_quantized_features)
-                if self._is_input_homogeneous
-                and self._partitioned_edge_quantized_features
-                else self._partitioned_edge_quantized_features or None
-            ),
+            partitioned_edge_quantized_features=partitioned_edge_quantized_features,
             partitioned_positive_labels=partitioned_positive_edge_index,
             partitioned_negative_labels=partitioned_negative_edge_index,
             partitioned_node_labels=partitioned_node_labels,

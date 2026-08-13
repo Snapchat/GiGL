@@ -144,6 +144,7 @@ def run_distributed_partitioner(
         (
             output_edge_index,
             output_edge_features,
+            _,
             output_edge_partition_book,
         ) = dist_partitioner.partition_edge_index_and_edge_features(
             node_partition_book=output_node_partition_book
@@ -206,6 +207,7 @@ def run_distributed_partitioner(
         (
             output_graph,
             output_edge_features,
+            _,
             output_edge_partition_book,
         ) = dist_partitioner.partition_edge_index_and_edge_features(
             node_partition_book=output_node_partition_book
