@@ -344,29 +344,71 @@ def materialize_quantized_node_features(
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ],
 ) -> tuple[_GraphType, dict[str, torch.Tensor]]:
-    """Materialize packed quantized node features into PyG node feature tensors."""
+    """Materialize packed quantized node features into PyG node feature tensors.
+
+    Reconstructs each node feature tensor in its original column order by
+    dequantizing packed features and combining them with any unquantized
+    feature columns already present in ``data``. Consumed packed-feature
+    entries are removed from ``metadata``.
+
+    Args:
+        data: Homogeneous or heterogeneous sampled graph containing raw node
+            feature columns.
+        metadata: Sample metadata containing packed node feature tensors.
+        node_quantization_metadata: Quantization metadata for the graph's node
+            features. Homogeneous graphs require a single value; heterogeneous
+            graphs require metadata for each node type.
+
+    Returns:
+        A tuple containing the graph with reconstructed node features and the
+        remaining sample metadata.
+
+    Raises:
+        ValueError: If the graph and quantization metadata shapes do not match,
+            required packed features are missing, or raw feature dimensions are
+            inconsistent.
+    """
     if node_quantization_metadata is None:
         return data, metadata
 
     def materialize(
         store: Union[Data, NodeStorage],
         packed_features: torch.Tensor,
-        q: FeatureQuantizationMetadata,
+        quantization_metadata: FeatureQuantizationMetadata,
     ) -> None:
-        dequantized = dequantize_torch_tensor(packed_features, metadata=q)
+        """Reconstruct and assign node features for one PyG node store.
+
+        Args:
+            store: Node store receiving the reconstructed ``x`` tensor.
+            packed_features: Quantized feature columns for the sampled nodes.
+            quantization_metadata: Column layout and dequantization metadata.
+
+        Raises:
+            ValueError: If expected raw feature columns are absent or have an
+                unexpected dimension.
+        """
+        dequantized = dequantize_torch_tensor(
+            packed_features, metadata=quantization_metadata
+        )
         x = getattr(store, "x", None)
-        out = dequantized.new_empty((dequantized.size(0), q.feature_dim))
-        scatter_idx: FeatureQuantizationIndexTensors = q.scatter_index_tensors(
-            out.device
+        out = dequantized.new_empty(
+            (dequantized.size(0), quantization_metadata.feature_dim)
+        )
+        scatter_idx: FeatureQuantizationIndexTensors = (
+            quantization_metadata.scatter_index_tensors(out.device)
         )
         out[:, scatter_idx.quantized] = dequantized
 
-        if x is None and q.raw_feature_dim:
-            raise ValueError(f"Missing {q.raw_feature_dim} unquantized features")
+        if x is None and quantization_metadata.raw_feature_dim:
+            raise ValueError(
+                f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
+            )
         if x is not None:
-            if x.size(1) != q.raw_feature_dim:
+            if x.size(1) != quantization_metadata.raw_feature_dim:
                 raise ValueError(
-                    f"Expected {q.raw_feature_dim} raw node features before dequantization, got {x.size(1)}"
+                    "Expected "
+                    f"{quantization_metadata.raw_feature_dim} raw node features "
+                    f"before dequantization, got {x.size(1)}"
                 )
             out[:, scatter_idx.raw] = x
         store.x = out
