@@ -21,6 +21,7 @@ from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
+    FeatureQuantizationMetadata,
 )
 from gigl.utils.sampling import ABLPInputNodes
 
@@ -64,6 +65,19 @@ class RemoteDistDataset:
         return request_server(
             0,
             DistServer.get_node_feature_info,
+        )
+
+    def fetch_node_quantization_metadata(
+        self,
+    ) -> Union[
+        FeatureQuantizationMetadata,
+        dict[NodeType, FeatureQuantizationMetadata],
+        None,
+    ]:
+        """Fetch node feature quantization metadata from the registered dataset."""
+        return request_server(
+            0,
+            DistServer.get_node_quantization_metadata,
         )
 
     def fetch_edge_feature_info(

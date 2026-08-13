@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Type, Union
+from typing import Optional, Type, Union, cast
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -61,6 +61,7 @@ def run_distributed_partitioner(
     positive_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     negative_labels: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     node_labels: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    node_quantized_features: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
 
     if not is_heterogeneous:
         node_ids = input_graph.node_ids[USER_NODE_TYPE]
@@ -78,6 +79,15 @@ def run_distributed_partitioner(
         positive_labels = input_graph.positive_labels
         negative_labels = input_graph.negative_labels
         node_labels = input_graph.node_labels
+
+    if isinstance(node_ids, dict):
+        node_ids_by_type = cast(dict[NodeType, torch.Tensor], node_ids)
+        node_quantized_features = {
+            node_type: node_type_ids.to(torch.uint8).unsqueeze(1)
+            for node_type, node_type_ids in node_ids_by_type.items()
+        }
+    else:
+        node_quantized_features = node_ids.to(torch.uint8).unsqueeze(1)
 
     partition_output: PartitionOutput
 
@@ -115,11 +125,16 @@ def run_distributed_partitioner(
         )
 
         dist_partitioner.register_node_features(node_features=node_features)
+        dist_partitioner.register_node_quantized_features(
+            node_quantized_features=node_quantized_features
+        )
         dist_partitioner.register_node_labels(node_labels=node_labels)
         del node_labels
         del node_features
+        del node_quantized_features
         (
             output_node_features,
+            output_node_quantized_features,
             output_node_labels,
         ) = dist_partitioner.partition_node_features_and_labels(
             node_partition_book=output_node_partition_book
@@ -146,6 +161,7 @@ def run_distributed_partitioner(
             edge_partition_book=output_edge_partition_book,
             partitioned_edge_index=output_edge_index,
             partitioned_node_features=output_node_features,
+            partitioned_node_quantized_features=output_node_quantized_features,
             partitioned_node_labels=output_node_labels,
             partitioned_edge_features=output_edge_features,
             partitioned_positive_labels=output_positive_labels,
@@ -186,6 +202,7 @@ def run_distributed_partitioner(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
             node_ids=node_ids,
             node_features=node_features,
+            node_quantized_features=node_quantized_features,
             edge_index=edge_index,
             edge_features=edge_features,
             positive_labels=positive_labels,
@@ -196,6 +213,7 @@ def run_distributed_partitioner(
         del (
             node_ids,
             node_features,
+            node_quantized_features,
             edge_index,
             edge_features,
             positive_labels,
