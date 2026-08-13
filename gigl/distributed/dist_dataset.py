@@ -370,8 +370,10 @@ class DistDataset(glt.distributed.DistDataset):
     ) -> Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]:
         """Per-edge sampling weights for this rank's partition, or ``None`` if not registered.
 
-        Cached in Python before being passed to GLT's C++ graph so that samplers
-        can index into weights by edge ID without going through the C++ layer.
+        The tensors are the topology-owned weight storage, ordered to match
+        each topology's edge order (``topo.edge_ids``), not the partition
+        input order. The per-edge pairing between edge id and weight is
+        preserved.
         """
         return self._edge_weights
 
@@ -699,7 +701,13 @@ class DistDataset(glt.distributed.DistDataset):
             is_label_edge: Whether this edge type carries supervision labels.
 
         Returns:
-            An initialized CPU ``Graph``.
+            A CPU ``Graph``. Native (C++) initialization is deferred to first
+            use: this process never samples from the graph it builds, and
+            sampling workers rebuild the ``Graph`` from its ipc handle
+            (dropping any native state built here) before initializing their
+            own copy on demand. Initializing eagerly would only spend an
+            edge-scale transient (the native CPU init runs ``unique`` over the
+            indices).
 
         Raises:
             ValueError: If a message-passing edge type's compressed-dimension
@@ -754,9 +762,7 @@ class DistDataset(glt.distributed.DistDataset):
                 input_layout="COO",
                 layout=layout,
             )
-        graph = Graph(topology, "CPU")
-        graph.lazy_init()
-        return graph
+        return Graph(topology, "CPU")
 
     def _initialize_graph(
         self,
@@ -800,8 +806,7 @@ class DistDataset(glt.distributed.DistDataset):
             assert not isinstance(node_partition_book, Mapping), (
                 "Found homogeneous graph data with a heterogeneous node partition book."
             )
-            self._edge_weights = partitioned_edge_index.weights
-            self.graph = self._build_graph_for_partition(
+            homogeneous_graph = self._build_graph_for_partition(
                 edge_index=partitioned_edge_index.edge_index,
                 edge_ids=partitioned_edge_index.edge_ids,
                 edge_weights=partitioned_edge_index.weights,
@@ -809,6 +814,11 @@ class DistDataset(glt.distributed.DistDataset):
                 layout=layout,
                 is_label_edge=False,
             )
+            self.graph = homogeneous_graph
+            # The topology owns the weights, realigned to its edge order;
+            # referencing them here avoids retaining a second full copy in
+            # partition order for the lifetime of the dataset.
+            self._edge_weights = homogeneous_graph.topo.edge_weights
             self._directed = True
             logger.info("Initialized homogeneous graph to dataset")
             return
@@ -844,7 +854,6 @@ class DistDataset(glt.distributed.DistDataset):
         edge_weights: Optional[dict[EdgeType, torch.Tensor]] = (
             weights_by_type if weights_by_type else None
         )
-        self._edge_weights = edge_weights
 
         edge_types = list(partitioned_edge_index.keys())
         graph: dict[EdgeType, Graph] = {}
@@ -867,6 +876,15 @@ class DistDataset(glt.distributed.DistDataset):
             )
             del graph_partition_data
         self.graph = graph
+        # Reference the topology-owned weight tensors (realigned to each
+        # topology's edge order) instead of retaining the partition-order
+        # inputs, so weights are stored once per edge type.
+        topology_weights = {
+            edge_type: edge_graph.topo.edge_weights
+            for edge_type, edge_graph in graph.items()
+            if edge_graph.topo.edge_weights is not None
+        }
+        self._edge_weights = topology_weights if topology_weights else None
         self._directed = True
         logger.info(
             f"Initialized heterogeneous graph to dataset with edge types: {edge_types}"

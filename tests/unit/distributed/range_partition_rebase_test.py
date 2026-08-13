@@ -15,6 +15,7 @@ Covers:
 
 import pickle
 from multiprocessing.reduction import ForkingPickler
+from typing import cast
 
 import torch
 import torch.multiprocessing as mp
@@ -205,6 +206,19 @@ class RangeRebasedBuildTest(TestCase):
         # Global sizing: indptr spans [0, max compressed id].
         self.assertEqual(misaligned_topology.indptr.numel(), 5 + 2)
 
+    def test_build_defers_native_graph_initialization(self):
+        """The build never samples from the graphs it builds (sampling workers
+        rebuild them from the ipc handle), so the native graph must not be
+        initialized eagerly — its init runs an edge-scale ``unique`` over the
+        indices."""
+        dataset = _build_homogeneous_range_dataset()
+
+        assert isinstance(dataset.graph, Graph)
+        self.assertIsNone(dataset.graph._graph)
+        # First native access still initializes on demand.
+        self.assertEqual(dataset.graph.row_count, _UPPER - _LOWER)
+        self.assertIsNotNone(dataset.graph._graph)
+
     def test_tensor_partition_book_keeps_global_topology(self):
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(12, dtype=torch.int64),
@@ -339,6 +353,176 @@ class ForkingPicklerRoundTripTest(TestCase):
             rebuilt.id_select(srcs, book[srcs] == 1, book),
             torch.tensor([0, 5]),
         )
+
+
+class TopologyOwnedEdgeWeightsTest(TestCase):
+    """dataset.edge_weights must be the topology-owned storage.
+
+    Both stock GLT and OffsetTopology reorder weights into topology edge
+    order; retaining the partition-order input alongside would double the
+    weight memory permanently.
+    """
+
+    def test_homogeneous_weights_share_topology_storage_and_keep_pairing(self):
+        # Rows deliberately unsorted so the topology's edge order differs from
+        # the input order: a dataset that kept the partition-order weights
+        # would fail the elementwise pairing check below.
+        edge_index = torch.tensor(
+            [
+                [9, 4, 5, 4, 9, 7],
+                [0, 11, 3, 7, 2, 10],
+            ]
+        )
+        edge_ids = torch.tensor([45, 40, 42, 41, 44, 43])
+        # Weight of edge id k is k / 2.
+        weights = edge_ids.float() * 0.5
+        partition_output = PartitionOutput(
+            node_partition_book=RangePartitionBook(_NODE_RANGES, _RANK),
+            edge_partition_book=RangePartitionBook(
+                [(0, 40), (40, 46), (46, 50)], _RANK
+            ),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=edge_index,
+                edge_ids=edge_ids,
+                weights=weights,
+            ),
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=_RANK, world_size=_WORLD_SIZE, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        assert isinstance(dataset.graph, Graph)
+        topology = dataset.graph.topo
+        assert topology.edge_weights is not None
+        dataset_weights = dataset.edge_weights
+        assert isinstance(dataset_weights, torch.Tensor)
+        self.assertTrue(dataset.has_edge_weights)
+        # Same storage, not a second copy.
+        self.assertEqual(dataset_weights.data_ptr(), topology.edge_weights.data_ptr())
+        # Each edge kept its weight through the reorder: weight of edge id k
+        # is still k / 2, elementwise against the topology's edge order.
+        self.assert_tensor_equality(dataset_weights, topology.edge_ids.float() * 0.5)
+
+    def test_heterogeneous_weights_share_topology_storage_per_edge_type(self):
+        story_to_user = EdgeType(_STORY, Relation("about"), _USER)
+        user_book = RangePartitionBook([(0, 4)], 0)
+        story_book = RangePartitionBook([(0, 6)], 0)
+        weighted_edge_ids = torch.tensor([1, 0])
+        partition_output = PartitionOutput(
+            node_partition_book={_USER: user_book, _STORY: story_book},
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(2, dtype=torch.int64),
+                story_to_user: torch.zeros(2, dtype=torch.int64),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    # Sources unsorted so topology edge order differs from
+                    # input order.
+                    edge_index=torch.tensor([[3, 0], [5, 2]]),
+                    edge_ids=weighted_edge_ids,
+                    weights=weighted_edge_ids.float() * 0.5,
+                ),
+                # No weights registered: filled with uniform ones.
+                story_to_user: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 5], [1, 3]]),
+                    edge_ids=torch.tensor([0, 1]),
+                ),
+            },
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        assert isinstance(dataset.graph, dict)
+        assert isinstance(dataset.edge_weights, dict)
+        dataset_weights = cast(dict[EdgeType, torch.Tensor], dataset.edge_weights)
+        self.assertEqual(set(dataset_weights.keys()), {_USER_TO_STORY, story_to_user})
+        for edge_type in (_USER_TO_STORY, story_to_user):
+            topology = dataset.graph[edge_type].topo
+            assert topology.edge_weights is not None
+            self.assertEqual(
+                dataset_weights[edge_type].data_ptr(),
+                topology.edge_weights.data_ptr(),
+            )
+        weighted_topology = dataset.graph[_USER_TO_STORY].topo
+        self.assert_tensor_equality(
+            dataset_weights[_USER_TO_STORY],
+            weighted_topology.edge_ids.float() * 0.5,
+        )
+        self.assert_tensor_equality(dataset_weights[story_to_user], torch.ones(2))
+
+
+class DistServerEdgeSizeTest(TestCase):
+    def test_get_edge_size_reports_global_row_bound_for_rebased_graphs(self):
+        """get_edge_index returns global COO ids, so get_edge_size must report
+        the row bound in the same global id space — not the rebased local row
+        count."""
+        from gigl.distributed.graph_store.dist_server import DistServer
+
+        dataset = _build_homogeneous_range_dataset()
+        server = DistServer(dataset)
+
+        row, col = server.get_edge_index(None, "coo")
+        self.assertEqual(int(row.max().item()), int(_EDGE_INDEX[0].max().item()))
+
+        row_count, col_count = server.get_edge_size(None, "coo")
+        # Global row bound of this partition: offset + local row count.
+        self.assertEqual(row_count, _UPPER)
+        self.assertEqual(col_count, len(set(_EDGE_INDEX[1].tolist())))
+
+
+class SharedBackendSubgraphRejectionTest(TestCase):
+    def test_backend_rejects_subgraph_sampling_for_rebased_graphs(self):
+        """GLT's subgraph path sends global ids straight to the native
+        samplers, bypassing id_select; on a rebased topology that silently
+        returns wrong subgraphs, so the backend must refuse it up front."""
+        from graphlearn_torch.distributed import RemoteDistSamplingWorkerOptions
+        from graphlearn_torch.sampler import SamplingConfig, SamplingType
+
+        from gigl.distributed.graph_store.shared_dist_sampling_producer import (
+            SharedDistSamplingBackend,
+        )
+        from gigl.distributed.sampler_options import KHopNeighborSamplerOptions
+
+        dataset = _build_homogeneous_range_dataset()
+
+        def build_backend(sampling_type: SamplingType) -> SharedDistSamplingBackend:
+            return SharedDistSamplingBackend(
+                data=dataset,
+                worker_options=RemoteDistSamplingWorkerOptions(
+                    server_rank=0, master_addr="localhost", master_port=0
+                ),
+                sampling_config=SamplingConfig(
+                    sampling_type=sampling_type,
+                    num_neighbors=[2],
+                    batch_size=1,
+                    shuffle=False,
+                    drop_last=False,
+                    with_edge=False,
+                    collect_features=False,
+                    with_neg=False,
+                    with_weight=False,
+                    edge_dir="out",
+                    seed=0,
+                ),
+                sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+                degree_tensors=None,
+            )
+
+        # The message match disambiguates the rejection from unrelated
+        # ValueErrors raised by GLT option validation.
+        with self.assertRaisesRegex(ValueError, "SUBGRAPH"):
+            build_backend(SamplingType.SUBGRAPH)
+        # Node sampling on the same rebased dataset is accepted.
+        build_backend(SamplingType.NODE)
 
 
 # --- End-to-end two-rank range-partitioned sampling -------------------------

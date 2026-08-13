@@ -93,6 +93,7 @@ from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     SharedDistSamplingBackend,
 )
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.distributed.utils.topology import OffsetTopology
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeatureInfo, reverse_edge_type, select_label_edge_types
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
@@ -388,6 +389,11 @@ class DistServer:
         if layout == "coo":
             row_count = graph.row_count
             col_count = graph.col_count
+            if isinstance(graph.topo, OffsetTopology):
+                # The rebased topology's native row count covers only the
+                # local partition node range; report it in the same global id
+                # space that get_edge_index returns.
+                row_count += graph.topo.offset
         else:
             raise ValueError(f"Invalid layout {layout}")
         return (row_count, col_count)

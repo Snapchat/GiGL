@@ -103,6 +103,7 @@ from gigl.distributed.utils.dist_sampler import (
     SamplerRuntime,
     create_dist_sampler,
 )
+from gigl.distributed.utils.topology import contains_offset_topology
 
 logger = Logger()
 
@@ -852,7 +853,22 @@ class SharedDistSamplingBackend:
             sampler_options: GiGL sampler variant configuration (e.g.
                 ``PPRSamplerOptions`` for PPR-based sampling).
             degree_tensors: Pre-computed degree tensors for PPR sampling (if applicable).
+
+        Raises:
+            ValueError: If ``sampling_config`` requests
+                ``SamplingType.SUBGRAPH`` on a range-rebased
+                (``OffsetTopology``) graph.
         """
+        if sampling_config.sampling_type == SamplingType.SUBGRAPH and (
+            contains_offset_topology(data.graph)
+        ):
+            # GLT's subgraph path sends global node ids straight to the native
+            # samplers, bypassing the id_select translation that offset-rebased
+            # topologies require.
+            raise ValueError(
+                "SamplingType.SUBGRAPH is not supported for range-rebased "
+                "(OffsetTopology) graphs."
+            )
         self.data = data
         self.worker_options = worker_options
         self.num_workers = worker_options.num_workers
