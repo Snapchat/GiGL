@@ -512,9 +512,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
     def _translate_top_k_extraction_results(
         self,
-        extracted_results: dict[
-            int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-        ],
+        extracted_results: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ) -> tuple[
         dict[NodeType, torch.Tensor],
         dict[NodeType, torch.Tensor],
@@ -1150,7 +1148,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # source_nodes holds their global IDs (same values as nodes_to_sample).
             source_nodes = inducer.init_node(homogeneous_nodes_to_sample)
 
-            ppr_result = await self._compute_ppr_scores(homogeneous_nodes_to_sample, None)
+            ppr_result = await self._compute_ppr_scores(
+                homogeneous_nodes_to_sample, None
+            )
             homogeneous_flat_ids = ppr_result.node_ids
             homogeneous_flat_weights = ppr_result.weights
             homogeneous_valid_counts = ppr_result.valid_counts

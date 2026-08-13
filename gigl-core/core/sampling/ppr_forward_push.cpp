@@ -436,10 +436,8 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
 
     for (size_t stateIndex = 0; stateIndex < states.size(); ++stateIndex) {
         const auto* const state = states[stateIndex];
-        TORCH_CHECK(state != nullptr,
-                    "extractOriginalEdgesFromPPRCaches received a null PPR state at index ",
-                    stateIndex,
-                    ".");
+        TORCH_CHECK(
+            state != nullptr, "extractOriginalEdgesFromPPRCaches received a null PPR state at index ", stateIndex, ".");
         TORCH_CHECK(state->_numNodeTypes == numNodeTypes,
                     "All PPR states must share the same node type schema for original-edge extraction. Expected ",
                     numNodeTypes,
