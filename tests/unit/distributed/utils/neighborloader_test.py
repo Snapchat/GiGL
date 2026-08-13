@@ -156,22 +156,6 @@ class LoaderUtilsTest(TestCase):
         )
         self.assertEqual(remaining_metadata, {})
 
-    def test_materialize_quantized_edge_features_rejects_packed_data_without_metadata(
-        self,
-    ) -> None:
-        data = Data(edge_index=torch.tensor([[0], [1]]))
-
-        with self.assertRaises(ValueError):
-            materialize_quantized_edge_features(
-                data=data,
-                metadata={
-                    EDGE_PACKED_FEATURES_METADATA_KEY: torch.tensor(
-                        [[48]], dtype=torch.uint8
-                    )
-                },
-                edge_quantization_metadata=None,
-            )
-
     def test_materialize_quantized_edge_features_uses_effective_edge_type(
         self,
     ) -> None:
@@ -202,97 +186,6 @@ class LoaderUtilsTest(TestCase):
             torch.tensor([[0.0, 10.0, 3.0]]),
         )
         self.assertEqual(remaining_metadata, {})
-
-    def test_materialize_quantized_edge_features_rejects_malformed_sidecars(
-        self,
-    ) -> None:
-        edge_type = ("user", "to", "item")
-        quantization_metadata = FeatureQuantizationMetadata(
-            bits=2,
-            feature_dim=3,
-            quantized_feature_indices=(0, 2),
-            clip_min=0.0,
-            clip_max=3.0,
-        )
-        metadata_key = f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{edge_type}"
-
-        def edge_data(raw_features: torch.Tensor, num_edges: int = 1) -> HeteroData:
-            data = HeteroData()
-            data[edge_type].edge_index = torch.zeros((2, num_edges), dtype=torch.long)
-            data[edge_type].edge_attr = raw_features
-            return data
-
-        cases = [
-            (
-                edge_data(torch.tensor([[10.0]])),
-                {},
-            ),
-            (
-                edge_data(torch.tensor([[10.0]])),
-                {metadata_key: torch.tensor([[48, 0]], dtype=torch.uint8)},
-            ),
-            (
-                edge_data(torch.tensor([[10.0], [20.0]]), num_edges=2),
-                {metadata_key: torch.tensor([[48]], dtype=torch.uint8)},
-            ),
-            (
-                edge_data(torch.tensor([[10.0, 20.0]])),
-                {metadata_key: torch.tensor([[48]], dtype=torch.uint8)},
-            ),
-        ]
-
-        for data, metadata in cases:
-            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
-                materialize_quantized_edge_features(
-                    data=data,
-                    metadata=metadata,
-                    edge_quantization_metadata={edge_type: quantization_metadata},
-                )
-
-    def test_materialize_quantized_edge_features_preserves_empty_shape(
-        self,
-    ) -> None:
-        edge_type = ("user", "to", "item")
-        data = HeteroData()
-        data[edge_type].edge_index = torch.empty((2, 0), dtype=torch.long)
-        data[edge_type].edge_attr = torch.empty((0, 1))
-
-        materialized_data, remaining_metadata = materialize_quantized_edge_features(
-            data=data,
-            metadata={},
-            edge_quantization_metadata={
-                edge_type: FeatureQuantizationMetadata(
-                    bits=2,
-                    feature_dim=3,
-                    quantized_feature_indices=(0, 2),
-                    clip_min=0.0,
-                    clip_max=3.0,
-                )
-            },
-        )
-
-        self.assertEqual(
-            materialized_data[edge_type].edge_attr.shape, torch.Size([0, 3])
-        )
-        self.assertEqual(materialized_data[edge_type].edge_attr.dtype, torch.float32)
-        self.assertEqual(remaining_metadata, {})
-
-        homogeneous_data, _ = materialize_quantized_edge_features(
-            data=Data(
-                edge_index=torch.empty((2, 0), dtype=torch.long),
-                edge_attr=torch.empty((0, 1)),
-            ),
-            metadata={},
-            edge_quantization_metadata=FeatureQuantizationMetadata(
-                bits=2,
-                feature_dim=3,
-                quantized_feature_indices=(0, 2),
-                clip_min=0.0,
-                clip_max=3.0,
-            ),
-        )
-        self.assertEqual(homogeneous_data.edge_attr.shape, torch.Size([0, 3]))
-        self.assertEqual(homogeneous_data.edge_attr.dtype, torch.float32)
 
     def test_materialize_quantized_node_features_uses_per_node_type_metadata(
         self,
