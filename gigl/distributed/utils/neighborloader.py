@@ -375,10 +375,14 @@ def _materialize_quantized_features(
     materialized_features[:, scatter_idx.quantized] = dequantized
 
     if raw_features is None and quantization_metadata.raw_feature_dim:
-        raise ValueError(f"Missing {quantization_metadata.raw_feature_dim} unquantized features")  # fmt: skip
+        raise ValueError(
+            f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
+        )
     if raw_features is not None:
         if raw_features.size(1) != quantization_metadata.raw_feature_dim:
-            raise ValueError(f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}")  # fmt: skip
+            raise ValueError(
+                f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
+            )
         materialized_features[:, scatter_idx.raw] = raw_features
     setattr(store, feature_attribute, materialized_features)
 

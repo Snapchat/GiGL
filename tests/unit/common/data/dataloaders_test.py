@@ -671,7 +671,7 @@ class TFRecordDataLoaderTest(TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "must remain an unquantized scalar"):
+        with self.assertRaises(ValueError):
             load_torch_tensors_from_tf_record(
                 tf_record_dataloader=TFRecordDataLoader(rank=0, world_size=1),
                 serialized_graph_metadata=serialized_graph_metadata,

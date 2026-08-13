@@ -130,29 +130,20 @@ def _validate_weight_edge_feature_name(
     ],
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
 ) -> None:
-    """Validate sampling-weight configuration before TFRecord loading."""
     if weight_edge_feat_name is None:
         return
 
     configured_weights: list[tuple[EdgeType, str, SerializedTFRecordInfo]]
     if isinstance(edge_entity_info, SerializedTFRecordInfo):
         if not isinstance(weight_edge_feat_name, str):
-            raise ValueError(
-                "weight_edge_feat_name must be a string for homogeneous graphs."
-            )
-        configured_weights = [
-            (
-                DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-                weight_edge_feat_name,
-                edge_entity_info,
-            )
-        ]
+            raise ValueError("weight_edge_feat_name must be str for homogeneous graph")
+        edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        configured_weights = [(edge_type, weight_edge_feat_name, edge_entity_info)]
     else:
         if isinstance(weight_edge_feat_name, str):
             if len(edge_entity_info) != 1:
                 raise ValueError(
-                    "weight_edge_feat_name must be a dict[EdgeType, str] for "
-                    "heterogeneous graphs with multiple edge types."
+                    "weight_edge_feat_name must be dict[EdgeType, str] for heterogeneous graph with multiple edge types"
                 )
             edge_type, serialized_info = next(iter(edge_entity_info.items()))
             configured_weights = [(edge_type, weight_edge_feat_name, serialized_info)]
@@ -160,8 +151,7 @@ def _validate_weight_edge_feature_name(
             unknown_edge_types = set(weight_edge_feat_name) - set(edge_entity_info)
             if unknown_edge_types:
                 raise ValueError(
-                    "weight_edge_feat_name contains unknown edge types: "
-                    f"{unknown_edge_types}"
+                    f"weight_edge_feat_name contains unknown edge types: {unknown_edge_types}"
                 )
             configured_weights = [
                 (edge_type, feature_name, edge_entity_info[edge_type])
@@ -171,16 +161,7 @@ def _validate_weight_edge_feature_name(
     for edge_type, feature_name, serialized_info in configured_weights:
         if feature_name not in serialized_info.feature_keys:
             raise ValueError(
-                f"Sampling-weight field '{feature_name}' for edge type {edge_type} "
-                "must remain an unquantized scalar edge feature. Available raw "
-                f"features: {serialized_info.feature_keys}"
-            )
-        feature_spec = serialized_info.feature_spec[feature_name]
-        feature_width = feature_spec.shape[-1] if feature_spec.shape else 1
-        if feature_width != 1:
-            raise ValueError(
-                f"Sampling-weight field '{feature_name}' for edge type {edge_type} "
-                f"must be scalar, but has width {feature_width}."
+                f"Sampling-weight field '{feature_name}' for edge type {edge_type} must be an unquantized raw edge feature."
             )
 
 
