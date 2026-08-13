@@ -460,9 +460,11 @@ class DistRangePartitioner(DistPartitioner):
             Optional[dict[EdgeType, PartitionBook]],
         ],
     ]:
-        """Partition edges and feature sidecars using range-based partition books.
-
-        Must call `partition_node` first to get the node partition book as input.
+        """
+        Partitions edges of a graph, including edge indices and edge features. If heterogeneous, partitions edges
+        for all edge types. You must call `partition_node` first to get the node partition book as input. The difference
+        between this function and its parent is that we no longer need to check that the `edge_ids` have been
+        pre-computed as a prerequisite for partitioning edges and edge features.
 
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
@@ -471,9 +473,7 @@ class DistRangePartitioner(DistPartitioner):
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
                 Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned graph data, standard edge features, quantized edge features,
-                and the edge partition book. Sidecars and partition books are None
-                when no registered data requires edge lookup.
+            ]: Partitioned graph data, standard edge features, quantized edge features, and the corresponding edge partition book.
         """
 
         self._assert_and_get_rpc_setup()

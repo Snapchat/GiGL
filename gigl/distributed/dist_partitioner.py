@@ -690,8 +690,7 @@ class DistPartitioner:
         unknown_edge_types = set(packed_features) - set(self._edge_index)
         if unknown_edge_types:
             raise ValueError(
-                "Packed edge features contain unregistered edge types: "
-                f"{unknown_edge_types}"
+                f"Packed edge features contain unregistered edge types: {unknown_edge_types}"
             )
         for edge_type, features in packed_features.items():
             if not isinstance(features, torch.Tensor):
@@ -700,19 +699,16 @@ class DistPartitioner:
                 )
             if features.dtype != torch.uint8:
                 raise ValueError(
-                    f"Packed edge features for {edge_type} must use torch.uint8, "
-                    f"got {features.dtype}."
+                    f"Packed edge features for {edge_type} must use torch.uint8, got {features.dtype}."
                 )
             if features.ndim != 2:
                 raise ValueError(
-                    f"Packed edge features for {edge_type} must be 2-D, got "
-                    f"shape {tuple(features.shape)}."
+                    f"Packed edge features for {edge_type} must be 2-D, got shape {tuple(features.shape)}."
                 )
             expected_rows = self._edge_index[edge_type].size(1)
             if features.size(0) != expected_rows:
                 raise ValueError(
-                    f"Packed edge features for {edge_type} have {features.size(0)} "
-                    f"rows, expected {expected_rows}."
+                    f"Packed edge features for {edge_type} have {features.size(0)} rows, expected {expected_rows}."
                 )
         self._edge_quantized_feat = convert_to_tensor(packed_features)
         self._edge_quantized_feat_dim = {
@@ -1807,9 +1803,9 @@ class DistPartitioner:
             Optional[dict[EdgeType, PartitionBook]],
         ],
     ]:
-        """Partition edges and feature sidecars for all edge types.
-
-        Must call `partition_node` first to get the node partition book as input.
+        """
+        Partitions edges of a graph, including edge indices and edge features. If there are no edge features, only edge indices are partitioned.
+        If heterogeneous, partitions edges/features for all edge types. Must call `partition_node` first to get the node partition book as input.
 
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
@@ -1818,9 +1814,7 @@ class DistPartitioner:
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
                 Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned graph data, standard edge features, quantized edge features,
-                and the edge partition book. Sidecars and partition books are None
-                when no registered data requires edge lookup.
+            ]: Partitioned graph data, standard edge features, quantized edge features, and the corresponding edge partition book.
         """
 
         self._assert_and_get_rpc_setup()
