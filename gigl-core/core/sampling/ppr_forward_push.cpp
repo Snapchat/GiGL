@@ -275,10 +275,11 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
         auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
         auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
         auto countsAccessor = countsTensor.accessor<int64_t, 1>();
-        auto cacheNeighborRow = [this, edgeTypeId](int32_t nodeId,
-                                                   std::vector<int32_t> neighborIds,
-                                                   std::optional<std::vector<int64_t>> edgeIds) {
-            uint64_t cacheKey = packKey(nodeId, edgeTypeId);
+        const int32_t cacheEdgeTypeId = edgeTypeId;
+        auto cacheNeighborRow = [this, cacheEdgeTypeId](int32_t nodeId,
+                                                        std::vector<int32_t> neighborIds,
+                                                        std::optional<std::vector<int64_t>> edgeIds) {
+            uint64_t cacheKey = packKey(nodeId, cacheEdgeTypeId);
             if (_neighborCache.find(cacheKey) == _neighborCache.end()) {
                 _neighborCache.emplace(cacheKey, CachedNeighborList{std::move(neighborIds), std::move(edgeIds)});
             }
