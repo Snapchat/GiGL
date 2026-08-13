@@ -234,9 +234,9 @@ class DistRangePartitioner(DistPartitioner):
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            Optional[FeaturePartitionData]: Standard edge features on the current partition.
-            Optional[FeaturePartitionData]: Quantized edge features on the current partition.
-            Optional[PartitionBook]: The partition book of graph edges.
+            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
+            Optional[FeaturePartitionData]: The quantized edge features on the current partition, will be None if there are no quantized edge features for the current edge type
+            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
 
         start_time = time.time()
@@ -465,15 +465,13 @@ class DistRangePartitioner(DistPartitioner):
         for all edge types. You must call `partition_node` first to get the node partition book as input. The difference
         between this function and its parent is that we no longer need to check that the `edge_ids` have been
         pre-computed as a prerequisite for partitioning edges and edge features.
-
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
-
         Returns:
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
                 Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned graph data, standard edge features, quantized edge features, and the corresponding edge partition book.
+            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
         """
 
         self._assert_and_get_rpc_setup()

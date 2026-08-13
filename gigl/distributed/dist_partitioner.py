@@ -1253,7 +1253,8 @@ class DistPartitioner:
         Optional[FeaturePartitionData],
         Optional[PartitionBook],
     ]:
-        r"""Partition topology and feature sidecars for one edge type.
+        r"""Partition graph topology and edge features of a specific edge type. If there are no edge features for the current edge type,
+        both the returned edge feature and edge partition book will be None.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition books of all graph nodes.
@@ -1261,9 +1262,9 @@ class DistPartitioner:
 
         Returns:
             GraphPartitionData: The graph data of the current partition.
-            Optional[FeaturePartitionData]: Standard edge features on the current partition.
-            Optional[FeaturePartitionData]: Quantized edge features on the current partition.
-            Optional[PartitionBook]: The partition book of graph edges.
+            Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
+            Optional[FeaturePartitionData]: The quantized edge features on the current partition, will be None if there are no quantized edge features for the current edge type
+            Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
 
         start_time = time.time()
@@ -1806,15 +1807,15 @@ class DistPartitioner:
         """
         Partitions edges of a graph, including edge indices and edge features. If there are no edge features, only edge indices are partitioned.
         If heterogeneous, partitions edges/features for all edge types. Must call `partition_node` first to get the node partition book as input.
-
         Args:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
-
         Returns:
             Union[
                 Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
                 Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
-            ]: Partitioned graph data, standard edge features, quantized edge features, and the corresponding edge partition book.
+            ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
+            The second and third elements of this tuple are only present if there are edge features to partition, and are None
+            otherwise.
         """
 
         self._assert_and_get_rpc_setup()
