@@ -1,102 +1,110 @@
 # Feature Quantization
 
-Feature quantization is an opt-in preprocessing setting that stores selected scalar features in packed low-bit form.
-GiGL automatically reconstructs approximate floating-point values before a sampled batch reaches the model.
+Feature quantization is an opt-in node-preprocessing setting that stores selected scalar floating-point features at
+reduced precision. Before the model receives a sampled batch, GiGL restores approximate floating-point values in their
+original order and dimension.
 
-Use it when features are a meaningful memory or data-transfer cost and a small accuracy tradeoff is acceptable. Start
-with a baseline run, then evaluate quantization on your task metric.
+Use it when feature storage or transfer is a material constraint and a modest drop in the task metric is acceptable.
+Establish an unquantized baseline first, then evaluate the same task with quantization enabled.
 
 For background on feature quantization for GNNs, see
 [BiFeat: Supercharge GNN Training via Graph Feature Quantization](https://arxiv.org/abs/2207.14696).
 
-## Enable it
+## Enable quantization
 
-The current API supports node features. Configure it in `get_nodes_preprocessing_spec`, the function in your data
-preprocessor config that returns each `NodeDataPreprocessingSpec`. Do not add quantization logic to `preprocessing_fn`.
-
-First, import `FeatureQuantizationSpec`:
+Add `feature_quantization_spec` to the relevant `NodeDataPreprocessingSpec` returned from
+`get_nodes_preprocessing_spec`. Keep the quantization configuration out of `preprocessing_fn`.
 
 ```python
-from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
-```
+from gigl.src.data_preprocessor.lib.types import (
+    FeatureQuantizationSpec,
+    NodeDataPreprocessingSpec,
+)
 
-Then add `feature_quantization_spec` to the existing `NodeDataPreprocessingSpec`. Its `feature_keys` must name fields
-produced by `preprocessing_fn` and listed in `features_outputs`.
 
-```python
-def get_nodes_preprocessing_spec(self) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
-    # Existing code defines node_data_ref, feature_spec_fn, preprocessing_fn, and node_output_id.
+def get_nodes_preprocessing_spec(
+    self,
+) -> dict[NodeDataReference, NodeDataPreprocessingSpec]:
+    # This example assumes these variables are already defined in this method:
+    # node_data_ref, feature_spec_fn, preprocessing_fn, and node_output_id.
+    feature_outputs = ["embedding_0", "embedding_1", "embedding_2"]
+
     return {
         node_data_ref: NodeDataPreprocessingSpec(
             feature_spec_fn=feature_spec_fn,
             preprocessing_fn=preprocessing_fn,
             identifier_output=node_output_id,
-            features_outputs=["embedding_0", "embedding_1", "embedding_2"],
+            features_outputs=feature_outputs,
+            # New: configure reduced-precision storage for selected node features.
             feature_quantization_spec=FeatureQuantizationSpec(
-                feature_keys=["embedding_0", "embedding_1", "embedding_2"],
+                feature_keys=feature_outputs,
                 bits=4,
             ),
         ),
     }
 ```
 
-The keys must be distinct scalar fields. GiGL supports `1`, `2`, `4`, and `8` bits.
+`feature_keys` may name all or only some fields in `features_outputs`. Quantized and unquantized fields can be mixed;
+GiGL places both back into their original positions in the model input.
 
-After changing this setting, rerun preprocessing and use its output for subsequent training or inference. Do not reuse
-artifacts produced with a different quantization setting. GiGL restores the original feature-vector order and dimension,
-so model code does not need to change.
+After changing `feature_quantization_spec`, rerun preprocessing. Do not use artifacts produced with a different feature
+selection or bit width.
 
 ## Choose a bit width
 
-Start with `bits=4`. Use `8` when preserving quality matters more than compression; try `2` or `1` only after validating
-your task metric. Lower bit widths use less storage and can lose more information. Packing is most efficient when the
-number of selected features fills whole bytes.
+GiGL supports `1`, `2`, `4`, and `8` bits per selected scalar. Lower bit widths reduce the selected-feature data more
+and preserve less detail. Start with `4` bits. Use `8` bits when task quality is more important than data reduction;
+consider `2` or `1` bits only after validating task quality.
 
-## Expected upside and tradeoffs
+## Expected effect and how to evaluate it
 
-Packing selected features can reduce their stored and transferred payload. GiGL dequantizes sampled features at runtime,
-so the model receives approximate `float` values rather than the original values.
+Quantization reduces only the stored and transferred data for the selected fields. Unselected features, graph structure,
+labels, model parameters, and the feature tensor presented to the model are unchanged.
 
-Quantization is lossy. It can change model quality and may add preprocessing and runtime work. Its end-to-end effect on
-memory, throughput, cost, and task quality depends on the graph, sampled workload, selected columns, and bit width.
+Quantization is lossy, so it can change task quality. Compare task quality with an unquantized baseline before adopting
+a setting.
 
-TODO: Add published end-to-end benchmark results for memory, transfer, throughput, and task-quality impact.
+## FAQ
 
-## Gotchas and FAQ
+### What can I quantize?
 
-### What may I quantize?
-
-Choose only finite scalar fields from `features_outputs`. Every key must exist there and be unique. A scalar field has
-one number for each entity, such as `age=42`. A vector-valued field has a list or array for each entity, such as
-`embedding=[0.1, 0.2, 0.3]`; it cannot be quantized directly. Expose each vector element as a separate scalar output
-field before selecting it.
-
-### Do I need to change my model or loader?
-
-No. GiGL saves quantization metadata during preprocessing and dequantizes sampled features before they are passed to the
-model.
+Select distinct, finite, scalar floating-point outputs from `preprocessing_fn` that are also listed in
+`features_outputs`. Do not select vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one
+three-dimensional output and cannot be quantized directly. Expose its elements as separate scalar outputs such as
+`embedding_0`, `embedding_1`, and `embedding_2` before selecting them.
 
 ### Can I quantize only some features?
 
-Yes. Put only the selected fields in `feature_keys`; unselected fields stay unquantized. Compare the task metric with
-and without each selection, especially when feature scales or importance differ.
+Yes. Leave fields unquantized when they are especially sensitive to approximation. This configuration quantizes two
+embedding coordinates and keeps `country_id` unchanged:
 
 ```python
-features_outputs=["embedding_0", "embedding_1", "country_id"],
-feature_quantization_spec=FeatureQuantizationSpec(
+features_outputs = ["embedding_0", "embedding_1", "country_id"]
+
+feature_quantization_spec = FeatureQuantizationSpec(
     feature_keys=["embedding_0", "embedding_1"],
     bits=4,
-),
+)
 ```
 
-### Why is end-to-end training not faster?
+Use the two values in the same `NodeDataPreprocessingSpec`, as shown above.
 
-Quantization reduces the selected feature payload, not all training work. If data loading, feature transfer, or memory
-capacity is not the bottleneck, end-to-end training time may not improve. Compare loader time, accelerator utilization,
-and memory usage with the unquantized baseline before increasing the quantization level. Inference may see more upside
-when it is feature-transfer or memory-bound; measure it separately from training.
+### Do I need to change my model or loader?
+
+No model or loader configuration is required. GiGL writes the quantization metadata during preprocessing and
+reconstructs an approximate floating-point feature tensor before it reaches the model.
+
+### Will quantization make training faster?
+
+Not necessarily. Quantization reduces only selected feature data, while preprocessing and loading must also do extra
+work. It is most useful when storing or transferring those features is a material part of the workload.
 
 ### Does this support edge features?
 
-Not yet. The current API supports node features only. This guide will extend to the edge-feature API when it is
-available.
+No. The current API supports node features only.
+
+### Will quantization lower GPU requirements?
+
+Not for the model input. GiGL reconstructs the feature tensor before it reaches the model, so its per-batch dimension
+and floating-point memory requirement are unchanged. Quantization can still reduce feature storage and transfer before
+that reconstruction.
