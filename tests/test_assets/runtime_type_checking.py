@@ -1,4 +1,10 @@
-"""Enable runtime tensor contracts before test discovery imports GiGL modules."""
+"""Install test-only runtime checks for GiGL tensor Shape Contracts.
+
+Test launchers call ``install_runtime_typechecking()`` before test discovery.
+Jaxtyping then instruments the listed modules as they are imported, and Beartype
+checks only annotations containing Jaxtyping array types when those calls run.
+Production imports do not install this hook.
+"""
 
 from collections.abc import Callable
 from typing import Any, Final, Optional, get_args
@@ -32,12 +38,6 @@ _SHAPE_CONTRACT_MODULES: Final[tuple[str, ...]] = (
 _import_hook: Optional[object] = None
 
 
-def _contains_shape_contract(annotation: object) -> bool:
-    if isinstance(annotation, type) and issubclass(annotation, AbstractArray):
-        return True
-    return any(_contains_shape_contract(arg) for arg in get_args(annotation))
-
-
 def shape_contract_typechecker(
     function: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -49,11 +49,17 @@ def shape_contract_typechecker(
     Returns:
         Function wrapped to enforce only its Shape Contract annotations.
     """
+
+    def contains_shape_contract(annotation: object) -> bool:
+        if isinstance(annotation, type) and issubclass(annotation, AbstractArray):
+            return True
+        return any(contains_shape_contract(arg) for arg in get_args(annotation))
+
     annotations = function.__annotations__
     shape_annotations = {
         name: annotation
         for name, annotation in annotations.items()
-        if _contains_shape_contract(annotation)
+        if contains_shape_contract(annotation)
     }
     function.__annotations__ = shape_annotations
     try:
