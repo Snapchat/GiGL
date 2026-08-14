@@ -1,7 +1,7 @@
 import asyncio
 import traceback
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Union
 
 import torch
@@ -20,6 +20,7 @@ from graphlearn_torch.utils import reverse_edge_type
 from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
@@ -110,8 +111,27 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         which GLT's event loop would swallow the same way it swallows the
         original sampling exception.
         """
+        data = kwargs.get("data")
         super().__init__(*args, **kwargs)
         self._sampling_error_sent: bool = False
+
+        self.dist_node_quantized_feature: Optional[DistFeature] = None
+        if (
+            self.collect_features
+            and data is not None
+            and getattr(data, "node_quantized_features", None) is not None
+        ):
+            # Mirrors GLT's dist_node_feature initialization:
+            # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L162-L167
+            self.dist_node_quantized_feature = DistFeature(
+                data.num_partitions,
+                data.partition_idx,
+                data.node_quantized_features,
+                data.node_pb,
+                local_only=False,
+                rpc_router=self.rpc_router,
+                device=self.device,
+            )
 
     def _prepare_sample_loop_inputs(
         self,
@@ -357,17 +377,62 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             ]
             if self.dist_node_feature is not None:
                 if self.use_all2all:
-                    sorted_ntype = sorted(self.dist_node_feature.feature_pb.keys())
+                    sorted_ntype = sorted(self.dist_node_feature.local_feature.keys())
+                    # GLT get_all2all() iterates every type in output.node, not
+                    # just sorted_ntype. feature_pb contains partition books for
+                    # every node type, while local_feature contains only types
+                    # registered in this feature store, such as when only some
+                    # heterogeneous node types have quantized features.
+                    feature_output = replace(
+                        output,
+                        node={
+                            ntype: nodes
+                            for ntype, nodes in output.node.items()
+                            if ntype in sorted_ntype
+                        },
+                    )
                     nfeat_dict = self.dist_node_feature.get_all2all(
-                        output, sorted_ntype
+                        feature_output, sorted_ntype
                     )
                     for ntype, nfeats in nfeat_dict.items():
                         result_map[f"{as_str(ntype)}.nfeats"] = nfeats
                 else:
                     for ntype, nodes in output.node.items():
+                        if ntype not in self.dist_node_feature.local_feature:
+                            continue
                         nodes = nodes.to(torch.long)
                         futs[f"{as_str(ntype)}.nfeats"] = wrap_torch_future(
                             self.dist_node_feature.async_get(nodes, ntype)
+                        )
+            if self.dist_node_quantized_feature is not None:
+                if self.use_all2all:
+                    sorted_ntype = sorted(
+                        self.dist_node_quantized_feature.local_feature.keys()
+                    )
+                    feature_output = replace(
+                        output,
+                        node={
+                            ntype: nodes
+                            for ntype, nodes in output.node.items()
+                            if ntype in sorted_ntype
+                        },
+                    )
+                    quantized_nfeat_dict = self.dist_node_quantized_feature.get_all2all(
+                        feature_output, sorted_ntype
+                    )
+                    for ntype, quantized_nfeats in quantized_nfeat_dict.items():
+                        result_map[
+                            f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                        ] = quantized_nfeats
+                else:
+                    for ntype, nodes in output.node.items():
+                        if ntype not in self.dist_node_quantized_feature.local_feature:
+                            continue
+                        nodes = nodes.to(torch.long)
+                        futs[
+                            f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                        ] = wrap_torch_future(
+                            self.dist_node_quantized_feature.async_get(nodes, ntype)
                         )
             if self.dist_edge_feature is not None and self.with_edge:
                 for etype in self.edge_types:
@@ -415,6 +480,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if self.dist_node_feature is not None:
                 futs["nfeats"] = wrap_torch_future(
                     self.dist_node_feature.async_get(output.node)
+                )
+            if self.dist_node_quantized_feature is not None:
+                futs[f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"] = wrap_torch_future(
+                    self.dist_node_quantized_feature.async_get(output.node)
                 )
             if self.dist_edge_feature is not None:
                 eids = result_map["eids"]

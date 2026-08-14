@@ -29,6 +29,7 @@ from gigl.distributed.utils.neighborloader import (
     SamplingClusterSetup,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_node_features,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
@@ -278,6 +279,7 @@ class DistNeighborLoader(BaseDistLoader):
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
+                channel_name=f"nbr_channel_{runtime.rank}_of_{runtime.world_size}",
             )
 
         # Call base class — handles metadata storage and connection initialization
@@ -410,6 +412,7 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
+                node_quantization_metadata=dataset.fetch_node_quantization_metadata(),
                 edge_dir=dataset.fetch_edge_dir(),
             ),
             backend_key,
@@ -527,6 +530,7 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
+                node_quantization_metadata=dataset.node_quantization_metadata,
                 edge_dir=dataset.edge_dir,
             ),
         )
@@ -555,6 +559,11 @@ class DistNeighborLoader(BaseDistLoader):
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
 
         data, metadata = self._apply_ppr_outputs(data, metadata)
+        data, metadata = materialize_quantized_node_features(
+            data=data,
+            metadata=metadata,
+            node_quantization_metadata=self._node_quantization_metadata,
+        )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.

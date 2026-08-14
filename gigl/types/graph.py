@@ -1,6 +1,7 @@
 import gc
 from collections import abc
 from dataclasses import dataclass
+from functools import cached_property, lru_cache
 from typing import Literal, Optional, TypeVar, Union, overload
 
 import torch
@@ -8,6 +9,7 @@ from graphlearn_torch.partition import PartitionBook
 
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -98,6 +100,12 @@ class PartitionOutput:
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ]
 
+    # Quantized node features on current rank. These are packed uint8 features
+    # aligned by node id and dequantized/scattered in the sampler collate path.
+    partitioned_node_quantized_features: Optional[
+        Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
+    ] = None
+
 
 @dataclass(frozen=True)
 class FeatureInfo:
@@ -105,6 +113,79 @@ class FeatureInfo:
 
     dim: int
     dtype: torch.dtype
+
+
+@dataclass(frozen=True)
+class FeatureQuantizationIndexTensors:
+    """Device-local indices used to scatter dequantized and raw features."""
+
+    quantized: torch.Tensor
+    raw: torch.Tensor
+
+
+@dataclass(frozen=True)
+class FeatureQuantizationMetadata:
+    """Metadata needed to unpack/dequantize/scatter packed features."""
+
+    bits: int
+    feature_dim: int
+    quantized_feature_indices: tuple[int, ...] = ()
+    clip_min: Optional[float] = None
+    clip_max: Optional[float] = None
+    neg_mean: Optional[float] = None
+    pos_mean: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.bits not in SUPPORTED_QUANTIZATION_BITS:
+            raise ValueError(
+                f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}"
+            )
+        if any(i < 0 or i >= self.feature_dim for i in self.quantized_feature_indices):
+            raise ValueError(
+                f"quantized_feature_indices must be in [0, {self.feature_dim}), got {self.quantized_feature_indices}"
+            )
+        if len(set(self.quantized_feature_indices)) != len(
+            self.quantized_feature_indices
+        ):
+            raise ValueError(
+                f"quantized_feature_indices contains duplicates: {self.quantized_feature_indices}"
+            )
+
+    @property
+    def quantized_feature_dim(self) -> int:
+        """Number of logical features stored in packed quantized form."""
+        return len(self.quantized_feature_indices)
+
+    @property
+    def packed_feature_dim(self) -> int:
+        """Number of uint8 columns needed for the packed features."""
+        per_byte = 8 // self.bits
+        return (self.quantized_feature_dim + per_byte - 1) // per_byte
+
+    @cached_property
+    def raw_feature_indices(self) -> tuple[int, ...]:
+        """Logical feature positions that remain in raw form."""
+        quantized_indices = set(self.quantized_feature_indices)
+        return tuple(i for i in range(self.feature_dim) if i not in quantized_indices)
+
+    @property
+    def raw_feature_dim(self) -> int:
+        """Number of logical features that remain in raw form."""
+        return len(self.raw_feature_indices)
+
+    # One cache entry matches the expected single-device dataloader call path.
+    @lru_cache(maxsize=1)
+    def scatter_index_tensors(
+        self, device: torch.device
+    ) -> FeatureQuantizationIndexTensors:
+        """Device-local scatter indices for the single-device hot path."""
+        # The logical indices never change across batches, so cache their
+        # device-local tensors for repeated quantized/raw feature scatter writes.
+        quantized = torch.tensor(
+            self.quantized_feature_indices, dtype=torch.long, device=device
+        )
+        raw = torch.tensor(self.raw_feature_indices, dtype=torch.long, device=device)
+        return FeatureQuantizationIndexTensors(quantized=quantized, raw=raw)
 
 
 def _get_label_edges(
@@ -151,6 +232,10 @@ class LoadedGraphTensors:
     negative_label: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
+    # Unpartitioned packed uint8 node features.
+    node_quantized_features: Optional[
+        Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+    ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
@@ -249,6 +334,9 @@ class LoadedGraphTensors:
 
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
+        self.node_quantized_features = to_heterogeneous_node(
+            self.node_quantized_features
+        )
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
         self.edge_weights = to_heterogeneous_edge(self.edge_weights)

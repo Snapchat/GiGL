@@ -51,11 +51,13 @@ Worker event-loop internals::
     │ Phase 2: Round-robin batch submission           │
     │   for each channel in runnable_channel_ids:     │
     │     pop ──▶ _submit_one_batch()                 │
-    │            ──▶ sampler.sample_from_*()          │
-    │     if more batches: re-enqueue channel         │
+    │       in-flight below cap ──▶ submit             │
+    │         if more batches ──▶ re-enqueue channel  │
+    │       at cap ──▶ PARKED (not queued)             │
     │                                                 │
     │   completion callback (_on_batch_done):         │
     │     completed_batches += 1                      │
+    │     parked + work remains ──▶ runnable queue    │
     │     if all done ──▶ EPOCH_DONE to event_queue   │
     ├─────────────────────────────────────────────────┤
     │ Phase 3: Idle wait                              │
@@ -396,6 +398,11 @@ def _shared_sampling_worker_loop(
     state_lock = threading.RLock()
     last_state_log_time = 0.0
     current_device: Optional[torch.device] = None
+    # Cap each channel at worker_concurrency submitted-but-uncompleted batches.
+    # GLT acquires its semaphore synchronously in sample_*, so submitting past
+    # this cap can block the sole scheduler thread behind a stalled consumer.
+    # The counter is epoch-local; an epoch must finish before START_EPOCH resets it.
+    worker_concurrency = worker_options.worker_concurrency
 
     # --- Scheduler helper functions ---
 
@@ -411,6 +418,16 @@ def _shared_sampling_worker_loop(
             return
         runnable_channel_ids.append(channel_id)
         runnable_channel_id_set.add(channel_id)
+
+    def _is_channel_parked_locked(channel_id: int) -> bool:
+        """Return whether a channel has hit its in-flight submission cap.
+
+        Must be called while holding ``state_lock``.
+        """
+        state = active_epoch_by_channel_id.get(channel_id)
+        if state is None:
+            return False
+        return state.submitted_batches - state.completed_batches >= worker_concurrency
 
     def _drain_channel_locked(channel_id: int) -> int:
         """Lossily drain buffered sampled messages for a removing channel.
@@ -556,6 +573,9 @@ def _shared_sampling_worker_loop(
             if state is None or state.epoch != epoch:
                 return
             state.completed_batches += 1
+            # Completion re-enqueues a parked channel; GLT releases its
+            # semaphore after this callback returns.
+            _enqueue_channel_if_runnable_locked(channel_id)
             if channel_id in removing_channel_ids:
                 drained_messages = _drain_channel_locked(channel_id)
                 if drained_messages > 0:
@@ -578,18 +598,24 @@ def _shared_sampling_worker_loop(
                 cleanup_ready_channel_ids.add(channel_id)
 
     def _submit_one_batch(channel_id: int) -> bool:
-        """Submit the next batch for a channel to its sampler.
+        """Submit the channel's next batch without blocking on a saturated sampler.
 
-        Re-enqueues the channel into ``runnable_channel_ids`` if more batches
-        remain.
-        Returns True if a batch was submitted, False if the channel had no
-        pending work.
+        At the in-flight cap, leave the channel off the runnable queue until
+        ``_on_batch_done`` re-enqueues it.
+
+        Returns:
+            True if a batch was submitted; False otherwise.
         """
-        # Hold the lock only to read state and advance the cursor.
-        # Release before the sampler call to avoid blocking other threads.
+        # Keep sample_* outside state_lock. GLT may block here acquiring its
+        # semaphore, while the callback needs state_lock before GLT can release a
+        # slot; holding the lock across submission would deadlock both threads.
         with state_lock:
             state = active_epoch_by_channel_id.get(channel_id)
             if state is None:
+                return False
+            # Do not re-enqueue a parked channel; completion is its wake-up path.
+            # False lets a park-only pump enter the idle wait instead of spinning.
+            if _is_channel_parked_locked(channel_id):
                 return False
             batch_indices = _epoch_batch_indices(state)
             if batch_indices is None:
@@ -599,17 +625,17 @@ def _shared_sampling_worker_loop(
             sampler = sampler_by_channel_id[channel_id]
             channel_input = input_by_channel_id[channel_id]
             current_epoch = state.epoch
-            # Re-enqueue for the next round-robin pass if more batches remain.
-            if state.submitted_batches < state.total_batches and not state.cancelled:
-                runnable_channel_ids.append(channel_id)
-                runnable_channel_id_set.add(channel_id)
+            # A callback may have re-enqueued this channel since the pump popped
+            # it; the membership guard avoids a duplicate turn.
+            _enqueue_channel_if_runnable_locked(channel_id)
 
         sampler_input = channel_input[batch_indices]
 
-        # Sampler calls are async (submit to thread pool). If submission
-        # itself raises, the callback never fires and the epoch would hang
-        # forever.  Log the error and let the exception kill this worker so
-        # the parent can detect the dead process and fail fast.
+        # GLT skips this callback when the coroutine raises or is cancelled.
+        # GiGL's channel-mode _send_adapter converts sampling and collation
+        # failures to successful poison-pill sends, but any other coroutine
+        # failure leaves submitted > completed and can park sampling and
+        # deferred unregister forever.
         callback = lambda _: _on_batch_done(channel_id, current_epoch)
         try:
             if cfg.sampling_type == SamplingType.NODE:
@@ -638,7 +664,8 @@ def _shared_sampling_worker_loop(
     def _pump_runnable_channel_ids() -> bool:
         """Submit one batch per runnable channel in round-robin order.
 
-        Returns True if at least one batch was submitted.
+        Returns:
+            True if at least one batch was submitted.
         """
         made_progress = False
         # Snapshot the count so we process exactly one batch per channel that

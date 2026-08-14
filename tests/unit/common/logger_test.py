@@ -1,5 +1,8 @@
 import copy
+import logging
+import os
 import pickle
+from unittest import mock
 
 from absl.testing import absltest
 
@@ -32,6 +35,35 @@ class TestLogger(TestCase):
         clone = pickle.loads(pickle.dumps(logger))
         self.assertIsInstance(clone, Logger)
         clone.info("pickle works")
+
+    def test_disabling_cloud_logging_uses_console_handler(self) -> None:
+        # KUBERNETES_SERVICE_HOST alone would send records to Google Cloud Logging as
+        # GCP JSON; GIGL_DISABLE_CLOUD_LOGGING must win and give the console format.
+        with mock.patch.dict(
+            os.environ,
+            {
+                "KUBERNETES_SERVICE_HOST": "10.0.0.1",
+                "GIGL_DISABLE_CLOUD_LOGGING": "1",
+            },
+        ):
+            logger = Logger(name="test_cloud_logging_disabled")
+
+        handlers = logger.logger.handlers
+        self.assertEqual(len(handlers), 1)
+        self.assertIsInstance(handlers[0], logging.StreamHandler)
+        record = logging.LogRecord(
+            name="test_cloud_logging_disabled",
+            level=logging.INFO,
+            pathname="export.py",
+            lineno=197,
+            msg="upload took 8.82 seconds",
+            args=None,
+            exc_info=None,
+            func="_flush",
+        )
+        formatted = handlers[0].format(record)
+        self.assertIn("[INFO] : upload took 8.82 seconds", formatted)
+        self.assertIn("(export.py:_flush:197)", formatted)
 
 
 if __name__ == "__main__":
