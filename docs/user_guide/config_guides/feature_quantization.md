@@ -61,11 +61,10 @@ reduction; consider `2` or `1` bits only after validating task quality.
 Quantization reduces only the stored and transferred data for the selected fields. Unselected features, graph structure,
 labels, model parameters, and the feature tensor presented to the model are unchanged.
 
-Quantization can increase sampling-worker throughput when fetching node features or transferring sampled features to the
-GPU is the bottleneck. It reduces the amount of selected feature data that must move through that path. If training is
-instead limited by neighborhood sampling, model forward passes, or backpropagation, do not expect a material throughput
-increase. Quantization can still reduce peak RAM for graph data, in proportion to the share occupied by the selected
-features.
+Quantization can increase sampling-worker throughput when fetching node features or transferring hydrated subgraphs to
+the GPU is the bottleneck. If training is instead limited by neighborhood sampling, model forward passes, or
+backpropagation, do not expect a material throughput increase. Quantization can still reduce peak RAM for graph data, in
+proportion to the share occupied by the selected features.
 
 Quantization is lossy, so it can change task quality. Compare task quality with an unquantized baseline before adopting
 a setting.
@@ -74,10 +73,10 @@ a setting.
 
 ### What can I quantize?
 
-Select distinct, scalar floating-point outputs from `preprocessing_fn` that are also listed in `features_outputs`. Do
-not select vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one three-dimensional output and cannot be
-quantized directly. Expose its elements as separate scalar outputs such as `embedding_0`, `embedding_1`, and
-`embedding_2` before selecting them.
+Select distinct floating-point outputs from `preprocessing_fn` that are also listed in `features_outputs`. Do not select
+vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one three-dimensional output and cannot be quantized
+directly. Expose its elements as separate scalar outputs such as `embedding_0`, `embedding_1`, and `embedding_2` before
+selecting them.
 
 ### Can I quantize only some features?
 
@@ -92,8 +91,6 @@ feature_quantization_spec = FeatureQuantizationSpec(
     bits=4,
 )
 ```
-
-Use the two values in the same `NodeDataPreprocessingSpec`, as shown above.
 
 ### Do I need to change my model or loader?
 
