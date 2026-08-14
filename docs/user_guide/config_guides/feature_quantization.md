@@ -1,8 +1,8 @@
 # Feature Quantization
 
-Feature quantization is an opt-in node-preprocessing setting that stores selected scalar floating-point features at
-reduced precision. Before the model receives a sampled batch, GiGL restores approximate floating-point values in their
-original order and dimension.
+Feature quantization is an opt-in preprocessing setting that stores selected features at reduced precision. Before the
+model receives a sampled batch, GiGL reconstructs approximate `float32` versions of the original feature values in
+their original order.
 
 Use it when feature storage or transfer is a material constraint and a modest drop in the task metric is acceptable.
 Establish an unquantized baseline first, then evaluate the same task with quantization enabled.
@@ -12,8 +12,8 @@ For background on feature quantization for GNNs, see
 
 ## Enable quantization
 
-Add `feature_quantization_spec` to the relevant `NodeDataPreprocessingSpec` returned from
-`get_nodes_preprocessing_spec`. Keep the quantization configuration out of `preprocessing_fn`.
+In your preprocessor setup, add `feature_quantization_spec` to the relevant `NodeDataPreprocessingSpec` returned from
+`get_nodes_preprocessing_spec`:
 
 ```python
 from gigl.src.data_preprocessor.lib.types import (
@@ -52,9 +52,9 @@ selection or bit width.
 
 ## Choose a bit width
 
-GiGL supports `1`, `2`, `4`, and `8` bits per selected scalar. Lower bit widths reduce the selected-feature data more
-and preserve less detail. Start with `4` bits. Use `8` bits when task quality is more important than data reduction;
-consider `2` or `1` bits only after validating task quality.
+GiGL supports `1`-, `2`-, `4`-, and `8`-bit compression per feature. Lower bit widths reduce the selected-feature data
+more and preserve less detail. Start with `4` bits. Use `8` bits when task quality is more important than data
+reduction; consider `2` or `1` bits only after validating task quality.
 
 ## Expected effect and how to evaluate it
 
@@ -68,10 +68,10 @@ a setting.
 
 ### What can I quantize?
 
-Select distinct, finite, scalar floating-point outputs from `preprocessing_fn` that are also listed in
-`features_outputs`. Do not select vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one
-three-dimensional output and cannot be quantized directly. Expose its elements as separate scalar outputs such as
-`embedding_0`, `embedding_1`, and `embedding_2` before selecting them.
+Select distinct, scalar floating-point outputs from `preprocessing_fn` that are also listed in `features_outputs`. Do
+not select vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one three-dimensional output and cannot be
+quantized directly. Expose its elements as separate scalar outputs such as `embedding_0`, `embedding_1`, and
+`embedding_2` before selecting them.
 
 ### Can I quantize only some features?
 
