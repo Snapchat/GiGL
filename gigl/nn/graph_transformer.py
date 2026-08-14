@@ -29,6 +29,7 @@ from gigl.transforms.graph_transformer import (
     heterodata_to_graph_transformer_input,
 )
 
+
 def _get_node_type_positional_encodings(
     data: torch_geometric.data.hetero_data.HeteroData,
     node_type: NodeType,
@@ -1315,18 +1316,22 @@ class GraphTransformerEncoder(nn.Module):
             PPR_WEIGHT_FEATURE_NAME,
             PPR_FEATURES_NAME,
         }
-        if ppr_reserved_feature_names & set(pairwise_bias_attr_names):
+        requested_pairwise_ppr_feature_names = ppr_reserved_feature_names & set(
+            pairwise_bias_attr_names
+        )
+        requested_anchor_ppr_feature_names = ppr_reserved_feature_names & set(
+            anchor_bias_attr_names + anchor_input_attr_names
+        )
+        if requested_pairwise_ppr_feature_names:
             raise ValueError(
-                f"{sorted(ppr_reserved_feature_names)} are anchor-relative features and "
-                "cannot be used as pairwise attention bias."
+                "PPR reserved features "
+                f"{sorted(requested_pairwise_ppr_feature_names)} are anchor-relative "
+                "features and cannot be used as pairwise attention bias."
             )
-        if (
-            ppr_reserved_feature_names
-            & set(anchor_bias_attr_names + anchor_input_attr_names)
-            and sequence_construction_method != "ppr"
-        ):
+        if requested_anchor_ppr_feature_names and sequence_construction_method != "ppr":
             raise ValueError(
-                "Reserved PPR anchor-relative features require "
+                "PPR reserved features "
+                f"{sorted(requested_anchor_ppr_feature_names)} require "
                 "sequence_construction_method='ppr'."
             )
         if PPR_FEATURES_NAME in anchor_bias_attr_names:
