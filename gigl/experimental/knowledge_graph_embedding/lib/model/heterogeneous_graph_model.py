@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchrec
-from jaxtyping import Float, Int
 
 from gigl.common.logger import Logger
 from gigl.experimental.knowledge_graph_embedding.common.torchrec.large_embedding_lookup import (
@@ -26,23 +25,6 @@ from gigl.experimental.knowledge_graph_embedding.lib.model.types import (
 )
 
 logger = Logger()
-
-EdgeModelOutput = tuple[
-    Float[torch.Tensor, ""],
-    tuple[
-        Float[torch.Tensor, ""],
-        Float[torch.Tensor, "positive_edges samples"],
-        Float[torch.Tensor, "positive_edges samples"],
-        Int[torch.Tensor, " positive_edges"],
-    ],
-]
-NodeModelOutput = tuple[
-    Float[torch.Tensor, ""],
-    tuple[
-        Int[torch.Tensor, " nodes"],
-        Float[torch.Tensor, "nodes embedding_dim"],
-    ],
-]
 
 
 # TODO(nshah): This could be refactored to be more modular and have individualized APIs for individual KGE model variants.
@@ -152,10 +134,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
     def fetch_src_and_dst_embeddings(
         self, edge_batch: EdgeBatch
-    ) -> tuple[
-        Float[torch.Tensor, "edges embedding_dim"],
-        Float[torch.Tensor, "edges embedding_dim"],
-    ]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         num_edges = edge_batch.batch_size
         node_embeddings_kt: torchrec.KeyedTensor = self.large_embeddings(
             edge_batch.src_dst_pairs
@@ -189,13 +168,10 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
     def apply_relation_operator(
         self,
-        src_embeddings: Float[torch.Tensor, "edges embedding_dim"],
-        dst_embeddings: Float[torch.Tensor, "edges embedding_dim"],
-        condensed_edge_types: Int[torch.Tensor, " edges"],
-    ) -> tuple[
-        Float[torch.Tensor, "edges embedding_dim"],
-        Float[torch.Tensor, "edges embedding_dim"],
-    ]:
+        src_embeddings: torch.Tensor,
+        dst_embeddings: torch.Tensor,
+        condensed_edge_types: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Apply the src and dst relation operators to the source and destination embeddings.
 
@@ -232,9 +208,9 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
     def score_edges(
         self,
-        src_embeddings: Float[torch.Tensor, "edges embedding_dim"],
-        dst_embeddings: Float[torch.Tensor, "edges embedding_dim"],
-    ) -> Float[torch.Tensor, " edges"]:
+        src_embeddings: torch.Tensor,
+        dst_embeddings: torch.Tensor,
+    ):
         # Compute the scores using the specified scoring function
         if self.similarity_type == SimilarityType.DOT:
             scores = torch.sum(src_embeddings * dst_embeddings, dim=1)
@@ -248,7 +224,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
     def infer_node_batch(
         self,
         node_batch: NodeBatch,
-    ) -> Float[torch.Tensor, "nodes embedding_dim"]:
+    ) -> torch.Tensor:
         """
         Infer node embeddings for a given NodeBatch.
 
@@ -285,11 +261,7 @@ class HeterogeneousGraphSparseEmbeddingModel(nn.Module):
 
     def forward(
         self, edge_batch: EdgeBatch
-    ) -> tuple[
-        Float[torch.Tensor, "positive_edges samples"],
-        Float[torch.Tensor, "positive_edges samples"],
-        Int[torch.Tensor, " positive_edges"],
-    ]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Fetch node embeddings from the embedding layer
         src_embeddings, dst_embeddings = self.fetch_src_and_dst_embeddings(edge_batch)
         condensed_edge_types = edge_batch.condensed_edge_types
@@ -428,9 +400,7 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
     def phase(self) -> ModelPhase:
         return self.encoder_model.phase
 
-    def forward(
-        self, batch: Union[EdgeBatch, NodeBatch]
-    ) -> Union[EdgeModelOutput, NodeModelOutput]:
+    def forward(self, batch: Union[EdgeBatch, NodeBatch]) -> tuple[torch.Tensor, tuple]:
         """
         If the batch is an EdgeBatch, compute the loss and return it along with
         the logits and labels.

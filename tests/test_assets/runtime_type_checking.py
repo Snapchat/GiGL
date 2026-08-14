@@ -12,8 +12,6 @@ _SHAPE_CONTRACT_MODULES: Final[tuple[str, ...]] = (
     "gigl.distributed.dist_ppr_sampler",
     "gigl.distributed.distributed_neighborloader",
     "gigl.distributed.sampler",
-    "gigl.experimental.knowledge_graph_embedding.lib.model.heterogeneous_graph_model",
-    "gigl.experimental.knowledge_graph_embedding.lib.model.operators",
     "gigl.nn.graph_transformer",
     "gigl.nn.loss",
     "gigl.nn.models",
