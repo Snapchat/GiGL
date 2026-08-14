@@ -571,10 +571,10 @@ class TestHeteroToGraphTransformerInput(TestCase):
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
 
-    def test_ppr_sequence_construction_requires_only_ppr_relations(self):
+    def test_ppr_sequence_construction_requires_ppr_relations(self):
         data = create_simple_hetero_data()
 
-        with self.assertRaisesRegex(ValueError, "contain only PPR edges"):
+        with self.assertRaisesRegex(ValueError, "requires at least one PPR edge type"):
             heterodata_to_graph_transformer_input(
                 data=data,
                 batch_size=1,
@@ -582,6 +582,53 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 anchor_node_type="user",
                 sequence_construction_method="ppr",
             )
+
+    def test_ppr_sequence_ignores_original_edges_but_keeps_relation_indices(self):
+        data = create_ppr_sequence_hetero_data()
+        user = NodeType("user")
+        item = NodeType("item")
+        buys = EdgeType(user, Relation("buys"), item)
+        data[buys.tuple_repr()].edge_index = torch.tensor([[0], [0]])
+        data[buys.tuple_repr()].edge_attr = torch.tensor([[99.0, 99.0, 99.0]])
+
+        sequences, valid_mask, sequence_auxiliary_data = (
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=2,
+                max_seq_len=4,
+                anchor_node_type="user",
+                sequence_construction_method="ppr",
+                relation_edge_types=[buys],
+            )
+        )
+
+        self.assertTrue(
+            torch.allclose(
+                sequences[0],
+                torch.tensor(
+                    [
+                        [10.0, 0.0],
+                        [0.0, 21.0],
+                        [0.0, 20.0],
+                        [11.0, 0.0],
+                    ]
+                ),
+            )
+        )
+        self.assertTrue(
+            torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
+        )
+
+        pairwise_relation_indices = sequence_auxiliary_data["pairwise_relation_indices"]
+        self.assertIsNotNone(pairwise_relation_indices)
+        assert pairwise_relation_indices is not None
+        self.assertEqual(
+            {tuple(coord) for coord in pairwise_relation_indices.tolist()},
+            {
+                (0, 2, 0, 0),
+                (1, 1, 2, 0),
+            },
+        )
 
     def test_ppr_sequence_can_return_token_input_and_attention_bias_features(self):
         data = create_ppr_sequence_hetero_data()

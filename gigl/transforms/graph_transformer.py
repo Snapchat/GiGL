@@ -62,6 +62,7 @@ from typing import Literal, NamedTuple, Optional, TypedDict
 import torch
 from torch import Tensor
 from torch_geometric.data import Data, HeteroData
+from torch_geometric.typing import EdgeType as PyGEdgeType
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
@@ -80,6 +81,7 @@ class SequenceAuxiliaryData(TypedDict):
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 PPR_FEATURES_NAME = "ppr_features"
+PPR_RELATION_NAME = "ppr"
 
 
 class _TokenOccurrenceIndex(NamedTuple):
@@ -133,6 +135,8 @@ def heterodata_to_graph_transformer_input(
             ``"khop"`` performs the existing k-hop expansion over the sampled graph.
             ``"ppr"`` uses outgoing ``(anchor_type, "ppr", neighbor_type)`` edges,
             sorted by descending PPR weight from edge-attr column 0.
+            Non-PPR edges can remain on the batch for relation-aware attention
+            and message features, but they are ignored for PPR sequence layout.
             Multi-column edge attrs can also expose remaining columns as
             ``"ppr_features"``. (default: ``"khop"``)
         include_anchor_first: If True, anchor node is always first in sequence.
@@ -260,13 +264,19 @@ def heterodata_to_graph_transformer_input(
             "and cannot be used as attention bias."
         )
 
+    ppr_edge_types: list[PyGEdgeType] = []
     if sequence_construction_method == "ppr":
-        _validate_ppr_sequence_input(data)
+        ppr_edge_types = _validate_ppr_sequence_input(data)
 
     device = data[anchor_node_type].x.device
 
     # Convert to homogeneous for easier neighborhood extraction
-    homo_data = data.to_homogeneous()
+    sequence_data = (
+        data.edge_type_subgraph(ppr_edge_types)
+        if sequence_construction_method == "ppr"
+        else data
+    )
+    homo_data = sequence_data.to_homogeneous()
     homo_x = homo_data.x  # (total_nodes, feature_dim)
 
     num_nodes = homo_data.num_nodes
@@ -431,25 +441,29 @@ def _get_node_type_offsets(
     return offsets
 
 
-def _validate_ppr_sequence_input(data: HeteroData) -> None:
+def _validate_ppr_sequence_input(data: HeteroData) -> list[PyGEdgeType]:
     if not data.edge_types:
         raise ValueError(
             "sequence_construction_method='ppr' requires at least one PPR edge type."
         )
 
-    if any(edge_type[1] != "ppr" for edge_type in data.edge_types):
+    ppr_edge_types = [
+        edge_type for edge_type in data.edge_types if edge_type[1] == PPR_RELATION_NAME
+    ]
+    if not ppr_edge_types:
         raise ValueError(
-            "sequence_construction_method='ppr' expects the hetero batch to contain "
-            f"only PPR edges, got edge types: {data.edge_types}."
+            "sequence_construction_method='ppr' requires at least one PPR edge type, "
+            f"got edge types: {data.edge_types}."
         )
 
-    for edge_type in data.edge_types:
+    for edge_type in ppr_edge_types:
         edge_store = data[edge_type]
         if not hasattr(edge_store, "edge_attr") or edge_store.edge_attr is None:
             raise ValueError(
                 "sequence_construction_method='ppr' requires every PPR edge type to "
                 f"have edge_attr weights, but {edge_type} is missing them."
             )
+    return ppr_edge_types
 
 
 def _get_sparse_feature_matrices(
@@ -714,8 +728,7 @@ def _build_sequence_layout_from_ppr_edges(
         raw_edge_features = raw_edge_features.unsqueeze(1)
     elif raw_edge_features.dim() != 2:
         raise ValueError(
-            "PPR edge features must be 1D or 2D, "
-            f"got {tuple(raw_edge_features.shape)}."
+            f"PPR edge features must be 1D or 2D, got {tuple(raw_edge_features.shape)}."
         )
     if raw_edge_features.size(1) < 1:
         raise ValueError("PPR edge features must contain at least one weight column.")
@@ -801,9 +814,7 @@ def _build_sequence_layout_from_ppr_edges(
     sorted_dst_idx = all_dst_idx[batch_order]
     sorted_weights = all_weights[batch_order]
     sorted_ppr_features = (
-        all_ppr_features[batch_order]
-        if all_ppr_features is not None
-        else None
+        all_ppr_features[batch_order] if all_ppr_features is not None else None
     )
 
     n = sorted_batch_idx.size(0)
@@ -822,9 +833,7 @@ def _build_sequence_layout_from_ppr_edges(
     valid_dst_idx = sorted_dst_idx[valid]
     valid_weights = sorted_weights[valid]
     valid_ppr_features = (
-        sorted_ppr_features[valid]
-        if sorted_ppr_features is not None
-        else None
+        sorted_ppr_features[valid] if sorted_ppr_features is not None else None
     )
 
     node_index_sequences[valid_batch_idx, valid_positions] = valid_dst_idx
@@ -833,10 +842,7 @@ def _build_sequence_layout_from_ppr_edges(
         ppr_weight_sequences[valid_batch_idx, valid_positions, 0] = (
             valid_weights.float()
         )
-    if (
-        ppr_feature_sequences is not None
-        and valid_ppr_features is not None
-    ):
+    if ppr_feature_sequences is not None and valid_ppr_features is not None:
         ppr_feature_sequences[valid_batch_idx, valid_positions] = (
             valid_ppr_features.float()
         )
