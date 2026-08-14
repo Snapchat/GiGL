@@ -39,7 +39,7 @@ Welcome to the GiGL User Guide. This guide provides detailed documentation to he
    config_guides/resource_config_guide
    config_guides/task_config_guide
    config_guides/data_preprocessor_spec_guide
-   config_guides/node_feature_quantization
+   config_guides/feature_quantization
 
 
 .. toctree::
