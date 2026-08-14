@@ -35,6 +35,7 @@ import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.typing import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
@@ -867,6 +868,70 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
     shutdown_rpc()
 
 
+def _run_ppr_loader_preserves_original_edges_for_selected_nodes(_: int) -> None:
+    """Verify opt-in hetero PPR output includes original edges over selected nodes."""
+    create_test_process_group()
+
+    edge_index = torch.tensor([[0, 0, 0], [0, 1, 2]])
+    dataset = create_heterogeneous_dataset(
+        edge_indices={USER_TO_STORY: edge_index},
+        edge_dir="out",
+    )
+    node_ids = dataset.node_ids
+    assert isinstance(node_ids, dict)
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, torch.tensor([0])),
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=2,
+            include_sampled_edges=True,
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    datum = next(iter(loader))
+    assert isinstance(datum, HeteroData)
+
+    ppr_edge_type = (USER, "ppr", STORY)
+    original_output_edge_type = reverse_edge_type(USER_TO_STORY)
+    assert ppr_edge_type in datum.edge_types
+    # Original edges are emitted through GLT's regular sampled-edge path, so
+    # they follow the same edge_dir="out" orientation convention as k-hop.
+    assert original_output_edge_type in datum.edge_types
+
+    ppr_story_edge_index = datum[ppr_edge_type].edge_index
+    original_edge_index = datum[original_output_edge_type].edge_index
+    story_node_ids = datum[STORY].node
+
+    ppr_story_ids = {
+        int(story_node_ids[local_dst].item())
+        for local_dst in ppr_story_edge_index[1].tolist()
+    }
+    original_story_ids = {
+        int(story_node_ids[local_src].item())
+        for local_src in original_edge_index[0].tolist()
+    }
+
+    assert original_story_ids
+    assert original_story_ids <= ppr_story_ids
+    assert len(original_story_ids) < edge_index.size(1)
+    assert [int(count) for count in datum.num_sampled_nodes[USER]] == [1, 0]
+    assert [int(count) for count in datum.num_sampled_nodes[STORY]] == [
+        0,
+        story_node_ids.size(0),
+    ]
+    assert [
+        int(count) for count in datum.num_sampled_edges[original_output_edge_type]
+    ] == [original_edge_index.size(1)]
+
+    shutdown_rpc()
+
+
 def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
     """Verify that ABLP label edges are excluded from anchor-seed PPR walks.
 
@@ -981,6 +1046,13 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_destination_only_node_type(self) -> None:
         """Verify PPR output includes destination-only node types."""
         mp.spawn(fn=_run_ppr_destination_only_node_type, args=())
+
+    def test_ppr_sampler_can_preserve_original_edges_for_selected_nodes(self) -> None:
+        """Verify PPR can retain original hetero edges over selected nodes."""
+        mp.spawn(
+            fn=_run_ppr_loader_preserves_original_edges_for_selected_nodes,
+            args=(),
+        )
 
     def test_typed_ppr_sampler_loader_outputs_channel_attrs(self) -> None:
         """Verify typed PPR runs end-to-end through the loader."""

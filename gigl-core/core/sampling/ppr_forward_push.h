@@ -12,14 +12,23 @@
 namespace gigl {
 
 // Neighbor fetch input from Python, keyed by integer edge type ID:
-//   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N].
-using NeighborFetchTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
+//   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N], optional edge_ids[sum(counts)].
+using NeighborFetchTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>>;
 using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
 
 // PPR extraction output, keyed by integer node type ID:
 //   ids, weights/edge_attr, valid_counts.
 using PPRExtractTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
+
+// Original-edge extraction output, keyed by integer edge type ID:
+//   rows, cols, optional edge_ids.
+struct OriginalEdgeExtractTensors {
+    torch::Tensor rows;
+    torch::Tensor cols;
+    std::optional<torch::Tensor> edgeIds;
+};
+using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
 struct ResidualState {
     double residual; // unabsorbed mass waiting to push
@@ -38,6 +47,43 @@ struct SeedNodeTypeState {
     std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
     std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
     std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
+};
+
+// Cached adjacency payload stored in PPRForwardPush::_neighborCache.
+// It is part of the class layout, so the complete type lives in this header.
+struct CachedNeighborList {
+    std::vector<int32_t> neighborIds;
+    std::optional<std::vector<int64_t>> edgeIds;
+};
+
+struct OriginalEdgeDedupeKey {
+    // Original-edge extraction merges cached adjacency from several PPR states
+    // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
+    // emitted-edge level rather than skipping a whole cached row. GiGL's logical
+    // edge identity is structural: edge type, source node, and destination node.
+    // Edge IDs are optional payload for edge features, not a separate identity.
+    int32_t edgeTypeId;
+    int32_t sourceNodeId;
+    int32_t destinationNodeId;
+
+    bool operator==(const OriginalEdgeDedupeKey& other) const {
+        return edgeTypeId == other.edgeTypeId && sourceNodeId == other.sourceNodeId &&
+               destinationNodeId == other.destinationNodeId;
+    }
+};
+
+struct OriginalEdgeDedupeKeyHash {
+    // Must match OriginalEdgeDedupeKey::operator==: hash the structural edge
+    // identity that GiGL uses to dedupe sampled edges.
+    size_t operator()(const OriginalEdgeDedupeKey& key) const {
+        size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
+        auto combine = [&seed](size_t value) {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+        };
+        combine(std::hash<int32_t>{}(key.sourceNodeId));
+        combine(std::hash<int32_t>{}(key.destinationNodeId));
+        return seed;
+    }
 };
 
 // Batched drain result for typed-PPR channels.
@@ -124,6 +170,10 @@ public:
     friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                               const std::vector<int32_t>& channelTargetCounts,
                                                               bool enableResidualTopUp);
+    friend OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+        const std::vector<const PPRForwardPush*>& states,
+        const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+        bool includeEdgeIds);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
@@ -146,6 +196,7 @@ private:
     // _degreeTensors[ntype_id]         → int32 tensor of total out-degrees, indexed by node ID.
     std::vector<std::vector<int32_t>> _nodeTypeToEdgeTypeIds;
     std::vector<int32_t> _edgeTypeToDstNtypeId;
+    std::vector<int32_t> _edgeTypeToSrcNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
 
     // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
@@ -163,7 +214,7 @@ private:
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
-    std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
+    std::unordered_map<uint64_t, CachedNeighborList> _neighborCache;
 };
 
 // Helper function for draining several independent channel states for one
@@ -227,5 +278,13 @@ TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForward
 PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
                                                    const std::vector<int32_t>& channelTargetCounts,
                                                    bool enableResidualTopUp);
+
+// Extract original graph edges from one or more completed PPR states. Multiple
+// states are used for typed PPR, where each channel owns its own cache. Duplicate
+// emitted edges shared by channels are emitted once.
+OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+    const std::vector<const PPRForwardPush*>& states,
+    const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+    bool includeEdgeIds);
 
 } // namespace gigl

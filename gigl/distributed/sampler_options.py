@@ -34,10 +34,11 @@ class KHopNeighborSamplerOptions:
 class PPRSamplerOptions:
     """Sampler options for PPR-based neighbor sampling using DistPPRNeighborSampler.
 
-    **Output format:** When this sampler is active, each output Data/HeteroData batch
-    contains *only* PPR edges — no message-passing edges from the original graph are
-    included.  For each ``(seed_type, neighbor_type)`` pair reachable via PPR walks,
-    the batch will have an edge type ``(seed_type, "ppr", neighbor_type)`` with:
+    **Output format:** By default, each output Data/HeteroData batch contains
+    *only* virtual PPR edges — no message-passing edges from the original graph
+    are included. For each ``(seed_type, neighbor_type)`` pair reachable via PPR
+    walks, the batch will have an edge type ``(seed_type, "ppr", neighbor_type)``
+    with:
 
     - ``edge_index``: ``[2, N]`` int64 — row 0 is local seed indices, row 1 is local
       neighbor indices.
@@ -137,6 +138,20 @@ class PPRSamplerOptions:
             same mass scale as finalized PPR scores: ``ppr_score + residual``.
             Residual candidates follow the same channel targets as finalized
             PPR candidates.
+        include_sampled_edges: Whether heterogeneous PPR output batches should
+            also include original graph edge types alongside virtual PPR edges.
+            The sampler emits original edges from adjacency rows fetched while
+            running PPR and whose source and destination are both in the final
+            PPR-selected node set; an emitted edge does not have to be the
+            relation that uniquely caused the destination's PPR score. Original
+            edges are emitted through GLT's
+            regular sampled-edge channel, so their final HeteroData edge
+            orientation follows the same ``edge_dir`` convention as k-hop
+            sampling. The default ``False`` path is also more faithful to PyG's
+            ``get_ppr`` API, which returns virtual
+            seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
+            an induced message-passing subgraph:
+            https://pytorch-geometric.readthedocs.io/en/2.5.3/_modules/torch_geometric/utils/ppr.html
     """
 
     alpha: float = 0.5
@@ -146,6 +161,7 @@ class PPRSamplerOptions:
     num_neighbors_per_hop: int = 1_000
     max_fetch_iterations: Optional[int] = None
     typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None
+    include_sampled_edges: bool = False
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

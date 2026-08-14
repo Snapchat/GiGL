@@ -248,6 +248,28 @@ class BaseDistLoader(DistLoader):
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
 
         self._sampler_options = sampler_options
+        # Sampled-edge PPR output requires a final HeteroData batch so virtual
+        # PPR edges and original sampled edges can live under separate edge
+        # types. Pure homogeneous graphs and labeled-homogeneous ABLP both
+        # produce homogeneous Data batches, even though labeled-homogeneous ABLP
+        # is represented as hetero internally to carry label edges.
+        # TODO(mkolodner-sc): Consider supporting homogeneous PPR sampled-edge
+        # output once we have a Data-compatible representation for both virtual
+        # PPR edges and original graph edges.
+        if (
+            isinstance(sampler_options, PPRSamplerOptions)
+            and sampler_options.include_sampled_edges
+            and (
+                dataset_schema.edge_types is None
+                or self._is_homogeneous_with_labeled_edge_type
+            )
+        ):
+            raise ValueError(
+                "include_sampled_edges is only supported for pure heterogeneous "
+                "PPR output. Homogeneous graphs and labeled-homogeneous ABLP "
+                "graphs produce homogeneous Data and cannot represent virtual "
+                "PPR and original edges as separate edge types."
+            )
         self._non_blocking_transfers = non_blocking_transfers
         self._backend_key = backend_key
 
@@ -1017,7 +1039,20 @@ class BaseDistLoader(DistLoader):
             ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
             attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
             if isinstance(data, HeteroData):
-                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
+                edge_types_to_keep = set(ppr_edge_indices.keys())
+                if self._sampler_options.include_sampled_edges:
+                    # Original edges emitted by the sampler arrive through GLT's
+                    # normal edge stores. Empty feature-only stores can also be
+                    # created for configured edge types, so keep only original
+                    # stores with actual sampled edges.
+                    for edge_type in data.edge_types:
+                        if edge_type in edge_types_to_keep or not hasattr(
+                            data[edge_type], "edge_index"
+                        ):
+                            continue
+                        if data[edge_type].edge_index.numel() > 0:
+                            edge_types_to_keep.add(edge_type)
+                data = strip_non_ppr_edge_types(data, edge_types_to_keep)
 
         return data, metadata
 

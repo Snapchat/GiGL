@@ -26,9 +26,21 @@ static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedB
     for (auto item : fetchedByEtypeId) {
         auto edgeTypeId = item.first.cast<int32_t>();
         auto neighborTensors = item.second.cast<py::tuple>();
+        auto neighborTensorCount = neighborTensors.size();
+        if (neighborTensorCount != 3) {
+            TORCH_CHECK(neighborTensorCount == 4,
+                        "Expected neighbor fetch tuple of length 3 or 4, received ",
+                        neighborTensorCount,
+                        ".");
+        }
+        std::optional<torch::Tensor> edgeIds = std::nullopt;
+        if (neighborTensorCount == 4 && !neighborTensors[3].is_none()) {
+            edgeIds = neighborTensors[3].cast<torch::Tensor>();
+        }
         neighborTensorsByEtypeId[edgeTypeId] = {neighborTensors[0].cast<torch::Tensor>(),
                                                 neighborTensors[1].cast<torch::Tensor>(),
-                                                neighborTensors[2].cast<torch::Tensor>()};
+                                                neighborTensors[2].cast<torch::Tensor>(),
+                                                edgeIds};
     }
     // C++ push only uses tensor accessor/data_ptr APIs — GIL-safe to release.
     // Releasing here lets the asyncio event loop process RPC completion callbacks
@@ -118,6 +130,40 @@ static PPRExtractResult extractTypedTopKWithResidualTopUpWrapper(const py::seque
     return result;
 }
 
+static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& states,
+                                                         const py::dict& selectedNodeIdsByNodeTypeId,
+                                                         bool includeEdgeIds) {
+    std::vector<const PPRForwardPush*> statePtrs;
+    statePtrs.reserve(py::len(states));
+    for (py::handle stateObj : states) {
+        statePtrs.push_back(&stateObj.cast<PPRForwardPush&>());
+    }
+
+    std::unordered_map<int32_t, torch::Tensor> selectedNodeTensorsByNodeTypeId;
+    for (auto item : selectedNodeIdsByNodeTypeId) {
+        selectedNodeTensorsByNodeTypeId[item.first.cast<int32_t>()] = item.second.cast<torch::Tensor>();
+    }
+
+    OriginalEdgeExtractResult result;
+    {
+        py::gil_scoped_release release;
+        result = extractOriginalEdgesFromPPRCaches(statePtrs, selectedNodeTensorsByNodeTypeId, includeEdgeIds);
+    }
+
+    // Building py::dict/py::tuple objects and pybind tensor wrappers touches the
+    // Python C API, so the GIL must be held after the C++ extraction completes.
+    py::dict pyResult;
+    for (const auto& [edgeTypeId, tensors] : result) {
+        py::object edgeIdsObject = py::none();
+        const auto edgeIdsTensor = tensors.edgeIds.value_or(torch::Tensor());
+        if (edgeIdsTensor.defined()) {
+            edgeIdsObject = py::cast(edgeIdsTensor);
+        }
+        pyResult[py::int_(edgeTypeId)] = py::make_tuple(tensors.rows, tensors.cols, edgeIdsObject);
+    }
+    return pyResult;
+}
+
 } // namespace gigl
 
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
@@ -150,4 +196,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("states"),
           py::arg("channel_target_counts"),
           py::arg("enable_residual_topup"));
+    m.def("extract_original_edges_from_ppr_caches",
+          &gigl::extractOriginalEdgesFromPPRCachesWrapper,
+          py::arg("states"),
+          py::arg("selected_node_ids_by_node_type_id"),
+          py::arg("include_edge_ids"));
 }
