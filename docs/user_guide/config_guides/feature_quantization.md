@@ -1,8 +1,8 @@
 # Feature Quantization
 
 Feature quantization is an opt-in preprocessing setting that stores selected features at reduced precision. Before the
-model receives a sampled batch, GiGL reconstructs approximate `float32` versions of the original feature values in
-their original order.
+model receives a sampled batch, GiGL reconstructs approximate `float32` versions of the original feature values in their
+original order.
 
 Use it when feature storage or transfer is a material constraint and a modest drop in the task metric is acceptable.
 Establish an unquantized baseline first, then evaluate the same task with quantization enabled.
@@ -60,6 +60,12 @@ reduction; consider `2` or `1` bits only after validating task quality.
 
 Quantization reduces only the stored and transferred data for the selected fields. Unselected features, graph structure,
 labels, model parameters, and the feature tensor presented to the model are unchanged.
+
+Quantization can increase sampling-worker throughput when fetching node features or transferring sampled features to the
+GPU is the bottleneck. It reduces the amount of selected feature data that must move through that path. If training is
+instead limited by neighborhood sampling, model forward passes, or backpropagation, do not expect a material throughput
+increase. Quantization can still reduce peak RAM for graph data, in proportion to the share occupied by the selected
+features.
 
 Quantization is lossy, so it can change task quality. Compare task quality with an unquantized baseline before adopting
 a setting.
