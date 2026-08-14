@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from jaxtyping import Float, Int
 
 
 class RelationwiseOperatorBase(nn.Module):
@@ -9,12 +10,14 @@ class RelationwiseOperatorBase(nn.Module):
     the context of a specific relation / edge-type.
     """
 
-    def __init__(self, num_edge_types: int, node_emb_dim: int):
+    def __init__(self, num_edge_types: int, node_emb_dim: int) -> None:
         super().__init__()
 
     def forward(
-        self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor
-    ) -> torch.Tensor:
+        self,
+        embeddings: Float[torch.Tensor, "batch embedding_dim"],
+        condensed_edge_types: Int[torch.Tensor, " batch"],
+    ) -> Float[torch.Tensor, "batch embedding_dim"]:
         raise NotImplementedError
 
 
@@ -30,14 +33,18 @@ class TranslationOperator(RelationwiseOperatorBase):
     See https://papers.nips.cc/paper_files/paper/2013/file/1cecc7a77928ca8133fa24680a88d2f9-Paper.pdf
     """
 
-    def __init__(self, num_edge_types: int, node_emb_dim: int):
+    def __init__(self, num_edge_types: int, node_emb_dim: int) -> None:
         super().__init__(num_edge_types=num_edge_types, node_emb_dim=node_emb_dim)
         self.edge_type_embeddings = nn.Embedding(
             num_embeddings=num_edge_types,
             embedding_dim=node_emb_dim,
         )
 
-    def forward(self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor):
+    def forward(
+        self,
+        embeddings: Float[torch.Tensor, "batch embedding_dim"],
+        condensed_edge_types: Int[torch.Tensor, " batch"],
+    ) -> Float[torch.Tensor, "batch embedding_dim"]:
         edge_type_embeddings = self.edge_type_embeddings(condensed_edge_types)
         return embeddings + edge_type_embeddings
 
@@ -49,14 +56,18 @@ class DiagonalOperator(RelationwiseOperatorBase):
     This operator multiplies the node embeddings by the edge type embeddings.
     """
 
-    def __init__(self, num_edge_types: int, node_emb_dim: int):
+    def __init__(self, num_edge_types: int, node_emb_dim: int) -> None:
         super().__init__(num_edge_types=num_edge_types, node_emb_dim=node_emb_dim)
         self.edge_type_embeddings = nn.Embedding(
             num_embeddings=num_edge_types,
             embedding_dim=node_emb_dim,
         )
 
-    def forward(self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor):
+    def forward(
+        self,
+        embeddings: Float[torch.Tensor, "batch embedding_dim"],
+        condensed_edge_types: Int[torch.Tensor, " batch"],
+    ) -> Float[torch.Tensor, "batch embedding_dim"]:
         edge_type_embeddings = self.edge_type_embeddings(condensed_edge_types)
         return embeddings * edge_type_embeddings
 
@@ -73,7 +84,7 @@ class ComplexDiagonalOperator(RelationwiseOperatorBase):
     See https://proceedings.mlr.press/v48/trouillon16.pdf.
     """
 
-    def __init__(self, num_edge_types: int, node_emb_dim: int):
+    def __init__(self, num_edge_types: int, node_emb_dim: int) -> None:
         super().__init__(num_edge_types=num_edge_types, node_emb_dim=node_emb_dim)
         if node_emb_dim % 2 != 0:
             raise ValueError("Complex embeddings require an even embedding dimension.")
@@ -82,13 +93,21 @@ class ComplexDiagonalOperator(RelationwiseOperatorBase):
             embedding_dim=node_emb_dim,
         )
 
-    def real_part(self, embeddings: torch.Tensor):
+    def real_part(
+        self, embeddings: Float[torch.Tensor, "batch embedding_dim"]
+    ) -> Float[torch.Tensor, "batch half_embedding_dim"]:
         return embeddings[:, : embeddings.shape[1] // 2]
 
-    def imag_part(self, embeddings: torch.Tensor):
+    def imag_part(
+        self, embeddings: Float[torch.Tensor, "batch embedding_dim"]
+    ) -> Float[torch.Tensor, "batch half_embedding_dim"]:
         return embeddings[:, embeddings.shape[1] // 2 :]
 
-    def forward(self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor):
+    def forward(
+        self,
+        embeddings: Float[torch.Tensor, "batch embedding_dim"],
+        condensed_edge_types: Int[torch.Tensor, " batch"],
+    ) -> Float[torch.Tensor, "batch embedding_dim"]:
         edge_type_embeddings = self.edge_type_embeddings(condensed_edge_types)
         # Split the embeddings into real and imaginary parts
 
@@ -119,17 +138,20 @@ class LinearOperator(RelationwiseOperatorBase):
     is used to represent the different types of relationships between nodes.
     """
 
-    def __init__(self, num_edge_types: int, node_emb_dim: int):
+    def __init__(self, num_edge_types: int, node_emb_dim: int) -> None:
         super().__init__(num_edge_types=num_edge_types, node_emb_dim=node_emb_dim)
         self.edge_type_projection = nn.Parameter(
             torch.empty(num_edge_types, node_emb_dim, node_emb_dim),
         )
         nn.init.xavier_normal_(self.edge_type_projection)
 
-    def forward(self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor):
-        return (
-            embeddings @ self.edge_type_projection
-        )  # [num_edge_types, batch_size, node_emb_dim]
+    def forward(
+        self,
+        embeddings: Float[torch.Tensor, "batch embedding_dim"],
+        condensed_edge_types: Int[torch.Tensor, " batch"],
+    ) -> Float[torch.Tensor, "batch embedding_dim"]:
+        projection = self.edge_type_projection[condensed_edge_types]
+        return torch.bmm(embeddings.unsqueeze(1), projection).squeeze(1)
 
 
 class IdentityOperator(RelationwiseOperatorBase):
@@ -140,5 +162,9 @@ class IdentityOperator(RelationwiseOperatorBase):
     It is used when no relation operator is needed.
     """
 
-    def forward(self, embeddings: torch.Tensor, condensed_edge_types: torch.Tensor):
+    def forward(
+        self,
+        embeddings: Float[torch.Tensor, "batch embedding_dim"],
+        condensed_edge_types: Int[torch.Tensor, " batch"],
+    ) -> Float[torch.Tensor, "batch embedding_dim"]:
         return embeddings

@@ -72,10 +72,10 @@ TokenInputData = dict[str, Tensor]
 
 
 class SequenceAuxiliaryData(TypedDict):
-    anchor_bias: Optional[Tensor]
-    pairwise_bias: Optional[Tensor]
-    pairwise_relation_indices: Optional[Tensor]
-    pairwise_nonmissing_indices: Optional[Tensor]
+    anchor_bias: Optional[Float[Tensor, "anchors sequence"]]
+    pairwise_bias: Optional[Float[Tensor, "anchors sequence sequence"]]
+    pairwise_relation_indices: Optional[Int[Tensor, "relation_edges 4"]]
+    pairwise_nonmissing_indices: Optional[Int[Tensor, "nonmissing_edges 3"]]
     token_input: Optional[TokenInputData]
 
 

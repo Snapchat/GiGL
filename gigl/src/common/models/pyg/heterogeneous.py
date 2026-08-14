@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch_geometric.data
+from jaxtyping import Float
 from torch import nn
 from torch.nn import functional as F
 from torch_geometric.nn import Linear
@@ -73,7 +74,7 @@ class HGT(nn.Module):
         data: torch_geometric.data.hetero_data.HeteroData,
         output_node_types: list[NodeType],
         device: torch.device,
-    ) -> dict[NodeType, torch.Tensor]:
+    ) -> dict[NodeType, Float[torch.Tensor, "_nodes output_dim"]]:
         """
         Runs the forward pass of the module
         Args:
@@ -221,7 +222,7 @@ class SimpleHGN(nn.Module):
         data: torch_geometric.data.hetero_data.HeteroData,
         output_node_types: list[NodeType],
         device: torch.device,
-    ) -> dict[NodeType, torch.Tensor]:
+    ) -> dict[NodeType, Float[torch.Tensor, "_nodes output_dim"]]:
         # Align dimensions across all node-types and all edge-types, resp.
         x_dict = {
             node_type: self.node_type_lin_dict[node_type](x)

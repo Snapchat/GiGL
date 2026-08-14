@@ -190,7 +190,9 @@ class FeedForwardNetwork(nn.Module):
                     if layer.bias is not None:
                         nn.init.zeros_(layer.bias)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Float[Tensor, "batch sequence model_dim"]
+    ) -> Float[Tensor, "batch sequence model_dim"]:
         """Forward pass.
 
         Args:
@@ -444,7 +446,8 @@ class GraphTransformerEncoderLayer(nn.Module):
     def forward(
         self,
         x: Float[Tensor, "batch sequence model_dim"],
-        attn_bias: Optional[Tensor] = None,
+        # The bias may use any PyTorch-broadcastable rank, so only its dtype is stable.
+        attn_bias: Optional[Float[Tensor, "..."]] = None,
         valid_mask: Optional[Bool[Tensor, "batch sequence"]] = None,
         pairwise_relation_indices: Optional[Int[Tensor, "relation_edges 4"]] = None,
         query_seq_len: Optional[int] = None,

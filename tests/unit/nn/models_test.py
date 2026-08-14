@@ -45,10 +45,10 @@ class DummyEncoder(nn.Module):
                     "Output node types must be specified for heterogeneous data"
                 )
             return {
-                node_type: torch.tensor([1.0, 2.0]) for node_type in output_node_types
+                node_type: torch.tensor([[1.0, 2.0]]) for node_type in output_node_types
             }
         else:
-            return torch.tensor([1.0, 2.0])
+            return torch.tensor([[1.0, 2.0]])
 
 
 class DummyDecoder(nn.Module):
@@ -62,7 +62,7 @@ class DummyDecoder(nn.Module):
     def forward(
         self, query_embeddings: torch.Tensor, candidate_embeddings: torch.Tensor
     ) -> torch.Tensor:
-        return query_embeddings + candidate_embeddings
+        return torch.mm(query_embeddings, candidate_embeddings.T)
 
 
 class TestLinkPredictionGNN(TestCase):
@@ -76,7 +76,7 @@ class TestLinkPredictionGNN(TestCase):
         data = Data()
         result = model.forward(data, self.device)
         assert isinstance(result, torch.Tensor)
-        self.assert_tensor_equality(result, torch.tensor([1.0, 2.0]))
+        self.assert_tensor_equality(result, torch.tensor([[1.0, 2.0]]))
 
     def test_forward_heterogeneous_with_node_types(self):
         encoder = DummyEncoder()
@@ -88,7 +88,7 @@ class TestLinkPredictionGNN(TestCase):
         assert isinstance(result, dict)
         self.assertEqual(set(result.keys()), set(output_node_types))
         for node_type in output_node_types:
-            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            self.assert_tensor_equality(result[node_type], torch.tensor([[1.0, 2.0]]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
     def test_forward_heterogeneous_missing_node_types(self):
         encoder = DummyEncoder()
@@ -102,10 +102,10 @@ class TestLinkPredictionGNN(TestCase):
         encoder = DummyEncoder()
         decoder = DummyDecoder()
         model = LinkPredictionGNN(encoder, decoder)
-        q = torch.tensor([1.0, 2.0])
-        c = torch.tensor([3.0, 4.0])
+        q = torch.tensor([[1.0, 2.0]])
+        c = torch.tensor([[3.0, 4.0]])
         result = model.decode(q, c)
-        self.assert_tensor_equality(result, torch.tensor([4.0, 6.0]))
+        self.assert_tensor_equality(result, torch.tensor([[11.0]]))
 
     def test_encoder_property(self):
         encoder = DummyEncoder()

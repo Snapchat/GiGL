@@ -10,6 +10,7 @@ from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
 )
 from graphlearn_torch.sampler import NodeSamplerInput
+from jaxtyping import Int
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -65,10 +66,10 @@ class DistNeighborLoader(BaseDistLoader):
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
-                torch.Tensor,
-                Tuple[NodeType, torch.Tensor],
-                abc.Mapping[int, torch.Tensor],
-                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
+                Int[torch.Tensor, " nodes"],
+                Tuple[NodeType, Int[torch.Tensor, " nodes"]],
+                abc.Mapping[int, Int[torch.Tensor, " nodes"]],
+                Tuple[NodeType, abc.Mapping[int, Int[torch.Tensor, " nodes"]]],
             ]
         ] = None,
         num_workers: int = 1,
@@ -87,7 +88,7 @@ class DistNeighborLoader(BaseDistLoader):
         with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
-    ):
+    ) -> None:
         """
         Distributed Neighbor Loader.
         Takes in some input nodes and samples neighbors from the dataset.

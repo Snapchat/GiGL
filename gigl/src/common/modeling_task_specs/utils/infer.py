@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Set, Union
+from typing import Set, Union, cast
 
 import torch
 import torch.nn as nn
@@ -217,18 +217,27 @@ def infer_task_inputs(
                 condensed_node_type
             ].to(device=device)
         )
-        random_neg_root_embeddings[condensed_node_type] = (
-            random_neg_embeddings[condensed_node_type][random_neg_root_node_indices]
-            if random_neg_root_node_indices.numel()
-            else torch.FloatTensor([]).to(device=device)  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+        random_neg_root_embeddings[condensed_node_type] = cast(
+            torch.FloatTensor,
+            (
+                random_neg_embeddings[condensed_node_type][random_neg_root_node_indices]
+                if random_neg_root_node_indices.numel()
+                else random_neg_embeddings[condensed_node_type].new_empty(
+                    (0, random_neg_embeddings[condensed_node_type].shape[-1])
+                )
+            ),
         )
         if ModelResultType.batch_scores in batch_result_types or should_eval:
-            random_neg_scores[condensed_node_type] = (
-                decoder(
-                    query_embeddings, random_neg_root_embeddings[condensed_node_type]
-                )
-                if random_neg_root_embeddings[condensed_node_type].numel()
-                else torch.FloatTensor([]).to(device=device)  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+            random_neg_scores[condensed_node_type] = cast(
+                torch.FloatTensor,
+                (
+                    decoder(
+                        query_embeddings,
+                        random_neg_root_embeddings[condensed_node_type],
+                    )
+                    if random_neg_root_embeddings[condensed_node_type].numel()
+                    else query_embeddings.new_empty((query_embeddings.shape[0], 0))
+                ),
             )
 
     # Loop through all root nodes and populate ids, embeddings, and scores per condensed edge type
@@ -285,7 +294,7 @@ def infer_task_inputs(
                         ],
                     )
                     if pos_nodes.numel()
-                    else torch.FloatTensor([]).to(device=device)
+                    else query_embeddings.new_empty((1, 0))
                 )
                 hard_neg_scores = (
                     decoder(
@@ -295,7 +304,7 @@ def infer_task_inputs(
                         ],
                     )
                     if hard_neg_nodes.numel()
-                    else torch.FloatTensor([]).to(device=device)
+                    else query_embeddings.new_empty((1, 0))
                 )
                 random_neg_scores_root = random_neg_scores[
                     condensed_supervision_target_node_type
@@ -322,15 +331,35 @@ def infer_task_inputs(
         ) = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_condensed_node_types[
             condensed_supervision_edge_type
         ]
-        pos_embeddings[condensed_supervision_edge_type] = (
-            torch.cat(tuple(_pos_embeddings[condensed_supervision_edge_type]))
-            if len(_pos_embeddings[condensed_supervision_edge_type])
-            else torch.tensor([])  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+        pos_embeddings[condensed_supervision_edge_type] = cast(
+            torch.FloatTensor,
+            (
+                torch.cat(tuple(_pos_embeddings[condensed_supervision_edge_type]))
+                if len(_pos_embeddings[condensed_supervision_edge_type])
+                else main_embeddings[condensed_supervision_target_node_type].new_empty(
+                    (
+                        0,
+                        main_embeddings[condensed_supervision_target_node_type].shape[
+                            -1
+                        ],
+                    )
+                )
+            ),
         )
-        hard_neg_embeddings[condensed_supervision_edge_type] = (
-            torch.cat(tuple(_hard_neg_embeddings[condensed_supervision_edge_type]))
-            if len(_hard_neg_embeddings[condensed_supervision_edge_type])
-            else torch.tensor([])  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
+        hard_neg_embeddings[condensed_supervision_edge_type] = cast(
+            torch.FloatTensor,
+            (
+                torch.cat(tuple(_hard_neg_embeddings[condensed_supervision_edge_type]))
+                if len(_hard_neg_embeddings[condensed_supervision_edge_type])
+                else main_embeddings[condensed_supervision_target_node_type].new_empty(
+                    (
+                        0,
+                        main_embeddings[condensed_supervision_target_node_type].shape[
+                            -1
+                        ],
+                    )
+                )
+            ),
         )
 
         repeated_anchor_embeddings[condensed_supervision_edge_type] = (
@@ -430,7 +459,7 @@ def infer_task_inputs(
                     candidate_embeddings,
                 )
                 if repeated_anchor_embeddings[condensed_supervision_edge_type].numel()
-                else torch.tensor([])
+                else candidate_embeddings.new_empty((0, candidate_embeddings.shape[0]))
             )
 
             batch_combined_scores[condensed_supervision_edge_type] = (

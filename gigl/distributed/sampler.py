@@ -23,12 +23,12 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         node: Int[torch.Tensor, " anchors"],
         input_type: Optional[Union[str, NodeType]],
         positive_label_by_edge_types: dict[
-            EdgeType, Int[torch.Tensor, " positive_labels"]
+            EdgeType, Int[torch.Tensor, "anchors positive_labels_per_anchor"]
         ],
         negative_label_by_edge_types: dict[
-            EdgeType, Int[torch.Tensor, " negative_labels"]
+            EdgeType, Int[torch.Tensor, "anchors negative_labels_per_anchor"]
         ],
-    ):
+    ) -> None:
         """
         Args:
             node (torch.Tensor): Anchor nodes to fanout from
@@ -42,11 +42,15 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
         self._negative_label_by_edge_types = negative_label_by_edge_types
 
     @property
-    def positive_label_by_edge_types(self) -> dict[EdgeType, torch.Tensor]:
+    def positive_label_by_edge_types(
+        self,
+    ) -> dict[EdgeType, Int[torch.Tensor, "anchors positive_labels_per_anchor"]]:
         return self._positive_label_by_edge_types
 
     @property
-    def negative_label_by_edge_types(self) -> dict[EdgeType, torch.Tensor]:
+    def negative_label_by_edge_types(
+        self,
+    ) -> dict[EdgeType, Int[torch.Tensor, "anchors negative_labels_per_anchor"]]:
         return self._negative_label_by_edge_types
 
     def __len__(self) -> int:

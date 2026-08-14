@@ -144,6 +144,12 @@ development.
   `forward` or `decode` methods, and loss interfaces. When adding Shape Contracts in a new module, add that module to
   `_SHAPE_CONTRACT_MODULES` in `tests/test_assets/runtime_type_checking.py` so tests enforce the contract. Do not add
   Shape Contracts to internal tensor operations or dynamic PyG containers unless they clarify a stable boundary.
+- Reuse axis names to express required size relationships. Use a leading space for a single named axis, an
+  underscore-prefixed axis for intentionally independent container dimensions, and an ellipsis only for tensors whose
+  rank is intentionally variable because of PyTorch broadcasting.
+- Numeric dimension sizes need not be known. Use a named axis to bind the runtime size, `_name` when the size must remain
+  independent, and `_` when the axis meaning is unknown. Use `...` only when variable rank is supported. Inspect the
+  boundary instead of guessing when rank is not established. See `CONTEXT.md` for runtime enforcement and failures.
 
 ### Docstrings
 
