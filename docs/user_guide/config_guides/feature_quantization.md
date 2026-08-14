@@ -45,21 +45,19 @@ def get_nodes_preprocessing_spec(
 ```
 
 `feature_keys` may name all or only some fields in `features_outputs`. Quantized and unquantized fields can be mixed;
-GiGL places both back into their original positions in the model input.
-
-After changing `feature_quantization_spec`, rerun preprocessing. Do not use artifacts produced with a different feature
-selection or bit width.
+GiGL places both back into their original positions in the model input. After changing `feature_quantization_spec`,
+rerun preprocessing.
 
 ## Choose a bit width
 
-GiGL supports `1`-, `2`-, `4`-, and `8`-bit compression per feature. Lower bit widths reduce the selected-feature data
-more and preserve less detail. Start with `4` bits. Use `8` bits when task quality is more important than data
-reduction; consider `2` or `1` bits only after validating task quality.
+GiGL supports `1`-, `2`-, `4`-, and `8`-bit compression per feature. Lower bit widths reduce the feature data more and
+preserve less detail. Start with `4` bits. Use `8` bits when task quality is more important than data reduction;
+consider `2` or `1` bits only after validating task quality.
 
 ## Expected effect and how to evaluate it
 
-Quantization reduces only the stored and transferred data for the selected fields. Unselected features, graph structure,
-labels, model parameters, and the feature tensor presented to the model are unchanged.
+Quantization reduces only the stored and transferred data for the selected fields. Unselected features, graph topology,
+labels, and model parameters are unchanged.
 
 Quantization can increase sampling-worker throughput when fetching node features or transferring hydrated subgraphs to
 the GPU is the bottleneck. If training is instead limited by neighborhood sampling, model forward passes, or
