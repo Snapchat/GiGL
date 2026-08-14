@@ -9,6 +9,7 @@ from typing import Literal, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.data.storage import EdgeStorage, NodeStorage
 from torch_geometric.typing import EdgeType, NodeType
@@ -471,6 +472,7 @@ def materialize_quantized_edge_features(
     edge_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
     ],
+    edge_dir: Literal["in", "out"] = "in",
 ) -> tuple[_GraphType, dict[str, torch.Tensor]]:
     """Materialize packed quantized edge features into PyG edge feature tensors.
 
@@ -486,6 +488,8 @@ def materialize_quantized_edge_features(
         edge_quantization_metadata: Quantization metadata for the graph's edge
             features. Homogeneous graphs require a single value; heterogeneous
             graphs require metadata for each edge type.
+        edge_dir: Sampling direction. GLT reverses heterogeneous output edge
+            stores when sampling outward.
 
     Returns:
         A tuple containing the graph with reconstructed edge features and the
@@ -529,16 +533,23 @@ def materialize_quantized_edge_features(
             dict[EdgeType, FeatureQuantizationMetadata], edge_quantization_metadata
         )
         for edge_type, quantization_metadata in edge_quantization_metadata.items():
-            metadata_key = f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{edge_type}"
+            output_edge_type = (
+                reverse_edge_type(edge_type) if edge_dir == "out" else edge_type
+            )
+            metadata_key = f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
             packed_features = metadata.pop(metadata_key, None)
             if packed_features is None:
-                if edge_type not in data.edge_types or data[edge_type].num_edges == 0:
+                if (
+                    output_edge_type not in data.edge_types
+                    or data[output_edge_type].num_edges == 0
+                ):
                     continue
                 raise ValueError(
-                    f"Missing packed quantized edge features for sampled edge type {edge_type}"
+                    "Missing packed quantized edge features for sampled edge type "
+                    f"{output_edge_type}"
                 )
             _materialize_quantized_features(
-                data[edge_type],
+                data[output_edge_type],
                 packed_features,
                 quantization_metadata,
                 feature_attribute="edge_attr",

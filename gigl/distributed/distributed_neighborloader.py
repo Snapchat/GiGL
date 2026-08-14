@@ -571,6 +571,7 @@ class DistNeighborLoader(BaseDistLoader):
             data=data,
             metadata=metadata,
             edge_quantization_metadata=self._edge_quantization_metadata,
+            edge_dir=self.edge_dir,
         )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the

@@ -156,14 +156,15 @@ class LoaderUtilsTest(TestCase):
         )
         self.assertEqual(remaining_metadata, {})
 
-    def test_materialize_quantized_edge_features_uses_effective_edge_type(
+    def test_materialize_quantized_edge_features_maps_outward_sampling_to_output_edge_type(
         self,
     ) -> None:
-        edge_type = ("item", "rev_to", "user")
+        source_edge_type = ("user", "to", "item")
+        output_edge_type = ("item", "rev_to", "user")
         data = HeteroData()
-        data[edge_type].edge_attr = torch.tensor([[10.0]])
+        data[output_edge_type].edge_attr = torch.tensor([[10.0]])
         metadata = {
-            f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{edge_type}": torch.tensor(
+            f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}": torch.tensor(
                 [[48]], dtype=torch.uint8
             )
         }
@@ -178,11 +179,12 @@ class LoaderUtilsTest(TestCase):
         materialized_data, remaining_metadata = materialize_quantized_edge_features(
             data=data,
             metadata=metadata,
-            edge_quantization_metadata={edge_type: quantization_metadata},
+            edge_quantization_metadata={source_edge_type: quantization_metadata},
+            edge_dir="out",
         )
 
         self.assert_tensor_equality(
-            materialized_data[edge_type].edge_attr,
+            materialized_data[output_edge_type].edge_attr,
             torch.tensor([[0.0, 10.0, 3.0]]),
         )
         self.assertEqual(remaining_metadata, {})

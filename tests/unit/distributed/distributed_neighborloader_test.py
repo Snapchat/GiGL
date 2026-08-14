@@ -5,6 +5,7 @@ import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
@@ -464,7 +465,6 @@ def _run_heterogeneous_partially_quantized_neighbor_loader(
         batch_size=1,
         pin_memory_device=torch.device("cpu"),
     )
-
     batch = next(iter(loader))
     assert isinstance(batch, HeteroData)
     for node_type, expected_features_for_node_type in expected_features.items():
@@ -1308,7 +1308,6 @@ def _run_heterogeneous_partially_quantized_edge_feature_neighbor_loader(
         batch_size=1,
         pin_memory_device=torch.device("cpu"),
     )
-
     batch = next(iter(loader))
     assert isinstance(batch, HeteroData)
     for edge_type, expected_features in expected_edge_features.items():
@@ -1354,7 +1353,9 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
     ) -> None:
         # Sampling user reaches both edge types. Only user-to-story has raw and
         # packed features, so story-to-user must not be looked up in either store.
-        expected_edge_features = {_USER_TO_STORY: torch.tensor([[0.0, 10.0]])}
+        expected_edge_features = {
+            reverse_edge_type(_USER_TO_STORY): torch.tensor([[0.0, 10.0]])
+        }
         partition_output = PartitionOutput(
             node_partition_book={_USER: torch.zeros(1), _STORY: torch.zeros(1)},
             edge_partition_book={_USER_TO_STORY: torch.zeros(1)},
