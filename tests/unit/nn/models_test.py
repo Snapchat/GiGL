@@ -14,7 +14,10 @@ from torchrec.distributed.model_parallel import (
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
-from tests.test_assets.distributed.utils import get_process_group_init_method
+from tests.test_assets.distributed.utils import (
+    create_test_process_group,
+    get_process_group_init_method,
+)
 from tests.test_assets.test_case import TestCase
 
 # Embedding table name for default homogeneous node type
@@ -117,9 +120,7 @@ class TestLinkPredictionGNN(TestCase):
         self.assertIs(model.decoder, decoder)
 
     def test_for_ddp(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         self.addCleanup(torch.distributed.destroy_process_group)
         encoder = DummyEncoder()
         decoder = DummyDecoder()
@@ -132,9 +133,7 @@ class TestLinkPredictionGNN(TestCase):
         self.assertTrue(hasattr(ddp_model.decoder, "module"))
 
     def test_unwrap_from_ddp(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         self.addCleanup(torch.distributed.destroy_process_group)
         encoder = DummyEncoder()
         decoder = DummyDecoder()

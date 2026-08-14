@@ -60,6 +60,7 @@ Example Usage:
 from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
+from jaxtyping import Bool, Float, Int
 from torch import Tensor
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
@@ -96,7 +97,7 @@ def heterodata_to_graph_transformer_input(
     batch_size: int,
     max_seq_len: int,
     anchor_node_type: NodeType,
-    anchor_node_ids: Optional[Tensor] = None,
+    anchor_node_ids: Optional[Int[Tensor, " anchors"]] = None,
     hop_distance: int = 2,
     sequence_construction_method: Literal["khop", "ppr"] = "khop",
     include_anchor_first: bool = True,
@@ -106,7 +107,11 @@ def heterodata_to_graph_transformer_input(
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
     relation_edge_types: Optional[list[GiGLEdgeType]] = None,
     sampling_direction: Literal["in", "out"] = "out",
-) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
+) -> tuple[
+    Float[Tensor, "anchors sequence feature_dim"],
+    Bool[Tensor, "anchors sequence"],
+    SequenceAuxiliaryData,
+]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
 

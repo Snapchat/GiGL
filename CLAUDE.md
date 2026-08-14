@@ -140,6 +140,10 @@ development.
 - Use `Final` for constants. Use `@dataclass(frozen=True)` for immutable data containers when named fields and a stable
   shape add real clarity; do not introduce a dataclass for tiny internal-only plumbing.
 - Always annotate empty containers: `names: list[str] = []` not `names = []`.
+- Use Jaxtyping dtype and named-shape annotations for tensors crossing loader or sampler boundaries, public model
+  `forward` or `decode` methods, and loss interfaces. When adding Shape Contracts in a new module, add that module to
+  `_SHAPE_CONTRACT_MODULES` in `tests/test_assets/runtime_type_checking.py` so tests enforce the contract. Do not add
+  Shape Contracts to internal tensor operations or dynamic PyG containers unless they clarify a stable boundary.
 
 ### Docstrings
 

@@ -2,6 +2,7 @@ from typing import Any, Final, Optional, Union
 
 import torch
 from graphlearn_torch.sampler import NodeSamplerInput
+from jaxtyping import Int
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.utils.share_memory import share_memory
@@ -19,10 +20,14 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
 
     def __init__(
         self,
-        node: torch.Tensor,
+        node: Int[torch.Tensor, " anchors"],
         input_type: Optional[Union[str, NodeType]],
-        positive_label_by_edge_types: dict[EdgeType, torch.Tensor],
-        negative_label_by_edge_types: dict[EdgeType, torch.Tensor],
+        positive_label_by_edge_types: dict[
+            EdgeType, Int[torch.Tensor, " positive_labels"]
+        ],
+        negative_label_by_edge_types: dict[
+            EdgeType, Int[torch.Tensor, " negative_labels"]
+        ],
     ):
         """
         Args:

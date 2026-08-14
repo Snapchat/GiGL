@@ -167,9 +167,9 @@ class RetrievalLossTest(TestCase):
             )
         )
 
-    def test_empty_loss(self):
+    def test_empty_loss(self) -> None:
         loss_fn = RetrievalLoss(remove_accidental_hits=True)
-        query_ids = torch.empty(0)
+        query_ids = torch.empty(0, dtype=torch.long)
         empty_scores = torch.empty((0, 5))
         candidate_ids = torch.tensor([0, 1, 2, 3, 4])
         expected_loss = torch.tensor(0.0)

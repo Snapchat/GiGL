@@ -49,6 +49,10 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
 
+from tests.test_assets.runtime_type_checking import install_runtime_typechecking
+
+install_runtime_typechecking()
+
 from google.cloud.aiplatform import PipelineJob
 
 from gigl import __version__

@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.data.hetero_data
+from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -442,12 +443,12 @@ class GraphTransformerEncoderLayer(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
+        x: Float[Tensor, "batch sequence model_dim"],
         attn_bias: Optional[Tensor] = None,
-        valid_mask: Optional[Tensor] = None,
-        pairwise_relation_indices: Optional[Tensor] = None,
+        valid_mask: Optional[Bool[Tensor, "batch sequence"]] = None,
+        pairwise_relation_indices: Optional[Int[Tensor, "relation_edges 4"]] = None,
         query_seq_len: Optional[int] = None,
-    ) -> Tensor:
+    ) -> Float[Tensor, "batch query_sequence model_dim"]:
         """Forward pass.
 
         Args:
@@ -1470,9 +1471,9 @@ class GraphTransformerEncoder(nn.Module):
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
         anchor_node_type: Optional[NodeType] = None,
-        anchor_node_ids: Optional[Tensor] = None,
+        anchor_node_ids: Optional[Int[Tensor, " anchors"]] = None,
         device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, "anchors output_dim"]:
         """Run the forward pass of the Graph Transformer encoder.
 
         Args:
