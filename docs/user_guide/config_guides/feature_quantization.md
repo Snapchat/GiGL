@@ -10,7 +10,7 @@ Establish an unquantized baseline first, then evaluate the same task with quanti
 For background on feature quantization for GNNs, see
 [BiFeat: Supercharge GNN Training via Graph Feature Quantization](https://arxiv.org/abs/2207.14696).
 
-## Enable quantization
+## Enable node-feature quantization
 
 In your preprocessor setup, add `feature_quantization_spec` to the relevant `NodeDataPreprocessingSpec` returned from
 `get_nodes_preprocessing_spec`:
@@ -35,7 +35,7 @@ def get_nodes_preprocessing_spec(
             preprocessing_fn=preprocessing_fn,
             identifier_output=node_output_id,
             features_outputs=feature_outputs,
-            # New: configure reduced-precision storage for selected node features.
+            # Quantize all three scalar node features.
             feature_quantization_spec=FeatureQuantizationSpec(
                 feature_keys=feature_outputs,
                 bits=4,
@@ -48,6 +48,56 @@ def get_nodes_preprocessing_spec(
 GiGL places both back into their original positions in the model input. After changing `feature_quantization_spec`,
 rerun preprocessing.
 
+## Enable edge-feature quantization
+
+Add the same `feature_quantization_spec` to a main edge's `EdgeDataPreprocessingSpec` returned from
+`get_edges_preprocessing_spec`:
+
+```python
+from gigl.src.data_preprocessor.lib.types import (
+    EdgeDataPreprocessingSpec,
+    FeatureQuantizationSpec,
+)
+
+
+def get_edges_preprocessing_spec(
+    self,
+) -> dict[EdgeDataReference, EdgeDataPreprocessingSpec]:
+    edge_feature_outputs = ["match_score", "recency_days", "event_type"]
+
+    return {
+        main_edge_data_ref: EdgeDataPreprocessingSpec(
+            feature_spec_fn=feature_spec_fn,
+            preprocessing_fn=preprocessing_fn,
+            identifier_output=edge_output_id,
+            features_outputs=edge_feature_outputs,
+            # Keep event_type raw while quantizing two scalar edge features.
+            feature_quantization_spec=FeatureQuantizationSpec(
+                feature_keys=["match_score", "recency_days"],
+                bits=8,
+            ),
+        ),
+    }
+```
+
+Edge quantization is supported only for references with `EdgeUsageType.MAIN`. Positive and negative supervision edges
+cannot be quantized. A feature used as a sampling weight must also remain raw so the sampler can consume it directly.
+GiGL reconstructs selected main-edge fields into their original positions in `edge_attr` before the model receives a
+sampled batch.
+
+## Configure each node and edge type independently
+
+`feature_quantization_spec` belongs to one `NodeDataPreprocessingSpec` or `EdgeDataPreprocessingSpec`, not to the graph
+as a whole. Each node or main-edge reference can therefore select its own `feature_keys` and `bits`. For example, one
+node type can use 4-bit quantization, one main-edge type can use 8-bit quantization for a different feature subset, and
+another type can remain unquantized by omitting `feature_quantization_spec`.
+
+| Preprocessing spec     | Selected features             | Bit width   |
+| ---------------------- | ----------------------------- | ----------- |
+| User node              | `activity_score`              | 4           |
+| Item node              | None                          | Unquantized |
+| User-to-item main edge | `match_score`, `recency_days` | 8           |
+
 ## Choose a bit width
 
 GiGL supports `1`-, `2`-, `4`-, and `8`-bit compression per feature. Lower bit widths reduce the feature data more and
@@ -59,10 +109,10 @@ consider `2` or `1` bits only after validating task quality.
 Quantization reduces only the stored and transferred data for the selected fields. Unselected features, graph topology,
 labels, and model parameters are unchanged.
 
-Quantization can increase sampling-worker throughput when fetching node features or transferring hydrated subgraphs to
-the GPU is the bottleneck. If training is instead limited by neighborhood sampling, model forward passes, or
-backpropagation, do not expect a material throughput increase. Quantization can still reduce peak RAM for graph data, in
-proportion to the share occupied by the selected features.
+Quantization can increase sampling-worker throughput when fetching node or edge features, or when transferring hydrated
+subgraphs to the GPU is the bottleneck. If training is instead limited by neighborhood sampling, model forward passes,
+or backpropagation, do not expect a material throughput increase. Quantization can still reduce peak RAM for graph data,
+in proportion to the share occupied by the selected features.
 
 Quantization is lossy, so it can change task quality. Compare task quality with an unquantized baseline before adopting
 a setting.
@@ -71,10 +121,10 @@ a setting.
 
 ### What can I quantize?
 
-Select distinct floating-point outputs from `preprocessing_fn` that are also listed in `features_outputs`. Do not select
-vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one three-dimensional output and cannot be quantized
-directly. Expose its elements as separate scalar outputs such as `embedding_0`, `embedding_1`, and `embedding_2` before
-selecting them.
+Select distinct floating-point node or main-edge outputs from `preprocessing_fn` that are also listed in
+`features_outputs`. Do not select vector-valued outputs. For example, `embedding=[0.1, 0.2, 0.3]` is one
+three-dimensional output and cannot be quantized directly. Expose its elements as separate scalar outputs such as
+`embedding_0`, `embedding_1`, and `embedding_2` before selecting them.
 
 ### Can I quantize only some features?
 
@@ -93,7 +143,7 @@ feature_quantization_spec = FeatureQuantizationSpec(
 ### Do I need to change my model or loader?
 
 No model or loader configuration is required. GiGL writes the quantization metadata during preprocessing and
-reconstructs an approximate floating-point feature tensor before it reaches the model.
+reconstructs approximate floating-point `x` and `edge_attr` tensors before they reach the model.
 
 ### Will quantization make training faster?
 
@@ -102,10 +152,11 @@ work. It is most useful when storing or transferring those features is a materia
 
 ### Does this support edge features?
 
-No. The current API supports node features only.
+Yes. Add `feature_quantization_spec` to an `EdgeDataPreprocessingSpec` for main edges. Label-edge features and edge
+sampling weights must remain unquantized.
 
 ### Will quantization lower GPU requirements?
 
-Not for the model input. GiGL reconstructs the feature tensor before it reaches the model, so its per-batch dimension
-and floating-point memory requirement are unchanged. Quantization can still reduce feature storage and transfer before
-that reconstruction.
+Not for model inputs. GiGL reconstructs node and edge feature tensors before they reach the model, so their per-batch
+dimensions and floating-point memory requirements are unchanged. Quantization can still reduce feature storage,
+transfer, and host RAM before that reconstruction.
