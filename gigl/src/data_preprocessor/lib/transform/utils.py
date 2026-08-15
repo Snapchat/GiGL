@@ -28,6 +28,8 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     NodeDataReference,
 )
 from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    EDGE_PACKED_FEATURE_KEY,
+    NODE_PACKED_FEATURE_KEY,
     apply_feature_quantization_transform,
 )
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
@@ -372,9 +374,15 @@ def get_load_data_and_transform_pipeline_component(
             else analyzed_transform_fn[1].deferred_metadata  # type: ignore
         )
         quantization_spec: FeatureQuantizationSpec | None = None
-        if isinstance(preprocessing_spec, NodeDataPreprocessingSpec):
+        if isinstance(
+            preprocessing_spec, (NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec)
+        ):
             quantization_spec = preprocessing_spec.feature_quantization_spec
         if quantization_spec is not None:
+            if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
+                packed_feature_key = EDGE_PACKED_FEATURE_KEY
+            else:
+                packed_feature_key = NODE_PACKED_FEATURE_KEY
             transformed_features, resolved_transformed_metadata = (
                 apply_feature_quantization_transform(
                     logical_features=transformed_features,
@@ -384,6 +392,7 @@ def get_load_data_and_transform_pipeline_component(
                     ),
                     quantization_spec=quantization_spec,
                     quantization_metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    packed_feature_key=packed_feature_key,
                 )
             )
 
