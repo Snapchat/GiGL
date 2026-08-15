@@ -33,18 +33,11 @@ def _build_serialized_tfrecord_entity_info(
         entity_key (Union[str, Tuple[str, str]]): Entity key to register to SerializedTFRecordInfo, is a str if Node entity or Tuple[str, str] if Edge entity
         tfrecord_uri_pattern (str): Regex pattern for loading serialized tf records
         quantization_metadata (Optional[FeatureQuantizationMetadata]): Quantization
-            metadata for a node entity, when its features are quantized.
+            metadata for a node or main-edge entity when its features are quantized.
     Returns:
         SerializedTFRecordInfo: Stored metadata for current entity
     """
     if quantization_metadata is not None:
-        if not isinstance(
-            preprocessed_metadata, PreprocessedMetadata.NodeMetadataOutput
-        ):
-            # TODO(quantization): Support edge feature quantization.
-            raise NotImplementedError(
-                "Feature quantization is not supported for edge entities."
-            )
         packed_feature_key = (
             preprocessed_metadata.quantized_feature_metadata.packed_feature_key
         )
@@ -146,6 +139,7 @@ def convert_pb_to_serialized_graph_metadata(
     positive_label_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
     negative_label_entity_info: dict[EdgeType, SerializedTFRecordInfo] = {}
     node_quantization_metadata: dict[NodeType, FeatureQuantizationMetadata] = {}
+    edge_quantization_metadata: dict[EdgeType, FeatureQuantizationMetadata] = {}
 
     preprocessed_metadata_pb = preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
 
@@ -202,11 +196,19 @@ def convert_pb_to_serialized_graph_metadata(
             edge_feature_spec_dict = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_schema_map[
                 condensed_edge_type
             ].feature_spec
+            if edge_metadata.main_edge_info.HasField("quantized_feature_metadata"):
+                edge_quantization_metadata[edge_type] = (
+                    _build_feature_quantization_metadata(
+                        quantized_metadata=edge_metadata.main_edge_info.quantized_feature_metadata,
+                        feature_dim=edge_metadata.main_edge_info.feature_dim,
+                    )
+                )
             edge_entity_info[edge_type] = _build_serialized_tfrecord_entity_info(
                 preprocessed_metadata=edge_metadata.main_edge_info,
                 feature_spec_dict=edge_feature_spec_dict,
                 entity_key=edge_key,
                 tfrecord_uri_pattern=tfrecord_uri_pattern,
+                quantization_metadata=edge_quantization_metadata.get(edge_type),
             )
 
         if edge_metadata.HasField("positive_edge_info"):
@@ -251,6 +253,9 @@ def convert_pb_to_serialized_graph_metadata(
             node_quantization_metadata=to_homogeneous(node_quantization_metadata)
             if len(node_quantization_metadata) > 0
             else None,
+            edge_quantization_metadata=to_homogeneous(edge_quantization_metadata)
+            if len(edge_quantization_metadata) > 0
+            else None,
         )
     else:
         return SerializedGraphMetadata(
@@ -264,5 +269,8 @@ def convert_pb_to_serialized_graph_metadata(
             else None,
             node_quantization_metadata=node_quantization_metadata
             if len(node_quantization_metadata) > 0
+            else None,
+            edge_quantization_metadata=edge_quantization_metadata
+            if len(edge_quantization_metadata) > 0
             else None,
         )

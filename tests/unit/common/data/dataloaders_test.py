@@ -19,6 +19,7 @@ from gigl.common.data.dataloaders import (
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     load_torch_tensors_from_tf_record,
+    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
@@ -29,6 +30,7 @@ from gigl.src.mocking.lib.versioning import (
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
+from gigl.types.graph import FeatureQuantizationMetadata
 from tests.test_assets.test_case import TestCase
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
@@ -642,6 +644,91 @@ class TFRecordDataLoaderTest(TestCase):
         assert_close(
             loaded.edge_features[:, 0].sort().values,
             torch.tensor(sorted(edge_feature_vals), dtype=torch.float32),
+        )
+
+    def test_load_edge_weights_rejects_non_raw_field_before_loading(self) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            ),
+            edge_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={
+                    "src_id": tf.io.FixedLenFeature([], tf.int64),
+                    "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                    "edge_packed_features": tf.io.FixedLenFeature([], tf.string),
+                },
+                feature_keys=[],
+                feature_dim=0,
+                entity_key=("src_id", "dst_id"),
+                packed_feature_key="edge_packed_features",
+                packed_feature_dim=1,
+            ),
+        )
+
+        with self.assertRaises(ValueError):
+            load_torch_tensors_from_tf_record(
+                tf_record_dataloader=TFRecordDataLoader(rank=0, world_size=1),
+                serialized_graph_metadata=serialized_graph_metadata,
+                should_load_tensors_in_parallel=False,
+                weight_edge_feat_name="quantized_weight",
+            )
+
+    def test_sampling_weight_removal_updates_edge_quantization_metadata(
+        self,
+    ) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            ),
+            edge_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={
+                    "src_id": tf.io.FixedLenFeature([], tf.int64),
+                    "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                    "raw_embedding": tf.io.FixedLenFeature([2], tf.float32),
+                    "weight": tf.io.FixedLenFeature([], tf.float32),
+                    "edge_packed_features": tf.io.FixedLenFeature([], tf.string),
+                },
+                feature_keys=["raw_embedding", "weight"],
+                feature_dim=3,
+                entity_key=("src_id", "dst_id"),
+                packed_feature_key="edge_packed_features",
+                packed_feature_dim=1,
+            ),
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=4,
+                quantized_feature_indices=(3,),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+
+        adjusted_metadata = remove_sampling_weight_from_edge_quantization_metadata(
+            serialized_graph_metadata=serialized_graph_metadata,
+            weight_edge_feat_name="weight",
+        )
+
+        self.assertEqual(
+            adjusted_metadata,
+            FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=3,
+                quantized_feature_indices=(2,),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
         )
 
     def test_load_edge_weights_multidim_feature(self):

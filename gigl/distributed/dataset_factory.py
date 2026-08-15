@@ -194,6 +194,10 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
         )
+    if loaded_graph_tensors.edge_quantized_features is not None:
+        partitioner.register_edge_quantized_features(
+            edge_quantized_features=loaded_graph_tensors.edge_quantized_features
+        )
     if loaded_graph_tensors.positive_label is not None:
         partitioner.register_labels(
             label_edge_index=loaded_graph_tensors.positive_label, is_positive=True
@@ -212,6 +216,7 @@ def _load_and_build_partitioned_dataset(
         loaded_graph_tensors.node_quantized_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
+        loaded_graph_tensors.edge_quantized_features,
         loaded_graph_tensors.edge_weights,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,

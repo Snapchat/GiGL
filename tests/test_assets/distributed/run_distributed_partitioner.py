@@ -22,6 +22,9 @@ class InputDataStrategy(Enum):
     REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES = (
         "REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES"
     )
+    REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES = (
+        "REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES"
+    )
 
 
 def run_distributed_partitioner(
@@ -95,7 +98,29 @@ def run_distributed_partitioner(
     init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
     dist_partitioner: DistPartitioner
 
-    if input_data_strategy in (
+    if (
+        input_data_strategy
+        == InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES
+    ):
+        dist_partitioner = partitioner_class(
+            should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+        )
+        dist_partitioner.register_node_ids(node_ids=node_ids)
+        dist_partitioner.register_edge_index(edge_index=edge_index)
+        edge_quantized_features: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+        if isinstance(edge_index, dict):
+            edge_index_by_type = cast(dict[EdgeType, torch.Tensor], edge_index)
+            edge_quantized_features = {
+                edge_type: indices[0].to(torch.uint8).unsqueeze(1)
+                for edge_type, indices in edge_index_by_type.items()
+            }
+        else:
+            edge_quantized_features = edge_index[0].to(torch.uint8).unsqueeze(1)
+        dist_partitioner.register_edge_quantized_features(
+            edge_quantized_features=edge_quantized_features
+        )
+        partition_output = dist_partitioner.partition()
+    elif input_data_strategy in (
         InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
         InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
     ):
@@ -119,6 +144,7 @@ def run_distributed_partitioner(
         (
             output_edge_index,
             output_edge_features,
+            _,
             output_edge_partition_book,
         ) = dist_partitioner.partition_edge_index_and_edge_features(
             node_partition_book=output_node_partition_book
@@ -181,6 +207,7 @@ def run_distributed_partitioner(
         (
             output_graph,
             output_edge_features,
+            _,
             output_edge_partition_book,
         ) = dist_partitioner.partition_edge_index_and_edge_features(
             node_partition_book=output_node_partition_book
