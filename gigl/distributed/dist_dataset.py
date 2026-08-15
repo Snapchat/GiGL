@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union, overload
+from typing import Literal, Optional, Tuple, TypeVar, Union, cast, overload
 
 import graphlearn_torch as glt
 import torch
@@ -58,6 +58,9 @@ class DistDataset(glt.distributed.DistDataset):
         node_quantized_feature_partition: Optional[
             Union[Feature, dict[NodeType, Feature]]
         ] = None,
+        edge_quantized_feature_partition: Optional[
+            Union[Feature, dict[EdgeType, Feature]]
+        ] = None,
         edge_feature_partition: Optional[
             Union[Feature, dict[EdgeType, Feature]]
         ] = None,
@@ -85,6 +88,11 @@ class DistDataset(glt.distributed.DistDataset):
             Union[
                 FeatureQuantizationMetadata,
                 dict[NodeType, FeatureQuantizationMetadata],
+            ]
+        ] = None,
+        edge_quantization_metadata: Optional[
+            Union[
+                FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]
             ]
         ] = None,
         edge_feature_info: Optional[
@@ -166,6 +174,8 @@ class DistDataset(glt.distributed.DistDataset):
 
         self._node_quantized_features = node_quantized_feature_partition
         self._node_quantization_metadata = node_quantization_metadata
+        self._edge_quantized_features = edge_quantized_feature_partition
+        self._edge_quantization_metadata = edge_quantization_metadata
 
         self._degree_tensor: Optional[
             Union[torch.Tensor, dict[NodeType, torch.Tensor]]
@@ -254,6 +264,13 @@ class DistDataset(glt.distributed.DistDataset):
         self._edge_features = new_edge_features
 
     @property
+    def edge_quantized_features(
+        self,
+    ) -> Optional[Union[Feature, dict[EdgeType, Feature]]]:
+        """Packed uint8 main-edge feature sidecar."""
+        return self._edge_quantized_features
+
+    @property
     def node_pb(
         self,
     ) -> Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]:
@@ -339,6 +356,15 @@ class DistDataset(glt.distributed.DistDataset):
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ]:
         return self._node_quantization_metadata
+
+    @property
+    def edge_quantization_metadata(
+        self,
+    ) -> Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
+    ]:
+        """Metadata required to materialize packed main-edge features."""
+        return self._edge_quantization_metadata
 
     @property
     def edge_feature_info(
@@ -899,6 +925,43 @@ class DistDataset(glt.distributed.DistDataset):
             )
             logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
+    def _initialize_edge_quantized_features(
+        self,
+        edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
+        partitioned_edge_quantized_features: Optional[
+            Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
+        ],
+    ) -> None:
+        """Initialize packed uint8 main-edge feature storage."""
+        features, id_to_index = _prepare_feature_data(
+            partition_book=edge_partition_book,
+            partitioned_data=partitioned_edge_quantized_features,
+        )
+        if features is None or id_to_index is None:
+            logger.info("Found no packed quantized edge features to initialize")
+            return
+        if isinstance(features, Mapping):
+            assert isinstance(id_to_index, Mapping)
+            features = cast(dict[EdgeType, torch.Tensor], features)
+            id_to_index = cast(dict[EdgeType, torch.Tensor], id_to_index)
+            self._edge_quantized_features = {
+                edge_type: Feature(
+                    feature_tensor=features_per_edge_type,
+                    id2index=id_to_index[edge_type],
+                    with_gpu=False,
+                    dtype=torch.uint8,
+                )
+                for edge_type, features_per_edge_type in features.items()
+            }
+        else:
+            assert not isinstance(id_to_index, Mapping)
+            self._edge_quantized_features = Feature(
+                feature_tensor=features,
+                id2index=id_to_index,
+                with_gpu=False,
+                dtype=torch.uint8,
+            )
+
     def build(
         self,
         partition_output: PartitionOutput,
@@ -1011,6 +1074,13 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output.partitioned_edge_features = None
         gc.collect()
 
+        self._initialize_edge_quantized_features(
+            edge_partition_book=partition_output.edge_partition_book,
+            partitioned_edge_quantized_features=partition_output.partitioned_edge_quantized_features,
+        )
+        partition_output.partitioned_edge_quantized_features = None
+        gc.collect()
+
         self._node_partition_book = partition_output.node_partition_book
         self._edge_partition_book = partition_output.edge_partition_book
 
@@ -1037,6 +1107,7 @@ class DistDataset(glt.distributed.DistDataset):
         Optional[Union[Feature, dict[NodeType, Feature]]],
         Optional[Union[Feature, dict[NodeType, Feature]]],
         Optional[Union[Feature, dict[EdgeType, Feature]]],
+        Optional[Union[Feature, dict[EdgeType, Feature]]],
         Optional[Union[Feature, dict[NodeType, Feature]]],
         Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]],
         Optional[Union[PartitionBook, dict[EdgeType, PartitionBook]]],
@@ -1053,6 +1124,12 @@ class DistDataset(glt.distributed.DistDataset):
                 dict[NodeType, FeatureQuantizationMetadata],
             ]
         ],
+        Optional[
+            Union[
+                FeatureQuantizationMetadata,
+                dict[EdgeType, FeatureQuantizationMetadata],
+            ]
+        ],
         Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]],
         Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
         Optional[int],
@@ -1067,6 +1144,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[Graph, dict[EdgeType, Graph]]]: Partitioned Graph Data
             Optional[Union[Feature, dict[NodeType, Feature]]]: Partitioned Node Feature Data
             Optional[Union[Feature, dict[NodeType, Feature]]]: Partitioned packed uint8 node feature data
+            Optional[Union[Feature, dict[EdgeType, Feature]]]: Partitioned packed uint8 edge feature data
             Optional[Union[Feature, dict[EdgeType, Feature]]]: Partitioned Edge Feature Data
             Optional[Union[Feature, dict[NodeType, Feature]]]: Node labels on the current machine. Will be a dict if heterogeneous.
             Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Node Partition Book Tensor
@@ -1079,6 +1157,7 @@ class DistDataset(glt.distributed.DistDataset):
             Optional[Union[int, dict[NodeType, int]]]: Number of test nodes on the current machine. Will be a dict if heterogeneous.
             Optional[Union[FeatureInfo, dict[NodeType, FeatureInfo]]]: Node feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]]: Node quantization metadata.
+            Optional[Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]]: Edge quantization metadata.
             Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]: Edge feature dim and its data type, will be a dict if heterogeneous
             Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]]: Degree tensors
             Optional[int]: Optional per-anchor label cap for ABLP label fetching
@@ -1100,6 +1179,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._graph,
             self._node_features,
             self._node_quantized_features,
+            self._edge_quantized_features,
             self._edge_features,
             self._node_labels,
             self._node_partition_book,
@@ -1112,6 +1192,7 @@ class DistDataset(glt.distributed.DistDataset):
             self._num_test,  # Additional field unique to DistDataset class
             self._node_feature_info,  # Additional field unique to DistDataset class
             self._node_quantization_metadata,  # Additional field unique to DistDataset class
+            self._edge_quantization_metadata,  # Additional field unique to DistDataset class
             self._edge_feature_info,  # Additional field unique to DistDataset class
             self._degree_tensor,  # Additional field unique to DistDataset class
             self._max_labels_per_anchor_node,  # Additional field unique to DistDataset class
@@ -1350,6 +1431,9 @@ def _rebuild_distributed_dataset(
         ],  # Partitioned packed uint8 node feature data
         Optional[
             Union[Feature, dict[EdgeType, Feature]]
+        ],  # Partitioned packed uint8 edge feature data
+        Optional[
+            Union[Feature, dict[EdgeType, Feature]]
         ],  # Partitioned Edge Feature Data
         Optional[Union[Feature, dict[NodeType, Feature]]],  # Node Labels
         Optional[
@@ -1377,6 +1461,12 @@ def _rebuild_distributed_dataset(
                 dict[NodeType, FeatureQuantizationMetadata],
             ]
         ],  # Node quantization metadata
+        Optional[
+            Union[
+                FeatureQuantizationMetadata,
+                dict[EdgeType, FeatureQuantizationMetadata],
+            ]
+        ],  # Edge quantization metadata
         Optional[
             Union[FeatureInfo, dict[EdgeType, FeatureInfo]]
         ],  # Edge feature dim and its data type

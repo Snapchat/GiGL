@@ -218,6 +218,16 @@ def _run_quantized_homogeneous_ablp_loader(_: int, dataset: DistDataset) -> None
     for batch in loader:
         assert isinstance(batch, Data)
         assert_tensor_equality(batch.x, expected_features[batch.node])
+        expected_edge_features = {
+            (0, 1): torch.tensor([0.0, 3.0]),
+            (1, 0): torch.tensor([2.0, 1.0]),
+        }
+        for local_edge_index, edge_feature in zip(batch.edge_index.T, batch.edge_attr):
+            source, destination = batch.node[local_edge_index]
+            assert_tensor_equality(
+                edge_feature,
+                expected_edge_features[(source.item(), destination.item())],
+            )
         assert _global_pair_set(batch.node, batch.node, batch.y_positive) == [(0, 1)]
         assert _global_pair_set(batch.node, batch.node, batch.y_negative) == [(0, 2)]
         batch_count += 1
@@ -776,6 +786,7 @@ class DistABLPLoaderTest(TestCase):
             node_labels=None,
             edge_index=torch.tensor([[0, 1], [1, 0]]),
             edge_features=None,
+            edge_quantized_features=torch.tensor([[48], [144]], dtype=torch.uint8),
             positive_label=torch.tensor([[0], [1]]),
             negative_label=torch.tensor([[0], [2]]),
         )
@@ -792,12 +803,16 @@ class DistABLPLoaderTest(TestCase):
         assert isinstance(loaded_graph_tensors.edge_index, dict)
         assert isinstance(loaded_graph_tensors.node_features, dict)
         assert isinstance(loaded_graph_tensors.node_quantized_features, dict)
+        assert isinstance(loaded_graph_tensors.edge_quantized_features, dict)
         edge_index = cast(dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_index)
         node_features = cast(
             dict[NodeType, torch.Tensor], loaded_graph_tensors.node_features
         )
         node_quantized_features = cast(
             dict[NodeType, torch.Tensor], loaded_graph_tensors.node_quantized_features
+        )
+        edge_quantized_features = cast(
+            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_quantized_features
         )
         partition_output = PartitionOutput(
             node_partition_book={DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3)},
@@ -820,6 +835,12 @@ class DistABLPLoaderTest(TestCase):
                     ids=torch.arange(3),
                 )
             },
+            partitioned_edge_quantized_features={
+                DEFAULT_HOMOGENEOUS_EDGE_TYPE: FeaturePartitionData(
+                    feats=edge_quantized_features[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
+                    ids=torch.arange(2),
+                )
+            },
             partitioned_edge_features=None,
             partitioned_negative_labels=None,
             partitioned_positive_labels=None,
@@ -830,6 +851,13 @@ class DistABLPLoaderTest(TestCase):
             world_size=1,
             edge_dir="out",
             node_quantization_metadata=quantization_metadata,
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=2,
+                quantized_feature_indices=(0, 1),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
         )
         dataset.build(partition_output=partition_output)
 
