@@ -86,6 +86,7 @@ from typing import Literal, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from jaxtyping import Float
 from torch_geometric.data import HeteroData
 
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
@@ -263,7 +264,7 @@ def _compute_loss(
     supervision_edge_type: EdgeType,
     edge_dir: str,
     device: torch.device,
-) -> torch.Tensor:
+) -> Float[torch.Tensor, ""]:
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:

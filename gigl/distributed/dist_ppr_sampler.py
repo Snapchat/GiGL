@@ -21,7 +21,7 @@ from graphlearn_torch.sampler import (
 )
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict, reverse_edge_type
-from jaxtyping import Int
+from jaxtyping import Int32
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.utils.dist_typed_sampler import (
@@ -234,8 +234,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         enable_residual_topup: bool = True,
         num_neighbors_per_hop: int = 100_000,
         degree_tensors: Union[
-            Int[torch.Tensor, " nodes"],
-            dict[NodeType, Int[torch.Tensor, " _nodes"]],
+            Int32[torch.Tensor, "nodes"],
+            dict[NodeType, Int32[torch.Tensor, "_nodes"]],
         ],
         max_fetch_iterations: Optional[int] = None,
         typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None,

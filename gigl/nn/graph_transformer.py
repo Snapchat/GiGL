@@ -12,13 +12,13 @@ replacement as the encoder in ``LinkPredictionGNN``.
 """
 
 import math
-from typing import Callable, Literal, Optional, cast
+from typing import Callable, Literal, Optional, Union, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.data.hetero_data
-from jaxtyping import Bool, Float, Int
+from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -446,10 +446,11 @@ class GraphTransformerEncoderLayer(nn.Module):
     def forward(
         self,
         x: Float[Tensor, "batch sequence model_dim"],
-        # The bias may use any PyTorch-broadcastable rank, so only its dtype is stable.
-        attn_bias: Optional[Float[Tensor, "..."]] = None,
+        attn_bias: Optional[
+            Union[Float[Tensor, ""], Float[Tensor, "... #sequence"]]
+        ] = None,
         valid_mask: Optional[Bool[Tensor, "batch sequence"]] = None,
-        pairwise_relation_indices: Optional[Int[Tensor, "relation_edges 4"]] = None,
+        pairwise_relation_indices: Optional[Int64[Tensor, "relation_edges 4"]] = None,
         query_seq_len: Optional[int] = None,
     ) -> Float[Tensor, "batch query_sequence model_dim"]:
         """Forward pass.
@@ -1474,7 +1475,7 @@ class GraphTransformerEncoder(nn.Module):
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
         anchor_node_type: Optional[NodeType] = None,
-        anchor_node_ids: Optional[Int[Tensor, " anchors"]] = None,
+        anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
         device: Optional[torch.device] = None,
     ) -> Float[torch.Tensor, "anchors output_dim"]:
         """Run the forward pass of the Graph Transformer encoder.

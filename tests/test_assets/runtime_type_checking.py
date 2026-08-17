@@ -1,47 +1,28 @@
 """Install test-only runtime checks for GiGL tensor Shape Contracts.
 
 Test launchers call ``install_runtime_typechecking()`` before test discovery.
-Jaxtyping then instruments the listed modules as they are imported, and Beartype
-checks only annotations containing Jaxtyping array types when those calls run.
-Production imports do not install this hook.
+Jaxtyping then instruments GiGL and example modules as they are imported, and
+Typeguard checks only annotations containing Jaxtyping array types when those
+calls run. Production imports do not install this hook.
 """
 
-from collections.abc import Callable
-from typing import Any, Final, Optional, get_args
+from functools import reduce
+from operator import or_
+from types import FunctionType, UnionType
+from typing import Any, Final, Optional, Union, cast, get_args, get_origin
 
-from beartype import beartype
 from jaxtyping import AbstractArray, install_import_hook
+from typeguard import typechecked
 
-_SHAPE_CONTRACT_MODULES: Final[tuple[str, ...]] = (
-    "gigl.distributed.base_sampler",
-    "gigl.distributed.dist_ablp_neighborloader",
-    "gigl.distributed.dist_ppr_sampler",
-    "gigl.distributed.distributed_neighborloader",
-    "gigl.distributed.sampler",
-    "gigl.nn.graph_transformer",
-    "gigl.nn.loss",
-    "gigl.nn.models",
-    "gigl.src.common.models.layers.decoder",
-    "gigl.src.common.models.layers.feature_interaction",
-    "gigl.src.common.models.layers.loss",
-    "gigl.src.common.models.layers.task",
-    "gigl.src.common.models.pyg.heterogeneous",
-    "gigl.src.common.models.pyg.homogeneous",
-    "gigl.src.common.models.pyg.link_prediction",
-    "gigl.src.common.models.pyg.nn.models.feature_embedding",
-    "gigl.src.common.models.pyg.nn.models.feature_interaction",
-    "gigl.src.common.models.pyg.nn.models.jumping_knowledge",
-    "gigl.src.common.types.task_inputs",
-    "gigl.transforms.graph_transformer",
-)
+_SHAPE_CONTRACT_PACKAGES: Final[tuple[str, ...]] = ("gigl", "examples")
 
 _import_hook: Optional[object] = None
 
 
 def shape_contract_typechecker(
-    function: Callable[..., Any],
-) -> Callable[..., Any]:
-    """Apply Beartype only to annotations containing Jaxtyping arrays.
+    function: FunctionType,
+) -> FunctionType:
+    """Apply Typeguard only to annotations containing Jaxtyping arrays.
 
     Args:
         function: Function imported from a Shape Contract module.
@@ -55,17 +36,51 @@ def shape_contract_typechecker(
             return True
         return any(contains_shape_contract(arg) for arg in get_args(annotation))
 
+    def retain_shape_contract(annotation: object) -> object:
+        if isinstance(annotation, type) and issubclass(annotation, AbstractArray):
+            return annotation
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        if not args or origin is None:
+            return annotation
+        if origin in (Union, UnionType):
+            retained_args = tuple(
+                retain_shape_contract(arg) if contains_shape_contract(arg) else arg
+                for arg in args
+            )
+        else:
+            # Existing non-shape members are outside this test-only contract and
+            # may contain forward references Typeguard cannot resolve here.
+            retained_args = tuple(
+                retain_shape_contract(arg) if contains_shape_contract(arg) else Any
+                for arg in args
+            )
+        if hasattr(annotation, "copy_with"):
+            return cast(Any, annotation).copy_with(retained_args)
+        if origin is UnionType:
+            return reduce(or_, retained_args)
+        return origin[retained_args]
+
     annotations = function.__annotations__
     shape_annotations = {
-        name: annotation
+        name: retain_shape_contract(annotation)
         for name, annotation in annotations.items()
         if contains_shape_contract(annotation)
     }
-    function.__annotations__ = shape_annotations
-    try:
-        wrapped_function = beartype(function)
-    finally:
-        function.__annotations__ = annotations
+    if not shape_annotations:
+        return function
+    # Typeguard reads annotations again at call time. A private function copy
+    # keeps its shape-only view from replacing the public API annotations.
+    checking_function = FunctionType(
+        function.__code__,
+        function.__globals__,
+        function.__name__,
+        function.__defaults__,
+        function.__closure__,
+    )
+    checking_function.__annotations__ = shape_annotations
+    checking_function.__kwdefaults__ = function.__kwdefaults__
+    wrapped_function = typechecked(checking_function)
     wrapped_function.__annotations__ = annotations
     return wrapped_function
 
@@ -81,7 +96,7 @@ def install_runtime_typechecking() -> None:
     global _import_hook
     if _import_hook is None:
         _import_hook = install_import_hook(
-            modules=_SHAPE_CONTRACT_MODULES,
+            modules=_SHAPE_CONTRACT_PACKAGES,
             typechecker=(
                 "tests.test_assets.runtime_type_checking.shape_contract_typechecker"
             ),

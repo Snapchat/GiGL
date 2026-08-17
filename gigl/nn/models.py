@@ -2,7 +2,7 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float, Int
+from jaxtyping import Float, Int64
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.conv import LGConv
@@ -220,7 +220,7 @@ class LightGCN(nn.Module):
         data: Union[Data, HeteroData],
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-        anchor_node_ids: Optional[Int[torch.Tensor, " anchors"]] = None,
+        anchor_node_ids: Optional[Int64[torch.Tensor, "anchors"]] = None,
     ) -> Union[
         Float[torch.Tensor, "_nodes embedding_dim"],
         dict[NodeType, Float[torch.Tensor, "_nodes embedding_dim"]],

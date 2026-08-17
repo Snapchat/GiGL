@@ -60,7 +60,7 @@ Example Usage:
 from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
-from jaxtyping import Bool, Float, Int
+from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
@@ -74,8 +74,8 @@ TokenInputData = dict[str, Tensor]
 class SequenceAuxiliaryData(TypedDict):
     anchor_bias: Optional[Float[Tensor, "anchors sequence"]]
     pairwise_bias: Optional[Float[Tensor, "anchors sequence sequence"]]
-    pairwise_relation_indices: Optional[Int[Tensor, "relation_edges 4"]]
-    pairwise_nonmissing_indices: Optional[Int[Tensor, "nonmissing_edges 3"]]
+    pairwise_relation_indices: Optional[Int64[Tensor, "relation_edges 4"]]
+    pairwise_nonmissing_indices: Optional[Int64[Tensor, "nonmissing_edges 3"]]
     token_input: Optional[TokenInputData]
 
 
@@ -97,7 +97,7 @@ def heterodata_to_graph_transformer_input(
     batch_size: int,
     max_seq_len: int,
     anchor_node_type: NodeType,
-    anchor_node_ids: Optional[Int[Tensor, " anchors"]] = None,
+    anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
     hop_distance: int = 2,
     sequence_construction_method: Literal["khop", "ppr"] = "khop",
     include_anchor_first: bool = True,

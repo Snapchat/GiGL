@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-from jaxtyping import Float, Int
+from jaxtyping import Float, Int64
 
 
 class RetrievalLoss(nn.Module):
@@ -41,10 +41,10 @@ class RetrievalLoss(nn.Module):
         self,
         scores: Float[torch.Tensor, "queries candidates"],
         candidate_sampling_probability: Optional[
-            Float[torch.Tensor, " candidates"]
+            Float[torch.Tensor, "candidates"]
         ] = None,
-        query_ids: Optional[Int[torch.Tensor, " queries"]] = None,
-        candidate_ids: Optional[Int[torch.Tensor, " candidates"]] = None,
+        query_ids: Optional[Int64[torch.Tensor, "queries"]] = None,
+        candidate_ids: Optional[Int64[torch.Tensor, "candidates"]] = None,
         device: torch.device = torch.device("cpu"),
     ) -> Float[torch.Tensor, ""]:
         """
@@ -164,11 +164,11 @@ class RetrievalLoss(nn.Module):
     def forward(
         self,
         repeated_candidate_scores: Float[torch.Tensor, "queries candidates"],
-        candidate_ids: Int[torch.Tensor, " candidates"],
-        repeated_query_ids: Int[torch.Tensor, " queries"],
+        candidate_ids: Int64[torch.Tensor, "candidates"],
+        repeated_query_ids: Int64[torch.Tensor, "queries"],
         device: torch.device,
         candidate_sampling_probability: Optional[
-            Float[torch.Tensor, " candidates"]
+            Float[torch.Tensor, "candidates"]
         ] = None,
     ) -> Float[torch.Tensor, ""]:
         """

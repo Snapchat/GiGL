@@ -10,7 +10,7 @@ from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
 )
 from graphlearn_torch.sampler import NodeSamplerInput
-from jaxtyping import Int
+from jaxtyping import Int64
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -66,10 +66,10 @@ class DistNeighborLoader(BaseDistLoader):
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
-                Int[torch.Tensor, " nodes"],
-                Tuple[NodeType, Int[torch.Tensor, " nodes"]],
-                abc.Mapping[int, Int[torch.Tensor, " nodes"]],
-                Tuple[NodeType, abc.Mapping[int, Int[torch.Tensor, " nodes"]]],
+                Int64[torch.Tensor, "nodes"],
+                Tuple[NodeType, Int64[torch.Tensor, "nodes"]],
+                abc.Mapping[int, Int64[torch.Tensor, "nodes"]],
+                Tuple[NodeType, abc.Mapping[int, Int64[torch.Tensor, "nodes"]]],
             ]
         ] = None,
         num_workers: int = 1,

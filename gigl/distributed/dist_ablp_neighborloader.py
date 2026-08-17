@@ -9,7 +9,7 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
-from jaxtyping import Int
+from jaxtyping import Int64
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -74,8 +74,8 @@ class DistABLPLoader(BaseDistLoader):
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
-                Int[torch.Tensor, " nodes"],
-                tuple[NodeType, Int[torch.Tensor, " nodes"]],
+                Int64[torch.Tensor, "nodes"],
+                tuple[NodeType, Int64[torch.Tensor, "nodes"]],
                 # Graph Store mode inputs
                 dict[int, ABLPInputNodes],
             ]

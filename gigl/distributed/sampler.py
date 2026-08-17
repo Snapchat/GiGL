@@ -2,7 +2,7 @@ from typing import Any, Final, Optional, Union
 
 import torch
 from graphlearn_torch.sampler import NodeSamplerInput
-from jaxtyping import Int
+from jaxtyping import Int64
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.utils.share_memory import share_memory
@@ -20,13 +20,13 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
 
     def __init__(
         self,
-        node: Int[torch.Tensor, " anchors"],
+        node: Int64[torch.Tensor, "anchors"],
         input_type: Optional[Union[str, NodeType]],
         positive_label_by_edge_types: dict[
-            EdgeType, Int[torch.Tensor, "anchors positive_labels_per_anchor"]
+            EdgeType, Int64[torch.Tensor, "anchors _positive_labels_per_anchor"]
         ],
         negative_label_by_edge_types: dict[
-            EdgeType, Int[torch.Tensor, "anchors negative_labels_per_anchor"]
+            EdgeType, Int64[torch.Tensor, "anchors _negative_labels_per_anchor"]
         ],
     ) -> None:
         """
@@ -44,13 +44,13 @@ class ABLPNodeSamplerInput(NodeSamplerInput):
     @property
     def positive_label_by_edge_types(
         self,
-    ) -> dict[EdgeType, Int[torch.Tensor, "anchors positive_labels_per_anchor"]]:
+    ) -> dict[EdgeType, Int64[torch.Tensor, "anchors _positive_labels_per_anchor"]]:
         return self._positive_label_by_edge_types
 
     @property
     def negative_label_by_edge_types(
         self,
-    ) -> dict[EdgeType, Int[torch.Tensor, "anchors negative_labels_per_anchor"]]:
+    ) -> dict[EdgeType, Int64[torch.Tensor, "anchors _negative_labels_per_anchor"]]:
         return self._negative_label_by_edge_types
 
     def __len__(self) -> int:

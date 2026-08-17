@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from jaxtyping import Float, Int
+from jaxtyping import Float, Int64
 
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import CondensedEdgeType
@@ -227,10 +227,10 @@ class RetrievalLoss(nn.Module):
         self,
         scores: Float[torch.Tensor, "queries candidates"],
         candidate_sampling_probability: Optional[
-            Float[torch.Tensor, " candidates"]
+            Float[torch.Tensor, "candidates"]
         ] = None,
-        query_ids: Optional[Int[torch.Tensor, " queries"]] = None,
-        candidate_ids: Optional[Int[torch.Tensor, " candidates"]] = None,
+        query_ids: Optional[Int64[torch.Tensor, "queries"]] = None,
+        candidate_ids: Optional[Int64[torch.Tensor, "candidates"]] = None,
         device: torch.device = torch.device("cpu"),
     ) -> Float[torch.Tensor, ""]:
         """
@@ -352,7 +352,7 @@ class RetrievalLoss(nn.Module):
         batch_combined_scores: BatchCombinedScores,
         repeated_query_embeddings: Float[torch.Tensor, "queries embedding_dim"],
         candidate_sampling_probability: Optional[
-            Float[torch.Tensor, " candidates"]
+            Float[torch.Tensor, "candidates"]
         ] = None,
         device: torch.device = torch.device("cpu"),
     ) -> Tuple[Float[torch.Tensor, ""], int]:

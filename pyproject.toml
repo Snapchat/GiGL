@@ -149,8 +149,8 @@ typing-stubs = [
   "types-tqdm==4.67.0.20250513",
 ]
 test = [
-  "beartype",
   "parameterized==0.9.0",
+  "typeguard>=2,<3", # Jaxtyping documents known incompatibilities with Typeguard 3 and 4.
 ]
 lint = [
   "ruff==0.15.10",
