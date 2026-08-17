@@ -124,47 +124,6 @@ class SerializedGraphMetadata:
     ] = None
 
 
-def _validate_weight_edge_feature_name(
-    edge_entity_info: Union[
-        SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]
-    ],
-    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
-) -> None:
-    if weight_edge_feat_name is None:
-        return
-
-    configured_weights: list[tuple[EdgeType, str, SerializedTFRecordInfo]]
-    if isinstance(edge_entity_info, SerializedTFRecordInfo):
-        if not isinstance(weight_edge_feat_name, str):
-            raise ValueError("weight_edge_feat_name must be str for homogeneous graph")
-        edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
-        configured_weights = [(edge_type, weight_edge_feat_name, edge_entity_info)]
-    else:
-        if isinstance(weight_edge_feat_name, str):
-            if len(edge_entity_info) != 1:
-                raise ValueError(
-                    "weight_edge_feat_name must be dict[EdgeType, str] for heterogeneous graph with multiple edge types"
-                )
-            edge_type, serialized_info = next(iter(edge_entity_info.items()))
-            configured_weights = [(edge_type, weight_edge_feat_name, serialized_info)]
-        else:
-            unknown_edge_types = set(weight_edge_feat_name) - set(edge_entity_info)
-            if unknown_edge_types:
-                raise ValueError(
-                    f"weight_edge_feat_name contains unknown edge types: {unknown_edge_types}"
-                )
-            configured_weights = [
-                (edge_type, feature_name, edge_entity_info[edge_type])
-                for edge_type, feature_name in weight_edge_feat_name.items()
-            ]
-
-    for edge_type, feature_name, serialized_info in configured_weights:
-        if feature_name not in serialized_info.feature_keys:
-            raise ValueError(
-                f"Sampling-weight field '{feature_name}' for edge type {edge_type} must be an unquantized raw edge feature."
-            )
-
-
 def remove_sampling_weight_from_edge_quantization_metadata(
     serialized_graph_metadata: SerializedGraphMetadata,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
@@ -516,10 +475,42 @@ def load_torch_tensors_from_tf_record(
         loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
     """
 
-    _validate_weight_edge_feature_name(
-        edge_entity_info=serialized_graph_metadata.edge_entity_info,
-        weight_edge_feat_name=weight_edge_feat_name,
-    )
+    edge_entity_info = serialized_graph_metadata.edge_entity_info
+    if weight_edge_feat_name is not None:
+        if isinstance(edge_entity_info, SerializedTFRecordInfo):
+            if not isinstance(weight_edge_feat_name, str):
+                raise ValueError(
+                    "weight_edge_feat_name must be str for homogeneous graph"
+                )
+            if weight_edge_feat_name not in edge_entity_info.feature_keys:
+                raise ValueError(
+                    f"Sampling-weight field '{weight_edge_feat_name}' for edge type "
+                    f"{DEFAULT_HOMOGENEOUS_EDGE_TYPE} must be an unquantized raw edge feature."
+                )
+        elif isinstance(weight_edge_feat_name, str):
+            if len(edge_entity_info) != 1:
+                raise ValueError(
+                    "weight_edge_feat_name must be dict[EdgeType, str] for "
+                    "heterogeneous graph with multiple edge types"
+                )
+            edge_type, serialized_info = next(iter(edge_entity_info.items()))
+            if weight_edge_feat_name not in serialized_info.feature_keys:
+                raise ValueError(
+                    f"Sampling-weight field '{weight_edge_feat_name}' for edge type "
+                    f"{edge_type} must be an unquantized raw edge feature."
+                )
+        else:
+            unknown_edge_types = set(weight_edge_feat_name) - set(edge_entity_info)
+            if unknown_edge_types:
+                raise ValueError(
+                    f"weight_edge_feat_name contains unknown edge types: {unknown_edge_types}"
+                )
+            for edge_type, feature_name in weight_edge_feat_name.items():
+                if feature_name not in edge_entity_info[edge_type].feature_keys:
+                    raise ValueError(
+                        f"Sampling-weight field '{feature_name}' for edge type "
+                        f"{edge_type} must be an unquantized raw edge feature."
+                    )
 
     logger.info(f"Rank {rank} starting loading torch tensors from serialized info ...")
     start_time = time.time()

@@ -144,11 +144,12 @@ def run_distributed_partitioner(
         (
             output_edge_index,
             output_edge_features,
-            _,
+            output_edge_quantized_features,
             output_edge_partition_book,
         ) = dist_partitioner.partition_edge_index_and_edge_features(
             node_partition_book=output_node_partition_book
         )
+        assert output_edge_quantized_features is None
 
         dist_partitioner.register_node_features(node_features=node_features)
         dist_partitioner.register_node_quantized_features(
