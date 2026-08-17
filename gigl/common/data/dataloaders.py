@@ -7,6 +7,7 @@ from typing import Callable, NamedTuple, Optional, Sequence, Tuple, Union
 import psutil
 import tensorflow as tf
 import torch
+from jaxtyping import Int64, Shaped, UInt8
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
@@ -19,10 +20,10 @@ logger = Logger()
 
 
 class LoadedEntityTensors(NamedTuple):
-    ids: torch.Tensor
-    features: Optional[torch.Tensor]
-    quantized_features: Optional[torch.Tensor]
-    labels: Optional[torch.Tensor]
+    ids: Union[Int64[torch.Tensor, "entities"], Int64[torch.Tensor, "2 entities"]]
+    features: Optional[Shaped[torch.Tensor, "entities feature_dim"]]
+    quantized_features: Optional[UInt8[torch.Tensor, "entities packed_feature_dim"]]
+    labels: Optional[Shaped[torch.Tensor, "entities labels"]]
 
 
 @dataclass(frozen=True)
@@ -442,9 +443,9 @@ class TFRecordDataLoader:
                 f"No files to load for rank: {self._rank} and entity type: {entity_type.name}, returning empty tensors."
             )
             empty_entity = (
-                torch.empty(0)
+                torch.empty(0, dtype=torch.int64)
                 if entity_type == FeatureTypes.NODE
-                else torch.empty(2, 0)
+                else torch.empty(2, 0, dtype=torch.int64)
             )
             if feature_keys:
                 empty_feature = torch.empty(0, serialized_tf_record_info.feature_dim)
