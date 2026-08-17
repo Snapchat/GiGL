@@ -71,6 +71,8 @@ message PreprocessedMetadata{
     optional uint32 feature_dim = 6;
     // Contains categorical feature vocabularies
     string transform_fn_assets_uri = 7;
+    // Optional quantized main-edge feature metadata.
+    FeatureQuantizationMetadata quantized_feature_metadata = 8;
   }
 
   // Houses metadata about edge TFTransform output from DataPreprocessor.
