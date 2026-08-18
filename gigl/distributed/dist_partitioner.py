@@ -1400,6 +1400,8 @@ class DistPartitioner:
                 generate_pb=False,
             )
 
+            input_parts.clear()
+            del input_parts
             del edge_ids
             del self._edge_ids[edge_type]
             if len(self._edge_ids) == 0:

@@ -313,7 +313,16 @@ class DistRangePartitioner(DistPartitioner):
             partition_function=edge_partition_fn,
         )
 
-        del input_data, edge_index, target_indices, edge_feat, edge_weights_tensor
+        input_parts.clear()
+        del (
+            input_parts,
+            input_data,
+            edge_index,
+            target_indices,
+            edge_feat,
+            edge_quantized_features,
+            edge_weights_tensor,
+        )
         del self._edge_index[edge_type]
         if self._edge_feat is not None and edge_type in self._edge_feat:
             assert self._edge_feat_dim is not None
