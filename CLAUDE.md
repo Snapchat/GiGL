@@ -141,8 +141,8 @@ development.
   shape add real clarity; do not introduce a dataclass for tiny internal-only plumbing.
 - Always annotate empty containers: `names: list[str] = []` not `names = []`.
 - A Shape Contract is a runtime-checkable Jaxtyping dtype and named-shape annotation at a stable API boundary.
-- Use an exact dtype such as `Int64`, `Int32`, `Float32`, or `UInt8` only when the boundary guarantees it. Keep
-  `Float` for model and loss boundaries that intentionally support mixed precision.
+- Use an exact dtype such as `Int64`, `Int32`, `Float32`, or `UInt8` only when the boundary guarantees it. Keep `Float`
+  for model and loss boundaries that intentionally support mixed precision.
 - Use Jaxtyping dtype and named-shape annotations for tensors crossing loader or sampler boundaries, public model
   `forward` or `decode` methods, and loss interfaces. Tests enforce Shape Contracts throughout the `gigl` and `examples`
   packages. Do not add Shape Contracts to internal tensor operations, dynamic PyG or TorchRec keyed containers, or
@@ -151,15 +151,16 @@ development.
   `Int[Tensor, "candidates"]` require the same candidate count. Use an underscore-prefixed axis when its size must not
   bind to another annotation. Prefix an axis with `#` only when its size may be one because that axis supports PyTorch
   broadcasting. Use an ellipsis only when the boundary intentionally supports variable rank.
-- Numeric dimension sizes need not be known. Use a named axis to bind the runtime size, `_name` when the size must remain
-  independent, and `_` when the axis meaning is unknown. Use `...` only when variable rank is supported. Inspect the
-  boundary instead of guessing when rank is not established. Whitespace only separates axes, so do not add leading or
-  trailing whitespace to a shape string.
+- Numeric dimension sizes need not be known. Use a named axis to bind the runtime size, `_name` when the size must
+  remain independent, and `_` when the axis meaning is unknown. Use `...` only when variable rank is supported. Inspect
+  the boundary instead of guessing when rank is not established. Whitespace only separates axes, so do not add leading
+  or trailing whitespace to a shape string.
 - Unit, integration, and end-to-end test launchers install runtime Shape Contract checking before test discovery.
   Typeguard checks every shape-bearing tensor value in annotated containers in `gigl` and `examples` when a contracted
-  call executes. Arguments are checked before execution and returns afterwards; an uncaught
-  `jaxtyping.TypeCheckError` fails the test command. Runtime checking is disabled in production and direct `pytest` or
-  `unittest` invocations. Do not expose it as a user API.
+  call executes. Arguments are checked before execution and returns afterwards; an uncaught `jaxtyping.TypeCheckError`
+  fails the test command. Each test process logs when checking is enabled and reports its count of instrumented
+  functions at exit. Runtime checking is disabled in production and direct `pytest` or `unittest` invocations. Do not
+  expose it as a user API.
 
 ### Docstrings
 

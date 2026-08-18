@@ -332,7 +332,7 @@ class LightGCN(nn.Module):
 
     def _lookup_embeddings_for_single_node_type(
         self, node_type: str, ids: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Union[torch.Tensor, Awaitable[torch.Tensor]]:
         """
         Fetch per-ID embeddings for a single node type using EmbeddingBagCollection.
 
@@ -347,7 +347,9 @@ class LightGCN(nn.Module):
             ids (torch.Tensor): Node IDs to look up, shape [batch_size].
 
         Returns:
-            torch.Tensor: Embeddings for the requested node type, shape [batch_size, embedding_dim].
+            Embeddings for the requested node type, shape
+            ``[batch_size, embedding_dim]``. Distributed embedding collections
+            return an awaitable that resolves to the tensor.
         """
         if node_type not in self._feature_keys:
             raise KeyError(
