@@ -686,6 +686,22 @@ class DistRandomPartitionerTestCase(TestCase):
                 partitioner_class=DistRangePartitioner,
                 expected_pb_dtype=torch.int64,
             ),
+            param(
+                "Homogeneous raw and quantized edge feature tensor partitioning",
+                is_heterogeneous=False,
+                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
+                should_assign_edges_by_src_node=True,
+                partitioner_class=DistPartitioner,
+                expected_pb_dtype=torch.uint8,
+            ),
+            param(
+                "Heterogeneous raw and quantized edge feature range partitioning",
+                is_heterogeneous=True,
+                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
+                should_assign_edges_by_src_node=True,
+                partitioner_class=DistRangePartitioner,
+                expected_pb_dtype=torch.int64,
+            ),
         ]
     )
     def test_partitioning_correctness(
@@ -756,6 +772,10 @@ class DistRandomPartitionerTestCase(TestCase):
         else:
             expected_edge_feat_types = [USER_TO_USER_EDGE_TYPE]
 
+        has_edge_quantized_features = (
+            input_data_strategy == InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES
+        )
+
         for rank, partition_output in output_dict.items():
             partitioned_edge_index = partition_output.partitioned_edge_index
             assert partitioned_edge_index is not None
@@ -780,17 +800,66 @@ class DistRandomPartitionerTestCase(TestCase):
                     graph.edge_index
                 )
 
-            if (
+            if has_edge_quantized_features:
+                self.assertIsNotNone(partition_output.edge_partition_book)
+                assert partition_output.partitioned_edge_features is not None
+                self._assert_edge_feature_outputs(
+                    rank=rank,
+                    is_heterogeneous=is_heterogeneous,
+                    is_range_based_partition=is_range_based_partition,
+                    should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+                    output_graph=partitioned_edge_index,
+                    output_edge_feat=partition_output.partitioned_edge_features,
+                    expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
+                )
+                self.assertIsNotNone(
+                    partition_output.partitioned_edge_quantized_features
+                )
+                packed_features = partition_output.partitioned_edge_quantized_features
+                if isinstance(packed_features, abc.Mapping):
+                    assert isinstance(partitioned_edge_index, abc.Mapping)
+                    self.assertEqual(set(packed_features), {USER_TO_USER_EDGE_TYPE})
+                    packed_feature_items = packed_features.items()
+                else:
+                    assert isinstance(partitioned_edge_index, GraphPartitionData)
+                    packed_feature_items = [(USER_TO_USER_EDGE_TYPE, packed_features)]
+                for edge_type, edge_type_features in packed_feature_items:
+                    edge_type_graph = (
+                        partitioned_edge_index[edge_type]
+                        if isinstance(partitioned_edge_index, abc.Mapping)
+                        else partitioned_edge_index
+                    )
+                    self.assertEqual(edge_type_features.feats.dtype, torch.uint8)
+                    expected_features = torch.stack(
+                        (
+                            edge_type_graph.edge_index[0] * 3 + 17,
+                            edge_type_graph.edge_index[0] * 5 + 29,
+                        ),
+                        dim=1,
+                    ).to(torch.uint8)
+                    self.assert_tensor_equality(
+                        tensor_a=edge_type_features.feats,
+                        tensor_b=expected_features,
+                    )
+                    if edge_type_features.ids is not None:
+                        assert edge_type_graph.edge_ids is not None
+                        self.assert_tensor_equality(
+                            tensor_a=edge_type_features.ids,
+                            tensor_b=edge_type_graph.edge_ids,
+                        )
+            elif (
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
             ):
                 self.assertIsNone(partition_output.edge_partition_book)
                 self.assertIsNone(partition_output.partitioned_edge_features)
+                self.assertIsNone(partition_output.partitioned_edge_quantized_features)
                 self.assertIsNone(partition_output.partitioned_node_features)
                 self.assertIsNone(partition_output.partitioned_node_labels)
                 self.assertIsNone(partition_output.partitioned_positive_labels)
                 self.assertIsNone(partition_output.partitioned_negative_labels)
             else:
+                self.assertIsNone(partition_output.partitioned_edge_quantized_features)
                 assert partition_output.edge_partition_book is not None, (
                     f"Must create edge partition book for strategy {input_data_strategy.value}"
                 )
