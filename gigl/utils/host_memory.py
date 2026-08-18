@@ -7,11 +7,11 @@ the smaller.
 
 Most callers want :func:`available_memory_bytes`. The public API:
 
-- :func:`available_memory_bytes` — bytes this process can still allocate; the number to budget against.
-- :func:`cgroup_limit_and_usage` — the binding cgroup ``(limit, current)`` in bytes, or None when unlimited.
-- :func:`cgroup_memory_breakdown` — current usage split by reclaimability (anon, shmem, file, dirty, writeback).
-- :func:`log_stage_memory` — log the memory position after a pipeline stage.
-- :func:`describe_memory` — one line covering both views, for logs where a budget is decided.
+- :func:`available_memory_bytes` -- bytes this process can still allocate; the number to budget against.
+- :func:`cgroup_limit_and_usage` -- the binding cgroup ``(limit, current)`` in bytes, or None when unlimited.
+- :func:`cgroup_memory_breakdown` -- current usage split by reclaimability (anon, shmem, file, dirty, writeback).
+- :func:`log_stage_memory` -- log the memory position after a pipeline stage.
+- :func:`describe_memory` -- one line covering both views, for logs where a budget is decided.
 
 Everything else in the module is the ``/proc`` and cgroup plumbing behind those five.
 """
@@ -58,12 +58,14 @@ def _cgroup_paths() -> list[str]:
     try:
         with open("/proc/self/cgroup") as handle:
             for line in handle:
+                # Each line is `hierarchy-id:controllers:path`. v2 lines are `0::<path>`; v1 lines
+                # name their controllers, and only the one carrying `memory` is relevant here:
+                #   0::/kubepods/burstable/pod1234/5678
+                #   9:memory:/docker/5678
                 fields = line.strip().split(":", 2)
                 if len(fields) != 3:
                     continue
                 hierarchy_id, controllers, path = fields
-                # v2 lines are `0::<path>`; v1 lines name their controllers, and only the one
-                # carrying `memory` is relevant here.
                 if hierarchy_id == "0" or "memory" in controllers.split(","):
                     paths.append(path or "/")
     except OSError:
@@ -246,9 +248,11 @@ def log_stage_memory(stage: str) -> None:
         parts.append("cgroup=unlimited")
     else:
         limit, current = limits
+        # A cgroup can report a limit of 0; skip the percentage rather than divide by it.
+        percent = f"({100.0 * current / limit:.0f}%) " if limit else ""
         parts.append(
             f"cgroup {current / 2**30:.1f}/{limit / 2**30:.1f} GiB "
-            f"({100.0 * current / limit:.0f}%) headroom {(limit - current) / 2**30:.1f} GiB"
+            f"{percent}headroom {(limit - current) / 2**30:.1f} GiB"
         )
     breakdown = cgroup_memory_breakdown()
     if breakdown:

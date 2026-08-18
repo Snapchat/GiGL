@@ -12,12 +12,8 @@ from tests.test_assets.test_case import TestCase
 _GIB = 2**30
 
 
-class CgroupResolutionTest(TestCase):
-    """The limit must be read from the process's own cgroup, not the hierarchy root.
-
-    Reading ``/sys/fs/cgroup/memory.max`` directly reports "unlimited", or nothing, and falls back to
-    host memory.
-    """
+class _CgroupFixtureTestCase(TestCase):
+    """Fake cgroup tree helpers shared by the test classes below; holds no test methods itself."""
 
     def setUp(self) -> None:
         self._root = tempfile.TemporaryDirectory()
@@ -47,6 +43,14 @@ class CgroupResolutionTest(TestCase):
                 return_value=[(mount_root, str(self.root), filesystem)],
             ),
         )
+
+
+class CgroupResolutionTest(_CgroupFixtureTestCase):
+    """The limit must be read from the process's own cgroup, not the hierarchy root.
+
+    Reading ``/sys/fs/cgroup/memory.max`` directly reports "unlimited", or nothing, and falls back to
+    host memory.
+    """
 
     def test_reads_the_limit_from_a_nested_v2_cgroup(self):
         self._write_v2(
@@ -236,7 +240,7 @@ class AvailableMemoryTest(TestCase):
         self.assertLessEqual(available, host_memory.psutil.virtual_memory().total)
 
 
-class MemoryBreakdownTest(CgroupResolutionTest):
+class MemoryBreakdownTest(_CgroupFixtureTestCase):
     """``memory.current`` alone cannot say whether a peak is survivable.
 
     A process near its limit lives when the bytes are dirty page cache and dies when they are
@@ -362,6 +366,18 @@ class MemoryBreakdownTest(CgroupResolutionTest):
         self.assertIn("90.0/100.0 GiB (90%)", line)
         self.assertIn("anon 10.0", line)
         self.assertIn("dirty 60.0", line)
+
+    def test_log_stage_memory_survives_a_zero_limit(self):
+        """A cgroup can report a limit of 0; the log line must skip the percentage, not divide."""
+        self._write_v2("/leaf", limit="0", current=str(1 * _GIB))
+        paths, mounts = self._patch("/leaf")
+
+        with paths, mounts, mock.patch.object(host_memory.logger, "info") as info:
+            host_memory.log_stage_memory("assembled features")
+
+        line = info.call_args[0][0]
+        self.assertIn("1.0/0.0 GiB", line)
+        self.assertNotIn("%", line)
 
     def test_log_stage_memory_says_so_when_there_is_no_limit(self):
         paths, mounts = self._patch("/absent")
