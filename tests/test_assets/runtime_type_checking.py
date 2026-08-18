@@ -27,15 +27,10 @@ logger = Logger()
 
 def _log_runtime_typechecking_summary() -> None:
     """Log how many Shape Contract functions this process instrumented."""
-    logger.info(
-        "Runtime Shape Contract checking summary: "
-        f"pid={os.getpid()}, instrumented_functions={len(_instrumented_functions)}"
-    )
+    logger.info(f"Shape checks: pid={os.getpid()} count={len(_instrumented_functions)}")
 
 
-def shape_contract_typechecker(
-    function: FunctionType,
-) -> FunctionType:
+def shape_contract_typechecker(function: FunctionType) -> FunctionType:
     """Apply Typeguard only to annotations containing Jaxtyping arrays.
 
     Args:
@@ -127,7 +122,4 @@ def install_runtime_typechecking() -> None:
             typechecker="tests.test_assets.runtime_type_checking.shape_contract_typechecker",
         )
         atexit.register(_log_runtime_typechecking_summary)
-        logger.info(
-            "Runtime Shape Contract checking enabled: "
-            f"pid={os.getpid()}, packages={_SHAPE_CONTRACT_PACKAGES}"
-        )
+        logger.info(f"Shape checks enabled: pid={os.getpid()}")
