@@ -3,10 +3,10 @@ from jaxtyping import Float, Float32, Int64
 
 
 def hit_rate_at_k(
-    pos_scores: Float[torch.Tensor, "positives"],
-    neg_scores: Float[torch.Tensor, "negatives"],
-    ks: Int64[torch.Tensor, "requested_ks"],
-) -> Float32[torch.Tensor, "requested_ks"]:
+    pos_scores: Float[torch.FloatTensor, "positives"],
+    neg_scores: Float[torch.FloatTensor, "negatives"],
+    ks: Int64[torch.LongTensor, "requested_ks"],
+) -> Float32[torch.FloatTensor, "requested_ks"]:
     """Computes Hit Rate @ K metrics for various Ks, evaluating 1+ positives against 1+ negatives.
 
     Args:
@@ -46,13 +46,13 @@ def hit_rate_at_k(
     )
     ks_adjusted = ks - 1  # subtract 1 since indices are 0-indexed
     hits_at_ks = torch.gather(input=hit_rates_padded, dim=0, index=ks_adjusted)
-    return hits_at_ks
+    return hits_at_ks  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
 
 def mean_reciprocal_rank(
-    pos_scores: Float[torch.Tensor, "positives"],
-    neg_scores: Float[torch.Tensor, "negatives"],
-) -> Float32[torch.Tensor, ""]:
+    pos_scores: Float[torch.FloatTensor, "positives"],
+    neg_scores: Float[torch.FloatTensor, "negatives"],
+) -> Float32[torch.FloatTensor, ""]:
     """Computes Mean Reciprocal Rank (MRR), evaluating 1+ positives against 1+ negatives.
 
     Args:
@@ -72,4 +72,4 @@ def mean_reciprocal_rank(
     adjusted_ranks = unadjusted_ranks + 1  # +1 since ranks are 0-indexed here
     reciprocal_ranks = 1.0 / adjusted_ranks  # compute reciprocal
     mrr = torch.mean(reciprocal_ranks)
-    return mrr
+    return mrr  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.

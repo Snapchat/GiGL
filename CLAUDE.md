@@ -149,7 +149,9 @@ development.
 - Reuse axis names when dimensions must match across annotations. Use `_name` when a dimension must not bind to another
   annotation, `_` when its meaning is unknown, and `#name` when size `1` is valid because the dimension supports PyTorch
   broadcasting. Use numeric dimensions only when the size is guaranteed. Use `...` or `*name` only when variable rank is
-  part of the boundary contract. Whitespace separates axes; do not add leading or trailing whitespace.
+  part of the boundary contract. Use `{expression}` for an exact dimension derived from a runtime argument or instance
+  configuration only when it adds a useful boundary contract. Whitespace separates axes; do not add leading or trailing
+  whitespace.
 - Unit, integration, and end-to-end test launchers install runtime Shape Contract checking before test discovery.
   Typeguard checks every shape-bearing tensor value in annotated containers in `gigl` and `examples` when a contracted
   call executes. Arguments are checked before execution and returns afterwards; an uncaught `jaxtyping.TypeCheckError`

@@ -23,38 +23,38 @@ class InputBatch:
 # Returns the embeddings after being forward through encoder model
 @dataclass
 class BatchEmbeddings:
-    query_embeddings: Float32[torch.Tensor, "queries embedding_dim"]
+    query_embeddings: Float32[torch.FloatTensor, "queries embedding_dim"]
     repeated_query_embeddings: dict[
-        CondensedEdgeType, Float32[torch.Tensor, "_queries embedding_dim"]
+        CondensedEdgeType, Float32[torch.FloatTensor, "_queries embedding_dim"]
     ]
     pos_embeddings: dict[
-        CondensedEdgeType, Float32[torch.Tensor, "_positives embedding_dim"]
+        CondensedEdgeType, Float32[torch.FloatTensor, "_positives embedding_dim"]
     ]
     hard_neg_embeddings: dict[
-        CondensedEdgeType, Float32[torch.Tensor, "_hard_negatives embedding_dim"]
+        CondensedEdgeType, Float32[torch.FloatTensor, "_hard_negatives embedding_dim"]
     ]
     random_neg_embeddings: dict[
         CondensedNodeType,
-        Float32[torch.Tensor, "_random_negatives embedding_dim"],
+        Float32[torch.FloatTensor, "_random_negatives embedding_dim"],
     ]
 
 
 # Returns scores for a single anchor node
 @dataclass
 class BatchScores:
-    pos_scores: Float32[torch.Tensor, "1 positives"]
-    hard_neg_scores: Float32[torch.Tensor, "1 hard_negatives"]
-    random_neg_scores: Float32[torch.Tensor, "1 random_negatives"]
+    pos_scores: Float32[torch.FloatTensor, "1 positives"]
+    hard_neg_scores: Float32[torch.FloatTensor, "1 hard_negatives"]
+    random_neg_scores: Float32[torch.FloatTensor, "1 random_negatives"]
 
 
 # Returns combined scores across all anchor nodes with repeated anchor node embeddings for each positive supervision edge
 @dataclass
 class BatchCombinedScores:
-    repeated_candidate_scores: Float32[torch.Tensor, "queries candidates"]
-    positive_ids: Int64[torch.Tensor, "positives"]
-    hard_neg_ids: Int64[torch.Tensor, "hard_negatives"]
-    random_neg_ids: Int64[torch.Tensor, "random_negatives"]
-    repeated_query_ids: Optional[Int64[torch.Tensor, "queries"]]
+    repeated_candidate_scores: Float32[torch.FloatTensor, "queries candidates"]
+    positive_ids: Int64[torch.LongTensor, "positives"]
+    hard_neg_ids: Int64[torch.LongTensor, "hard_negatives"]
+    random_neg_ids: Int64[torch.LongTensor, "random_negatives"]
+    repeated_query_ids: Optional[Int64[torch.LongTensor, "queries"]]
     num_unique_query_ids: Optional[int]
 
 
