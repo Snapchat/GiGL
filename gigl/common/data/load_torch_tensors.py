@@ -195,6 +195,8 @@ def remove_sampling_weight_from_edge_quantization_metadata(
                 break
             feature_spec = edge_info.feature_spec[feature_name]
             raw_column_offset += feature_spec.shape[-1] if feature_spec.shape else 1
+        # The sampling-weight column is removed before reconstruction, shifting
+        # every following logical feature index one position to the left.
         weight_logical_index = metadata.raw_feature_indices[raw_column_offset]
         adjusted_quantized_feature_indices = tuple(
             quantized_feature_index - 1
