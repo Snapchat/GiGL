@@ -4,6 +4,16 @@
 HOST's memory rather than the container's limit, so a budget check trusting it alone can pass
 immediately before the container is killed. The cgroup knows the real limit; read both and believe
 the smaller.
+
+Most callers want :func:`available_memory_bytes`. The public API:
+
+- :func:`available_memory_bytes` — bytes this process can still allocate; the number to budget against.
+- :func:`cgroup_limit_and_usage` — the binding cgroup ``(limit, current)`` in bytes, or None when unlimited.
+- :func:`cgroup_memory_breakdown` — current usage split by reclaimability (anon, shmem, file, dirty, writeback).
+- :func:`log_stage_memory` — log the memory position after a pipeline stage.
+- :func:`describe_memory` — one line covering both views, for logs where a budget is decided.
+
+Everything else in the module is the ``/proc`` and cgroup plumbing behind those five.
 """
 
 import os
