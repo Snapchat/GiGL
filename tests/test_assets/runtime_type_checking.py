@@ -124,9 +124,7 @@ def install_runtime_typechecking() -> None:
     if _import_hook is None:
         _import_hook = install_import_hook(
             modules=_SHAPE_CONTRACT_PACKAGES,
-            typechecker=(
-                "tests.test_assets.runtime_type_checking.shape_contract_typechecker"
-            ),
+            typechecker="tests.test_assets.runtime_type_checking.shape_contract_typechecker",
         )
         atexit.register(_log_runtime_typechecking_summary)
         logger.info(
