@@ -101,7 +101,7 @@ def shape_contract_typechecker(
 
 
 def install_runtime_typechecking() -> None:
-    """Enable runtime checks for modules declaring tensor Shape Contracts.
+    """Enable test-only runtime checks for tensor Shape Contracts.
 
     Jaxtyping's simpler, general-purpose setup would be::
 
@@ -110,21 +110,10 @@ def install_runtime_typechecking() -> None:
             typechecker="typeguard.typechecked",
         )
 
-    That setup makes every existing annotation in those packages a runtime
-    contract. GiGL also has annotations intended for static analysis, including
-    TypeVars bounded by non-runtime-checkable Protocols, forward references, and
-    library return types whose concrete distributed implementations are lazy.
-    Typeguard cannot check every one of those annotations reliably. For example,
-    checking a value against a TypeVar bounded by a Protocol without
-    ``@runtime_checkable`` raises ``TypeError`` during an ``isinstance`` check.
-
-    The custom typechecker preserves the narrower purpose of this test hook. The
-    import hook still visits callables imported from ``gigl`` and ``examples``,
-    but ``shape_contract_typechecker`` returns callables without Shape Contracts
-    unchanged. For contracted callables, it gives Typeguard a private copy with
-    only shape-bearing annotations, while preserving the original annotations on
-    the public wrapper. This enforces tensor dtypes and named dimensions without
-    turning the repository's complete static type surface into runtime policy.
+    That setup makes every annotation in those packages a runtime contract.
+    GiGL has static-only annotations, such as TypeVars bounded by Protocols that
+    cannot be used with ``isinstance``. The custom typechecker filters those out
+    so Typeguard enforces Shape Contracts only.
 
     Repeated calls are safe. Runtime checking remains scoped to the current
     process and modules imported after this function runs. A contract violation
