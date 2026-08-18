@@ -108,6 +108,8 @@ class LoaderUtilsTest(TestCase):
         self,
     ) -> None:
         data = Data(edge_attr=torch.tensor([[10.0, 20.0], [30.0, 40.0]]))
+        # The high-order 2-bit codes unpack into slots 0 and 2:
+        # 0b00_11_00_00 -> [0, 3], 0b10_01_00_00 -> [2, 1].
         metadata = {
             "edge_packed_features": torch.tensor([[48], [144]], dtype=torch.uint8),
             "request_id": torch.tensor([7]),
@@ -139,6 +141,7 @@ class LoaderUtilsTest(TestCase):
             f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_EDGE_TYPE}"
         )
 
+        # The high-order 2-bit codes in 0b00_11_00_00 unpack to [0, 3].
         materialized_data, remaining_metadata = materialize_quantized_edge_features(
             data=data,
             metadata={typed_key: torch.tensor([[48]], dtype=torch.uint8)},
@@ -163,6 +166,7 @@ class LoaderUtilsTest(TestCase):
         output_edge_type = ("item", "rev_to", "user")
         data = HeteroData()
         data[output_edge_type].edge_attr = torch.tensor([[10.0]])
+        # The high-order 2-bit codes in 0b00_11_00_00 unpack to [0, 3].
         metadata = {
             f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}": torch.tensor(
                 [[48]], dtype=torch.uint8

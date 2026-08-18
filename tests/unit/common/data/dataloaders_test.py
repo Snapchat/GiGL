@@ -720,6 +720,8 @@ class TFRecordDataLoaderTest(TestCase):
             weight_edge_feat_name="weight",
         )
 
+        # raw_embedding occupies columns 0-1 and weight column 2. Removing the
+        # weight shifts the quantized column from 3 to 2 and reduces dim 4 to 3.
         self.assertEqual(
             adjusted_metadata,
             FeatureQuantizationMetadata(

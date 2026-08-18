@@ -200,7 +200,11 @@ def _run_cora_supervised(
     shutdown_rpc()
 
 
-def _run_quantized_homogeneous_ablp_loader(_: int, dataset: DistDataset) -> None:
+def _run_quantized_homogeneous_ablp_loader(
+    _: int,
+    dataset: DistDataset,
+    expected_edge_features: dict[tuple[int, int], torch.Tensor],
+) -> None:
     """Assert homogeneous ABLP materializes partial packed features."""
     create_test_process_group()
     loader = DistABLPLoader(
@@ -218,10 +222,6 @@ def _run_quantized_homogeneous_ablp_loader(_: int, dataset: DistDataset) -> None
     for batch in loader:
         assert isinstance(batch, Data)
         assert_tensor_equality(batch.x, expected_features[batch.node])
-        expected_edge_features = {
-            (0, 1): torch.tensor([0.0, 3.0]),
-            (1, 0): torch.tensor([2.0, 1.0]),
-        }
         for local_edge_index, edge_feature in zip(batch.edge_index.T, batch.edge_attr):
             source, destination = batch.node[local_edge_index]
             assert_tensor_equality(
@@ -780,6 +780,7 @@ class DistABLPLoaderTest(TestCase):
         loaded_graph_tensors = LoadedGraphTensors(
             node_ids=torch.arange(3),
             node_features=torch.tensor([[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]),
+            # High-order 2-bit codes unpack to [0, 3], [2, 1], and [1, 2].
             node_quantized_features=torch.tensor(
                 [[48], [144], [96]], dtype=torch.uint8
             ),
@@ -861,7 +862,16 @@ class DistABLPLoaderTest(TestCase):
         )
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(fn=_run_quantized_homogeneous_ablp_loader, args=(dataset,))
+        # The two packed edge bytes decode to [0, 3] for edge 0 -> 1 and
+        # [2, 1] for edge 1 -> 0.
+        expected_edge_features = {
+            (0, 1): torch.tensor([0.0, 3.0]),
+            (1, 0): torch.tensor([2.0, 1.0]),
+        }
+        mp.spawn(
+            fn=_run_quantized_homogeneous_ablp_loader,
+            args=(dataset, expected_edge_features),
+        )
 
     @parameterized.expand(
         [
