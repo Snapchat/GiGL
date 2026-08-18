@@ -172,7 +172,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     def _prepare_ablp_inputs(
         self,
         inputs: ABLPNodeSamplerInput,
-        input_seeds: Int64[torch.Tensor, "anchors"],
+        input_seeds: Int64[torch.Tensor, "{inputs.node.shape[0]}"],
         input_type: NodeType,
     ) -> SampleLoopInputs:
         """Prepare ABLP inputs with supervision nodes and label metadata.
