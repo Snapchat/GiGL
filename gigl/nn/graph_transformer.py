@@ -1305,9 +1305,19 @@ class GraphTransformerEncoder(nn.Module):
                 "{'none', 'edge_type_linear', 'edge_type_attention'}, "
                 f"got '{relation_message_mode}'"
             )
-        anchor_bias_attr_names = anchor_based_attention_bias_attr_names or []
-        anchor_input_attr_names = anchor_based_input_attr_names or []
-        pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
+        # Config loaders may pass OmegaConf ListConfig objects, which TorchDynamo cannot
+        # trace. Plain lists iterate identically and keep the forward path traceable.
+        pe_attr_names = list(pe_attr_names or ())
+        anchor_based_attention_bias_attr_names = list(
+            anchor_based_attention_bias_attr_names or ()
+        )
+        anchor_based_input_attr_names = list(anchor_based_input_attr_names or ())
+        pairwise_attention_bias_attr_names = list(
+            pairwise_attention_bias_attr_names or ()
+        )
+        anchor_bias_attr_names = anchor_based_attention_bias_attr_names
+        anchor_input_attr_names = anchor_based_input_attr_names
+        pairwise_bias_attr_names = pairwise_attention_bias_attr_names
         if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
             raise ValueError(
                 f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and "

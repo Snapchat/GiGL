@@ -543,11 +543,11 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpLimitsResultsWithoutResidualTop
 
     auto topk1 = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/1, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk1.find(0), topk1.end());
-    EXPECT_EQ(std::get<2>(topk1.at(0))[0].item<int64_t>(), 1);
+    EXPECT_EQ(topk1.at(0).validCounts[0].item<int64_t>(), 1);
 
     auto topk10 = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk10.find(0), topk10.end());
-    EXPECT_EQ(std::get<2>(topk10.at(0))[0].item<int64_t>(), 2);
+    EXPECT_EQ(topk10.at(0).validCounts[0].item<int64_t>(), 2);
 }
 
 // Residual top-up includes discovered nodes whose residual never crossed the
@@ -562,8 +562,8 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
 
     auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
-    EXPECT_EQ(std::get<2>(topk.at(0))[0].item<int64_t>(), 1);
-    EXPECT_EQ(std::get<0>(topk.at(0))[0].item<int64_t>(), 0);
+    EXPECT_EQ(topk.at(0).validCounts[0].item<int64_t>(), 1);
+    EXPECT_EQ(topk.at(0).ids[0].item<int64_t>(), 0);
 
     auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/3, /*enableResidualTopUp=*/true);
     ASSERT_NE(topkWithResiduals.find(0), topkWithResiduals.end());
