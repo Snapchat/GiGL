@@ -21,7 +21,7 @@ from gigl.common.data.load_torch_tensors import (
     load_torch_tensors_from_tf_record,
     remove_sampling_weight_from_edge_quantization_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 from gigl.src.mocking.lib.versioning import (
@@ -736,8 +736,9 @@ class TFRecordDataLoaderTest(TestCase):
         self,
     ) -> None:
         missing_path = UriFactory.create_uri("/does/not/exist")
-        edge_type_a = EdgeType("node", "relation_a", "node")
-        edge_type_b = EdgeType("node", "relation_b", "node")
+        node_type = NodeType("node")
+        edge_type_a = EdgeType(node_type, Relation("relation_a"), node_type)
+        edge_type_b = EdgeType(node_type, Relation("relation_b"), node_type)
         edge_info = SerializedTFRecordInfo(
             tfrecord_uri_prefix=missing_path,
             feature_spec={
