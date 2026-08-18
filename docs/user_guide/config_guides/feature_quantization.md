@@ -92,12 +92,6 @@ as a whole. Each node or main-edge reference can therefore select its own `featu
 node type can use 4-bit quantization, one main-edge type can use 8-bit quantization for a different feature subset, and
 another type can remain unquantized by omitting `feature_quantization_spec`.
 
-| Preprocessing spec     | Selected features             | Bit width   |
-| ---------------------- | ----------------------------- | ----------- |
-| User node              | `activity_score`              | 4           |
-| Item node              | None                          | Unquantized |
-| User-to-item main edge | `match_score`, `recency_days` | 8           |
-
 ## Choose a bit width
 
 GiGL supports `1`-, `2`-, `4`-, and `8`-bit compression per feature. Lower bit widths reduce the feature data more and
@@ -149,11 +143,6 @@ reconstructs approximate floating-point `x` and `edge_attr` tensors before they 
 
 Not necessarily. Quantization reduces only selected feature data, while preprocessing and loading must also do extra
 work. It is most useful when storing or transferring those features is a material part of the workload.
-
-### Does this support edge features?
-
-Yes. Add `feature_quantization_spec` to an `EdgeDataPreprocessingSpec` for main edges. Label-edge features and edge
-sampling weights must remain unquantized.
 
 ### Will quantization lower GPU requirements?
 
