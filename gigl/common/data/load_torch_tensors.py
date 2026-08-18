@@ -170,6 +170,11 @@ def remove_sampling_weight_from_edge_quantization_metadata(
             dict[EdgeType, FeatureQuantizationMetadata], quantization_metadata
         )
         if isinstance(weight_edge_feat_name, str):
+            if len(edge_info_by_type) != 1:
+                raise ValueError(
+                    "weight_edge_feat_name must be dict[EdgeType, str] for "
+                    "heterogeneous graph with multiple edge types"
+                )
             edge_type = next(iter(edge_info_by_type))
             weight_by_type: dict[EdgeType, str] = {edge_type: weight_edge_feat_name}
         else:
