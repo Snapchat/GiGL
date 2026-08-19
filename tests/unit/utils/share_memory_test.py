@@ -1,15 +1,16 @@
 import errno
 import gc
+import io
 import os
 import pickle
 import tempfile
 import unittest
 from collections import abc
+from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
 from typing import Optional, Union
 from unittest import mock
 
-import numpy as np
 import torch
 import torch.multiprocessing as mp
 from graphlearn_torch.partition import RangePartitionBook
@@ -19,21 +20,37 @@ from torch.testing import assert_close
 from gigl.src.common.types.graph_data import NodeType
 from gigl.utils import share_memory as share_memory_module
 from gigl.utils.share_memory import (
-    SpilledTensorHandle,
     allocate_disk_backed,
     allocate_preshared,
-    disk_backed_handle,
     has_live_mapping,
     is_disk_backed,
+    load_spilled_tensor,
     prepare_spill_dir,
     release_page_cache,
     release_page_cache_by_path,
-    resolve_spilled_handles,
     share_memory,
     share_memory_for_ipc,
     spill_tensor_to_disk,
 )
 from tests.test_assets.test_case import TestCase
+
+
+def _spill_file_path(tensor: torch.Tensor) -> str:
+    """The file behind a disk-backed tensor, read off its storage."""
+    path = tensor.untyped_storage().filename
+    assert path is not None, "the tensor is not disk-backed"
+    return path
+
+
+def _forking_pickle(value: object) -> bytes:
+    """Serialize the way multiprocessing does, so the spill-aware reducer applies.
+
+    ``pickle.dumps`` uses the plain pickler, which does not consult ForkingPickler's dispatch
+    table -- tensors then serialize by value and every size assertion would be meaningless.
+    """
+    buffer = io.BytesIO()
+    ForkingPickler(buffer).dump(value)
+    return buffer.getvalue()
 
 
 class ShareMemoryTest(TestCase):
@@ -97,22 +114,29 @@ class ShareMemoryTest(TestCase):
         self.assertFalse(empty_2d_tensor.is_shared())
 
 
-def _load_in_child(
-    prepared: dict[NodeType, Union[torch.Tensor, SpilledTensorHandle]],
+def _receive_in_child(
+    in_queue: "mp.Queue",
     result_queue: "mp.Queue",
 ) -> None:
-    """Resolve handles in a spawned child and report what arrived, plus the Shmem delta.
+    """Receive a prepared mapping in a spawned child and report what arrived, plus the Shmem delta.
 
     Runs in a separate process on purpose: the failure this guards against only exists across a
-    process boundary, where pickling an mmap-backed tensor copies it into ``/dev/shm``.
+    process boundary, where torch's own reduction would copy the bytes into ``/dev/shm``. The
+    mapping travels through the QUEUE rather than as a spawn argument so the deserialization
+    happens inside the measurement window below.
     """
     before = _shmem_kib()
-    resolved = resolve_spilled_handles(prepared)
+    received = in_queue.get(timeout=120)
     after = _shmem_kib()
     result_queue.put(
         {
-            key: (tuple(tensor.shape), str(tensor.dtype), tensor.sum().item())
-            for key, tensor in resolved.items()
+            key: (
+                tuple(tensor.shape),
+                str(tensor.dtype),
+                tensor.sum().item(),
+                is_disk_backed(tensor),
+            )
+            for key, tensor in received.items()
         }
     )
     result_queue.put(after - before)
@@ -121,7 +145,7 @@ def _load_in_child(
 
 
 def _spill_in_child(result_queue: "mp.Queue") -> None:
-    """Spill a tensor in a spawned child and hand back only its descriptor, then exit.
+    """Spill a tensor in a spawned child, send it back (it pickles by path), then exit.
 
     Mirrors what a tensor-loading child does, including exiting before the parent uses the file.
     """
@@ -134,32 +158,16 @@ def _spill_in_child(result_queue: "mp.Queue") -> None:
 
 
 def _share_memory_in_child(
-    handle: SpilledTensorHandle, result_queue: "mp.Queue"
+    in_queue: "mp.Queue",
+    result_queue: "mp.Queue",
 ) -> None:
-    """Map a spilled tensor, pass it to share_memory, and report whether it got copied to RAM."""
-    tensor = handle.load()
+    """Receive a spilled tensor, pass it to share_memory, and report whether it got copied to RAM."""
+    tensor = in_queue.get(timeout=120)
     before = _shmem_kib()
     share_memory(tensor)
-    result_queue.put((_shmem_kib() - before, tensor.is_shared()))
+    result_queue.put((_shmem_kib() - before, is_disk_backed(tensor)))
     result_queue.close()
     result_queue.join_thread()
-
-
-class _RecordingMmap:
-    """Stand-in for the memmap's underlying ``mmap.mmap``, which is a C type and cannot be patched."""
-
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
-
-    def madvise(self, *_args: object) -> None:
-        self._calls.append("madvise")
-
-
-class _FailingMmap:
-    """A mapping whose ``madvise`` is unsupported, as on a platform or filesystem that lacks it."""
-
-    def madvise(self, *_args: object) -> None:
-        raise OSError("madvise unsupported")
 
 
 def _resident_page_fraction(tensor: torch.Tensor) -> Optional[float]:
@@ -262,7 +270,7 @@ class ShareMemoryForIpcTest(TestCase):
         # protect here.
         os.environ.pop("GIGL_TENSOR_SPILL_DIR_PREPARED", None)
 
-    def test_spilled_tensors_are_sent_as_handles_not_tensors(self):
+    def test_spilled_tensors_pickle_by_path_not_by_value(self):
         entity = {
             NodeType("user"): torch.arange(100_000, dtype=torch.float32),
             # Under the threshold, so it should stay a tensor in shared memory.
@@ -270,29 +278,155 @@ class ShareMemoryForIpcTest(TestCase):
         }
         prepared = share_memory_for_ipc(entity)
 
-        self.assertIsInstance(prepared[NodeType("user")], SpilledTensorHandle)
+        big = prepared[NodeType("user")]
+        self.assertTrue(is_disk_backed(big))
         small = prepared[NodeType("item")]
-        assert isinstance(small, torch.Tensor)
+        self.assertFalse(is_disk_backed(small))
         self.assertTrue(small.is_shared())
 
         # The whole point: what crosses the boundary must be small, whatever the tensor's size.
-        self.assertLess(len(pickle.dumps(prepared)), 4096)
+        # Serialized the way multiprocessing serializes, where the spill-aware reducer applies.
+        self.assertLess(len(_forking_pickle({NodeType("user"): big})), 4096)
 
-    def test_handles_resolve_to_the_same_values_in_another_process(self):
+    def test_a_pickled_spilled_tensor_remaps_the_same_file(self):
+        prepared = share_memory_for_ipc(
+            {NodeType("user"): torch.arange(100_000, dtype=torch.float32)}
+        )
+        original = prepared[NodeType("user")]
+
+        received = pickle.loads(_forking_pickle(original))
+
+        assert_close(received, original)
+        self.assertEqual(_spill_file_path(received), _spill_file_path(original))
+        # A shared mapping of the same file, not a copy: a write on one side is visible on the
+        # other, which is from_file's documented contract and what path-shipping must preserve.
+        received[42] = -1.0
+        self.assertEqual(original[42].item(), -1.0)
+        original[42] = 42.0
+
+    def test_a_pickled_view_keeps_its_offset_and_strides(self):
+        """Shipping a view by path alone would hand the receiver the wrong bytes.
+
+        A square tensor's transpose has the same storage, pointer, shape and numel as the
+        original -- only the strides differ. A slice differs only in offset and shape. Both must
+        round-trip by value, not just by file.
+        """
+        prepared = share_memory_for_ipc(
+            {
+                NodeType("user"): torch.arange(256 * 256, dtype=torch.float32).reshape(
+                    256, 256
+                )
+            }
+        )
+        mapped = prepared[NodeType("user")]
+
+        transposed = pickle.loads(_forking_pickle(mapped.t()))
+        assert_close(transposed, mapped.t())
+
+        sliced = pickle.loads(_forking_pickle(mapped[3:17, 5:9]))
+        assert_close(sliced, mapped[3:17, 5:9])
+
+        # Neither round-trip may write a second spill file: the view travels as (path, offset,
+        # shape, strides) over the one existing file.
+        self.assertEqual(
+            len(list(Path(self._spill_dir.name).glob("spill_*.bin"))),
+            1,
+        )
+
+    def test_a_stale_pickle_fails_loudly_instead_of_fabricating_zeros(self):
+        """``from_file`` CREATES a missing file, so a stale recipe must be refused, not mapped.
+
+        If the spill file is unlinked while a pickled tensor is in flight, mapping the path would
+        silently hand the receiver a fresh zero-filled file -- corrupt data with the SIGBUS
+        reservation gone too. Missing and truncated files must both raise, and the failed rebuild
+        must not leave a recreated file behind.
+        """
+        prepared = share_memory_for_ipc(
+            {NodeType("user"): torch.arange(100_000, dtype=torch.float32)}
+        )
+        original = prepared[NodeType("user")]
+        path = _spill_file_path(original)
+        blob = _forking_pickle(original)
+
+        with open(path, "r+b") as spill_file:
+            spill_file.truncate(1024)
+        with self.assertRaises(ValueError):
+            pickle.loads(blob)
+
+        os.unlink(path)
+        with self.assertRaises(FileNotFoundError):
+            pickle.loads(blob)
+        self.assertFalse(
+            os.path.exists(path), "the failed rebuild recreated the missing spill file"
+        )
+
+    def test_quantized_tensors_are_refused(self):
+        """A quantized tensor's quantizer lives beside its storage, so raw bytes cannot rebuild it.
+
+        Mapping one anyway produces a tensor that trips internal torch assertions on first use;
+        both entry points must decline so the caller keeps a working in-memory tensor.
+        """
+        self.assertIsNone(allocate_disk_backed((20_000, 8), torch.qint8))
+        quantized = torch.quantize_per_tensor(torch.ones(100_000), 0.1, 0, torch.qint8)
+        self.assertIsNone(spill_tensor_to_disk(quantized))
+
+    def test_the_reducer_is_inert_when_spilling_is_disabled(self):
+        """Opt-in means opt-in: without ``GIGL_TENSOR_SPILL_DIR``, torch's own reduction runs.
+
+        A user's unrelated ``from_file`` tensor must pickle exactly as it does without this module
+        loaded -- torch copies it into shared memory, so the received tensor has no ``filename``.
+        With spilling enabled the same tensor ships by path and keeps it.
+        """
+        side_file = os.path.join(self._spill_dir.name, "not_a_spill.bin")
+        tensor = torch.from_file(side_file, shared=True, size=1000, dtype=torch.float32)
+        tensor.fill_(7.0)
+        strategy = mp.get_sharing_strategy()
+        # file_system, because torch's fd-passing reduction cannot round-trip inside one process
+        mp.set_sharing_strategy("file_system")
+        self.addCleanup(mp.set_sharing_strategy, strategy)
+
+        # Enabled first: path-shipping does not mutate the sender. Torch's reduction does -- it
+        # relocates the sender's storage into /dev/shm in place, stripping the filename -- so the
+        # disabled round-trip must come last
+        received_enabled = pickle.loads(_forking_pickle(tensor))
+        with mock.patch.dict(os.environ, {"GIGL_TENSOR_SPILL_DIR": ""}):
+            received_disabled = pickle.loads(_forking_pickle(tensor))
+
+        self.assertEqual(received_enabled.untyped_storage().filename, side_file)
+        assert_close(received_enabled, torch.full((1000,), 7.0))
+        assert_close(received_disabled, torch.full((1000,), 7.0))
+        self.assertIsNone(received_disabled.untyped_storage().filename)
+
+    def test_a_named_tensor_is_delegated_to_torch_which_refuses_it(self):
+        """Shipping a named tensor by path would drop its names silently; torch raises instead.
+
+        Delegation preserves that explicit refusal rather than swallowing it.
+        """
+        prepared = share_memory_for_ipc(
+            {NodeType("user"): torch.arange(100_000, dtype=torch.float32)}
+        )
+        named = prepared[NodeType("user")].reshape(1000, 100).refine_names("row", "col")
+
+        with self.assertRaisesRegex(RuntimeError, "[Nn]amed"):
+            _forking_pickle(named)
+
+    def test_tensors_resolve_to_the_same_values_in_another_process(self):
         entity = {
             NodeType("user"): torch.arange(100_000, dtype=torch.float32),
             NodeType("item"): torch.arange(10, dtype=torch.float32),
         }
         expected = {
-            key: (tuple(t.shape), str(t.dtype), t.sum().item())
+            key: (tuple(t.shape), str(t.dtype), t.sum().item(), key == NodeType("user"))
             for key, t in entity.items()
         }
         prepared = share_memory_for_ipc(entity)
 
         ctx = mp.get_context("spawn")
+        in_queue = ctx.Queue()
         result_queue = ctx.Queue()
-        child = ctx.Process(target=_load_in_child, args=(prepared, result_queue))
+        child = ctx.Process(target=_receive_in_child, args=(in_queue, result_queue))
         child.start()
+        in_queue.put(prepared)
         got = result_queue.get(timeout=120)
         shmem_delta_kib = result_queue.get(timeout=120)
         child.join(timeout=120)
@@ -303,32 +437,31 @@ class ShareMemoryForIpcTest(TestCase):
         # bound is loose because the whole machine's Shmem is being sampled, not just ours.
         self.assertLess(shmem_delta_kib, 200)
 
-    def test_resolve_passes_through_tensors_and_none(self):
-        tensor = torch.arange(10)
-        self.assertIs(resolve_spilled_handles(tensor), tensor)
-        self.assertIsNone(resolve_spilled_handles(None))
-
     def test_share_memory_leaves_a_disk_backed_tensor_alone(self):
-        """``share_memory_()`` on an mmap view copies it into /dev/shm, undoing the spill.
+        """``share_memory_()`` relocating an mmap view into /dev/shm would undo the spill.
 
-        Measured at +16,128 kB for a 16 MiB tensor, so a caller that reaches one of these tensors
-        after it has been spilled would silently put it back in RAM.
+        Checked in a separate process, where the tensor arrives by path: after ``share_memory`` it
+        must still be disk-backed and RAM-backed shared memory must not have grown.
         """
         prepared = share_memory_for_ipc(
             {NodeType("user"): torch.arange(1_000_000, dtype=torch.float32)}
         )
-        handle = prepared[NodeType("user")]
-        assert isinstance(handle, SpilledTensorHandle)
 
         ctx = mp.get_context("spawn")
+        in_queue = ctx.Queue()
         result_queue = ctx.Queue()
-        child = ctx.Process(target=_share_memory_in_child, args=(handle, result_queue))
+        child = ctx.Process(
+            target=_share_memory_in_child, args=(in_queue, result_queue)
+        )
         child.start()
-        shmem_delta_kib, is_shared = result_queue.get(timeout=120)
+        in_queue.put(prepared[NodeType("user")])
+        shmem_delta_kib, still_disk_backed = result_queue.get(timeout=120)
         child.join(timeout=120)
 
         self.assertEqual(child.exitcode, 0)
-        self.assertFalse(is_shared, "share_memory relocated a disk-backed tensor")
+        self.assertTrue(
+            still_disk_backed, "share_memory relocated a disk-backed tensor"
+        )
         self.assertLess(shmem_delta_kib, 512)
 
     def test_share_memory_still_shares_an_ordinary_tensor(self):
@@ -362,31 +495,59 @@ class ShareMemoryForIpcTest(TestCase):
             1,
         )
 
-    def test_a_reserved_file_is_mapped_without_truncating_it(self):
-        """A reserved file must be mapped ``r+``, never ``w+``.
-
-        Not hypothetical: numpy opens ``mode="w+"`` as ``w+b``, which truncates the file and hands
-        every block ``posix_fallocate`` reserved straight back, leaving it sparse and the SIGBUS risk
-        exactly where it started.
-
-        Asserted on the MODE rather than on the resulting block count, so the check is deterministic:
-        block accounting varies by filesystem, while the mode used for a reserved file must never
-        vary.
-        """
-        real_memmap = np.memmap
-        with mock.patch("numpy.memmap", side_effect=real_memmap) as memmap_spy:
-            buffer = allocate_disk_backed((20_000, 8), torch.float32)
+    def test_dtypes_without_numpy_equivalents_are_spillable(self):
+        """The mapping is torch-native, so torch-only dtypes like bfloat16 spill too."""
+        buffer = allocate_disk_backed((20_000, 8), torch.bfloat16)
 
         assert buffer is not None
-        self.assertEqual(memmap_spy.call_count, 1)
-        self.assertEqual(
-            memmap_spy.call_args.kwargs.get("mode"),
-            "r+",
-            "a reserved file was mapped with a mode that truncates it",
-        )
+        self.assertTrue(is_disk_backed(buffer))
+        buffer.fill_(2.0)
+        assert_close(buffer[123], torch.full((8,), 2.0, dtype=torch.bfloat16))
+
+    @parameterized.expand(
+        [
+            param(
+                "allocate path",
+                act=lambda: allocate_disk_backed((20_000, 8), torch.float32),
+            ),
+            param(
+                "spill copy path",
+                act=lambda: spill_tensor_to_disk(torch.randn(20_000, 8)),
+            ),
+        ]
+    )
+    def test_every_block_is_reserved_before_the_file_is_mapped(self, _, act):
+        """The ORDER is the SIGBUS guard, so it is pinned deterministically.
+
+        A mapping made before the reservation is sparse for as long as the gap lasts, and a write
+        into a sparse page on a full filesystem dies as SIGBUS -- a signal no ``except`` can catch.
+        Asserted on the call order rather than on block counts, which vary by filesystem.
+        """
+        calls: list[str] = []
+        real_fallocate = os.posix_fallocate
+        real_from_file = torch.UntypedStorage.from_file
+
+        def fallocate_spy(fd: int, offset: int, n_bytes: int) -> None:
+            calls.append("reserve")
+            real_fallocate(fd, offset, n_bytes)
+
+        def from_file_spy(path: str, shared: bool = False, nbytes: int = 0):
+            calls.append("map")
+            return real_from_file(path, shared=shared, nbytes=nbytes)
+
+        with (
+            mock.patch("os.posix_fallocate", side_effect=fallocate_spy),
+            mock.patch.object(
+                torch.UntypedStorage, "from_file", side_effect=from_file_spy
+            ),
+        ):
+            produced = act()
+
+        assert produced is not None
+        self.assertEqual(calls, ["reserve", "map"])
 
     def test_the_reserved_blocks_are_still_allocated_after_mapping(self):
-        """End-to-end version of the above, where the filesystem can actually demonstrate it.
+        """``from_file`` must not truncate the reservation away when it maps the file.
 
         Skipped rather than failed where ``posix_fallocate`` is unsupported or where ``st_blocks``
         does not reflect reservations -- compressed, copy-on-write, network and emulated filesystems
@@ -403,9 +564,7 @@ class ShareMemoryForIpcTest(TestCase):
         buffer = allocate_disk_backed((rows, columns), torch.float32)
 
         assert buffer is not None
-        handle = disk_backed_handle(buffer)
-        assert handle is not None
-        stat = os.stat(handle.path)
+        stat = os.stat(_spill_file_path(buffer))
         self.assertEqual(stat.st_size, expected_bytes)
         # st_blocks counts 512-byte units actually allocated; a sparse file reports far fewer than
         # its apparent size.
@@ -413,26 +572,6 @@ class ShareMemoryForIpcTest(TestCase):
             stat.st_blocks * 512,
             expected_bytes,
             "the file is sparse -- the fallocate reservation was discarded by the mapping",
-        )
-
-    def test_the_spill_copy_path_never_truncates_its_reservation(self):
-        """``_spill_to_mmap`` must map ``r+`` too, for the same reason as ``allocate_disk_backed``.
-
-        numpy opens ``mode="w+"`` as ``w+b``, which truncates the file and discards the blocks
-        ``posix_fallocate`` just reserved, silently restoring the disk-full SIGBUS path this suite
-        exists to close.
-        """
-        real_memmap = np.memmap
-        with mock.patch("numpy.memmap", side_effect=real_memmap) as memmap_spy:
-            spilled = spill_tensor_to_disk(torch.randn(20_000, 8))
-
-        assert spilled is not None
-        modes = [call.kwargs.get("mode") for call in memmap_spy.call_args_list]
-        self.assertTrue(len(modes) >= 1)
-        # Every mapping must be writable AND non-truncating: "w+" discards the reservation, and a
-        # read-only "r" hands back storage that segfaults on in-place write
-        self.assertEqual(
-            set(modes), {"r+"}, "the spill path used a mapping mode other than r+"
         )
 
     def test_a_filesystem_that_cannot_reserve_gets_memory_not_a_file(self):
@@ -466,36 +605,24 @@ class ShareMemoryForIpcTest(TestCase):
         """The ORDER is the whole mechanism, so it is pinned deterministically.
 
         ``FADV_DONTNEED`` on a live mapping is a no-op that reports success -- Linux skips pages held
-        in a page table. So ``MADV_DONTNEED`` must come first, and after an ``msync`` because dirty
-        pages cannot be dropped at all. A residency test alone would not catch a reordering that
-        happens to work on one kernel.
+        in a page table. So ``MADV_DONTNEED`` must come first, and after the write-back because
+        dirty pages cannot be dropped at all. A residency test alone would not catch a reordering
+        that happens to work on one kernel.
         """
         buffer = allocate_disk_backed((40_000, 8), torch.float32)
         assert buffer is not None
         calls: list[str] = []
-        handle = disk_backed_handle(buffer)
-        assert handle is not None
-        backing = buffer.numpy().base
-        # torch.from_numpy(np.asarray(memmap)) -- reach the memmap the same way the code does.
-        for _, _, reference, registered in share_memory_module._spilled_mappings:
-            if registered is handle:
-                array = reference()
-                assert array is not None, (
-                    "the mapping was collected before the test ran"
-                )
-                backing = array.base
-                break
 
-        # `mmap.mmap` is a C type whose `madvise` cannot be patched, so the whole object is
-        # swapped for a recorder. `_mmap` is a plain attribute of numpy's memmap, so this is
-        # exactly the object the implementation reaches for.
+        def record_madvise(address: int, n_bytes: int, path: str) -> bool:
+            calls.append("madvise")
+            return True
+
         with (
             mock.patch.object(
-                backing, "flush", side_effect=lambda: calls.append("msync")
-            ),
-            mock.patch.object(backing, "_mmap", _RecordingMmap(calls)),
-            mock.patch.object(
                 os, "fsync", side_effect=lambda fd: calls.append("fsync")
+            ),
+            mock.patch.object(
+                share_memory_module, "_madvise_dontneed", side_effect=record_madvise
             ),
             mock.patch.object(
                 os, "posix_fadvise", side_effect=lambda *a: calls.append("fadvise")
@@ -504,7 +631,7 @@ class ShareMemoryForIpcTest(TestCase):
             released = release_page_cache(buffer)
 
         self.assertTrue(released)
-        self.assertEqual(calls, ["msync", "madvise", "fsync", "fadvise"])
+        self.assertEqual(calls, ["fsync", "madvise", "fadvise"])
 
     def test_release_page_cache_reports_failure_when_it_cannot_unmap(self):
         """A no-op must report False, not True.
@@ -514,20 +641,10 @@ class ShareMemoryForIpcTest(TestCase):
         """
         buffer = allocate_disk_backed((40_000, 8), torch.float32)
         assert buffer is not None
-        handle = disk_backed_handle(buffer)
-        assert handle is not None
-        backing = None
-        for _, _, reference, registered in share_memory_module._spilled_mappings:
-            if registered is handle:
-                array = reference()
-                assert array is not None, (
-                    "the mapping was collected before the test ran"
-                )
-                backing = array.base
-                break
-        assert backing is not None
 
-        with mock.patch.object(backing, "_mmap", _FailingMmap()):
+        with mock.patch.object(
+            share_memory_module, "_madvise_dontneed", return_value=False
+        ):
             self.assertFalse(release_page_cache(buffer))
 
     def test_release_page_cache_actually_reduces_residency(self):
@@ -574,9 +691,7 @@ class ShareMemoryForIpcTest(TestCase):
 
         Moving a tensor to a file makes its pages reclaimable but leaves them CHARGED to
         ``memory.current``, so a tens-of-GiB feature matrix still counts against the limit while
-        later phases allocate. Resident pages are read
-        from ``/proc/self/smaps_rollup``-style accounting via mincore semantics; here the simpler
-        observable is that the values survive a refault.
+        later phases allocate. Here the simpler observable is that the values survive a refault.
         """
         rows, columns = 40_000, 8
         buffer = allocate_disk_backed((rows, columns), torch.float32)
@@ -596,9 +711,10 @@ class ShareMemoryForIpcTest(TestCase):
         assert_close(buffer, expected)
         # And the flush must have reached the file, not just the cache: read it through a fresh
         # mapping that shares nothing with the original.
-        handle = disk_backed_handle(buffer)
-        assert handle is not None
-        assert_close(handle.load(), expected)
+        remapped = load_spilled_tensor(
+            _spill_file_path(buffer), buffer.dtype, tuple(buffer.shape)
+        )
+        assert_close(remapped, expected)
 
     def test_release_page_cache_declines_for_an_ordinary_tensor(self):
         self.assertFalse(release_page_cache(torch.arange(1000, dtype=torch.float32)))
@@ -613,22 +729,21 @@ class ShareMemoryForIpcTest(TestCase):
         """
         buffer = allocate_disk_backed((40_000, 8), torch.float32)
         assert buffer is not None
-        handle = disk_backed_handle(buffer)
-        assert handle is not None
+        path = _spill_file_path(buffer)
         buffer.fill_(1.0)
 
-        self.assertTrue(has_live_mapping(handle.path))
+        self.assertTrue(has_live_mapping(path))
         self.assertFalse(
-            release_page_cache_by_path(handle.path),
+            release_page_cache_by_path(path),
             "a still-mapped file cannot have its cache dropped by fadvise alone",
         )
 
         del buffer
         gc.collect()
 
-        self.assertFalse(has_live_mapping(handle.path))
+        self.assertFalse(has_live_mapping(path))
         self.assertTrue(
-            release_page_cache_by_path(handle.path),
+            release_page_cache_by_path(path),
             "with the mapping gone, fadvise is sufficient",
         )
 
@@ -727,12 +842,26 @@ class ShareMemoryForIpcTest(TestCase):
 
         spilled = spill_tensor_to_disk(buffer)
 
-        assert spilled is not None
-        self.assertIs(spilled.tensor, buffer)
+        self.assertIs(spilled, buffer)
         self.assertEqual(
             len(list(Path(self._spill_dir.name).glob("spill_*.bin"))),
             1,
             "a second copy of the same bytes was written",
+        )
+
+    def test_an_already_spilled_tensor_is_not_spilled_twice(self):
+        first = share_memory_for_ipc(
+            {NodeType("user"): torch.arange(100_000, dtype=torch.float32)}
+        )
+        tensor = first[NodeType("user")]
+
+        second = share_memory_for_ipc({NodeType("user"): tensor})
+
+        self.assertIs(second[NodeType("user")], tensor)
+        self.assertEqual(
+            len(list(Path(self._spill_dir.name).glob("spill_*.bin"))),
+            1,
+            "the same bytes were written to a second spill file",
         )
 
     def test_a_failed_spill_leaves_no_partial_file(self):
@@ -743,7 +872,7 @@ class ShareMemoryForIpcTest(TestCase):
         into RAM -- converting a recoverable spill failure into the OOM the spill exists to prevent.
         """
         with mock.patch.object(
-            np.memmap, "flush", side_effect=OSError("no space left on device")
+            os, "fsync", side_effect=OSError("no space left on device")
         ):
             spilled = spill_tensor_to_disk(torch.arange(100_000, dtype=torch.float32))
 
@@ -752,44 +881,6 @@ class ShareMemoryForIpcTest(TestCase):
             list(Path(self._spill_dir.name).glob("spill_*.bin")),
             [],
             "a partial spill file was left behind",
-        )
-
-    def test_a_transposed_view_does_not_reuse_the_file_descriptor(self):
-        """Same pointer, same shape, same numel -- different strides.
-
-        A square tensor's transpose matches on everything ``disk_backed_handle`` used to compare, so
-        reusing the descriptor would hand the receiver untransposed values with no error anywhere.
-        """
-        prepared = share_memory_for_ipc(
-            {
-                NodeType("user"): torch.arange(256 * 256, dtype=torch.float32).reshape(
-                    256, 256
-                )
-            }
-        )
-        handle = prepared[NodeType("user")]
-        assert isinstance(handle, SpilledTensorHandle)
-        mapped = handle.load()
-
-        self.assertEqual(disk_backed_handle(mapped), handle)
-        self.assertIsNone(disk_backed_handle(mapped.t()))
-        # A partial view names only part of the file, so it cannot be described by the file either.
-        self.assertIsNone(disk_backed_handle(mapped[:8]))
-
-    def test_an_already_spilled_tensor_is_not_spilled_twice(self):
-        first = share_memory_for_ipc(
-            {NodeType("user"): torch.arange(100_000, dtype=torch.float32)}
-        )
-        handle = first[NodeType("user")]
-        assert isinstance(handle, SpilledTensorHandle)
-
-        second = share_memory_for_ipc({NodeType("user"): handle.load()})
-
-        self.assertEqual(second[NodeType("user")], handle)
-        self.assertEqual(
-            len(list(Path(self._spill_dir.name).glob("spill_*.bin"))),
-            1,
-            "the same bytes were written to a second spill file",
         )
 
     def test_prepare_removes_files_from_previous_runs(self):
@@ -819,29 +910,31 @@ class ShareMemoryForIpcTest(TestCase):
         first_queue = ctx.Queue()
         first = ctx.Process(target=_spill_in_child, args=(first_queue,))
         first.start()
-        first_handle = first_queue.get(timeout=120)
+        first_tensor = first_queue.get(timeout=120)
         first.join(timeout=120)
         self.assertEqual(first.exitcode, 0)
+        first_path = _spill_file_path(first_tensor)
         self.assertTrue(
-            Path(first_handle.path).exists(),
+            Path(first_path).exists(),
             "the first child's spill vanished on its own",
         )
 
         second_queue = ctx.Queue()
         second = ctx.Process(target=_spill_in_child, args=(second_queue,))
         second.start()
-        second_handle = second_queue.get(timeout=120)
+        second_tensor = second_queue.get(timeout=120)
         second.join(timeout=120)
         self.assertEqual(second.exitcode, 0)
 
-        self.assertNotEqual(first_handle.path, second_handle.path)
+        self.assertNotEqual(first_path, _spill_file_path(second_tensor))
         self.assertTrue(
-            Path(first_handle.path).exists(),
+            Path(first_path).exists(),
             "the second child deleted the first child's live spill file",
         )
-        # And the parent -- which only maps after both children are gone -- still gets the data.
-        assert_close(first_handle.load(), torch.arange(100_000, dtype=torch.float32))
-        assert_close(second_handle.load(), torch.arange(100_000, dtype=torch.float32))
+        # And the parent -- which received both tensors after their writers exited -- still gets
+        # the data.
+        assert_close(first_tensor, torch.arange(100_000, dtype=torch.float32))
+        assert_close(second_tensor, torch.arange(100_000, dtype=torch.float32))
 
 
 if __name__ == "__main__":

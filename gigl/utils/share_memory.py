@@ -1,15 +1,22 @@
+import ctypes
 import errno
+import math
 import mmap
 import os
 import tempfile
-import weakref
 from collections import abc
-from dataclasses import dataclass
-from typing import Any, Optional, TypeVar, Union, cast
+from multiprocessing.reduction import ForkingPickler
+from typing import Optional, TypeVar, Union, cast
 
-import numpy as np
 import torch
+
+# Imported for its side effect as much as its symbols: importing torch.multiprocessing runs
+# init_reductions(), which registers torch's reducer for torch.Tensor. The spill-aware reducer near
+# the bottom of this module must register AFTER that so it replaces torch's entry; a later import
+# of torch.multiprocessing elsewhere is a cached no-op and cannot clobber it
+import torch.multiprocessing
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
+from torch.multiprocessing.reductions import reduce_tensor as _torch_reduce_tensor
 
 from gigl.common.logger import Logger
 from gigl.utils.host_memory import available_memory_bytes
@@ -41,13 +48,17 @@ _SHARED_MEMORY_RESERVE_BYTES = 2 * 2**30  # 2 GiB
 # this check against whatever headroom is left and falls back to disk if the answer is no
 _DEFAULT_RANDOM_ACCESS_RESERVE_BYTES = 16 * 2**30  # 16 GiB
 
-_NUMPY_DTYPES = {
-    torch.float32: "float32",
-    torch.float16: "float16",
-    torch.int64: "int64",
-    torch.int32: "int32",
-    torch.uint8: "uint8",
-}
+# Quantized tensors carry a quantizer beside their storage; rebuilding one from raw bytes produces
+# a tensor that trips internal torch assertions on first use (qscheme, copy_). Refused rather than
+# mapped wrong
+_UNSPILLABLE_DTYPES = frozenset(
+    dtype
+    for dtype in (
+        getattr(torch, name, None)
+        for name in ("qint8", "quint8", "qint32", "quint4x2", "quint2x4")
+    )
+    if dtype is not None
+)
 
 
 def prepare_spill_dir() -> None:
@@ -130,10 +141,6 @@ def _ensure_spill_dir_prepared(spill_dir: str) -> None:
 _cleared_spill_dirs: set[str] = set()
 _SPILL_PREFIX = "spill_"
 
-# (start address, byte length, weak reference to the backing array, descriptor) for every live spill
-# mapping in this process. See _register_mapping for why this cannot be read back off the tensor.
-_spilled_mappings: list[tuple[int, int, "weakref.ref[Any]", "SpilledTensorHandle"]] = []
-
 
 def _spill_dir() -> Optional[str]:
     d = os.environ.get(_SPILL_DIR_ENV)
@@ -157,151 +164,81 @@ def is_tensor_spilling_enabled() -> bool:
     return _spill_dir() is not None
 
 
-@dataclass(frozen=True)
-class SpilledTensorHandle:
-    """Where a spilled tensor lives, with no tensor attached, so it is cheap to pickle.
+def is_disk_backed(tensor: torch.Tensor) -> bool:
+    """Whether ``tensor`` (or a view of one) is an mmap over a real file rather than RAM.
 
-    This is what crosses a process boundary in place of the tensor. Sending the tensor instead
-    silently undoes the spill: torch's multiprocessing reduction does not consider a numpy-owned
-    storage shareable, so pickling copies every byte into RAM-backed ``/dev/shm`` (measured: Shmem
-    +383 MiB on a 383 MiB tensor). Call :func:`load_spilled_tensor` on the far side.
+    Read off the tensor itself: a storage created by ``from_file(shared=True)`` records the path
+    in ``untyped_storage().filename``, and a view shares its base's storage, so the label travels
+    with it. ``filename`` is None for everything else -- including tmpfs-shared storages
+    (``share_memory_()``, ``_new_shared``), which are RAM and must not be treated as spilled.
     """
-
-    path: str
-    dtype: torch.dtype
-    shape: tuple[int, ...]
-
-    def load(self) -> torch.Tensor:
-        """Re-map the tensor in the current process."""
-        return load_spilled_tensor(self.path, self.dtype, self.shape)
+    if not isinstance(tensor, torch.Tensor) or tensor.device.type != "cpu":
+        return False
+    if tensor.layout is not torch.strided:
+        return False
+    return tensor.untyped_storage().filename is not None
 
 
-@dataclass(frozen=True)
-class SpilledTensor:
-    """A tensor living in a file, plus everything needed to re-map it elsewhere.
+def _contiguous_strides(shape: tuple[int, ...]) -> tuple[int, ...]:
+    """Row-major strides for ``shape``, computed because ``set_`` with a size requires a stride."""
+    stride = [1] * len(shape)
+    for axis in range(len(shape) - 2, -1, -1):
+        stride[axis] = stride[axis + 1] * int(shape[axis + 1])
+    return tuple(stride)
 
-    ``.tensor`` is an mmap view; ``.handle`` is the part that is safe to send elsewhere.
+
+def _tensor_over_file(
+    path: str, dtype: torch.dtype, shape: tuple[int, ...]
+) -> torch.Tensor:
+    """A writable tensor mapped over the whole of ``path``, or raise ``OSError``.
+
+    ``shared=True`` is MAP_SHARED: always writable, writes reach the file, and the storage records
+    ``path`` in ``filename`` -- which is what marks the tensor disk-backed everywhere else in this
+    module and makes it pickle by path. A read-only mapping is never handed back: downstream code
+    is not audited for in-place mutation, and a write through PROT_READ storage is a SIGSEGV, not
+    an exception.
     """
-
-    tensor: torch.Tensor
-    path: str
-    dtype: torch.dtype
-    shape: tuple[int, ...]
-
-    @property
-    def handle(self) -> SpilledTensorHandle:
-        return SpilledTensorHandle(path=self.path, dtype=self.dtype, shape=self.shape)
+    n_bytes = math.prod(shape) * torch.empty(0, dtype=dtype).element_size()
+    # cast because the stub types from_file's return as the storage base class, which set_ rejects
+    storage = cast(
+        torch.UntypedStorage,
+        torch.UntypedStorage.from_file(path, shared=True, nbytes=n_bytes),
+    )
+    tensor = torch.empty(0, dtype=dtype)
+    tensor.set_(storage, 0, tuple(shape), _contiguous_strides(tuple(shape)))
+    return tensor
 
 
 def load_spilled_tensor(
     path: str, dtype: torch.dtype, shape: tuple[int, ...]
 ) -> torch.Tensor:
-    """Re-map a spilled tensor in another process, without copying its bytes anywhere.
+    """Re-map a spilled tensor in the current process, without copying its bytes anywhere.
 
-    The counterpart to :func:`spill_tensor_to_disk`. Pass ``SpilledTensor``'s path, dtype and
-    shape through whatever IPC channel is available and call this on the far side.
+    The counterpart to :func:`spill_tensor_to_disk` for a path that arrived through some channel
+    other than pickling a tensor (pickling already re-maps by itself).
 
     Raises:
-        ValueError: If ``dtype`` has no numpy equivalent, or the file is the wrong size for
-            ``shape`` -- which would otherwise be read as silently wrong data.
+        ValueError: If the file is the wrong size for ``shape`` -- which would otherwise be read
+            as silently wrong data.
+        OSError: If the file cannot be mapped writable.
     """
-    np_dtype = _NUMPY_DTYPES.get(dtype)
-    if np_dtype is None:
-        raise ValueError(f"Cannot map a spilled tensor of dtype {dtype}")
-    expected_bytes = int(np.prod(shape)) * torch.empty(0, dtype=dtype).element_size()
+    expected_bytes = math.prod(shape) * torch.empty(0, dtype=dtype).element_size()
     actual_bytes = os.path.getsize(path)
     if actual_bytes != expected_bytes:
         raise ValueError(
             f"Spill file {path} is {actual_bytes} bytes but {shape} of {dtype} needs "
             f"{expected_bytes}. Refusing to map it."
         )
-    return _map_spill_file(path, np_dtype, tuple(shape))
+    return _tensor_over_file(path, dtype, tuple(shape))
 
 
-def _register_mapping(
-    array: Any, tensor: torch.Tensor, handle: SpilledTensorHandle
-) -> None:
-    """Remember that ``tensor``'s bytes live in a file, so ``share_memory`` can refuse to copy them.
+def spill_tensor_to_disk(tensor: torch.Tensor) -> Optional[torch.Tensor]:
+    """Write ``tensor`` to disk and return a tensor mapped over the file, or ``None`` to keep it.
 
-    Needed because the fact is not recoverable from the tensor: ``tensor.numpy().base`` is the
-    tensor itself, and ``untyped_storage().filename`` is None for a storage adopted from numpy
-    (both measured). Without a registry, ``share_memory_()`` on a spilled tensor silently relocates
-    it into ``/dev/shm`` -- measured at +16,128 kB for a 16 MiB tensor -- undoing the spill at a
-    point far from where it was made.
-
-    The reference to ``array`` is weak, so an entry disappears when the mapping does. Views of a
-    spilled tensor point inside the recorded range and are recognised too.
-    """
-    nbytes = tensor.numel() * tensor.element_size()
-    _spilled_mappings[:] = [
-        entry for entry in _spilled_mappings if entry[2]() is not None
-    ]
-    _spilled_mappings.append((tensor.data_ptr(), nbytes, weakref.ref(array), handle))
-
-
-def is_disk_backed(tensor: torch.Tensor) -> bool:
-    """Whether ``tensor`` (or a view of one) is an mmap over a spill file rather than RAM."""
-    if not isinstance(tensor, torch.Tensor) or tensor.device.type != "cpu":
-        return False
-    pointer = tensor.data_ptr()
-    for start, nbytes, reference, _ in _spilled_mappings:
-        if reference() is not None and start <= pointer < start + nbytes:
-            return True
-    return False
-
-
-def disk_backed_handle(tensor: torch.Tensor) -> Optional[SpilledTensorHandle]:
-    """The spill descriptor for a tensor that IS an entire spill mapping, else None.
-
-    A partial view does not qualify: a descriptor names a whole file, so it cannot describe a
-    slice of one. Lets a caller re-send an already-spilled tensor by path instead of spilling a
-    second copy of it.
-
-    Requires the tensor to be CONTIGUOUS with no storage offset, not merely to have the right start
-    address and element count. A transpose of a square mmap tensor has the same pointer, shape and
-    numel as the original but reads the file in the wrong order, so matching on those alone would
-    hand the receiver transposed data described as untransposed -- silently wrong values rather than
-    an error.
-    """
-    if not isinstance(tensor, torch.Tensor) or tensor.device.type != "cpu":
-        return None
-    if not tensor.is_contiguous() or tensor.storage_offset() != 0:
-        return None
-    for start, nbytes, reference, handle in _spilled_mappings:
-        if (
-            reference() is not None
-            and start == tensor.data_ptr()
-            and nbytes == tensor.numel() * tensor.element_size()
-            and tuple(tensor.shape) == tuple(handle.shape)
-            and tensor.dtype == handle.dtype
-        ):
-            return handle
-    return None
-
-
-def _map_spill_file(path: str, np_dtype: str, shape: tuple[int, ...]) -> torch.Tensor:
-    """mmap a spill file as a torch tensor, always writable, or raise ``OSError``.
-
-    Never falls back to a read-only mapping. A read-only mapping is PROT_READ, and
-    ``torch.from_numpy`` does not enforce that -- an in-place write on the resulting tensor would
-    reach the mapping and take a SIGSEGV rather than raising. Downstream code is not audited for
-    in-place mutation of loaded tensors, so a file that cannot be opened writable raises here,
-    where the caller can fall back, instead of handing back storage that crashes on write.
-    """
-    mapped = np.memmap(path, dtype=np_dtype, mode="r+", shape=shape)
-    array = np.asarray(mapped)
-    tensor = torch.from_numpy(array)
-    _register_mapping(
-        array, tensor, SpilledTensorHandle(path=path, dtype=tensor.dtype, shape=shape)
-    )
-    return tensor
-
-
-def spill_tensor_to_disk(tensor: torch.Tensor) -> Optional[SpilledTensor]:
-    """Write ``tensor`` to disk and return a :class:`SpilledTensor`, or ``None`` to keep it.
-
-    ``None`` covers every reason not to spill -- spilling disabled, tensor below the threshold,
-    unsupported dtype, IO failure -- so callers can treat it as "keep what you had".
+    ``None`` covers every reason not to spill -- spilling disabled, tensor below the threshold, IO
+    failure -- so callers can treat it as "keep what you had". The returned tensor's storage knows
+    its file (:func:`is_disk_backed`), so :func:`share_memory` leaves it alone and pickling ships
+    the path rather than the bytes.
 
     Exposed for callers that hold a tensor directly rather than inside a Mapping, which
     :func:`share_memory` cannot substitute into. The partitioned node feature matrix is the case
@@ -313,25 +250,24 @@ def spill_tensor_to_disk(tensor: torch.Tensor) -> Optional[SpilledTensor]:
         return None
     if 0 in tensor.shape:
         return None
-    # Already living in a file -- most likely allocated by allocate_disk_backed rather than filled in
-    # memory and spilled. Copying it to a second file would double the disk use and the time for no
-    # benefit, so hand back a descriptor for the file it is already in.
-    existing = disk_backed_handle(tensor)
-    if existing is not None:
+    if tensor.is_quantized:
+        logger.warning(
+            f"share_memory: dtype {tensor.dtype} not spillable, using shared memory"
+        )
+        return None
+    # Already living in a file -- most likely allocated by allocate_disk_backed rather than filled
+    # in memory and spilled. Copying it to a second file would double the disk use and the time
+    # for no benefit
+    if is_disk_backed(tensor):
         logger.info(
             f"share_memory: {tuple(tensor.shape)} {tensor.dtype} is already on disk at "
-            f"{existing.path}; not writing a second copy"
+            f"{tensor.untyped_storage().filename}; not writing a second copy"
         )
-        return SpilledTensor(
-            tensor=tensor,
-            path=existing.path,
-            dtype=existing.dtype,
-            shape=existing.shape,
-        )
+        return tensor
     if tensor.numel() * tensor.element_size() < _spill_min_bytes():
         return None
     _ensure_spill_dir_prepared(spill_dir)
-    return _spill_to_mmap(tensor, spill_dir)
+    return _spill_to_file(tensor, spill_dir)
 
 
 def _fadvise_dontneed(fd: int) -> None:
@@ -396,34 +332,31 @@ def allocate_disk_backed(
     memory at all.
 
     Blocks are RESERVED up front with ``posix_fallocate`` rather than left sparse, and reservation
-    is mandatory. ``np.memmap(mode="w+")`` gives the file its full apparent size without allocating
-    it, so a filesystem that fills later fails at the moment a page is written -- and a write to a
-    mapping that cannot be backed raises **SIGBUS**, which is a signal, not an exception: it
-    bypasses every ``try`` here and kills the process with no traceback. Reserving turns that into
-    an ``OSError`` at allocation time, where it can be reported and fallen back on; a filesystem
-    that cannot reserve at all gets None rather than an unreserved mapping.
+    is mandatory. ``from_file`` gives the file its full apparent size without allocating it, so a
+    filesystem that fills later fails at the moment a page is written -- and a write to a mapping
+    that cannot be backed raises **SIGBUS**, which is a signal, not an exception: it bypasses
+    every ``try`` here and kills the process with no traceback. Reserving turns that into an
+    ``OSError`` at allocation time, where it can be reported and fallen back on; a filesystem that
+    cannot reserve at all gets None rather than an unreserved mapping.
 
     Sequential writes through the mapping cost ~3.1x their in-memory equivalent (measured on a wide
     fp32 matrix written row-by-row). What that buys: the destination's bytes stop being
     unreclaimable anonymous memory -- still charged to the cgroup while resident, but reclaimable
     page cache the kernel can evict under pressure instead of OOM-killing.
 
-    Returns None whenever a file-backed buffer is not available or not worth it -- spilling disabled,
-    below the size threshold, dtype with no numpy equivalent, no room to reserve, reservation
-    unsupported by the filesystem, IO failure -- so callers can simply fall back to ``torch.empty``.
+    Returns None whenever a file-backed buffer is not available or not worth it -- spilling
+    disabled, below the size threshold, quantized dtype, no room to reserve, reservation
+    unsupported by the filesystem, IO failure -- so callers can simply fall back to
+    ``torch.empty``.
     """
     spill_dir = _spill_dir()
     if spill_dir is None:
         return None
     if 0 in shape:
         return None
-    np_dtype = _NUMPY_DTYPES.get(dtype)
-    if np_dtype is None:
+    if dtype in _UNSPILLABLE_DTYPES:
         return None
-    element_size = torch.empty(0, dtype=dtype).element_size()
-    n_bytes = element_size
-    for extent in shape:
-        n_bytes *= extent
+    n_bytes = math.prod(shape) * torch.empty(0, dtype=dtype).element_size()
     if n_bytes < _spill_min_bytes():
         return None
     _ensure_spill_dir_prepared(spill_dir)
@@ -436,22 +369,9 @@ def allocate_disk_backed(
             _reserve_file_blocks(fd, n_bytes, spill_dir)
         finally:
             os.close(fd)
-        # "r+", NOT "w+": the file is already sized by the reservation, and numpy opens "w+" as
-        # `w+b`, which TRUNCATES the file and hands back every block just reserved -- leaving it
-        # sparse again and the SIGBUS risk exactly where it was
-        mapped = np.memmap(
-            path,
-            dtype=np_dtype,
-            mode="r+",
-            shape=tuple(shape),
-        )
-        array = np.asarray(mapped)
-        tensor = torch.from_numpy(array)
-        _register_mapping(
-            array,
-            tensor,
-            SpilledTensorHandle(path=path, dtype=dtype, shape=tuple(shape)),
-        )
+        # Mapped only AFTER the reservation. from_file leaves an existing file's allocated blocks
+        # intact (the tests hold this), so the mapping below is fully backed and SIGBUS-safe
+        tensor = _tensor_over_file(path, dtype, tuple(shape))
         logger.info(
             f"share_memory: allocated {n_bytes / 2**30:.1f} GiB buffer {tuple(shape)} {dtype} "
             f"on disk at {path} instead of in anonymous memory"
@@ -470,38 +390,26 @@ def allocate_disk_backed(
         return None
 
 
-def _spill_to_mmap(tensor: torch.Tensor, spill_dir: str) -> Optional[SpilledTensor]:
-    """Write ``tensor`` to a file under ``spill_dir`` and return an mmap view of it.
+def _spill_to_file(tensor: torch.Tensor, spill_dir: str) -> Optional[torch.Tensor]:
+    """Write ``tensor`` to a file under ``spill_dir`` and return a tensor mapped over it.
 
-    Returns None if the tensor cannot be spilled (unsupported dtype, reservation refused by the
-    filesystem, IO failure), in which case the caller should keep the tensor it already had.
+    Returns None if the tensor cannot be spilled (reservation refused by the filesystem, IO
+    failure), in which case the caller should keep the tensor it already had.
 
     Why this helps: ``/dev/shm`` is tmpfs, i.e. RAM. Node features for a ~1B-node graph approach
     a terabyte at fp32; even split across replicas that is the largest resident tensor, and
     ``share_memory_()`` costs 1x in tmpfs plus a transient 2x in RSS. Backing the bytes with
     a real file turns them into evictable page cache instead.
-
-    NOTE the mapping only stays file-backed within this process. Torch's multiprocessing reduction
-    copies a numpy-owned storage into shared memory when the tensor is pickled, so anything that
-    ships this tensor to another process undoes the spill. Ship ``SpilledTensor.path`` and call
-    :func:`load_spilled_tensor` on the far side instead.
     """
-    np_dtype = _NUMPY_DTYPES.get(tensor.dtype)
-    if np_dtype is None:
-        logger.warning(
-            f"share_memory: dtype {tensor.dtype} not spillable, using shared memory"
-        )
-        return None
-
     path: Optional[str] = None
     try:
         os.makedirs(spill_dir, exist_ok=True)
         n_bytes = tensor.numel() * tensor.element_size()
         # mkstemp, not a name derived from shape and byte count. A derived name collides for two
         # tensors with the same shape and element width -- including different dtypes of the same
-        # width -- and reopening that path with mode="w+" TRUNCATES the file still backing the
-        # first tensor's live read-only mapping, silently replacing its contents. Nothing would
-        # raise; the features would simply be wrong.
+        # width -- and reopening and resizing that path would silently replace the contents still
+        # backing the first tensor's live mapping. Nothing would raise; the features would simply
+        # be wrong
         fd, path = tempfile.mkstemp(dir=spill_dir, prefix=_SPILL_PREFIX, suffix=".bin")
         try:
             # Same SIGBUS-safety rule as allocate_disk_backed: every block is reserved before the
@@ -510,9 +418,7 @@ def _spill_to_mmap(tensor: torch.Tensor, spill_dir: str) -> Optional[SpilledTens
             _reserve_file_blocks(fd, n_bytes, spill_dir)
         finally:
             os.close(fd)
-        # "r+", not "w+": the reservation already sized the file, and "w+" would truncate the
-        # reserved blocks away
-        writable = np.memmap(path, dtype=np_dtype, mode="r+", shape=tuple(tensor.shape))
+        writable = _tensor_over_file(path, tensor.dtype, tuple(tensor.shape))
         # Copy in ~1 GiB slices so we never hold a second full-size buffer.
         row_bytes = (
             max(1, int(tensor[0].numel()) * tensor.element_size())
@@ -521,25 +427,25 @@ def _spill_to_mmap(tensor: torch.Tensor, spill_dir: str) -> Optional[SpilledTens
         )
         rows = max(1, int(2**30 // row_bytes))
         for start in range(0, tensor.shape[0], rows):
-            writable[start : start + rows] = tensor[start : start + rows].numpy()
-        writable.flush()
-        del writable
+            writable[start : start + rows].copy_(tensor[start : start + rows])
+        # msync equivalent: fsync writes back the pages the copy just dirtied, so the data is on
+        # disk and a later release_page_cache has clean pages to drop
+        flush_fd = os.open(path, os.O_RDWR)
+        try:
+            os.fsync(flush_fd)
+        finally:
+            os.close(flush_fd)
         logger.info(
             f"share_memory: spilled {n_bytes / 2**30:.1f} GiB to {path} instead of /dev/shm"
         )
-        return SpilledTensor(
-            tensor=_map_spill_file(path, np_dtype, tuple(tensor.shape)),
-            path=path,
-            dtype=tensor.dtype,
-            shape=tuple(tensor.shape),
-        )
+        return writable
     except Exception as e:  # noqa: BLE001
-        # Unlink the partial file. mkstemp has already created it, so a failure in the mmap, the
-        # copy, the flush or the remap would otherwise leave its bytes on disk with nothing
-        # referencing them. That matters most in the case that causes the failure: the spill
-        # filesystem is finite and node features are tens of GiB per replica, so a couple of failed
-        # attempts can exhaust the disk and push the tensors back into RAM -- turning a recoverable
-        # spill failure into the OOM this whole mechanism exists to avoid
+        # Unlink the partial file. mkstemp has already created it, so a failure in the mapping,
+        # the copy or the flush would otherwise leave its bytes on disk with nothing referencing
+        # them. That matters most in the case that causes the failure: the spill filesystem is
+        # finite and node features are tens of GiB per replica, so a couple of failed attempts can
+        # exhaust the disk and push the tensors back into RAM -- turning a recoverable spill
+        # failure into the OOM this whole mechanism exists to avoid
         if path is not None:
             try:
                 os.unlink(path)
@@ -661,9 +567,7 @@ def allocate_preshared(
         random_access: Set when the caller will write to scattered offsets rather than stream
             through in order; memory is then preferred and disk the checked fallback.
     """
-    n_bytes = torch.empty(0, dtype=dtype).element_size()
-    for extent in shape:
-        n_bytes *= extent
+    n_bytes = math.prod(shape) * torch.empty(0, dtype=dtype).element_size()
 
     prefer_memory = random_access and _memory_is_the_better_home(n_bytes) is None
     if not prefer_memory:
@@ -718,12 +622,7 @@ def allocate_preshared(
     try:
         storage = torch.UntypedStorage._new_shared(n_bytes)
         tensor = torch.empty(0, dtype=dtype)
-        # Contiguous strides, computed rather than left to be inferred: the typed overload of `set_`
-        # that takes a size also requires a stride.
-        stride: list[int] = [1] * len(shape)
-        for axis in range(len(shape) - 2, -1, -1):
-            stride[axis] = stride[axis + 1] * int(shape[axis + 1])
-        tensor.set_(storage, 0, tuple(shape), tuple(stride))
+        tensor.set_(storage, 0, tuple(shape), _contiguous_strides(tuple(shape)))
         logger.info(
             f"share_memory: allocated {_human_bytes(n_bytes)} {tuple(shape)} {dtype} directly in "
             f"shared memory, so share_memory_() will not copy it"
@@ -744,15 +643,18 @@ def allocate_preshared(
 
 
 def has_live_mapping(path: str) -> bool:
-    """Whether some tensor in this process still maps ``path``.
+    """Whether THIS process still maps ``path``, read from ``/proc/self/maps``.
 
-    Reads the spill registry, whose entries hold a weakref to the ``np.memmap``: a dead weakref means
-    the last tensor over that file was collected and the mapping is gone.
+    The kernel's own list of this process's mappings, so it sees every mapping over the file no
+    matter who created it. False when the list cannot be read (non-Linux), matching the rest of
+    this module: spilling is effectively Linux-only and refuses gracefully elsewhere.
     """
-    return any(
-        reference() is not None and handle.path == path
-        for _, _, reference, handle in _spilled_mappings
-    )
+    real = os.path.realpath(path)
+    try:
+        with open("/proc/self/maps") as maps:
+            return any(line.rstrip("\n").endswith(f" {real}") for line in maps)
+    except OSError:
+        return False
 
 
 def release_page_cache_by_path(path: str) -> bool:
@@ -792,92 +694,169 @@ def release_page_cache_by_path(path: str) -> bool:
     return True
 
 
+def _madvise_dontneed(address: int, n_bytes: int, path: str) -> bool:
+    """``MADV_DONTNEED`` on ``[address, address + n_bytes)``, dropping this process's page-table entries.
+
+    Safe only on a file-backed mapping whose dirty pages were just written back: the pages remain
+    in the file and refault on next access. On an anonymous mapping the same call would discard
+    the data, which is why this helper is private to :func:`release_page_cache`.
+    """
+    dontneed = getattr(mmap, "MADV_DONTNEED", None)
+    if dontneed is None:
+        logger.info(
+            f"share_memory: cannot unmap pages for {path} (no MADV_DONTNEED on this platform); "
+            f"its pages stay charged to the cgroup until the kernel reclaims them"
+        )
+        return False
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.madvise(
+        ctypes.c_void_p(address), ctypes.c_size_t(n_bytes), ctypes.c_int(dontneed)
+    )
+    if result != 0:
+        reason = os.strerror(ctypes.get_errno())
+        logger.info(
+            f"share_memory: MADV_DONTNEED failed for {path} ({reason}); page-cache eviction "
+            f"would be a no-op while the pages remain mapped, so nothing was dropped"
+        )
+        return False
+    return True
+
+
 def release_page_cache(tensor: torch.Tensor) -> bool:
     """Write a disk-backed tensor's dirty pages out and ask the kernel to drop them from the cache.
 
     A spilled tensor's pages are reclaimable but still charged to cgroup v2's ``memory.current``
     while resident; dropping them releases the charge. The mapping stays valid and refaults on
     next access, so this is worth it only for data written now and not read until much later.
+    Operates on the tensor's whole backing file, so views over the same file lose their cached
+    pages too.
 
     Three steps, in this order, and every one is load-bearing:
 
-    1. ``msync`` through the backing memmap -- dirty pages cannot be dropped at all.
+    1. ``fsync`` -- writes back the pages dirtied through the mapping; dirty pages cannot be
+       dropped at all.
     2. ``MADV_DONTNEED`` on the mapping -- removes this process's page-table entries. Without it
        step 3 silently skips every still-mapped page and reports success having freed nothing.
-    3. ``fsync`` then ``POSIX_FADV_DONTNEED`` -- discards the now-unmapped clean page cache.
+    3. ``POSIX_FADV_DONTNEED`` -- discards the now-unmapped clean page cache.
 
     Returns True when every step COMPLETED -- ``FADV_DONTNEED`` is advisory, so completion is not
     proof of eviction; measure residency with ``mincore`` to know (the tests do). False means the
     sequence was incomplete, though a failure after step 2 has already dropped this process's
     page-table entries.
     """
-    handle = disk_backed_handle(tensor)
-    if handle is None:
+    if not is_disk_backed(tensor):
         return False
-
-    # The numpy memmap that owns the mapping. `np.asarray(memmap)` keeps the memmap as its base, and
-    # torch keeps that array alive, so it is still reachable through the registry.
-    backing = None
-    for _, _, reference, registered in _spilled_mappings:
-        if registered is handle:
-            array = reference()
-            backing = getattr(array, "base", None) if array is not None else None
-            break
-    if backing is None or not hasattr(backing, "flush"):
-        logger.warning(
-            f"share_memory: no live mapping found for {handle.path}; cannot drop its cache"
-        )
-        return False
+    storage = tensor.untyped_storage()
+    path = storage.filename
+    assert path is not None  # is_disk_backed just checked
 
     try:
-        backing.flush()  # msync: dirty pages cannot be dropped, so this is not optional.
-    except (OSError, ValueError) as e:
-        logger.warning(f"share_memory: could not msync {handle.path}: {e}")
-        return False
-
-    # Step 2 of the docstring's order: the page-table entries must go before FADV_DONTNEED, and
-    # MADV_DONTNEED is only safe because the mapping is file-backed and has just been msync'd (on
-    # an anonymous mapping it would discard the data)
-    mapping = getattr(backing, "_mmap", None)
-    if mapping is None or not hasattr(mapping, "madvise"):
-        logger.info(
-            f"share_memory: cannot unmap pages for {handle.path} (no madvise available); its "
-            f"pages stay charged to the cgroup until the kernel reclaims them"
-        )
-        return False
-    try:
-        mapping.madvise(mmap.MADV_DONTNEED)
-    except (AttributeError, OSError, ValueError) as e:
-        logger.info(
-            f"share_memory: MADV_DONTNEED failed for {handle.path} ({e}); page-cache eviction "
-            f"would be a no-op while the pages remain mapped, so nothing was dropped"
-        )
-        return False
-
-    try:
-        fd = os.open(handle.path, os.O_RDWR)
+        fd = os.open(path, os.O_RDWR)
     except OSError as e:
-        logger.warning(
-            f"share_memory: could not reopen {handle.path} to drop cache: {e}"
-        )
+        logger.warning(f"share_memory: could not open {path} to drop cache: {e}")
         return False
     try:
-        os.fsync(fd)
-        _fadvise_dontneed(fd)
+        os.fsync(fd)  # step 1: dirty pages cannot be dropped, so this is not optional
+        # step 2 must precede step 3, and MADV_DONTNEED is only safe because the mapping is
+        # file-backed and its dirty pages were just written back (on an anonymous mapping it
+        # would discard the data)
+        if not _madvise_dontneed(storage.data_ptr(), storage.nbytes(), path):
+            return False
+        _fadvise_dontneed(fd)  # step 3
     except OSError as e:
         logger.info(
-            f"share_memory: could not drop page cache for {handle.path} ({e}); its pages stay "
+            f"share_memory: could not drop page cache for {path} ({e}); its pages stay "
             f"charged to the cgroup until the kernel reclaims them"
         )
         return False
     finally:
         os.close(fd)
-    n_bytes = tensor.numel() * tensor.element_size()
     logger.info(
-        f"share_memory: unmapped and requested eviction of {_human_bytes(n_bytes)} of page cache "
-        f"for {handle.path}; the mapping stays valid and refaults on next read"
+        f"share_memory: unmapped and requested eviction of {_human_bytes(storage.nbytes())} of "
+        f"page cache for {path}; the mapping stays valid and refaults on next read"
     )
     return True
+
+
+def _rebuild_spilled_tensor(
+    path: str,
+    dtype: torch.dtype,
+    shape: tuple[int, ...],
+    stride: tuple[int, ...],
+    storage_offset: int,
+    storage_nbytes: int,
+) -> torch.Tensor:
+    """The receiving half of :func:`_reduce_spill_aware`: re-map the file, no bytes copied.
+
+    Raises:
+        FileNotFoundError: If the spill file is gone -- ``from_file`` would otherwise CREATE it
+            and silently hand back zero-filled, unreserved storage.
+        ValueError: If the file is too small for the storage it is supposed to hold, for the same
+            reason.
+    """
+    actual_bytes = os.path.getsize(path)
+    if actual_bytes < storage_nbytes:
+        raise ValueError(
+            f"Spill file {path} is {actual_bytes} bytes but the pickled tensor needs "
+            f"{storage_nbytes}. Refusing to map it."
+        )
+    # cast because the stub types from_file's return as the storage base class, which set_ rejects
+    storage = cast(
+        torch.UntypedStorage,
+        torch.UntypedStorage.from_file(path, shared=True, nbytes=storage_nbytes),
+    )
+    tensor = torch.empty(0, dtype=dtype)
+    tensor.set_(storage, storage_offset, shape, stride)
+    return tensor
+
+
+def _reduce_spill_aware(tensor: torch.Tensor) -> tuple:
+    """Pickle a disk-backed tensor as its path; hand everything else to torch's own reducer.
+
+    Torch's reduction for CPU tensors moves the bytes into ``/dev/shm`` -- for a spilled tensor
+    that copies it back into RAM and undoes the spill. A storage with a ``filename`` was created
+    by ``from_file(shared=True)``, whose documented contract is already "all changes are written
+    to the file", so shipping the path preserves its sharing semantics: the receiver maps the same
+    file with the same offset, shape and strides. Everything else -- no filename, CUDA, sparse,
+    grad-carrying, quantized, named, conj/neg views whose flag a raw re-map would drop -- is
+    reduced by torch exactly as if this module were not loaded.
+
+    Gated on spilling being enabled, so the feature stays opt-in: a process that never set
+    ``GIGL_TENSOR_SPILL_DIR`` pickles its own ``from_file`` tensors exactly as torch does today
+    (spawn children inherit the environment, so the gate agrees on both sides of a boundary).
+    """
+    if (
+        is_tensor_spilling_enabled()
+        and tensor.layout is torch.strided
+        and tensor.device.type == "cpu"
+        and not tensor.requires_grad
+        and not tensor.is_quantized
+        and not tensor.has_names()
+        and not tensor.is_conj()
+        and not tensor.is_neg()
+    ):
+        storage = tensor.untyped_storage()
+        if storage.filename is not None:
+            return (
+                _rebuild_spilled_tensor,
+                (
+                    storage.filename,
+                    tensor.dtype,
+                    tuple(tensor.shape),
+                    tuple(tensor.stride()),
+                    tensor.storage_offset(),
+                    storage.nbytes(),
+                ),
+            )
+    return _torch_reduce_tensor(tensor)
+
+
+# Replaces torch's entry for torch.Tensor in the ForkingPickler dispatch table (keyed by exact
+# type, so subclasses like torch.nn.Parameter keep their own reducers). Module import is the only
+# hook that reliably precedes any pickling in both the sending and receiving process: the sender
+# has imported this module to create or receive a spilled tensor, and the receiver imports it when
+# unpickling resolves _rebuild_spilled_tensor
+ForkingPickler.register(torch.Tensor, _reduce_spill_aware)
 
 
 def share_memory(
@@ -903,8 +882,8 @@ def share_memory(
 
     This function never spills to disk, and a tensor that is ALREADY disk-backed is left alone:
     ``share_memory_()`` on an mmap-backed tensor copies every byte into ``/dev/shm``, quietly
-    undoing a spill made elsewhere. Spilling belongs where a descriptor travels with the tensor --
-    :func:`share_memory_for_ipc` and :func:`spill_tensor_to_disk`.
+    undoing a spill made elsewhere. Spilling belongs to :func:`share_memory_for_ipc` and
+    :func:`spill_tensor_to_disk`.
 
     Args:
         entity (Optional[Union[torch.Tensor, PartitionBook, dict[_KeyType, torch.Tensor], dict[_KeyType, PartitionBook]]]):
@@ -934,64 +913,24 @@ def share_memory(
 
 def share_memory_for_ipc(
     entity: dict[_KeyType, torch.Tensor],
-) -> dict[_KeyType, Union[torch.Tensor, SpilledTensorHandle]]:
+) -> dict[_KeyType, torch.Tensor]:
     """Prepare a mapping of tensors to cross a process boundary, spilling instead of copying.
 
     Same intent as :func:`share_memory`, but for values that will be **pickled to another
-    process**: a spilled tensor is replaced by a :class:`SpilledTensorHandle` rather than by its
-    mmap view. Sending the view would copy every byte back into ``/dev/shm``, which is RAM, and
-    silently undo the spill -- the reason this function exists separately.
-
-    Tensors that are not spilled (spilling disabled, below the size threshold, unsupported dtype)
-    go to POSIX shared memory exactly as before, which pickles by handle already.
+    process**: each value large enough is spilled first, and a spilled tensor pickles as its file
+    path (see :func:`_reduce_spill_aware`), so its bytes never transit ``/dev/shm``. Tensors that
+    are not spilled (spilling disabled, below the size threshold) go to POSIX shared memory
+    exactly as before, which pickles by handle already.
 
     Returns a NEW dict; the input is left alone, since the caller usually still holds the tensors
     and dropping them is its decision.
     """
-    prepared: dict[_KeyType, Union[torch.Tensor, SpilledTensorHandle]] = {}
+    prepared: dict[_KeyType, torch.Tensor] = {}
     for key, value in entity.items():
-        already_spilled = disk_backed_handle(value)
-        if already_spilled is not None:
-            # Spilled earlier by something else; send that file's descriptor rather than writing a
-            # second copy of the same bytes.
-            prepared[key] = already_spilled
-            continue
         spilled = spill_tensor_to_disk(value)
         if spilled is not None:
-            prepared[key] = spilled.handle
-            # Nothing here keeps the mmap view alive on purpose: the far side re-maps from the
-            # path, and holding a second mapping in this process buys nothing.
+            prepared[key] = spilled
             continue
         share_memory(value)
         prepared[key] = value
     return prepared
-
-
-def resolve_spilled_handles(
-    value: Union[
-        torch.Tensor,
-        SpilledTensorHandle,
-        dict[_KeyType, Union[torch.Tensor, SpilledTensorHandle]],
-        None,
-    ],
-) -> Any:
-    """Turn any :class:`SpilledTensorHandle` back into a tensor, mapped in this process.
-
-    The receiving half of :func:`share_memory_for_ipc`. Accepts a bare value or a mapping of
-    values -- matching how the loader ships either a single tensor (homogeneous) or a dict keyed
-    by node/edge type (heterogeneous) -- and passes anything that is already a tensor straight
-    through.
-    """
-    if value is None:
-        return None
-    if isinstance(value, SpilledTensorHandle):
-        tensor = value.load()
-        logger.info(
-            f"share_memory: mapped spilled tensor {tuple(value.shape)} {value.dtype} from "
-            f"{value.path} ({tensor.numel() * tensor.element_size() / 2**30:.1f} GiB, no copy)"
-        )
-        return tensor
-    if isinstance(value, abc.Mapping):
-        by_type = cast(dict[Any, Union[torch.Tensor, SpilledTensorHandle]], value)
-        return {key: resolve_spilled_handles(item) for key, item in by_type.items()}
-    return value
