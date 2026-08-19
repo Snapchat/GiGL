@@ -507,18 +507,26 @@ def materialize_quantized_edge_features(
         if isinstance(edge_quantization_metadata, dict):
             raise ValueError("Expect scalar quantization metadata for homogeneous data")
         packed_features = metadata.pop(EDGE_PACKED_FEATURES_METADATA_KEY, None)
+        labeled_homogeneous_output_edge_type = (
+            reverse_edge_type(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+            if edge_dir == "out"
+            else DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        )
         labeled_homogeneous_packed_features_key = (
-            f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_EDGE_TYPE}"
+            f"{EDGE_PACKED_FEATURES_METADATA_KEY}."
+            f"{labeled_homogeneous_output_edge_type}"
         )
         if packed_features is None:
             # Labeled homogeneous graphs are sampled as heterogeneous graphs, so
-            # the packed-feature transport key retains the default edge type.
+            # the transport key uses GLT's direction-dependent output edge type.
             packed_features = metadata.pop(
                 labeled_homogeneous_packed_features_key, None
             )
         if packed_features is None:
             raise ValueError(
-                f"Missing packed quantized features in metadata keys {EDGE_PACKED_FEATURES_METADATA_KEY} or {labeled_homogeneous_packed_features_key}"
+                "Missing packed quantized features in metadata keys "
+                f"{EDGE_PACKED_FEATURES_METADATA_KEY} or "
+                f"{labeled_homogeneous_packed_features_key}"
             )
         _materialize_quantized_features(
             data,

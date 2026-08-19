@@ -1424,6 +1424,8 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
             },
             partitioned_edge_quantized_features={
                 _USER_TO_STORY: FeaturePartitionData(
+                    # The high-order 2-bit codes unpack to [0, 3] in feature
+                    # slots 0 and 2; raw [10, 20] therefore yields [0, 10, 3, 20].
                     feats=torch.tensor([[48]], dtype=torch.uint8),
                     ids=torch.tensor([0]),
                 )

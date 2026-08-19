@@ -21,6 +21,7 @@ from gigl.common.data.load_torch_tensors import (
     load_torch_tensors_from_tf_record,
     remove_sampling_weight_from_edge_quantization_metadata,
 )
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 from gigl.src.mocking.lib.versioning import (
@@ -730,6 +731,44 @@ class TFRecordDataLoaderTest(TestCase):
                 clip_max=3.0,
             ),
         )
+
+    def test_sampling_weight_removal_rejects_scalar_name_for_multiple_edge_types(
+        self,
+    ) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        node_type = NodeType("node")
+        edge_type_a = EdgeType(node_type, Relation("relation_a"), node_type)
+        edge_type_b = EdgeType(node_type, Relation("relation_b"), node_type)
+        edge_info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=missing_path,
+            feature_spec={
+                "src_id": tf.io.FixedLenFeature([], tf.int64),
+                "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                "weight": tf.io.FixedLenFeature([], tf.float32),
+            },
+            feature_keys=["weight"],
+            feature_dim=1,
+            entity_key=("src_id", "dst_id"),
+        )
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=edge_info,
+            edge_entity_info={edge_type_a: edge_info, edge_type_b: edge_info},
+            edge_quantization_metadata={
+                edge_type_b: FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=1,
+                    quantized_feature_indices=(0,),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                )
+            },
+        )
+
+        with self.assertRaises(ValueError):
+            remove_sampling_weight_from_edge_quantization_metadata(
+                serialized_graph_metadata=serialized_graph_metadata,
+                weight_edge_feat_name="weight",
+            )
 
     def test_load_edge_weights_multidim_feature(self):
         """Weight column offset is correct when a preceding feature key is multi-dimensional.

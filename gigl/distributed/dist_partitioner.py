@@ -1001,6 +1001,7 @@ class DistPartitioner:
 
         return node_partition_book
 
+    # TODO: Create a dataclass for this positional three-value partition result.
     def _partition_node_features_and_labels(
         self,
         node_partition_book: dict[NodeType, PartitionBook],
@@ -1228,6 +1229,7 @@ class DistPartitioner:
             node_label_partition_data,
         )
 
+    # TODO: Create a dataclass for this positional four-value partition result.
     def _partition_edge_index_and_edge_features(
         self,
         node_partition_book: dict[NodeType, PartitionBook],
@@ -1400,6 +1402,8 @@ class DistPartitioner:
                 generate_pb=False,
             )
 
+            input_parts.clear()
+            del input_parts
             del edge_ids
             del self._edge_ids[edge_type]
             if len(self._edge_ids) == 0:

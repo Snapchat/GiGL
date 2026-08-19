@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -13,12 +12,21 @@ namespace gigl {
 
 // Neighbor fetch input from Python, keyed by integer edge type ID:
 //   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N], optional edge_ids[sum(counts)].
-using NeighborFetchTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>>;
+struct NeighborFetchTensors {
+    torch::Tensor nodeIds;                // node_ids[N]
+    torch::Tensor flatNeighborIds;        // flat_neighbor_ids[sum(counts)]
+    torch::Tensor counts;                 // counts[N]
+    std::optional<torch::Tensor> edgeIds; // optional edge_ids[sum(counts)]
+};
 using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
 
 // PPR extraction output, keyed by integer node type ID:
 //   ids, weights/edge_attr, valid_counts.
-using PPRExtractTensors = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>;
+struct PPRExtractTensors {
+    torch::Tensor ids;         // int64 node IDs, flattened across seeds
+    torch::Tensor weights;     // double feature matrix / edge_attr
+    torch::Tensor validCounts; // int64 selected-node count per seed
+};
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
 // Original-edge extraction output, keyed by integer edge type ID:

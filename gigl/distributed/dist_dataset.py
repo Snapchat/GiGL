@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union, cast, overload
+from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
@@ -940,19 +940,18 @@ class DistDataset(glt.distributed.DistDataset):
         if features is None or id_to_index is None:
             logger.info("Found no packed quantized edge features to initialize")
             return
-        if isinstance(features, Mapping):
-            assert isinstance(id_to_index, Mapping)
-            features = cast(dict[EdgeType, torch.Tensor], features)
-            id_to_index = cast(dict[EdgeType, torch.Tensor], id_to_index)
-            self._edge_quantized_features = {
-                edge_type: Feature(
+        if isinstance(features, dict):
+            assert isinstance(id_to_index, dict)
+            edge_quantized_features: dict[EdgeType, Feature] = {}
+            for edge_type, features_per_edge_type in features.items():
+                assert isinstance(edge_type, EdgeType)
+                edge_quantized_features[edge_type] = Feature(
                     feature_tensor=features_per_edge_type,
                     id2index=id_to_index[edge_type],
                     with_gpu=False,
                     dtype=torch.uint8,
                 )
-                for edge_type, features_per_edge_type in features.items()
-            }
+            self._edge_quantized_features = edge_quantized_features
         else:
             assert not isinstance(id_to_index, Mapping)
             self._edge_quantized_features = Feature(
