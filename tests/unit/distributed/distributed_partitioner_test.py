@@ -873,10 +873,14 @@ class DistRandomPartitionerTestCase(TestCase):
                         else partitioned_edge_index
                     )
                     self.assertEqual(edge_type_features.feats.dtype, torch.uint8)
-                    assert edge_type_features.ids is not None
-                    expected_source_nodes = MOCKED_UNIFIED_GRAPH.edge_index[edge_type][
-                        0, edge_type_features.ids
-                    ]
+                    if is_range_based_partition:
+                        self.assertIsNone(edge_type_features.ids)
+                        expected_source_nodes = edge_type_graph.edge_index[0]
+                    else:
+                        assert edge_type_features.ids is not None
+                        expected_source_nodes = MOCKED_UNIFIED_GRAPH.edge_index[
+                            edge_type
+                        ][0, edge_type_features.ids]
                     expected_features = torch.stack(
                         (
                             expected_source_nodes * 3 + 17,
@@ -888,11 +892,13 @@ class DistRandomPartitionerTestCase(TestCase):
                         tensor_a=edge_type_features.feats,
                         tensor_b=expected_features,
                     )
-                    assert edge_type_graph.edge_ids is not None
-                    self.assert_tensor_equality(
-                        tensor_a=edge_type_features.ids,
-                        tensor_b=edge_type_graph.edge_ids,
-                    )
+                    if not is_range_based_partition:
+                        assert edge_type_features.ids is not None
+                        assert edge_type_graph.edge_ids is not None
+                        self.assert_tensor_equality(
+                            tensor_a=edge_type_features.ids,
+                            tensor_b=edge_type_graph.edge_ids,
+                        )
             elif (
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
