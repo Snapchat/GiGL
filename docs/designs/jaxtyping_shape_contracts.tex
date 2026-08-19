@@ -1,0 +1,177 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.55in]{geometry}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Heros}
+\setmonofont{DejaVu Sans Mono}[Scale=0.78]
+\usepackage{xcolor,booktabs,tabularx,array,enumitem,titlesec,hyperref,parskip,microtype,fancyvrb}
+\definecolor{navy}{HTML}{123047}
+\definecolor{blue}{HTML}{1D5D8F}
+\definecolor{pale}{HTML}{EEF5F8}
+\definecolor{ink}{HTML}{1D2730}
+\hypersetup{colorlinks=true,urlcolor=blue,linkcolor=blue}
+\color{ink}
+\pagestyle{plain}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\setlist[itemize]{leftmargin=12pt,itemsep=1pt,topsep=2pt}
+\titleformat{\section}{\large\bfseries\color{navy}}{}{0pt}{}
+\titlespacing*{\section}{0pt}{6pt}{3pt}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\labelbox}[1]{\colorbox{pale}{\strut\hspace{3pt}\textbf{#1}\hspace{3pt}}}
+\DefineVerbatimEnvironment{snippet}{Verbatim}{fontsize=\small,formatcom=\color{navy}}
+\begin{document}
+
+{\color{navy}\Huge\bfseries Test-time Tensor Shape Contracts}\\[-2pt]
+{\large A concise proposal and PR \#748 implementation summary}\\[5pt]
+\hrule\vspace{5pt}
+
+\section*{What Jaxtyping adds}
+Jaxtyping extends Python type annotations with tensor \emph{dtype}, \emph{rank}, and \emph{shape relationships}. It supports PyTorch tensors despite its name. A contract is executable only when paired with a runtime checker; otherwise it remains useful documentation.
+
+\begin{snippet}
+from jaxtyping import Float, Int64
+from torch import Tensor
+
+def decode(q: Float[Tensor, "queries embedding_dim"],
+           c: Float[Tensor, "candidates embedding_dim"]
+          ) -> Float[Tensor, "queries candidates"]: ...
+\end{snippet}
+
+The repeated \code{embedding\_dim} binds at a call boundary: both inputs must have the same final dimension. This catches a common, expensive class of GNN interface bug near its source.
+
+\labelbox{Shape vocabulary}\quad Axes are whitespace-separated. Exact integers are fixed, names bind equal sizes within one checked call, and dtype families such as \code{Float} allow any floating precision.
+
+\begin{tabularx}{\linewidth}{@{}>{\ttfamily}p{0.31\linewidth}X@{}}
+\toprule
+\normalfont\bfseries Contract & \bfseries Meaning \\
+\midrule
+\code{Float[Tensor, "batch 128"]} & Matrix with a fixed 128-wide final axis. \\
+\code{Float[Tensor, "... channels"]} & Any leading rank, followed by \code{channels}. \code{...} is anonymous variable rank. \\
+\code{Float[Tensor, "#batch features"]} & \code{batch} may equal its bound size \emph{or 1}; this enables broadcasting. It is not an optional scalar. A scalar is \code{""}. \\
+\code{Float[Tensor, "{width}"]} & Exact size taken from a runtime argument named \code{width}. \\
+\code{Float[Tensor, "{self.hidden}+1"]} & Exact size derived from instance configuration. \\
+\code{Float[Tensor, "*batch channels"]} & Named variable number of leading axes. Only one \code{*name} or \code{...} is allowed per shape. \\
+\bottomrule
+\end{tabularx}
+
+\begin{snippet}
+def add_bias(x: Float[Tensor, "#batch features"],
+             bias: Float[Tensor, "#batch features"]
+            ) -> Float[Tensor, "batch features"]: ...
+
+def make_vector(width: int) -> Float[Tensor, "{width}"]: ...
+
+def channel_last(x: Float[Tensor, "... channels"]) -> Float[Tensor, "... channels"]: ...
+\end{snippet}
+
+\section*{Benefits and limits}
+\begin{minipage}[t]{0.48\linewidth}
+\labelbox{Benefits}
+\begin{itemize}
+\item Contracts document the true boundary, not merely \code{Tensor}.
+\item Runtime checks validate dtype, rank, fixed axes, and named-axis equality.
+\item Reusing a name exposes semantic coupling in code review.
+\item Tests fail at the offending call, before malformed data propagates.
+\end{itemize}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+\labelbox{Limits}
+\begin{itemize}
+\item Checks cover only exercised paths and annotated boundaries.
+\item Wrong or over-tight contracts create false test failures and maintenance.
+\item Dynamic keyed heterogeneous containers cannot express key-to-axis equality.
+\item Do not guess a tensor's rank or semantics simply to add an annotation.
+\end{itemize}
+\end{minipage}
+
+\newpage
+{\color{navy}\Huge\bfseries Choosing a checker}\\[-2pt]
+{\large Jaxtyping supplies tensor-aware types; another library invokes them at runtime.}\\[5pt]
+\hrule\vspace{5pt}
+
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}X X@{}}
+\toprule
+\bfseries Option & \bfseries Strengths & \bfseries Tradeoffs \\
+\midrule
+\textbf{Typeguard 2.x} & Mature, straightforward decorator and import-hook integration. Jaxtyping explicitly documents the 2.x series. It is the PR's choice. & General runtime checking can encounter static-only GiGL annotations and forward references. The PR filters all non-Jaxtyping annotations before Typeguard sees them. Jaxtyping documents known issues with Typeguard 3 and 4. \\
+\addlinespace
+\textbf{Beartype} & A popular alternative with the same decorator-shaped interface. It can be selected for \code{@jaxtyped} or an import hook. & Not selected here because the PR already has a working Typeguard 2.x path. Switching would add a dependency and behavior change without a demonstrated GiGL need. \\
+\addlinespace
+\textbf{Pyrefly} & Fast static type checker and language server. Useful for broad Python typing feedback in editors and CI. & Different tool: it does not perform runtime tensor value checks. It requires adopting and maintaining a repository-wide static type-checking program, including third-party and dynamic PyTorch/PyG boundaries. That is valuable independently, but larger than this targeted test contract proposal. \\
+\bottomrule
+\end{tabularx}
+
+\section*{How runtime checking works}
+Jaxtyping creates a dynamic context per checked function. The checker calls \code{isinstance} against a tensor type; Jaxtyping binds named axes while checking arguments and verifies returns against the same bindings.
+
+\begin{snippet}
+from jaxtyping import Float, jaxtyped
+from typeguard import typechecked
+
+@jaxtyped(typechecker=typechecked)
+def outer(x: Float[Tensor, "batch left"],
+          y: Float[Tensor, "batch right"]
+         ) -> Float[Tensor, "batch left right"]:
+    return x[:, :, None] * y[:, None, :]
+\end{snippet}
+
+For broad coverage, Jaxtyping also provides an import hook that automatically instruments functions and dataclasses imported after installation.
+
+\begin{snippet}
+from jaxtyping import install_import_hook
+hook = install_import_hook(
+    modules=("gigl", "examples"), typechecker="typeguard.typechecked"
+)
+# Later imports from those packages are instrumented.
+\end{snippet}
+
+\labelbox{Important}\quad Runtime checks are a complement to static typing, not a replacement. They validate actual values on executed test paths. Static checking validates a wider program model before execution, but cannot generally prove runtime tensor dimensions.
+
+\section*{Why test-time only}
+Production training and inference avoid instrumentation overhead, import-order sensitivity, and a new user-facing operational mode. The contracts remain normal annotations in production. Tests provide the feedback loop where a precise failure is most useful.
+
+\newpage
+{\color{navy}\Huge\bfseries PR \#748 in GiGL}\\[-2pt]
+{\large Targeted contracts at stable boundaries, enforced only by test launchers.}\\[5pt]
+\hrule\vspace{5pt}
+
+\section*{Implementation}
+\begin{center}
+\fcolorbox{blue}{pale}{\parbox{0.91\linewidth}{\centering
+\textbf{Unit, integration, and E2E launchers} install \code{install_runtime_typechecking()} before test discovery\\
+$\downarrow$\\
+\textbf{Jaxtyping import hook} instruments subsequently imported \code{gigl} and \code{examples} modules\\
+$\downarrow$\\
+\textbf{Custom Typeguard adapter} retains only annotations containing a Jaxtyping array type\\
+$\downarrow$\\
+\textbf{Contracted call}: arguments checked before execution; return checked afterward; uncaught \code{TypeCheckError} fails the test
+}}
+\end{center}
+
+The custom adapter is deliberate. A vanilla whole-package Typeguard hook would also try to runtime-check GiGL's static-only Protocol and TypeVar annotations, which can be invalid for \code{isinstance}. The adapter creates a private shape-only view for Typeguard, then preserves the public annotations.
+
+\section*{Where the PR adds contracts}
+\begin{tabularx}{\linewidth}{@{}p{0.29\linewidth}X@{}}
+\toprule
+\bfseries Boundary & \bfseries Examples in PR \#748 \\
+\midrule
+Loaders and samplers & Node IDs, ABLP seed and label matrices, loader inputs, PPR degrees. \\
+Public models and decoders & \code{forward}/\code{decode} embeddings and score matrices, including common embedding dimensions. \\
+Losses and task results & Score, ID, and embedding containers. Empty-path tensors were reshaped to retain meaningful matrix rank. \\
+Examples & Link-prediction and node-classification public model methods follow the same contract language. \\
+\bottomrule
+\end{tabularx}
+
+\section*{Policy and tradeoffs}
+\begin{itemize}
+\item Check stable tensor boundaries only: loader or sampler inputs, public model \code{forward}/\code{decode}, loss interfaces, and result containers.
+\item Use exact dtypes only when guaranteed. \code{Float} preserves mixed-precision compatibility; \code{Int64}/\code{Float32} express hard contracts where appropriate.
+\item Leave internal tensor operations, dynamic PyG/TorchRec keyed containers, and low-level message passing uncontracted unless they expose a stable, useful boundary.
+\item The initial scope is intentionally conservative. Coverage increases through exercised tests, while annotations remain easy to remove or revise when an API changes.
+\end{itemize}
+
+\vfill
+\footnotesize\color{navy}
+Sources: Jaxtyping \href{https://docs.kidger.site/jaxtyping/api/array/}{array annotations} and \href{https://docs.kidger.site/jaxtyping/api/runtime-type-checking/}{runtime type checking}; \href{https://typeguard.readthedocs.io/}{Typeguard}; \href{https://beartype.readthedocs.io/}{Beartype}; \href{https://pyrefly.org/}{Pyrefly}; GiGL PR \#748.
+
+\end{document}
