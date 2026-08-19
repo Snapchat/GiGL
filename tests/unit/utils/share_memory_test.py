@@ -3,6 +3,7 @@ import gc
 import os
 import pickle
 import tempfile
+import unittest
 from collections import abc
 from pathlib import Path
 from typing import Optional, Union
@@ -68,7 +69,8 @@ class ShareMemoryTest(TestCase):
             Union[torch.Tensor, RangePartitionBook, dict[NodeType, torch.Tensor]]
         ],
     ):
-        share_memory(entity=entity)
+        # The -> None contract is public API: returning the entity would be a signature change
+        self.assertIsNone(share_memory(entity=entity))
         if isinstance(entity, torch.Tensor):
             self.assertTrue(entity.is_shared())
         elif isinstance(entity, RangePartitionBook):
@@ -199,10 +201,16 @@ def _fallocate_reflected_in_st_blocks(directory: str) -> bool:
     """
     fd, path = tempfile.mkstemp(dir=directory)
     probe_bytes = 1 << 20
+    # getattr because the symbol does not exist off Linux, where this file must still type-check
+    fallocate = getattr(os, "posix_fallocate", None)
+    if fallocate is None:
+        os.close(fd)
+        os.unlink(path)
+        return False
     try:
-        os.posix_fallocate(fd, 0, probe_bytes)
+        fallocate(fd, 0, probe_bytes)
         return os.stat(path).st_blocks * 512 >= probe_bytes
-    except (AttributeError, OSError):
+    except OSError:
         return False
     finally:
         os.close(fd)
@@ -217,8 +225,7 @@ def _shmem_kib() -> int:
 
     Read from meminfo rather than by listing ``/dev/shm``: torch's ``file_descriptor`` sharing
     strategy unlinks its segment immediately, so the directory looks empty while the pages are very
-    much resident. An earlier probe that scanned the directory reported a false negative for
-    exactly this reason.
+    much resident -- a directory scan reports a false negative here.
     """
     with open("/proc/meminfo") as meminfo:
         for line in meminfo:
@@ -227,6 +234,10 @@ def _shmem_kib() -> int:
     raise AssertionError("no Shmem line in /proc/meminfo")
 
 
+@unittest.skipUnless(
+    hasattr(os, "posix_fallocate"),
+    "tensor spilling requires posix_fallocate, absent on this platform",
+)
 class ShareMemoryForIpcTest(TestCase):
     def setUp(self) -> None:
         self._spill_dir = tempfile.TemporaryDirectory()
@@ -404,6 +415,26 @@ class ShareMemoryForIpcTest(TestCase):
             "the file is sparse -- the fallocate reservation was discarded by the mapping",
         )
 
+    def test_the_spill_copy_path_never_truncates_its_reservation(self):
+        """``_spill_to_mmap`` must map ``r+`` too, for the same reason as ``allocate_disk_backed``.
+
+        numpy opens ``mode="w+"`` as ``w+b``, which truncates the file and discards the blocks
+        ``posix_fallocate`` just reserved, silently restoring the disk-full SIGBUS path this suite
+        exists to close.
+        """
+        real_memmap = np.memmap
+        with mock.patch("numpy.memmap", side_effect=real_memmap) as memmap_spy:
+            spilled = spill_tensor_to_disk(torch.randn(20_000, 8))
+
+        assert spilled is not None
+        modes = [call.kwargs.get("mode") for call in memmap_spy.call_args_list]
+        self.assertTrue(len(modes) >= 1)
+        # Every mapping must be writable AND non-truncating: "w+" discards the reservation, and a
+        # read-only "r" hands back storage that segfaults on in-place write
+        self.assertEqual(
+            set(modes), {"r+"}, "the spill path used a mapping mode other than r+"
+        )
+
     def test_a_filesystem_that_cannot_reserve_gets_memory_not_a_file(self):
         """Reservation is mandatory: a refused ``posix_fallocate`` means no file-backed tensor.
 
@@ -478,8 +509,8 @@ class ShareMemoryForIpcTest(TestCase):
     def test_release_page_cache_reports_failure_when_it_cannot_unmap(self):
         """A no-op must report False, not True.
 
-        The first version of this returned True after calling only ``FADV_DONTNEED``, which drops
-        nothing while the pages are mapped -- so the log said 56.4 GiB had been freed when none had.
+        Returning True after calling only ``FADV_DONTNEED`` would drop nothing while the pages are
+        mapped, and the caller would log a saving it did not get.
         """
         buffer = allocate_disk_backed((40_000, 8), torch.float32)
         assert buffer is not None
@@ -502,9 +533,9 @@ class ShareMemoryForIpcTest(TestCase):
     def test_release_page_cache_actually_reduces_residency(self):
         """Measured, not assumed: ``mincore`` before and after.
 
-        The previous version of this test only proved the data survived, which it would have done
-        even with the broken implementation -- and touching every page to check repopulated the cache
-        before anything could observe it. Residency has to be read BEFORE the refault.
+        Proving the data survived is not enough -- it survives even when eviction silently fails --
+        and touching every page to check repopulates the cache before anything can observe it, so
+        residency has to be read BEFORE the refault.
         """
         rows, columns = (
             200_000,
@@ -541,9 +572,9 @@ class ShareMemoryForIpcTest(TestCase):
     def test_release_page_cache_drops_resident_pages_and_keeps_the_data(self):
         """Dropping the cache must remove the cgroup charge without losing the bytes.
 
-        This is the fix for a misconception that has OOM-killed a real run: moving a tensor to a
-        file makes its pages reclaimable but leaves them CHARGED to ``memory.current``, so a
-        tens-of-GiB feature matrix still counted against the limit during the CSR build. Resident pages are read
+        Moving a tensor to a file makes its pages reclaimable but leaves them CHARGED to
+        ``memory.current``, so a tens-of-GiB feature matrix still counts against the limit while
+        later phases allocate. Resident pages are read
         from ``/proc/self/smaps_rollup``-style accounting via mincore semantics; here the simpler
         observable is that the values survive a refault.
         """
@@ -689,8 +720,8 @@ class ShareMemoryForIpcTest(TestCase):
             self.assertIsNone(allocate_disk_backed((5000, 8), torch.float32))
 
     def test_an_already_disk_backed_buffer_is_not_spilled_again(self):
-        """`_spill_partitioned_node_features` runs after assembly; if the assembly already wrote the
-        matrix to disk, copying it to a second file doubles both the disk use and the time."""
+        """Spilling a tensor that already lives in a spill file must reuse that file: copying it to
+        a second one doubles both the disk use and the time for no benefit."""
         buffer = allocate_disk_backed((5000, 8), torch.float32)
         assert buffer is not None
 

@@ -21,11 +21,9 @@ _KeyType = TypeVar("_KeyType")  # Generic Key Type
 # behaviour is exactly as before (everything goes to /dev/shm).
 #
 # Read from the ENVIRONMENT rather than passed as an argument on purpose: the dataset is
-# built inside `mp.spawn` (gigl/distributed/dataset_factory.py:468), which starts a fresh
-# interpreter. Module-level state set by a parent process does NOT survive that, but the
-# environment does -- it is inherited by the spawned child. An earlier attempt to control
-# this by monkey-patching from the trainer process was a silent no-op for exactly this
-# reason.
+# built inside `mp.spawn` (dataset_factory.py), which starts a fresh interpreter, so
+# module-level state set by a parent process does NOT survive but the environment does --
+# it is inherited by the spawned child
 _SPILL_DIR_ENV = "GIGL_TENSOR_SPILL_DIR"
 _SPILL_MIN_BYTES_ENV = "GIGL_TENSOR_SPILL_MIN_BYTES"
 # Set by whichever process cleans the spill directory, so its descendants know not to.
@@ -35,14 +33,11 @@ _DEFAULT_SPILL_MIN_BYTES = 2 * 2**30  # 2 GiB
 # queues and the sampling workers' channels all share it, and a shared storage that overruns the
 # mount takes SIGBUS on write rather than failing at allocation.
 _SHARED_MEMORY_RESERVE_BYTES = 2 * 2**30  # 2 GiB
-# Cgroup headroom to leave free when a scattered destination is placed in memory. Only what is
-# allocated AFTER this check runs belongs here -- at the measured worst case (the largest CSC of
-# a ~1B-node graph): the direct scatter's full-size cursor clone (indptr[:-1], 7.2 GiB anonymous)
-# and ~1 GiB of chunk/sort transients, ~8.2 GiB, so 16 leaves ~7.8 GiB of allocator/race margin.
-# The freshly written indptr's 7.2 GiB of dirty pages are NOT itemised: they are already charged
-# when this check reads the headroom. NOT covered: the next edge type; its own allocation re-runs
-# this check against whatever headroom is left, and falls back to the banded disk path if the
-# answer is no
+# Cgroup headroom to leave free when a scattered destination is placed in memory. Sized to what
+# is allocated AFTER this check runs (a CSR build's cursor clone and chunk/sort transients, which
+# together reach several GiB at large-graph scale) plus allocator and race margin. Already-charged
+# dirty pages are not itemised: the headroom read here reflects them. A later allocation re-runs
+# this check against whatever headroom is left and falls back to disk if the answer is no
 _DEFAULT_RANDOM_ACCESS_RESERVE_BYTES = 16 * 2**30  # 16 GiB
 
 _NUMPY_DTYPES = {
@@ -283,21 +278,17 @@ def disk_backed_handle(tensor: torch.Tensor) -> Optional[SpilledTensorHandle]:
 
 
 def _map_spill_file(path: str, np_dtype: str, shape: tuple[int, ...]) -> torch.Tensor:
-    """mmap a spill file as a torch tensor, writable when the file permits it.
+    """mmap a spill file as a torch tensor, always writable, or raise ``OSError``.
 
-    Prefers ``r+`` over ``r``. A read-only mapping is PROT_READ, and ``torch.from_numpy`` does not
-    enforce that -- an in-place write on the resulting tensor would reach the mapping and take a
-    SIGSEGV rather than raising. Downstream code (partitioning, label handling) is not audited for
-    in-place mutation of loaded tensors, so a writable mapping trades an unbounded crash risk for
-    dirtied page-cache pages, which is the cheaper failure. Unwritten pages stay clean and
-    evictable either way, which is the point of spilling.
+    Never falls back to a read-only mapping. A read-only mapping is PROT_READ, and
+    ``torch.from_numpy`` does not enforce that -- an in-place write on the resulting tensor would
+    reach the mapping and take a SIGSEGV rather than raising. Downstream code is not audited for
+    in-place mutation of loaded tensors, so a file that cannot be opened writable raises here,
+    where the caller can fall back, instead of handing back storage that crashes on write.
     """
     import numpy as np
 
-    try:
-        mapped = np.memmap(path, dtype=np_dtype, mode="r+", shape=shape)
-    except OSError:
-        mapped = np.memmap(path, dtype=np_dtype, mode="r", shape=shape)
+    mapped = np.memmap(path, dtype=np_dtype, mode="r+", shape=shape)
     array = np.asarray(mapped)
     tensor = torch.from_numpy(array)
     _register_mapping(
@@ -343,6 +334,19 @@ def spill_tensor_to_disk(tensor: torch.Tensor) -> Optional[SpilledTensor]:
     return _spill_to_mmap(tensor, spill_dir)
 
 
+def _fadvise_dontneed(fd: int) -> None:
+    """``POSIX_FADV_DONTNEED`` over the whole file (length 0 means to end of file).
+
+    Raises ``OSError`` (ENOSYS) on platforms without ``posix_fadvise``, resolved with getattr
+    because the symbol does not exist off Linux, where the module must still import.
+    """
+    fadvise = getattr(os, "posix_fadvise", None)
+    dontneed = getattr(os, "POSIX_FADV_DONTNEED", None)
+    if fadvise is None or dontneed is None:
+        raise OSError(errno.ENOSYS, "posix_fadvise is unavailable on this platform")
+    fadvise(fd, 0, 0, dontneed)
+
+
 def _reserve_file_blocks(fd: int, n_bytes: int, spill_dir: str) -> None:
     """Reserve every block of a spill file now, or raise ``OSError``.
 
@@ -351,18 +355,21 @@ def _reserve_file_blocks(fd: int, n_bytes: int, spill_dir: str) -> None:
     (``posix_fallocate`` unsupported) raises too: proceeding with an unreserved mapping would keep
     the SIGBUS window open, so the caller falls back to memory instead.
     """
+    # getattr rather than a direct reference: the symbol does not exist on non-Linux platforms,
+    # where the module must still import and merely refuse to spill
+    fallocate = getattr(os, "posix_fallocate", None)
+    if fallocate is None:
+        raise OSError(
+            errno.ENOSYS,
+            f"posix_fallocate is unavailable on this platform, so a "
+            f"{n_bytes / 2**30:.1f} GiB mapping under {spill_dir} cannot be made SIGBUS-safe",
+        )
     while True:
         try:
-            os.posix_fallocate(fd, 0, n_bytes)
+            fallocate(fd, 0, n_bytes)
             return
         except InterruptedError:
             continue  # EINTR: the syscall was interrupted, not refused
-        except AttributeError as no_fallocate:
-            raise OSError(
-                errno.ENOSYS,
-                f"posix_fallocate is unavailable on this platform, so a "
-                f"{n_bytes / 2**30:.1f} GiB mapping under {spill_dir} cannot be made SIGBUS-safe",
-            ) from no_fallocate
         except OSError as reserve_error:
             if reserve_error.errno in (errno.EOPNOTSUPP, errno.ENOSYS, errno.EINVAL):
                 # The filesystem cannot reserve. An unreserved mapping faults with SIGBUS if the
@@ -395,15 +402,10 @@ def allocate_disk_backed(
     an ``OSError`` at allocation time, where it can be reported and fallen back on; a filesystem
     that cannot reserve at all gets None rather than an unreserved mapping.
 
-    Measured cost of writing a 251-column fp32 matrix through the mapping instead of RAM: 46.8 s vs
-    15.1 s at 8M rows, so ~3.1x, i.e. roughly 6 minutes at the production shape by linear
-    extrapolation -- an estimate, not an upper bound, since the production pattern scatters ~938k
-    rows per chunk under cgroup dirty-page throttling.
-
-    What it buys: the destination's own bytes, ~56.42 GiB for a rank's node feature matrix, stop
-    being unreclaimable anonymous memory. The mapped pages are still charged to the cgroup, but as
-    page cache the kernel can reclaim them under pressure instead of OOM-killing. Freed chunk arenas
-    retained by the allocator are unaffected, so this does not remove the whole measured 1.63x peak.
+    Sequential writes through the mapping cost ~3.1x their in-memory equivalent (measured on a wide
+    fp32 matrix written row-by-row). What that buys: the destination's bytes stop being
+    unreclaimable anonymous memory -- still charged to the cgroup while resident, but reclaimable
+    page cache the kernel can evict under pressure instead of OOM-killing.
 
     Returns None whenever a file-backed buffer is not available or not worth it -- spilling disabled,
     below the size threshold, dtype with no numpy equivalent, no room to reserve, reservation
@@ -563,10 +565,9 @@ def _shared_memory_backing_dir() -> str:
     ``/dev/shm/torch_<pid>_<random>_0``, 16,000,064 bytes for a 16 MB tensor), and ``TMPDIR`` receives
     only a 4 KiB ``torch-shm-dir-*`` directory holding the libshm manager's socket. Under
     ``file_descriptor`` the segment is ``shm_open``ed and immediately unlinked, so nothing is visible
-    in the directory listing while it still consumes the mount's capacity.
-
-    An earlier version of this returned ``TMPDIR`` for ``file_system``, which would have sized the
-    check against the wrong filesystem in precisely the case the check exists for.
+    in the directory listing while it still consumes the mount's capacity. Returning ``TMPDIR``
+    for ``file_system`` would size the check against the wrong filesystem in precisely the case
+    the check exists for.
     """
     return "/dev/shm"
 
@@ -640,50 +641,25 @@ def allocate_preshared(
 ) -> torch.Tensor:
     """Allocate a large tensor in its FINAL home, so ``share_memory_()`` cannot duplicate it.
 
+    GLT's ``Graph.__init__`` shares the topology unconditionally, and for an anonymous tensor that
+    copies every byte into ``/dev/shm`` -- the tensor exists twice during the copy, fatal for a
+    tens-of-GiB CSR near the memory limit. Both homes here are immune to that copy: a spill file
+    (consumers that check :func:`is_disk_backed` leave it alone), or POSIX shared memory allocated
+    directly (``share_memory_()`` then finds it already shared and does nothing).
+
+    Disk-first for a destination written in order. A scatter destination prefers memory: an 8-byte
+    write to an uncached file page is a 4 KiB read-modify-write, repeated over the same pages, so
+    a file-backed scatter destination behaves like a hung run. With ``random_access=True`` a file
+    is only the checked, loudly-logged fallback for when memory will not hold the tensor.
+
+    Below the spill threshold returns a plain tensor. Uninitialised in all cases, like
+    ``torch.empty``.
+
     Args:
         shape: Shape of the tensor.
         dtype: Dtype of the tensor.
-        random_access: Set when the caller will write to SCATTERED offsets rather than stream
-            through in order. Then memory is preferred over a file and disk is a fallback, because
-            a file is catastrophically slower under that pattern -- see below. Defaults to False,
-            which keeps the disk-first behaviour that saves the most memory.
-
-    PLACEMENT
-        Disk-first is right for a destination written in order: one pass, sequential, and the bytes
-        become reclaimable page cache instead of unreclaimable anonymous memory.
-
-        It is badly wrong for a destination written by scatter. An 8-byte write to an uncached file
-        page costs a 4 KiB read-modify-write, and a chunked CSR build makes hundreds of passes over
-        the same millions of pages of a tens-of-GiB ``indices`` (measured: 251 passes over 8.2M
-        pages, 2.06 BILLION page touches, ~19 h at 60k IOPS). A production-scale run sat in exactly
-        that loop for over an hour at 4% CPU with memory flat, having logged nothing since the
-        allocation. The measured 3.1x cost of a file-backed destination came from a FEATURE matrix,
-        ~1000 contiguous bytes per row written once; carrying that ratio across to a scatter was an
-        extrapolation across a change in kind, not degree.
-
-        ``random_access=True`` therefore prefers shared memory, and falls back to a file only when
-        memory genuinely will not hold it -- logging the expected slowdown when it does, because a
-        silent fall back to disk here is a run that appears to hang.
-
-    WHY PRE-SHARED AT ALL
-    GLT's ``Graph.__init__`` calls ``Topology.share_memory_()`` unconditionally, and for an ordinary
-    anonymous tensor that copies every byte into ``/dev/shm``. The CSR therefore exists TWICE for the
-    duration of the copy. A production-scale run was killed one second after logging that its CSR was
-    built: indices 31.3 GiB + indptr 7.2 GiB duplicating to 77 GiB on top of an 84 GiB baseline,
-    against a limit under 160 GiB. No log line sits between the two, which is why it looked like the
-    CSR build itself.
-
-    Two backends, both immune to that copy:
-
-    * a file under ``GIGL_TENSOR_SPILL_DIR`` -- consumers that check :func:`is_disk_backed` before
-      sharing leave the tensor alone, and the bytes are reclaimable file pages rather than
-      unreclaimable anonymous memory (still cgroup-charged while resident);
-    * POSIX shared memory allocated directly -- ``share_memory_()`` then finds it already shared and
-      does nothing (verified: ``data_ptr`` unchanged across the call).
-
-    Below the spill threshold it returns a plain tensor, where a duplicate costs little.
-
-    Uninitialised in both cases, like ``torch.empty``.
+        random_access: Set when the caller will write to scattered offsets rather than stream
+            through in order; memory is then preferred and disk the checked fallback.
     """
     n_bytes = torch.empty(0, dtype=dtype).element_size()
     for extent in shape:
@@ -719,7 +695,7 @@ def allocate_preshared(
         # the first write past the limit takes SIGBUS, which no `except` can catch.
         #
         # Returning an anonymous tensor is equally unsafe, which is the part that is easy to get
-        # wrong: `_build_topology_without_edge_ids` would then pick a plain `Topology`, and
+        # wrong: the topology builder would then pick a plain in-memory topology, and
         # `Graph.__init__` calls GLT's UNGUARDED `share_memory_()` on it -- attempting the very same
         # oversized allocation on the very same full mount, a few seconds later and with no
         # attribution back to here. A warning-and-continue only moves the SIGBUS somewhere harder to
@@ -730,8 +706,8 @@ def allocate_preshared(
         raise RuntimeError(
             f"Cannot allocate {_human_bytes(n_bytes)} {tuple(shape)} {dtype} without risking SIGBUS: "
             f"{shortfall}. Continuing is not safe -- an anonymous tensor this size is relocated into "
-            f"the same full mount by graphlearn_torch's Graph.__init__, and that copy has OOM-killed "
-            f"real runs. Either set GIGL_TENSOR_SPILL_DIR to a filesystem with room "
+            f"the same full mount by graphlearn_torch's Graph.__init__, a few seconds later and "
+            f"with no attribution back to here. Either set GIGL_TENSOR_SPILL_DIR to a filesystem with room "
             f"(the intended configuration; the CSR is then file-backed and never copied), or raise "
             f"the container's shared-memory limit."
         )
@@ -782,23 +758,16 @@ def has_live_mapping(path: str) -> bool:
 def release_page_cache_by_path(path: str) -> bool:
     """Request eviction of a spill file's page cache when nothing maps it any more.
 
-    The counterpart to :func:`release_page_cache` for a tensor that has already been dropped. Once no
-    mapping remains there are no page-table entries to clear, so ``FADV_DONTNEED`` alone is
-    sufficient -- the reason the tensor version needs ``MADV_DONTNEED`` first does not apply.
+    The counterpart to :func:`release_page_cache` for a tensor already dropped: ``del`` unmaps it
+    but leaves the file's pages charged to the cgroup until the kernel reclaims them.
 
-    This is what a consumed input needs. ``del`` on an mmap-backed tensor unmaps it but leaves the
-    file's pages charged to the cgroup until the kernel reclaims them, so an input and an output of
-    the same size are both charged while the output is being written.
+    Refuses when a mapping is still live: ``FADV_DONTNEED`` silently skips pages present in any
+    page table, so it would return success having freed nothing. Use :func:`release_page_cache` on
+    the tensor in that case, which unmaps first.
 
-    Refuses when a mapping is still live, because ``FADV_DONTNEED`` SILENTLY SKIPS pages that are in
-    any page table -- it would return success having freed nothing. One stale reference (a tuple
-    built for a call, a name the caller forgot to drop) is enough to turn this into a no-op, and
-    without this check the caller logs a saving it did not get. Use :func:`release_page_cache` on the
-    tensor itself in that case, which unmaps first.
-
-    Returns True if the eviction was REQUESTED -- ``FADV_DONTNEED`` is advisory and reports no
-    count, so "requested" is all success can mean without measuring residency. False if a mapping
-    is still live, the file could not be opened, or the platform lacks ``posix_fadvise``.
+    Returns True if the eviction was REQUESTED (``FADV_DONTNEED`` is advisory and reports no
+    count); False if a mapping is still live, the file could not be opened, or the platform lacks
+    ``posix_fadvise``.
     """
     if has_live_mapping(path):
         logger.warning(
@@ -814,8 +783,8 @@ def release_page_cache_by_path(path: str) -> bool:
         return False
     try:
         os.fsync(fd)
-        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-    except (AttributeError, OSError) as e:
+        _fadvise_dontneed(fd)
+    except OSError as e:
         logger.info(f"share_memory: could not drop page cache for {path}: {e}")
         return False
     finally:
@@ -826,37 +795,21 @@ def release_page_cache_by_path(path: str) -> bool:
 def release_page_cache(tensor: torch.Tensor) -> bool:
     """Write a disk-backed tensor's dirty pages out and ask the kernel to drop them from the cache.
 
-    Moving a tensor to a file changes the KIND of memory it occupies, not whether it is charged:
-    cgroup v2 counts page cache in ``memory.current``, so a 56.4 GiB feature matrix on the spill
-    filesystem still counts against the container's limit -- reclaimable rather than OOM-triggering,
-    but counted. A production-scale run died with exactly that 56.4 GiB charged alongside the CSR
-    build's anonymous allocations, within a few GiB of its limit.
-
-    Dropping the cache once the file is written releases the charge as the pages go (writeback can
-    briefly delay stragglers; the fsync below bounds that). The mapping stays
-    valid; pages fault back in on next access, so this costs a cold first read and nothing else.
-    Worth doing only for a tensor that is written now and not read until much later -- the
-    partitioned node features, which are written before the graph build and not touched again until
-    sampling starts.
+    A spilled tensor's pages are reclaimable but still charged to cgroup v2's ``memory.current``
+    while resident; dropping them releases the charge. The mapping stays valid and refaults on
+    next access, so this is worth it only for data written now and not read until much later.
 
     Three steps, in this order, and every one is load-bearing:
 
     1. ``msync`` through the backing memmap -- dirty pages cannot be dropped at all.
-    2. ``MADV_DONTNEED`` on the mapping -- removes this process's page-table entries.
+    2. ``MADV_DONTNEED`` on the mapping -- removes this process's page-table entries. Without it
+       step 3 silently skips every still-mapped page and reports success having freed nothing.
     3. ``fsync`` then ``POSIX_FADV_DONTNEED`` -- discards the now-unmapped clean page cache.
 
-    Step 2 is the one that is easy to omit and fatal to omit. Linux implements ``FADV_DONTNEED`` via
-    ``invalidate_mapping_pages()``, which SKIPS any page currently mapped into a page table, so
-    calling it alone on a live mapping leaves every page resident and charged while returning
-    success. ``MADV_DONTNEED`` is safe here only because the mapping is file-backed and has just been
-    flushed; on an anonymous mapping it would discard the data outright.
-
-    Returns True when every eviction step COMPLETED, which is not the same as proof that every page
-    went: ``FADV_DONTNEED`` is advisory and reports no count, and another process holding live PTEs on
-    the same file can keep pages resident. False means the sequence was incomplete -- not disk-backed,
-    no live mapping, or a failing step -- and note that a failure after step 2 leaves this process's
-    PTEs already dropped, so False does not mean nothing changed. To know what was actually evicted,
-    measure residency with ``mincore``; the tests do exactly that.
+    Returns True when every step COMPLETED -- ``FADV_DONTNEED`` is advisory, so completion is not
+    proof of eviction; measure residency with ``mincore`` to know (the tests do). False means the
+    sequence was incomplete, though a failure after step 2 has already dropped this process's
+    page-table entries.
     """
     handle = disk_backed_handle(tensor)
     if handle is None:
@@ -882,16 +835,9 @@ def release_page_cache(tensor: torch.Tensor) -> bool:
         logger.warning(f"share_memory: could not msync {handle.path}: {e}")
         return False
 
-    # STEP ORDER MATTERS, and getting it wrong makes this whole function a silent no-op.
-    #
-    # POSIX_FADV_DONTNEED alone does nothing here: Linux implements it via
-    # invalidate_mapping_pages(), which SKIPS any page currently mapped into a page table. With the
-    # tensor still mapped, every one of those pages stays resident and stays charged to the cgroup --
-    # while the call returns success. So the PTEs have to go first.
-    #
-    # MADV_DONTNEED on a shared FILE mapping only drops this process's page-table entries; the next
-    # access refaults from the file. (On an anonymous mapping it would discard the data -- this is
-    # only safe because the mapping is file-backed and has just been msync'd.)
+    # Step 2 of the docstring's order: the page-table entries must go before FADV_DONTNEED, and
+    # MADV_DONTNEED is only safe because the mapping is file-backed and has just been msync'd (on
+    # an anonymous mapping it would discard the data)
     mapping = getattr(backing, "_mmap", None)
     if mapping is None or not hasattr(mapping, "madvise"):
         logger.info(
@@ -917,9 +863,8 @@ def release_page_cache(tensor: torch.Tensor) -> bool:
         return False
     try:
         os.fsync(fd)
-        # length 0 means "to end of file".
-        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-    except (AttributeError, OSError) as e:
+        _fadvise_dontneed(fd)
+    except OSError as e:
         logger.info(
             f"share_memory: could not drop page cache for {handle.path} ({e}); its pages stay "
             f"charged to the cgroup until the kernel reclaims them"
@@ -956,16 +901,10 @@ def share_memory(
     provide a ForkingPickler registration method for the `RangePartitionBook`, and the cost of not moving this to shared memory is minimal,
     since the size of this tensor is very small, being equal in length to the number of machines.
 
-    This function does NOT spill to disk, deliberately. Its callers hand the result to another
-    process, and a spill whose path is not carried alongside it is undone the moment the tensor is
-    pickled -- torch copies a numpy-owned storage into ``/dev/shm``, so spilling here would cost a
-    full disk write AND the full RAM copy it was meant to avoid. Spilling belongs where a
-    descriptor travels with the tensor: :func:`share_memory_for_ipc` and
-    :func:`spill_tensor_to_disk`.
-
-    A tensor that is ALREADY disk-backed is left alone for the same reason. ``share_memory_()`` on
-    such a tensor copies every byte into ``/dev/shm`` -- measured at +16,128 kB for a 16 MiB
-    tensor -- which would quietly undo a spill made earlier and elsewhere.
+    This function never spills to disk, and a tensor that is ALREADY disk-backed is left alone:
+    ``share_memory_()`` on an mmap-backed tensor copies every byte into ``/dev/shm``, quietly
+    undoing a spill made elsewhere. Spilling belongs where a descriptor travels with the tensor --
+    :func:`share_memory_for_ipc` and :func:`spill_tensor_to_disk`.
 
     Args:
         entity (Optional[Union[torch.Tensor, PartitionBook, dict[_KeyType, torch.Tensor], dict[_KeyType, PartitionBook]]]):
