@@ -7,6 +7,7 @@ from collections import abc
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar, Union, cast
 
+import numpy as np
 import torch
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 
@@ -59,11 +60,14 @@ def prepare_spill_dir() -> None:
     front bounds disk use without that hazard.
 
     Exactly one process may do this, and it must be a process that starts before any spilling
-    one. Per-process age-based cleanup is NOT a substitute and is actively wrong: with sequential
-    loading, the edge child spills and exits, then the node child starts, sees the edge files as
-    older than itself, and deletes files the parent has not mapped yet. The marker below is an
-    environment variable precisely because ``spawn`` children inherit the environment, so a child
-    can tell that its parent already did this.
+    one -- a run has several spilling children in sequence, and a later one cannot tell a
+    sibling's live files from a stale run's (the first spiller does clean up itself when no
+    ancestor did, which covers standalone use and tests). Per-process age-based cleanup is NOT a
+    substitute and is actively wrong: with sequential loading, the edge child spills and exits,
+    then the node child starts, sees the edge files as older than itself, and deletes files the
+    parent has not mapped yet. The marker below is an environment variable precisely because
+    ``spawn`` children inherit the environment, so a child can tell that its parent already did
+    this.
 
     Idempotent, and safe to call when spilling is disabled.
     """
@@ -176,7 +180,7 @@ class SpilledTensorHandle:
 class SpilledTensor:
     """A tensor living in a file, plus everything needed to re-map it elsewhere.
 
-    ``tensor`` is an mmap view; ``handle`` is the part that is safe to send elsewhere.
+    ``.tensor`` is an mmap view; ``.handle`` is the part that is safe to send elsewhere.
     """
 
     tensor: torch.Tensor
@@ -201,8 +205,6 @@ def load_spilled_tensor(
         ValueError: If ``dtype`` has no numpy equivalent, or the file is the wrong size for
             ``shape`` -- which would otherwise be read as silently wrong data.
     """
-    import numpy as np
-
     np_dtype = _NUMPY_DTYPES.get(dtype)
     if np_dtype is None:
         raise ValueError(f"Cannot map a spilled tensor of dtype {dtype}")
@@ -286,8 +288,6 @@ def _map_spill_file(path: str, np_dtype: str, shape: tuple[int, ...]) -> torch.T
     in-place mutation of loaded tensors, so a file that cannot be opened writable raises here,
     where the caller can fall back, instead of handing back storage that crashes on write.
     """
-    import numpy as np
-
     mapped = np.memmap(path, dtype=np_dtype, mode="r+", shape=shape)
     array = np.asarray(mapped)
     tensor = torch.from_numpy(array)
@@ -338,7 +338,8 @@ def _fadvise_dontneed(fd: int) -> None:
     """``POSIX_FADV_DONTNEED`` over the whole file (length 0 means to end of file).
 
     Raises ``OSError`` (ENOSYS) on platforms without ``posix_fadvise``, resolved with getattr
-    because the symbol does not exist off Linux, where the module must still import.
+    because the symbol does not exist off Linux, and macOS dev machines still import and
+    type-check this module (its tests skip there).
     """
     fadvise = getattr(os, "posix_fadvise", None)
     dontneed = getattr(os, "POSIX_FADV_DONTNEED", None)
@@ -427,8 +428,6 @@ def allocate_disk_backed(
         return None
     _ensure_spill_dir_prepared(spill_dir)
 
-    import numpy as np
-
     path: Optional[str] = None
     try:
         os.makedirs(spill_dir, exist_ok=True)
@@ -493,7 +492,6 @@ def _spill_to_mmap(tensor: torch.Tensor, spill_dir: str) -> Optional[SpilledTens
             f"share_memory: dtype {tensor.dtype} not spillable, using shared memory"
         )
         return None
-    import numpy as np
 
     path: Optional[str] = None
     try:
@@ -559,7 +557,9 @@ def _spill_to_mmap(tensor: torch.Tensor, spill_dir: str) -> Optional[SpilledTens
 def _shared_memory_backing_dir() -> str:
     """Where torch puts shared storages on Linux: ``/dev/shm``, under BOTH sharing strategies.
 
-    Measured rather than inferred, because the obvious reading of the docs is wrong. Under
+    Exists to point the free-space check below at the right mount: over-allocating tmpfs succeeds
+    and then SIGBUSes on the first write, so checking the wrong filesystem makes the guard
+    worthless. Measured rather than inferred, because the obvious reading of the docs is wrong. Under
     ``file_system`` torch calls ``_new_using_filename_cpu``, which sounds like an ordinary temporary
     file and is not: the storage lands in ``/dev/shm`` (observed:
     ``/dev/shm/torch_<pid>_<random>_0``, 16,000,064 bytes for a 16 MB tensor), and ``TMPDIR`` receives
