@@ -470,29 +470,29 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             self.dist_edge_feature.async_get(eids, etype)
                         )
             if self.dist_edge_quantized_feature is not None and self.with_edge:
-                assert output.edge is not None
-                for result_edge_type, eids in output.edge.items():
-                    etype = (
-                        reverse_edge_type(result_edge_type)
-                        if self.edge_dir == "in"
-                        else result_edge_type
-                    )
-                    # A graph partition book covers every edge type while a
-                    # feature store registers only edge types with packed data.
+                for etype in self.edge_types:
+                    # Like node features, an edge partition book covers every
+                    # edge type while a feature store may register only some.
                     if etype not in self.dist_edge_quantized_feature.local_feature:
                         continue
-                    output_edge_type = (
-                        reverse_edge_type(etype) if self.edge_dir == "out" else etype
+                    result_edge_type = (
+                        reverse_edge_type(etype) if self.edge_dir == "in" else etype
                     )
-                    # GLT maps wire edge types to output stores during collation.
-                    # Metadata bypasses that mapping, so key it by the output store.
-                    futs[
-                        f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
-                    ] = wrap_torch_future(
-                        self.dist_edge_quantized_feature.async_get(
-                            eids.to(torch.long), etype
+                    eids = result_map.get(f"{as_str(result_edge_type)}.eids")
+                    if eids is not None:
+                        eids = eids.to(torch.long)
+                        output_edge_type = (
+                            reverse_edge_type(etype)
+                            if self.edge_dir == "out"
+                            else etype
                         )
-                    )
+                        # GLT maps wire edge types to output stores during collation.
+                        # Metadata bypasses that mapping, so key it by the output store.
+                        futs[
+                            f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
+                        ] = wrap_torch_future(
+                            self.dist_edge_quantized_feature.async_get(eids, etype)
+                        )
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
                     result_map[f"{as_str(ntype)}.batch"] = batch
