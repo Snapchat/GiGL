@@ -1,186 +1,178 @@
 \documentclass[10pt]{article}
-\usepackage[letterpaper,margin=0.68in,headheight=19pt,footskip=24pt]{geometry}
+\usepackage[letterpaper,margin=0.72in,headheight=18pt,footskip=24pt]{geometry}
 \usepackage{fontspec}
 \setmainfont{TeX Gyre Heros}
-\setmonofont{DejaVu Sans Mono}[Scale=0.78]
+\setmonofont{DejaVu Sans Mono}[Scale=0.76]
 \usepackage[table]{xcolor}
 \usepackage{booktabs,tabularx,array,enumitem,titlesec,hyperref,parskip,microtype,fancyvrb,fancyhdr}
 
-\definecolor{navy}{HTML}{16324A}
-\definecolor{teal}{HTML}{087E8B}
-\definecolor{blue}{HTML}{256B9C}
-\definecolor{ink}{HTML}{26333D}
-\definecolor{muted}{HTML}{60717E}
-\definecolor{line}{HTML}{CBD6DC}
-\definecolor{wash}{HTML}{F2F6F7}
-\definecolor{tealwash}{HTML}{E8F4F4}
+\definecolor{navy}{HTML}{183247}
+\definecolor{blue}{HTML}{276A96}
+\definecolor{ink}{HTML}{25313A}
+\definecolor{muted}{HTML}{64727C}
+\definecolor{rule}{HTML}{BFC9CF}
+\definecolor{row}{HTML}{F3F5F6}
 
 \hypersetup{
   colorlinks=true,
   urlcolor=blue,
   linkcolor=blue,
-  pdftitle={Tensor Shape Contracts in GiGL},
-  pdfsubject={Jaxtyping design and PR 748 implementation},
+  pdftitle={Jaxtyping Shape Contracts in GiGL},
+  pdfsubject={Implementation note for PR 748},
   pdfauthor={GiGL Engineering}
 }
 
 \color{ink}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{4pt}
-\setlist[itemize]{leftmargin=14pt,itemsep=2pt,topsep=3pt,parsep=0pt}
-\setlength{\tabcolsep}{7pt}
-\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.2}
+\setlist[itemize]{leftmargin=15pt,itemsep=2pt,topsep=3pt,parsep=0pt}
 \raggedbottom
 
 \titleformat{\section}
   {\large\bfseries\color{navy}}
-  {}{0pt}{}
-  [\vspace{1pt}{\color{line}\titlerule}]
-\titlespacing*{\section}{0pt}{12pt}{6pt}
+  {\thesection}{0.55em}{}
+  [\vspace{1pt}{\color{rule}\titlerule}]
+\titlespacing*{\section}{0pt}{11pt}{6pt}
 
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\footnotesize\bfseries\color{navy}GIGL ENGINEERING NOTE}
-\fancyhead[R]{\footnotesize\color{muted}PR \#748}
-\fancyfoot[L]{\scriptsize\color{muted}Tensor Shape Contracts in GiGL}
+\fancyhead[L]{\scriptsize\bfseries\color{navy}GIGL ENGINEERING}
+\fancyhead[R]{\scriptsize\color{muted}PR \#748}
+\fancyfoot[L]{\scriptsize\color{muted}Jaxtyping Shape Contracts in GiGL}
 \fancyfoot[R]{\scriptsize\color{muted}\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
-\renewcommand{\headrule}{\hbox to\headwidth{\color{line}\leaders\hrule height \headrulewidth\hfill}}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{rule}\leaders\hrule height \headrulewidth\hfill}}
 \renewcommand{\footrulewidth}{0pt}
 
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
-\newcommand{\eyebrow}[1]{{\small\bfseries\color{teal}\MakeUppercase{#1}}}
-\newcommand{\pill}[1]{\colorbox{tealwash}{\strut\hspace{4pt}\textbf{\color{teal}#1}\hspace{4pt}}}
-\newcommand{\callout}[1]{%
-  \begin{center}
-  \fcolorbox{line}{wash}{\parbox{0.93\linewidth}{\vspace{3pt}#1\vspace{3pt}}}
-  \end{center}
-}
-\DefineVerbatimEnvironment{snippet}{Verbatim}{fontsize=\small,formatcom=\color{navy},xleftmargin=8pt}
+\newcommand{\meta}[1]{{\small\color{muted}#1}}
+\DefineVerbatimEnvironment{snippet}{Verbatim}{fontsize=\small,formatcom=\color{navy},xleftmargin=6pt}
 
 \begin{document}
 
-\eyebrow{Design and implementation brief}\par
+{\color{navy}\fontsize{23}{27}\selectfont\bfseries Jaxtyping Shape Contracts in GiGL}\par
 \vspace{4pt}
-{\color{navy}\fontsize{28}{32}\selectfont\bfseries Tensor Shape Contracts in GiGL}\par
-\vspace{3pt}
-{\large\color{muted}Jaxtyping contracts, enforced automatically during tests}\par
-\vspace{9pt}
-{\color{teal}\rule{0.16\linewidth}{2.5pt}}\hspace{4pt}{\color{line}\rule{0.82\linewidth}{2.5pt}}
+\meta{Status: implemented \quad Scope: test-time enforcement \quad Runtime checker: Typeguard 2.13.3}\par
+\vspace{7pt}
+{\color{navy}\rule{\linewidth}{1.2pt}}
 
-\section*{The problem}
-Python's \code{Tensor} annotation says nothing about dtype, rank, or how dimensions relate. In graph learning, a mismatched embedding width or malformed ID tensor may travel through several layers before failing. The eventual error is often far from the boundary that admitted the bad value.
+\section{What changed}
 
-Jaxtyping turns those assumptions into readable, runtime-checkable contracts:
+Tensor annotations at stable GiGL boundaries now state dtype, rank, and axis relationships. The annotations remain part of the production API, but runtime checking is enabled only by the unit, integration, and end-to-end test launchers.
+
+\begin{itemize}
+  \item \code{jaxtyping} is a runtime dependency because annotations are imported with GiGL modules.
+  \item \code{typeguard>=2,<3} is a test dependency and is not installed for production execution.
+  \item The launchers install one Jaxtyping import hook for \code{gigl} and \code{examples} before test discovery.
+  \item A custom adapter gives Typeguard only annotations that contain a Jaxtyping array type. Existing static-only annotations are not turned into runtime policy.
+\end{itemize}
+
+\section{Contract syntax used in GiGL}
+
+Axis names are local to one checked call. Reusing a name across parameters and the return value requires the sizes to match.
+
+\rowcolors{2}{row}{white}
+\begin{tabularx}{\linewidth}{@{}>{\ttfamily\small}p{0.43\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+\normalfont\bfseries Contract & \bfseries Meaning \\
+\midrule
+Float[Tensor, "queries embedding\_dim"] & Floating tensor with rank 2 and named axes. \\
+Int64[Tensor, "nodes"] & One-dimensional \code{torch.int64} tensor. \\
+Float[Tensor, "... feature\_dim"] & Any number of leading axes followed by \code{feature_dim}. \\
+Float[Tensor, "\_nodes output\_dim"] & \code{_nodes} is descriptive but does not bind to another annotation. \\
+Float[Tensor, "\#batch features"] & \code{batch} may match its bound size or be 1 for broadcasting. \\
+Float32[Tensor, "... \{output\_dim\}"] & Final size is read from a runtime argument or instance field. \\
+Float[Tensor, ""] & Scalar tensor. \\
+\bottomrule
+\end{tabularx}
+\rowcolors{2}{}{}
+
+Use exact dtypes only where the interface guarantees them. Model and loss boundaries use \code{Float} when mixed precision is valid; ID tensors and packed features use \code{Int64} and \code{UInt8}.
+
+\section{Examples from current GiGL APIs}
+
+The decoder contract ties the input embedding widths together and carries the input counts into the score matrix:
 
 \begin{snippet}
-from jaxtyping import Float
-from torch import Tensor
-
 def decode(
-    query: Float[Tensor, "queries embedding_dim"],
-    candidate: Float[Tensor, "candidates embedding_dim"],
+    query_embeddings: Float[Tensor, "queries embedding_dim"],
+    candidate_embeddings: Float[Tensor, "candidates embedding_dim"],
 ) -> Float[Tensor, "queries candidates"]: ...
 \end{snippet}
 
-The shared \code{embedding_dim} name requires both inputs to have the same final dimension. A test fails at \code{decode}, before an invalid tensor can propagate.
+Heterogeneous outputs do not require every node type to contain the same number of nodes:
 
-\callout{\pill{Core idea}\quad A shape contract records the stable interface: tensor kind, dtype family, rank, and meaningful relationships between axes.}
+\begin{snippet}
+def forward(...) -> dict[
+    NodeType, Float[Tensor, "_nodes embedding_dim"]
+]: ...
+\end{snippet}
 
-\section*{Contract vocabulary}
-Axes are whitespace-separated. Reusing a name binds equal sizes within one checked call.
+Contracts also apply inside containers. This catches a malformed layer output, not merely a malformed list object:
 
-\rowcolors{2}{wash}{white}
-\begin{tabularx}{\linewidth}{@{}>{\ttfamily\small}p{0.39\linewidth}>{\raggedright\arraybackslash}X@{}}
-\toprule
-\normalfont\bfseries\color{navy} Contract & \bfseries\color{navy} Meaning \\
-\midrule
-Float[Tensor, "batch 128"] & Rank-2 tensor with a fixed final width of 128. \\
-Float[Tensor, "... channels"] & Any number of leading axes, followed by \code{channels}. \\
-Float[Tensor, "\#batch features"] & \code{batch} may match its bound size or be 1 for broadcasting. \\
-Float[Tensor, "\{width\}"] & Exact size taken from the runtime argument \code{width}. \\
-Float[Tensor, "*batch channels"] & Named, variable number of leading axes. \\
-\bottomrule
-\end{tabularx}
-\rowcolors{2}{}{}
+\begin{snippet}
+def forward(
+    self, xs: list[Float[Tensor, "nodes hidden_dim"]]
+) -> Float[Tensor, "nodes output_dim"]: ...
+\end{snippet}
 
-\section*{What contracts provide}
-\begin{minipage}[t]{0.48\linewidth}
-\pill{Benefits}
-\begin{itemize}
-  \item Express the boundary more precisely than \code{Tensor}.
-  \item Validate dtype, rank, fixed axes, and named-axis equality.
-  \item Make semantic coupling visible in code review.
-  \item Fail close to the invalid call on exercised test paths.
-\end{itemize}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.48\linewidth}
-\pill{Limits}
-\begin{itemize}
-  \item Validate only annotated boundaries reached by tests.
-  \item Cannot model key-to-axis equality in dynamic keyed containers.
-  \item Require accurate contracts; guessed semantics create false failures.
-  \item Complement static typing rather than replace it.
-\end{itemize}
-\end{minipage}
+\section{Where contracts belong}
+
+Contract tensors crossing loader or sampler interfaces, public model methods, loss and result interfaces, and conversion or quantization boundaries. The dtype, rank, and axis meaning must be stable. Do not annotate internal tensor operations, low-level message passing, or dynamic PyG and TorchRec keyed containers solely for coverage.
 
 \clearpage
 \thispagestyle{fancy}
-\vspace*{2pt}
 
-\eyebrow{GiGL integration}\par
-\vspace{3pt}
-{\color{navy}\fontsize{24}{28}\selectfont\bfseries Automatic enforcement in tests}\par
-\vspace{4pt}
-{\large\color{muted}No per-function setup and no production instrumentation}\par
+\section{Runtime enforcement path}
 
-\section*{How PR \#748 works}
-Runtime checking is installed by GiGL's unit, integration, and end-to-end test launchers before test discovery. Annotated \code{gigl} and \code{examples} code is instrumented as it is imported.
-
-\begin{center}
-\begin{tabularx}{0.95\linewidth}{@{}>{\centering\arraybackslash\columncolor{tealwash}}X>{\centering\arraybackslash}p{0.05\linewidth}>{\centering\arraybackslash\columncolor{tealwash}}X>{\centering\arraybackslash}p{0.05\linewidth}>{\centering\arraybackslash\columncolor{tealwash}}X@{}}
-\rule{0pt}{34pt}\textbf{1. Test launchers}\par{\small Install checking} &
-{\Large\color{teal}$\rightarrow$} &
-\rule{0pt}{34pt}\textbf{2. Import hook}\par{\small Instrument packages} &
-{\Large\color{teal}$\rightarrow$} &
-\rule{0pt}{34pt}\textbf{3. Contracted call}\par{\small Check inputs and returns}
+\begin{tabularx}{\linewidth}{@{}>{\bfseries\color{navy}}p{0.23\linewidth}>{\raggedright\arraybackslash}X@{}}
+Test entry points & \code{tests/unit/main.py}, \code{tests/integration/main.py}, and \code{tests/e2e_tests/e2e_test.py} call \code{install_runtime_typechecking()} before importing GiGL modules. \\
+Import scope & \code{install_import_hook()} instruments subsequently imported functions and dataclasses in \code{gigl} and \code{examples}. \\
+Annotation filter & \code{shape_contract_typechecker()} returns uncontracted functions unchanged. For contracted functions, it creates a private function copy containing only shape-bearing annotations. \\
+Runtime check & Typeguard checks arguments before the call and the return value afterward. Jaxtyping binds named axes for that call. \\
+Failure & A dtype, rank, or axis mismatch raises \code{jaxtyping.TypeCheckError}; an uncaught error fails the test command. \\
+Telemetry & Each process logs whether checking was enabled and how many functions were instrumented. The count is not the number of calls or tensor checks. \\
 \end{tabularx}
-\end{center}
 
-An uncaught \code{jaxtyping.TypeCheckError} fails the test command. Production training and inference retain the annotations as documentation but do not install runtime checking, avoiding instrumentation overhead and import-order sensitivity.
+The private function copy matters because Typeguard reads \code{__annotations__} at call time. The adapter restores the complete public annotation mapping on the wrapped function, so runtime filtering does not change the API seen by introspection or static tooling.
 
-\callout{\pill{Why Typeguard 2.x}\quad Jaxtyping documents this integration path. GiGL's adapter presents Typeguard with shape-bearing annotations only, avoiding runtime evaluation of static-only Protocol, TypeVar, and forward-reference annotations.}
+\section{Why Typeguard 2.x instead of Beartype}
 
-\section*{Contracted boundaries}
-\rowcolors{2}{wash}{white}
-\begin{tabularx}{\linewidth}{@{}>{\bfseries\color{navy}}p{0.31\linewidth}>{\raggedright\arraybackslash}X@{}}
+Both libraries integrate with Jaxtyping and both were viable. GiGL uses Typeguard for deterministic container coverage.
+
+\rowcolors{2}{row}{white}
+\begin{tabularx}{\linewidth}{@{}p{0.25\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
 \toprule
-Boundary & \bfseries\color{navy} Examples \\
+\bfseries Criterion & \bfseries Typeguard 2.x & \bfseries Beartype \\
 \midrule
-Loaders and samplers & Node IDs, ABLP seeds and labels, loader inputs, and PPR degrees. \\
-Public models and decoders & \code{forward} and \code{decode} embeddings, shared embedding widths, and score matrices. \\
-Losses and task results & Scores, IDs, and embedding containers with meaningful empty-path ranks. \\
-Examples & Public link-prediction and node-classification model methods. \\
+Container checking & Exhaustively checks values reached through annotated containers. & Samples container contents to keep checking near constant time. \\
+GiGL impact & Deterministically checks contracts such as \code{list[Float[...]]}, \code{dict[NodeType, Float[...]]}, and nested loader inputs. & A malformed tensor can be missed when its container element is not sampled. \\
+Runtime cost & Higher for large containers, accepted because checking runs only in tests. & Lower and more suitable when runtime overhead is the primary constraint. \\
+Jaxtyping support & Supported, with the 2.x series required because Jaxtyping documents known issues in Typeguard 3 and 4. & Supported without the Typeguard version constraint. \\
 \bottomrule
 \end{tabularx}
 \rowcolors{2}{}{}
 
-\section*{Contract policy}
+The custom annotation filter is separate from this choice. It prevents either checker from treating all existing GiGL annotations as runtime contracts. TypeVars bounded by non-runtime-checkable Protocols and unresolved forward references can otherwise fail during \code{isinstance} evaluation.
+
+\section{Enforcement boundaries}
+
 \begin{itemize}
-  \item Annotate stable tensor boundaries: loader and sampler interfaces, public model \code{forward} and \code{decode} methods, loss interfaces, and result containers.
-  \item Use exact dtypes only when the boundary guarantees them. Use \code{Float} when mixed precision is valid; use \code{Int64}, \code{Int32}, \code{Float32}, or \code{UInt8} for hard guarantees.
-  \item Reuse axis names only when dimensions must match. Use \texttt{\_name} for an independent dimension, \texttt{\_} for an unknown dimension, and \texttt{\#name} when size 1 is valid for broadcasting.
-  \item Leave internal tensor operations, low-level message passing, and dynamic PyG or TorchRec keyed containers uncontracted unless they expose a stable boundary.
-  \item Prefer no annotation over a guessed rank, dtype, or axis meaning.
+  \item Checks run only for calls reached by tests through the standard GiGL test launchers. Commands that bypass those entry points do not install the hook.
+  \item The hook affects modules imported after installation; this is why installation precedes test discovery and GiGL imports.
+  \item Only annotations containing a Jaxtyping array type are checked. This is not repository-wide runtime validation of ordinary Python annotations.
+  \item Axis bindings apply within one checked function call. The same name in separate calls does not create shared state.
+  \item A leading underscore makes an axis independent. Use it for heterogeneous dictionary values whose node counts legitimately differ by key.
 \end{itemize}
 
 \vfill
 {\scriptsize\color{muted}
-\textbf{References}\quad
-\href{https://docs.kidger.site/jaxtyping/api/array/}{Jaxtyping array annotations}\enspace\textbullet\enspace
-\href{https://docs.kidger.site/jaxtyping/api/runtime-type-checking/}{Runtime type checking}\enspace\textbullet\enspace
-\href{https://typeguard.readthedocs.io/}{Typeguard}\enspace\textbullet\enspace
-GiGL PR \#748
+\textbf{References:}
+\href{https://docs.kidger.site/jaxtyping/api/array/}{Jaxtyping array annotations};
+\href{https://docs.kidger.site/jaxtyping/api/runtime-type-checking/}{runtime type checking};
+\href{https://docs.kidger.site/jaxtyping/}{Typeguard and Beartype checking behavior}.
 }
 
 \end{document}
