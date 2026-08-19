@@ -873,10 +873,14 @@ class DistRandomPartitionerTestCase(TestCase):
                         else partitioned_edge_index
                     )
                     self.assertEqual(edge_type_features.feats.dtype, torch.uint8)
+                    assert edge_type_features.ids is not None
+                    expected_source_nodes = MOCKED_UNIFIED_GRAPH.edge_index[edge_type][
+                        0, edge_type_features.ids
+                    ]
                     expected_features = torch.stack(
                         (
-                            edge_type_graph.edge_index[0] * 3 + 17,
-                            edge_type_graph.edge_index[0] * 5 + 29,
+                            expected_source_nodes * 3 + 17,
+                            expected_source_nodes * 5 + 29,
                         ),
                         dim=1,
                     ).to(torch.uint8)
@@ -884,12 +888,11 @@ class DistRandomPartitionerTestCase(TestCase):
                         tensor_a=edge_type_features.feats,
                         tensor_b=expected_features,
                     )
-                    if edge_type_features.ids is not None:
-                        assert edge_type_graph.edge_ids is not None
-                        self.assert_tensor_equality(
-                            tensor_a=edge_type_features.ids,
-                            tensor_b=edge_type_graph.edge_ids,
-                        )
+                    assert edge_type_graph.edge_ids is not None
+                    self.assert_tensor_equality(
+                        tensor_a=edge_type_features.ids,
+                        tensor_b=edge_type_graph.edge_ids,
+                    )
             elif (
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
