@@ -224,9 +224,11 @@ def _run_quantized_homogeneous_ablp_loader(
         assert_tensor_equality(batch.x, expected_features[batch.node])
         for local_edge_index, edge_feature in zip(batch.edge_index.T, batch.edge_attr):
             source, destination = batch.node[local_edge_index]
+            # Outward sampling reverses the batch edge for message passing while
+            # preserving the original edge's feature payload.
             assert_tensor_equality(
                 edge_feature,
-                expected_edge_features[(source.item(), destination.item())],
+                expected_edge_features[(destination.item(), source.item())],
             )
         assert _global_pair_set(batch.node, batch.node, batch.y_positive) == [(0, 1)]
         assert _global_pair_set(batch.node, batch.node, batch.y_negative) == [(0, 2)]
