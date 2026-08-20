@@ -20,6 +20,7 @@ from jaxtyping import Int64
 
 from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
+    EDGE_PACKED_FEATURES_METADATA_KEY,
     NEGATIVE_LABEL_METADATA_KEY,
     NODE_PACKED_FEATURES_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
@@ -117,6 +118,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         self._sampling_error_sent: bool = False
 
         self.dist_node_quantized_feature: Optional[DistFeature] = None
+        self.dist_edge_quantized_feature: Optional[DistFeature] = None
         if (
             self.collect_features
             and data is not None
@@ -129,6 +131,20 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 data.partition_idx,
                 data.node_quantized_features,
                 data.node_pb,
+                local_only=False,
+                rpc_router=self.rpc_router,
+                device=self.device,
+            )
+        if (
+            self.collect_features
+            and data is not None
+            and getattr(data, "edge_quantized_features", None) is not None
+        ):
+            self.dist_edge_quantized_feature = DistFeature(
+                data.num_partitions,
+                data.partition_idx,
+                data.edge_quantized_features,
+                data.edge_pb,
                 local_only=False,
                 rpc_router=self.rpc_router,
                 device=self.device,
@@ -437,6 +453,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             if self.dist_edge_feature is not None and self.with_edge:
                 for etype in self.edge_types:
+                    if etype not in self.dist_edge_feature.local_feature:
+                        continue
                     if self.edge_dir == "in":
                         eids = result_map.get(
                             f"{as_str(reverse_edge_type(etype))}.eids", None
@@ -451,6 +469,30 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             result_key = f"{as_str(etype)}.efeats"
                         futs[result_key] = wrap_torch_future(
                             self.dist_edge_feature.async_get(eids, etype)
+                        )
+            if self.dist_edge_quantized_feature is not None and self.with_edge:
+                for etype in self.edge_types:
+                    # Like node features, an edge partition book covers every
+                    # edge type while a feature store may register only some.
+                    if etype not in self.dist_edge_quantized_feature.local_feature:
+                        continue
+                    result_edge_type = (
+                        reverse_edge_type(etype) if self.edge_dir == "in" else etype
+                    )
+                    eids = result_map.get(f"{as_str(result_edge_type)}.eids")
+                    if eids is not None:
+                        eids = eids.to(torch.long)
+                        output_edge_type = (
+                            reverse_edge_type(etype)
+                            if self.edge_dir == "out"
+                            else etype
+                        )
+                        # GLT maps wire edge types to output stores during collation.
+                        # Metadata bypasses that mapping, so key it by the output store.
+                        futs[
+                            f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
+                        ] = wrap_torch_future(
+                            self.dist_edge_quantized_feature.async_get(eids, etype)
                         )
             if output.batch is not None:
                 for ntype, batch in output.batch.items():
@@ -490,6 +532,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 eids = result_map["eids"]
                 futs["efeats"] = wrap_torch_future(
                     self.dist_edge_feature.async_get(eids)
+                )
+            if self.dist_edge_quantized_feature is not None:
+                futs[f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}"] = wrap_torch_future(
+                    self.dist_edge_quantized_feature.async_get(result_map["eids"])
                 )
             if output.batch is not None:
                 result_map["batch"] = output.batch

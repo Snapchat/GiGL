@@ -6,6 +6,7 @@ from typing import Callable, Literal, cast
 import torch
 import torch.nn as nn
 from absl.testing import absltest
+from omegaconf import ListConfig, OmegaConf
 from torch import Tensor
 from torch_geometric.data import HeteroData
 
@@ -967,6 +968,44 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         self.assertEqual(attn_bias[0, 1, 0, 1].item(), 8.0)
         self.assertEqual(attn_bias[0, 0, 2, 2].item(), 27.0)
         self.assertEqual(attn_bias[0, 1, 2, 2].item(), 38.0)
+
+    def test_config_supplied_attr_names_become_plain_lists(self) -> None:
+        """Attribute-name sequences are stored as plain lists, never config containers.
+
+        TorchDynamo cannot trace OmegaConf containers, so none may reach the forward path.
+        Omitted names normalize to empty lists.
+        """
+        config = OmegaConf.create(
+            {
+                "pe_attr_names": ["random_walk_pe"],
+                "anchor_bias": ["hop_distance"],
+                "anchor_input": ["hop_distance"],
+                "pairwise_bias": ["pairwise_distance"],
+            }
+        )
+        self.assertIsInstance(config.pe_attr_names, ListConfig)
+
+        encoder = self._create_encoder(
+            pe_attr_names=config.pe_attr_names,
+            anchor_based_attention_bias_attr_names=config.anchor_bias,
+            anchor_based_input_attr_names=config.anchor_input,
+            pairwise_attention_bias_attr_names=config.pairwise_bias,
+        )
+
+        self.assertIs(type(encoder._pe_attr_names), list)
+        self.assertIs(type(encoder._anchor_based_attention_bias_attr_names), list)
+        self.assertIs(type(encoder._anchor_based_input_attr_names), list)
+        self.assertIs(type(encoder._pairwise_attention_bias_attr_names), list)
+        self.assertEqual(encoder._pe_attr_names, ["random_walk_pe"])
+        self.assertEqual(
+            encoder._pairwise_attention_bias_attr_names, ["pairwise_distance"]
+        )
+
+        default_encoder = self._create_encoder()
+        self.assertEqual(default_encoder._pe_attr_names, [])
+        self.assertEqual(default_encoder._anchor_based_attention_bias_attr_names, [])
+        self.assertEqual(default_encoder._anchor_based_input_attr_names, [])
+        self.assertEqual(default_encoder._pairwise_attention_bias_attr_names, [])
 
     def test_attention_bias_supports_anchor_relative_attrs_and_ppr_weights(
         self,

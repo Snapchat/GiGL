@@ -105,6 +105,9 @@ class PartitionOutput:
     partitioned_node_quantized_features: Optional[
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ] = None
+    partitioned_edge_quantized_features: Optional[
+        Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
+    ] = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +239,9 @@ class LoadedGraphTensors:
     node_quantized_features: Optional[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     ] = None
+    edge_quantized_features: Optional[
+        Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:
         """
@@ -336,6 +342,9 @@ class LoadedGraphTensors:
         self.node_features = to_heterogeneous_node(self.node_features)
         self.node_quantized_features = to_heterogeneous_node(
             self.node_quantized_features
+        )
+        self.edge_quantized_features = to_heterogeneous_edge(
+            self.edge_quantized_features
         )
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)

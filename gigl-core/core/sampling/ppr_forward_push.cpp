@@ -9,13 +9,22 @@
 #include <future>
 #include <numeric>
 #include <optional>
-#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace gigl {
+
+namespace {
+// Internal (nodeId, score) pair threaded through the extraction path, sorted by
+// score. Layout-identical to std::pair<int32_t, double>; named fields replace
+// positional .first/.second.
+struct NodeScore {
+    int32_t nodeId;
+    double score;
+};
+} // namespace
 
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
 // Inputs are cast through uint32_t to avoid sign-extension of negative int32 values.
@@ -255,10 +264,10 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
     // fetched row here avoids re-fetching a (node, edge type) pair if it re-enters
     // the frontier later in the same PPR channel.
     for (const auto& [edgeTypeId, neighborTensors] : fetchedByEtypeId) {
-        const auto& nodeIdsTensor = std::get<0>(neighborTensors);
-        const auto& flatNeighborIdsTensor = std::get<1>(neighborTensors);
-        const auto& countsTensor = std::get<2>(neighborTensors);
-        const auto edgeIdsTensor = std::get<3>(neighborTensors).value_or(torch::Tensor());
+        const auto& nodeIdsTensor = neighborTensors.nodeIds;
+        const auto& flatNeighborIdsTensor = neighborTensors.flatNeighborIds;
+        const auto& countsTensor = neighborTensors.counts;
+        const auto edgeIdsTensor = neighborTensors.edgeIds.value_or(torch::Tensor());
 
         if (edgeIdsTensor.defined()) {
             TORCH_CHECK(edgeIdsTensor.dim() == 1, "edge_ids must be 1D.");
@@ -592,24 +601,28 @@ OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
 // Expected output: (node_id, raw_ppr_score) pairs selected by raw PPR score.
 // The order is unspecified; callers that emit these directly should sort the
 // returned vector before writing output tensors.
-static std::vector<std::pair<int32_t, double>> selectFinalizedPPRPairs(const SeedNodeTypeState& nodeTypeState,
-                                                                       int32_t finalizedPPRNodeLimit) {
+static std::vector<NodeScore> selectFinalizedPPRPairs(const SeedNodeTypeState& nodeTypeState,
+                                                      int32_t finalizedPPRNodeLimit) {
     const auto& scores = nodeTypeState.pprScores;
 
     const int32_t numReturnedPairs = std::min(finalizedPPRNodeLimit, static_cast<int32_t>(scores.size()));
-    std::vector<std::pair<int32_t, double>> selectedPairs;
+    std::vector<NodeScore> selectedPairs;
     selectedPairs.reserve(static_cast<size_t>(numReturnedPairs));
     if (numReturnedPairs > 0) {
-        std::vector<std::pair<int32_t, double>> scorePairs(scores.begin(), scores.end());
+        std::vector<NodeScore> scorePairs;
+        scorePairs.reserve(scores.size());
+        for (const auto& [nodeId, score] : scores) {
+            scorePairs.push_back(NodeScore{nodeId, score});
+        }
         if (numReturnedPairs < static_cast<int32_t>(scorePairs.size())) {
             std::nth_element(scorePairs.begin(),
                              scorePairs.begin() + numReturnedPairs,
                              scorePairs.end(),
-                             [](const auto& a, const auto& b) { return a.second > b.second; });
+                             [](const auto& a, const auto& b) { return a.score > b.score; });
         }
 
         for (int32_t rankIdx = 0; rankIdx < numReturnedPairs; ++rankIdx) {
-            selectedPairs.emplace_back(scorePairs[rankIdx].first, scorePairs[rankIdx].second);
+            selectedPairs.push_back(NodeScore{scorePairs[rankIdx].nodeId, scorePairs[rankIdx].score});
         }
     }
 
@@ -628,7 +641,7 @@ static std::vector<std::pair<int32_t, double>> selectFinalizedPPRPairs(const See
 // highest-scoring residual candidates that are not already selected. This helper
 // does not sort selectedPairs; callers sort only when their output needs it.
 static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
-                                     std::vector<std::pair<int32_t, double>>& selectedPairs,
+                                     std::vector<NodeScore>& selectedPairs,
                                      int32_t sequenceLength) {
     const int32_t residualTopUpBudget =
         std::max<int32_t>(0, sequenceLength - static_cast<int32_t>(selectedPairs.size()));
@@ -637,10 +650,10 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         std::unordered_set<int32_t> selectedPPRNodeIds;
         selectedPPRNodeIds.reserve(selectedPairs.size());
         for (const auto& selectedPair : selectedPairs) {
-            selectedPPRNodeIds.insert(selectedPair.first);
+            selectedPPRNodeIds.insert(selectedPair.nodeId);
         }
 
-        std::vector<std::pair<int32_t, double>> residualPairs;
+        std::vector<NodeScore> residualPairs;
         residualPairs.reserve(nodeTypeState.residualStates.size());
         for (const auto& [nodeId, residualState] : nodeTypeState.residualStates) {
             double residual = residualState.residual;
@@ -654,7 +667,7 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
             auto pprScoreIter = pprScoresByNodeId.find(nodeId);
             double pprScore = (pprScoreIter != pprScoresByNodeId.end()) ? pprScoreIter->second : 0.0;
             double outputScore = pprScore + residual;
-            residualPairs.emplace_back(nodeId, outputScore);
+            residualPairs.push_back(NodeScore{nodeId, outputScore});
         }
 
         const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
@@ -663,11 +676,11 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
                 std::nth_element(residualPairs.begin(),
                                  residualPairs.begin() + residualTopK,
                                  residualPairs.end(),
-                                 [](const auto& a, const auto& b) { return a.second > b.second; });
+                                 [](const auto& a, const auto& b) { return a.score > b.score; });
             }
 
             for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
-                selectedPairs.emplace_back(residualPairs[rankIdx].first, residualPairs[rankIdx].second);
+                selectedPairs.push_back(NodeScore{residualPairs[rankIdx].nodeId, residualPairs[rankIdx].score});
             }
         }
     }
@@ -682,8 +695,7 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
 //
 // Expected output: selectedPairs scores are updated in-place to
 // ppr_score + residual(node) when residual mass exists for that node.
-static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState,
-                                      std::vector<std::pair<int32_t, double>>& selectedPairs) {
+static void addResidualMassToPPRPairs(const SeedNodeTypeState& nodeTypeState, std::vector<NodeScore>& selectedPairs) {
     for (auto& [nodeId, score] : selectedPairs) {
         auto residualStateIter = nodeTypeState.residualStates.find(nodeId);
         if (residualStateIter != nodeTypeState.residualStates.end()) {
@@ -722,12 +734,12 @@ static double getNodeHopProximity(const SeedNodeTypeState& nodeTypeState, int32_
 // Expected output: outputScoresByNodeId has this channel's score, proximity,
 // and presence features merged in, and channelOutputCandidates contains this channel's
 // candidates on the emitted PPR score scale.
-static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int32_t, double>>& nodesAndScores,
+static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<NodeScore>& nodesAndScores,
                                                  const SeedNodeTypeState& nodeTypeState,
                                                  int32_t channelIndex,
                                                  const TypedPPRFeatureLayout& featureLayout,
                                                  std::unordered_map<int32_t, std::vector<double>>& outputScoresByNodeId,
-                                                 std::vector<std::pair<int32_t, double>>& channelOutputCandidates) {
+                                                 std::vector<NodeScore>& channelOutputCandidates) {
     if (nodesAndScores.empty()) {
         return;
     }
@@ -746,7 +758,7 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
 
         // Keep a per-channel sortable candidate list so target counts can be
         // applied after cross-channel attribution.
-        channelOutputCandidates.emplace_back(nodeId, score);
+        channelOutputCandidates.push_back(NodeScore{nodeId, score});
     }
 }
 
@@ -762,10 +774,9 @@ static void addTypedPPRSeedFeaturesAndCandidates(const std::vector<std::pair<int
 //   2. Fill each channel up to its target count.
 //   3. Redistribute unused slots to the remaining highest-scoring candidates.
 //   4. Return the selected nodes globally ranked by best score.
-static std::vector<int32_t> selectTypedPPRNodeIds(
-    std::vector<std::vector<std::pair<int32_t, double>>>& candidatesByChannel,
-    const std::vector<int32_t>& channelTargetCounts,
-    int32_t maxPPRNodes) {
+static std::vector<int32_t> selectTypedPPRNodeIds(std::vector<std::vector<NodeScore>>& candidatesByChannel,
+                                                  const std::vector<int32_t>& channelTargetCounts,
+                                                  int32_t maxPPRNodes) {
     struct AttributedCandidate {
         double bestScore;
         double channelScore;
@@ -923,7 +934,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
             // together by emitted score, so top-up rows may interleave after selection.
             if (selectedPairs.size() > 1) {
                 std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
-                    return a.second > b.second;
+                    return a.score > b.score;
                 });
             }
 
@@ -996,8 +1007,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
             // residual-aware rows when top-up is enabled. Selection and emitted
             // features use this same view so both finalized and residual
             // candidates obey the per-channel target counts.
-            std::vector<std::vector<std::pair<int32_t, double>>> outputCandidatesByChannel(
-                static_cast<size_t>(numChannels));
+            std::vector<std::vector<NodeScore>> outputCandidatesByChannel(static_cast<size_t>(numChannels));
 
             for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
                 const auto& nodeTypeState = states[channelIndex]->_state[seedIdx][nodeTypeId];

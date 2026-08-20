@@ -39,6 +39,7 @@ from gigl.distributed.utils.neighborloader import (
     extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_edge_features,
     materialize_quantized_node_features,
     set_missing_features,
     shard_nodes_by_process,
@@ -610,6 +611,7 @@ class DistABLPLoader(BaseDistLoader):
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
                 node_quantization_metadata=dataset.node_quantization_metadata,
+                edge_quantization_metadata=dataset.edge_quantization_metadata,
                 edge_dir=dataset.edge_dir,
             ),
         )
@@ -800,6 +802,7 @@ class DistABLPLoader(BaseDistLoader):
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
                 node_quantization_metadata=dataset.fetch_node_quantization_metadata(),
+                edge_quantization_metadata=dataset.fetch_edge_quantization_metadata(),
                 edge_dir=edge_dir,
             ),
             backend_key,
@@ -972,6 +975,12 @@ class DistABLPLoader(BaseDistLoader):
             data=data,
             metadata=metadata,
             node_quantization_metadata=self._node_quantization_metadata,
+        )
+        data, metadata = materialize_quantized_edge_features(
+            data=data,
+            metadata=metadata,
+            edge_quantization_metadata=self._edge_quantization_metadata,
+            edge_dir=self.edge_dir,
         )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the

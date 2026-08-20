@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <tuple>
 #include <unordered_map>
 
 #include "ppr_forward_push.h"
@@ -18,39 +17,19 @@ namespace py = pybind11;
 
 namespace gigl {
 
-// pushResiduals receives Python-owned containers, so convert them while the GIL
-// is held and release only around the C++ state update.
-static void pushResidualsWrapper(PPRForwardPush& state, const py::dict& fetchedByEtypeId) {
-    NeighborFetchMap neighborTensorsByEtypeId;
-    // Dict iteration touches Python objects — GIL must be held here.
-    for (auto item : fetchedByEtypeId) {
-        auto edgeTypeId = item.first.cast<int32_t>();
-        auto neighborTensors = item.second.cast<py::tuple>();
-        auto neighborTensorCount = neighborTensors.size();
-        if (neighborTensorCount != 3) {
-            TORCH_CHECK(neighborTensorCount == 4,
-                        "Expected neighbor fetch tuple of length 3 or 4, received ",
-                        neighborTensorCount,
-                        ".");
-        }
-        std::optional<torch::Tensor> edgeIds = std::nullopt;
-        if (neighborTensorCount == 4 && !neighborTensors[3].is_none()) {
-            edgeIds = neighborTensors[3].cast<torch::Tensor>();
-        }
-        neighborTensorsByEtypeId[edgeTypeId] = {neighborTensors[0].cast<torch::Tensor>(),
-                                                neighborTensors[1].cast<torch::Tensor>(),
-                                                neighborTensors[2].cast<torch::Tensor>(),
-                                                edgeIds};
-    }
+// pushResiduals receives Python-owned containers. pybind converts the
+// dict[int, NeighborFetchTensors] argument into NeighborFetchMap while the GIL
+// is held, before this wrapper runs; release only around the C++ state update.
+static void pushResidualsWrapper(PPRForwardPush& state, const NeighborFetchMap& fetchedByEtypeId) {
     // C++ push only uses tensor accessor/data_ptr APIs — GIL-safe to release.
     // Releasing here lets the asyncio event loop process RPC completion callbacks
     // from other concurrent PPR coroutines while this push runs.
-    // REQUIREMENT: no other thread may read or modify neighborTensorsByEtypeId or
-    // the underlying tensor data while the GIL is released.  The caller (Python)
-    // must not alias or mutate fetchedByEtypeId until push_residuals returns.
+    // REQUIREMENT: no other thread may read or modify fetchedByEtypeId or the
+    // underlying tensor data while the GIL is released.  The caller (Python) must
+    // not alias or mutate the fetched map until push_residuals returns.
     {
         py::gil_scoped_release release;
-        state.pushResiduals(neighborTensorsByEtypeId);
+        state.pushResiduals(fetchedByEtypeId);
     }
 }
 
@@ -79,9 +58,9 @@ static PPRExtractResult extractTopKWithResidualTopUpWrapper(PPRForwardPush& stat
     return result;
 }
 
-static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
-                                                   const std::vector<int32_t>& fetchIterationCounts,
-                                                   int32_t maxFetchIterations) {
+static TypedPPRQueueDrainResult drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
+                                                                  const std::vector<int32_t>& fetchIterationCounts,
+                                                                  int32_t maxFetchIterations) {
     std::vector<PPRForwardPush*> statePtrs;
     statePtrs.reserve(py::len(states));
     // Sequence iteration and casting touch Python objects, so keep the GIL
@@ -91,7 +70,7 @@ static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
     }
 
     // C++ typed drain only reads/mutates PPRForwardPush states and builds C++
-    // containers. Reacquire the GIL before constructing the Python tuple.
+    // containers. Reacquire the GIL before pybind converts the returned struct.
     // REQUIREMENT: no other thread may read or mutate these channel states
     // while the GIL is released. The typed sampler drains and pushes each
     // channel in a single sequenced loop iteration.
@@ -100,13 +79,10 @@ static py::tuple drainTypedPPRChannelQueuesWrapper(const py::sequence& states,
         py::gil_scoped_release release;
         queueDrainResult = drainTypedPPRChannelQueues(statePtrs, fetchIterationCounts, maxFetchIterations);
     }
-    // Pybind converts the temporary C++ containers into Python objects. Tensor
-    // values are handles, so this does not copy tensor storage across the
+    // Pybind converts the returned struct's C++ containers into Python objects.
+    // Tensor values are handles, so this does not copy tensor storage across the
     // Python/C++ boundary.
-    return py::make_tuple(queueDrainResult.drainedChannelIndices,
-                          queueDrainResult.fetchChannelIndices,
-                          queueDrainResult.edgeTypeIdsByFetchChannel,
-                          queueDrainResult.unionedNodeIdsByEdgeTypeId);
+    return queueDrainResult;
 }
 
 static PPRExtractResult extractTypedTopKWithResidualTopUpWrapper(const py::sequence& states,
@@ -130,9 +106,9 @@ static PPRExtractResult extractTypedTopKWithResidualTopUpWrapper(const py::seque
     return result;
 }
 
-static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& states,
-                                                         const py::dict& selectedNodeIdsByNodeTypeId,
-                                                         bool includeEdgeIds) {
+static OriginalEdgeExtractResult extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& states,
+                                                                          const py::dict& selectedNodeIdsByNodeTypeId,
+                                                                          bool includeEdgeIds) {
     std::vector<const PPRForwardPush*> statePtrs;
     statePtrs.reserve(py::len(states));
     for (py::handle stateObj : states) {
@@ -144,24 +120,15 @@ static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& sta
         selectedNodeTensorsByNodeTypeId[item.first.cast<int32_t>()] = item.second.cast<torch::Tensor>();
     }
 
+    // Pybind converts the returned map into dict[int, OriginalEdgeExtractTensors];
+    // the optional edge_ids field becomes None when absent. Tensor values are
+    // handles, so no storage is copied across the Python/C++ boundary.
     OriginalEdgeExtractResult result;
     {
         py::gil_scoped_release release;
         result = extractOriginalEdgesFromPPRCaches(statePtrs, selectedNodeTensorsByNodeTypeId, includeEdgeIds);
     }
-
-    // Building py::dict/py::tuple objects and pybind tensor wrappers touches the
-    // Python C API, so the GIL must be held after the C++ extraction completes.
-    py::dict pyResult;
-    for (const auto& [edgeTypeId, tensors] : result) {
-        py::object edgeIdsObject = py::none();
-        const auto edgeIdsTensor = tensors.edgeIds.value_or(torch::Tensor());
-        if (edgeIdsTensor.defined()) {
-            edgeIdsObject = py::cast(edgeIdsTensor);
-        }
-        pyResult[py::int_(edgeTypeId)] = py::make_tuple(tensors.rows, tensors.cols, edgeIdsObject);
-    }
-    return pyResult;
+    return result;
 }
 
 } // namespace gigl
@@ -169,6 +136,44 @@ static py::dict extractOriginalEdgesFromPPRCachesWrapper(const py::sequence& sta
 // TORCH_EXTENSION_NAME is set by PyTorch's build system to match the Python
 // module name derived from this file's path (e.g. "ppr_forward_push").
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    // Input databag: one edge type's fetched neighbor payload. Constructible from
+    // Python with edge_ids defaulting to None for callers that omit edge IDs.
+    py::class_<gigl::NeighborFetchTensors>(m, "NeighborFetchTensors")
+        .def(py::init([](torch::Tensor nodeIds,
+                         torch::Tensor flatNeighborIds,
+                         torch::Tensor counts,
+                         std::optional<torch::Tensor> edgeIds) {
+                 return gigl::NeighborFetchTensors{
+                     std::move(nodeIds), std::move(flatNeighborIds), std::move(counts), std::move(edgeIds)};
+             }),
+             py::arg("node_ids"),
+             py::arg("flat_neighbor_ids"),
+             py::arg("counts"),
+             py::arg("edge_ids") = py::none())
+        .def_readonly("node_ids", &gigl::NeighborFetchTensors::nodeIds)
+        .def_readonly("flat_neighbor_ids", &gigl::NeighborFetchTensors::flatNeighborIds)
+        .def_readonly("counts", &gigl::NeighborFetchTensors::counts)
+        .def_readonly("edge_ids", &gigl::NeighborFetchTensors::edgeIds);
+
+    // Output databag: one node type's PPR extraction output.
+    py::class_<gigl::PPRExtractTensors>(m, "PPRExtractTensors")
+        .def_readonly("ids", &gigl::PPRExtractTensors::ids)
+        .def_readonly("weights", &gigl::PPRExtractTensors::weights)
+        .def_readonly("valid_counts", &gigl::PPRExtractTensors::validCounts);
+
+    // Output databag: one edge type's original-edge extraction output.
+    py::class_<gigl::OriginalEdgeExtractTensors>(m, "OriginalEdgeExtractTensors")
+        .def_readonly("rows", &gigl::OriginalEdgeExtractTensors::rows)
+        .def_readonly("cols", &gigl::OriginalEdgeExtractTensors::cols)
+        .def_readonly("edge_ids", &gigl::OriginalEdgeExtractTensors::edgeIds);
+
+    // Output databag: batched typed-PPR channel drain result.
+    py::class_<gigl::TypedPPRQueueDrainResult>(m, "TypedPPRQueueDrainResult")
+        .def_readonly("drained_channel_indices", &gigl::TypedPPRQueueDrainResult::drainedChannelIndices)
+        .def_readonly("fetch_channel_indices", &gigl::TypedPPRQueueDrainResult::fetchChannelIndices)
+        .def_readonly("edge_type_ids_by_fetch_channel", &gigl::TypedPPRQueueDrainResult::edgeTypeIdsByFetchChannel)
+        .def_readonly("unioned_node_ids_by_edge_type_id", &gigl::TypedPPRQueueDrainResult::unionedNodeIdsByEdgeTypeId);
+
     py::class_<gigl::PPRForwardPush>(m, "PPRForwardPush")
         .def(py::init<torch::Tensor,
                       int32_t,

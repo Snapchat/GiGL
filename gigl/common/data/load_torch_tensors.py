@@ -1,7 +1,7 @@
 import time
 import traceback
-from dataclasses import dataclass
-from typing import MutableMapping, Optional, Union
+from dataclasses import dataclass, replace
+from typing import MutableMapping, Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -119,6 +119,141 @@ class SerializedGraphMetadata:
     node_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
     ] = None
+    edge_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
+    ] = None
+
+
+def _validate_weight_edge_feature_name(
+    edge_entity_info: Union[
+        SerializedTFRecordInfo, dict[EdgeType, SerializedTFRecordInfo]
+    ],
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
+) -> None:
+    if weight_edge_feat_name is None:
+        return
+
+    configured_weights: list[tuple[EdgeType, str, SerializedTFRecordInfo]]
+    if isinstance(edge_entity_info, SerializedTFRecordInfo):
+        if not isinstance(weight_edge_feat_name, str):
+            raise ValueError("weight_edge_feat_name must be str for homogeneous graph")
+        edge_type = DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        configured_weights = [(edge_type, weight_edge_feat_name, edge_entity_info)]
+    else:
+        if isinstance(weight_edge_feat_name, str):
+            if len(edge_entity_info) != 1:
+                raise ValueError(
+                    "weight_edge_feat_name must be dict[EdgeType, str] for heterogeneous graph with multiple edge types"
+                )
+            edge_type, serialized_info = next(iter(edge_entity_info.items()))
+            configured_weights = [(edge_type, weight_edge_feat_name, serialized_info)]
+        else:
+            unknown_edge_types = set(weight_edge_feat_name) - set(edge_entity_info)
+            if unknown_edge_types:
+                raise ValueError(
+                    f"weight_edge_feat_name contains unknown edge types: {unknown_edge_types}"
+                )
+            configured_weights = [
+                (edge_type, feature_name, edge_entity_info[edge_type])
+                for edge_type, feature_name in weight_edge_feat_name.items()
+            ]
+
+    for edge_type, feature_name, serialized_info in configured_weights:
+        if feature_name not in serialized_info.feature_keys:
+            raise ValueError(
+                f"Sampling-weight field '{feature_name}' for edge type {edge_type} must be an unquantized raw edge feature."
+            )
+
+
+def remove_sampling_weight_from_edge_quantization_metadata(
+    serialized_graph_metadata: SerializedGraphMetadata,
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
+) -> Optional[
+    Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
+]:
+    """Remove separately stored sampling weights from edge reconstruction metadata.
+
+    TFRecord loading removes the sampling-weight column from raw edge features
+    before registering it with the weighted sampler. The resulting metadata
+    must describe the remaining model features so batch reconstruction scatters
+    raw and dequantized columns into the correct positions.
+
+    Args:
+        serialized_graph_metadata: Serialized edge schema and quantization metadata.
+        weight_edge_feat_name: Raw scalar feature configured as sampling weights.
+
+    Returns:
+        Quantization metadata for the model-facing edge features.
+    """
+    quantization_metadata = serialized_graph_metadata.edge_quantization_metadata
+    if quantization_metadata is None or weight_edge_feat_name is None:
+        return quantization_metadata
+
+    if isinstance(serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo):
+        assert isinstance(quantization_metadata, FeatureQuantizationMetadata)
+        assert isinstance(weight_edge_feat_name, str)
+        edge_info_by_type: dict[EdgeType, SerializedTFRecordInfo] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: serialized_graph_metadata.edge_entity_info
+        }
+        metadata_by_type: dict[EdgeType, FeatureQuantizationMetadata] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: quantization_metadata
+        }
+        weight_by_type: dict[EdgeType, str] = {
+            DEFAULT_HOMOGENEOUS_EDGE_TYPE: weight_edge_feat_name
+        }
+        is_homogeneous = True
+    else:
+        assert isinstance(quantization_metadata, dict)
+        edge_info_by_type: dict[EdgeType, SerializedTFRecordInfo] = (
+            serialized_graph_metadata.edge_entity_info
+        )
+        metadata_by_type: dict[EdgeType, FeatureQuantizationMetadata] = cast(
+            dict[EdgeType, FeatureQuantizationMetadata], quantization_metadata
+        )
+        if isinstance(weight_edge_feat_name, str):
+            if len(edge_info_by_type) != 1:
+                raise ValueError(
+                    "weight_edge_feat_name must be dict[EdgeType, str] for "
+                    "heterogeneous graph with multiple edge types"
+                )
+            edge_type = next(iter(edge_info_by_type))
+            weight_by_type: dict[EdgeType, str] = {edge_type: weight_edge_feat_name}
+        else:
+            weight_by_type: dict[EdgeType, str] = weight_edge_feat_name
+        is_homogeneous = False
+
+    adjusted_metadata: dict[EdgeType, FeatureQuantizationMetadata] = {}
+    for edge_type, metadata in metadata_by_type.items():
+        weight_feature_name = weight_by_type.get(edge_type)
+        if weight_feature_name is None:
+            adjusted_metadata[edge_type] = metadata
+            continue
+
+        edge_info = edge_info_by_type[edge_type]
+        raw_column_offset = 0
+        for feature_name in edge_info.feature_keys:
+            if feature_name == weight_feature_name:
+                break
+            feature_spec = edge_info.feature_spec[feature_name]
+            raw_column_offset += feature_spec.shape[-1] if feature_spec.shape else 1
+        # The sampling-weight column is removed before reconstruction, shifting
+        # every following logical feature index one position to the left.
+        weight_logical_index = metadata.raw_feature_indices[raw_column_offset]
+        adjusted_quantized_feature_indices = tuple(
+            quantized_feature_index - 1
+            if quantized_feature_index > weight_logical_index
+            else quantized_feature_index
+            for quantized_feature_index in metadata.quantized_feature_indices
+        )
+        adjusted_metadata[edge_type] = replace(
+            metadata,
+            feature_dim=metadata.feature_dim - 1,
+            quantized_feature_indices=adjusted_quantized_feature_indices,
+        )
+
+    if is_homogeneous:
+        return adjusted_metadata[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+    return adjusted_metadata
 
 
 def _data_loading_process(
@@ -198,14 +333,6 @@ def _data_loading_process(
             ):
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
-                )
-            if (
-                serialized_entity_tf_record_info.packed_feature_key is not None
-                and not serialized_entity_tf_record_info.is_node_entity
-            ):
-                # TODO(quantization): Support feature quantization for edge features.
-                raise NotImplementedError(
-                    "Packed feature keys are not supported for edge entities"
                 )
             loaded_entity = tf_record_dataloader.load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
@@ -396,6 +523,11 @@ def load_torch_tensors_from_tf_record(
         loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
     """
 
+    _validate_weight_edge_feature_name(
+        edge_entity_info=serialized_graph_metadata.edge_entity_info,
+        weight_edge_feat_name=weight_edge_feat_name,
+    )
+
     logger.info(f"Rank {rank} starting loading torch tensors from serialized info ...")
     start_time = time.time()
 
@@ -525,6 +657,9 @@ def load_torch_tensors_from_tf_record(
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
     edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
+    edge_quantized_features = edge_output_dict.get(
+        _PACKED_FEATURE_FMT.format(entity=_EDGE_KEY), None
+    )
     edge_weights = edge_output_dict.get(_EDGE_WEIGHTS_KEY, None)
 
     positive_labels = edge_output_dict.get(
@@ -552,6 +687,7 @@ def load_torch_tensors_from_tf_record(
         node_labels=node_labels,
         edge_index=edge_index,
         edge_features=edge_features,
+        edge_quantized_features=edge_quantized_features,
         positive_label=positive_labels,
         negative_label=negative_labels,
         edge_weights=edge_weights,

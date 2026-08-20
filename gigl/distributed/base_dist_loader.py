@@ -246,6 +246,7 @@ class BaseDistLoader(DistLoader):
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
+        self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
 
         self._sampler_options = sampler_options
         # Sampled-edge PPR output requires a final HeteroData batch so virtual
@@ -457,7 +458,10 @@ class BaseDistLoader(DistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=dataset_schema.edge_feature_info is not None,
+            with_edge=(
+                dataset_schema.edge_feature_info is not None
+                or dataset_schema.edge_quantization_metadata is not None
+            ),
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,

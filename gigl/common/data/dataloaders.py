@@ -399,16 +399,6 @@ class TFRecordDataLoader:
                 feature_spec_dict[entity_key] = tf.io.FixedLenFeature(
                     shape=[], dtype=tf.int64
                 )
-            if (
-                packed_feature_key is not None
-                and packed_feature_key not in feature_spec_dict
-            ):
-                logger.info(
-                    f"Injecting packed feature key {packed_feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape=[], dtype=tf.string)`"
-                )
-                feature_spec_dict[packed_feature_key] = tf.io.FixedLenFeature(
-                    shape=[], dtype=tf.string
-                )
         else:
             id_concat_axis = 1
             proccess_id_tensor = lambda t: tf.stack(
@@ -433,6 +423,17 @@ class TFRecordDataLoader:
                 feature_spec_dict[entity_key[1]] = tf.io.FixedLenFeature(
                     shape=[], dtype=tf.int64
                 )
+
+        if (
+            packed_feature_key is not None
+            and packed_feature_key not in feature_spec_dict
+        ):
+            logger.info(
+                f"Injecting packed feature key {packed_feature_key} into feature spec dictionary with value `tf.io.FixedLenFeature(shape=[], dtype=tf.string)`"
+            )
+            feature_spec_dict[packed_feature_key] = tf.io.FixedLenFeature(
+                shape=[], dtype=tf.string
+            )
 
         uris = self._partition_children_uris(
             serialized_tf_record_info.tfrecord_uri_prefix,

@@ -8,6 +8,8 @@ import torch
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
 from gigl_core import (
+    NeighborFetchTensors,
+    PPRExtractTensors,
     PPRForwardPush,
     drain_typed_ppr_channel_queues,
     extract_original_edges_from_ppr_caches,
@@ -50,12 +52,6 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
 
-# Python normalizes neighbor fetches to four items. The C++ binding also accepts
-# a three-item tuple from callers that omit edge IDs and treats it as None.
-PPRForwardPushFetchTensors = tuple[
-    torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]
-]
-PPRForwardPushFetchMap = dict[int, PPRForwardPushFetchTensors]
 PPRTensorOutput = Union[torch.Tensor, dict[NodeType, torch.Tensor]]
 PPRCacheState = Optional[Union[PPRForwardPush, list[PPRForwardPush]]]
 
@@ -403,7 +399,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     async def _batch_fetch_neighbors(
         self,
         nodes_by_edge_type_id: dict[int, torch.Tensor],
-    ) -> PPRForwardPushFetchMap:
+    ) -> dict[int, NeighborFetchTensors]:
         """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
         Issues one one-hop request per edge type in the frontier. Each node's
@@ -457,11 +453,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
         outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
         return {
-            edge_type_id: (
-                nodes_by_edge_type_id[edge_type_id],
-                output.nbr,
-                output.nbr_num,
-                output.edge if self._include_sampled_edges else None,
+            edge_type_id: NeighborFetchTensors(
+                node_ids=nodes_by_edge_type_id[edge_type_id],
+                flat_neighbor_ids=output.nbr,
+                counts=output.nbr_num,
+                edge_ids=output.edge if self._include_sampled_edges else None,
             )
             for edge_type_id, output in zip(edge_type_ids, outputs)
         }
@@ -516,7 +512,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
 
     def _translate_top_k_extraction_results(
         self,
-        extracted_results: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        extracted_results: dict[int, PPRExtractTensors],
     ) -> tuple[
         dict[NodeType, torch.Tensor],
         dict[NodeType, torch.Tensor],
@@ -526,15 +522,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
         node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
         node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-        for node_type_id, (
-            flat_ids,
-            flat_weights,
-            valid_counts,
-        ) in extracted_results.items():
+        for node_type_id, extracted in extracted_results.items():
             node_type = self._ntype_id_to_ntype[node_type_id]
-            node_type_to_flat_ids[node_type] = flat_ids
-            node_type_to_flat_weights[node_type] = flat_weights
-            node_type_to_valid_counts[node_type] = valid_counts
+            node_type_to_flat_ids[node_type] = extracted.ids
+            node_type_to_flat_weights[node_type] = extracted.weights
+            node_type_to_valid_counts[node_type] = extracted.valid_counts
         return (
             node_type_to_flat_ids,
             node_type_to_flat_weights,
@@ -740,23 +732,26 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         )
 
         while True:
-            (
-                drained_channel_indices,
-                fetch_channel_indices,
-                edge_type_ids_by_fetch_channel,
-                unioned_node_ids_by_edge_type_id,
-            ) = await loop.run_in_executor(
+            queue_drain_result = await loop.run_in_executor(
                 None,
                 drain_typed_ppr_channel_queues,
                 ppr_states,
                 fetch_iteration_counts,
                 max_fetch_iterations,
             )
+            drained_channel_indices = queue_drain_result.drained_channel_indices
+            fetch_channel_indices = queue_drain_result.fetch_channel_indices
+            edge_type_ids_by_fetch_channel = (
+                queue_drain_result.edge_type_ids_by_fetch_channel
+            )
+            unioned_node_ids_by_edge_type_id = (
+                queue_drain_result.unioned_node_ids_by_edge_type_id
+            )
             if not drained_channel_indices:
                 break
 
-            fetched_by_channel: list[PPRForwardPushFetchMap] = [
-                PPRForwardPushFetchMap() for _ in ppr_states
+            fetched_by_channel: list[dict[int, NeighborFetchTensors]] = [
+                {} for _ in ppr_states
             ]
 
             if unioned_node_ids_by_edge_type_id:
@@ -833,15 +828,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         rows_dict: dict[EdgeType, torch.Tensor] = {}
         cols_dict: dict[EdgeType, torch.Tensor] = {}
         edge_dict: dict[EdgeType, torch.Tensor] = {}
-        for edge_type_id, (rows, cols, edge_ids) in extracted_edges.items():
+        for edge_type_id, extracted in extracted_edges.items():
             edge_type = self._etype_id_to_etype[edge_type_id]
             output_edge_type = (
                 reverse_edge_type(edge_type) if self.edge_dir == "in" else edge_type
             )
-            rows_dict[output_edge_type] = rows
-            cols_dict[output_edge_type] = cols
-            if edge_ids is not None:
-                edge_dict[output_edge_type] = edge_ids
+            rows_dict[output_edge_type] = extracted.rows
+            cols_dict[output_edge_type] = extracted.cols
+            if extracted.edge_ids is not None:
+                edge_dict[output_edge_type] = extracted.edge_ids
 
         if not rows_dict:
             empty_edge_dict = {} if self.with_edge else None
