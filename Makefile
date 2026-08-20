@@ -43,29 +43,6 @@ GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yam
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-# Directories whose markdown we never format: virtualenvs, caches, build output,
-# vendored tooling, experimental sub-projects, plan docs, and agent runtime dirs.
-# .claude/skills holds SKILL.md files whose YAML frontmatter mdformat corrupts, so
-# they are excluded (the other .claude docs are still formatted).
-MD_EXCLUDE_DIRS := \
-	*/.cache \
-	*/.claude/skills \
-	*/.venv \
-	*/experimental \
-	*/tools \
-	./.claude/plans \
-	./.claude/tmp \
-	./.claude/worktrees \
-	./.pytest_cache \
-	./.sdd \
-	./.superpowers \
-	./build \
-	./dist \
-	./docs/plans \
-	./docs/superpowers/plans \
-	./gh_pages_build
-MD_FILES := $(shell find . -type f -name "*.md" \
-	$(foreach dir,$(MD_EXCLUDE_DIRS),! -path "$(dir)/*"))
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -141,9 +118,12 @@ check_format_scala:
 	( cd scala; sbt "scalafmtCheckAll; scalafixAll --check"; )
 	( cd scala_spark35; sbt "scalafmtCheckAll; scalafixAll --check"; )
 
+# Markdown (plus toml/dockerfile/cmake) formatting is handled by dprint; file
+# scoping (e.g. excluding .claude/skills, whose SKILL.md YAML frontmatter
+# formatters corrupt) lives in dprint.json.
 check_format_md:
 	@echo "Checking markdown files..."
-	uv run mdformat --check ${MD_FILES}
+	uv run dprint check
 
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
@@ -186,7 +166,7 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	uv run mdformat ${MD_FILES}
+	uv run dprint fmt
 
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp

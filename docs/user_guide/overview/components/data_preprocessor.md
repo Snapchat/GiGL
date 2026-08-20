@@ -95,7 +95,7 @@ labels, etc. `PreprocessedMetadata` will be read from this URI by other componen
   {py:class}`gigl.src.mocking.mocking_assets.passthrough_preprocessor_config_for_mocked_assets.PassthroughPreprocessorConfigForMockedAssets`
 
 - In order to customize transformation logic for existing node features, take a look at preprocessing functions in
-  [Tensorflow Transform ](https://www.tensorflow.org/tfx/transform/get_started) documentation. In order to add or remove
+  [Tensorflow Transform](https://www.tensorflow.org/tfx/transform/get_started) documentation. In order to add or remove
   node and edge features, you can modify the logic in `feature_spec_fn` and `preprocessing_fn` housed by
   `NodeDataPreprocessingSpec` and `EdgeDataPreprocessingSpec`. You can use the `build_ingestion_feature_spec_fn`
   function to conveniently generate feature specs which allow you to ingest and then transform these fields
