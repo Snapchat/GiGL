@@ -39,6 +39,7 @@ from torch.utils.data.dataset import Dataset
 from gigl.common.logger import Logger
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import create_dist_sampler
+from gigl.distributed.utils.topology import contains_offset_topology
 
 logger = Logger()
 
@@ -148,6 +149,14 @@ def _sampling_worker_loop(
                     for index in loader:
                         dist_sampler.sample_from_edges(sampler_input[index])
                 elif sampling_config.sampling_type == SamplingType.SUBGRAPH:
+                    if contains_offset_topology(data.graph):
+                        # GLT's subgraph path sends global node ids straight to
+                        # the native samplers, bypassing the id_select
+                        # translation that offset-rebased topologies require.
+                        raise ValueError(
+                            "SamplingType.SUBGRAPH is not supported for "
+                            "range-rebased (OffsetTopology) graphs."
+                        )
                     for index in loader:
                         dist_sampler.subgraph(sampler_input[index])
 
