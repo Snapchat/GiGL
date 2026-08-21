@@ -1,0 +1,34 @@
+{
+  "markdown": {
+    "lineWidth": 120,
+    "textWrap": "always",
+    "emphasisKind": "asterisks"
+  },
+  "toml": {},
+  "dockerfile": {},
+  "cmakefmt": {},
+  "excludes": [
+    "**/.cache",
+    "**/.claude/skills",
+    "**/.venv",
+    "**/experimental",
+    "**/tools",
+    ".claude/plans",
+    ".claude/tmp",
+    ".claude/worktrees",
+    ".pytest_cache",
+    ".sdd",
+    ".superpowers",
+    "build",
+    "dist",
+    "docs/plans",
+    "docs/superpowers/plans",
+    "gh_pages_build"
+  ],
+  "plugins": [
+    "npm:@dprint/markdown@0.22.1",
+    "npm:@dprint/toml@0.8.0",
+    "npm:@dprint/dockerfile@0.5.0",
+    "https://plugins.dprint.dev/sargunv/dprint-cmakefmt-0.1.0.wasm"
+  ]
+}
