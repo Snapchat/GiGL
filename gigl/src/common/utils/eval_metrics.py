@@ -5,8 +5,8 @@ from jaxtyping import Float, Float32, Int64
 def hit_rate_at_k(
     pos_scores: Float[torch.FloatTensor, "*batch positives"],
     neg_scores: Float[torch.FloatTensor, "*batch negatives"],
-    ks: Int64[torch.LongTensor, "*batch requested_ks"],
-) -> Float32[torch.FloatTensor, "*batch requested_ks"]:
+    ks: Int64[torch.LongTensor, "requested_ks"],
+) -> Float32[torch.FloatTensor, "requested_ks"]:
     """Computes Hit Rate @ K metrics for various Ks, evaluating 1+ positives against 1+ negatives.
 
     Args:
