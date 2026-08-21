@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 
 
 class DCNCross(nn.Module):
@@ -60,8 +61,10 @@ class DCNCross(nn.Module):
             )
 
     def forward(
-        self, x0: torch.Tensor, x: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+        self,
+        x0: Float[torch.Tensor, "... feature_dim"],
+        x: Optional[Float[torch.Tensor, "... feature_dim"]] = None,
+    ) -> Float[torch.Tensor, "... feature_dim"]:
         """
         Computes the feature cross.
         Args:
@@ -141,7 +144,9 @@ class DCNv2(nn.Module):
                 )
             )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: Float[torch.Tensor, "... feature_dim"]
+    ) -> Float[torch.Tensor, "... feature_dim"]:
         x0, xl = x, x
         for i in range(self._num_layers):
             xl = self._layers[i](x0, xl)

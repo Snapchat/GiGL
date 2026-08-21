@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float, Int64
 
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import CondensedEdgeType
@@ -42,11 +43,11 @@ class MarginLoss(nn.Module):
 
     def _calculate_margin_loss(
         self,
-        pos_scores: torch.Tensor,
-        hard_neg_scores: torch.Tensor,
-        random_neg_scores: torch.Tensor,
+        pos_scores: Float[torch.Tensor, "1 positives"],
+        hard_neg_scores: Float[torch.Tensor, "1 hard_negatives"],
+        random_neg_scores: Float[torch.Tensor, "1 random_negatives"],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         all_neg_scores = torch.cat(
             (hard_neg_scores, random_neg_scores),
             dim=1,
@@ -75,7 +76,7 @@ class MarginLoss(nn.Module):
         self,
         loss_input: list[dict[CondensedEdgeType, BatchScores]],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         batch_loss = torch.tensor(0.0).to(device=device)
         batch_size = 0
         # In case we have an empty list as input, avoids division by zero error
@@ -127,11 +128,11 @@ class SoftmaxLoss(nn.Module):
 
     def _calculate_softmax_loss(
         self,
-        pos_scores: torch.Tensor,
-        hard_neg_scores: torch.Tensor,
-        random_neg_scores: torch.Tensor,
+        pos_scores: Float[torch.Tensor, "1 positives"],
+        hard_neg_scores: Float[torch.Tensor, "1 hard_negatives"],
+        random_neg_scores: Float[torch.Tensor, "1 random_negatives"],
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         all_neg_scores = torch.cat(
             (hard_neg_scores, random_neg_scores),
             dim=1,
@@ -162,7 +163,7 @@ class SoftmaxLoss(nn.Module):
         self,
         loss_input: list[dict[CondensedEdgeType, BatchScores]],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         batch_loss = torch.tensor(0.0).to(device=device)
         batch_size = 0
         # In case we have an empty list as input, avoids division by zero error
@@ -224,12 +225,14 @@ class RetrievalLoss(nn.Module):
 
     def calculate_batch_retrieval_loss(
         self,
-        scores: torch.Tensor,
-        candidate_sampling_probability: Optional[torch.Tensor] = None,
-        query_ids: Optional[torch.Tensor] = None,
-        candidate_ids: Optional[torch.Tensor] = None,
+        scores: Float[torch.Tensor, "queries candidates"],
+        candidate_sampling_probability: Optional[
+            Float[torch.Tensor, "candidates"]
+        ] = None,
+        query_ids: Optional[Int64[torch.Tensor, "queries"]] = None,
+        candidate_ids: Optional[Int64[torch.Tensor, "candidates"]] = None,
         device: torch.device = torch.device("cpu"),
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, ""]:
         """
         Args:
           scores: [num_queries, num_candidates] tensor of candidate and query embeddings similarity
@@ -347,10 +350,12 @@ class RetrievalLoss(nn.Module):
     def forward(
         self,
         batch_combined_scores: BatchCombinedScores,
-        repeated_query_embeddings: torch.FloatTensor,
-        candidate_sampling_probability: Optional[torch.FloatTensor] = None,
+        repeated_query_embeddings: Float[torch.Tensor, "queries embedding_dim"],
+        candidate_sampling_probability: Optional[
+            Float[torch.Tensor, "candidates"]
+        ] = None,
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         candidate_ids = torch.cat(
             (
                 batch_combined_scores.positive_ids.to(device=device),
@@ -389,10 +394,10 @@ class GRACELoss(nn.Module):
 
     def forward(
         self,
-        h1: torch.Tensor,
-        h2: torch.Tensor,
+        h1: Float[torch.Tensor, "nodes embedding_dim"],
+        h2: Float[torch.Tensor, "nodes embedding_dim"],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         """
         Args:
             h1 (torch.Tensor): First input tensor
@@ -445,9 +450,9 @@ class FeatureReconstructionLoss(nn.Module):
 
     def forward(
         self,
-        x_target: torch.Tensor,
-        x_pred: torch.Tensor,
-    ) -> Tuple[torch.Tensor, int]:
+        x_target: Float[torch.Tensor, "nodes feature_dim"],
+        x_pred: Float[torch.Tensor, "nodes feature_dim"],
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         x = F.normalize(x_target, p=2, dim=-1)  # SCE Loss Computation
         y = F.normalize(x_pred, p=2, dim=-1)
         loss = (1 - (x * y).sum(dim=-1)).pow_(self.alpha)
@@ -470,11 +475,11 @@ class WhiteningDecorrelationLoss(nn.Module):
 
     def forward(
         self,
-        h1: torch.Tensor,
-        h2: torch.Tensor,
+        h1: Float[torch.Tensor, "nodes embedding_dim"],
+        h2: Float[torch.Tensor, "nodes embedding_dim"],
         N: int,
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         """
         Args:
             h1 (torch.Tensor): First input tensor
@@ -517,10 +522,10 @@ class GBTLoss(nn.Module):
 
     def forward(
         self,
-        z_a: torch.Tensor,
-        z_b: torch.Tensor,
+        z_a: Float[torch.Tensor, "nodes feature_dim"],
+        z_b: Float[torch.Tensor, "nodes feature_dim"],
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         """
         Args:
             z_a (torch.Tensor): First input matrix
@@ -557,11 +562,11 @@ class BGRLLoss(nn.Module):
 
     def forward(
         self,
-        q1: torch.Tensor,
-        q2: torch.Tensor,
-        y1: torch.Tensor,
-        y2: torch.Tensor,
-    ) -> Tuple[torch.Tensor, int]:
+        q1: Float[torch.Tensor, "nodes embedding_dim"],
+        q2: Float[torch.Tensor, "nodes embedding_dim"],
+        y1: Float[torch.Tensor, "nodes embedding_dim"],
+        y2: Float[torch.Tensor, "nodes embedding_dim"],
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         loss = (
             2
             - F.cosine_similarity(q1, y2.detach(), dim=-1).mean()
@@ -586,12 +591,12 @@ class TBGRLLoss(nn.Module):
 
     def forward(
         self,
-        q1: torch.Tensor,
-        q2: torch.Tensor,
-        y1: torch.Tensor,
-        y2: torch.Tensor,
-        neg_y: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, int]:
+        q1: Float[torch.Tensor, "nodes embedding_dim"],
+        q2: Float[torch.Tensor, "nodes embedding_dim"],
+        y1: Float[torch.Tensor, "nodes embedding_dim"],
+        y2: Float[torch.Tensor, "nodes embedding_dim"],
+        neg_y: Optional[Float[torch.Tensor, "nodes embedding_dim"]],
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         sim1 = F.cosine_similarity(q1, y2.detach()).mean()
         sim2 = F.cosine_similarity(q2, y1.detach()).mean()
         neg_sim1 = F.cosine_similarity(q1, neg_y.detach()).mean()  # type: ignore
@@ -615,8 +620,10 @@ class AligmentLoss(nn.Module):
         self.alpha = alpha
 
     def forward(
-        self, user_embeddings: torch.Tensor, item_embeddings: torch.Tensor
-    ) -> torch.Tensor:
+        self,
+        user_embeddings: Float[torch.Tensor, "pairs embedding_dim"],
+        item_embeddings: Float[torch.Tensor, "pairs embedding_dim"],
+    ) -> Float[torch.Tensor, ""]:
         return (
             (user_embeddings - item_embeddings).norm(p=2, dim=1).pow(self.alpha).mean()
         )
@@ -635,8 +642,10 @@ class UniformityLoss(nn.Module):
         self.temperature = temperature
 
     def forward(
-        self, user_embeddings: torch.Tensor, item_embeddings: torch.Tensor
-    ) -> torch.Tensor:
+        self,
+        user_embeddings: Float[torch.Tensor, "_users embedding_dim"],
+        item_embeddings: Float[torch.Tensor, "_items embedding_dim"],
+    ) -> Float[torch.Tensor, ""]:
         user_uniformity = (
             torch.pdist(user_embeddings, p=2)
             .pow(2)
@@ -672,9 +681,9 @@ class KLLoss(nn.Module):
 
     def forward(
         self,
-        student_scores: torch.Tensor,
-        teacher_scores: torch.Tensor,
-    ) -> torch.Tensor:
+        student_scores: Float[torch.Tensor, "batch classes"],
+        teacher_scores: Float[torch.Tensor, "batch classes"],
+    ) -> Float[torch.Tensor, ""]:
         y_s = F.log_softmax(student_scores / self.kl_temperature, dim=-1)
         y_t = F.softmax(teacher_scores / self.kl_temperature, dim=-1)
         loss = (
@@ -704,10 +713,10 @@ class LLPRankingLoss(nn.Module):
 
     def forward(
         self,
-        student_scores: torch.Tensor,
-        teacher_scores: torch.Tensor,
+        student_scores: Float[torch.Tensor, "batch candidates"],
+        teacher_scores: Float[torch.Tensor, "batch candidates"],
         device: torch.device,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, ""]:
         dim_pairs = [
             x for x in itertools.combinations(range(student_scores.shape[1]), r=2)
         ]

@@ -4,6 +4,7 @@ from typing import Callable, Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float
 from torch_geometric.nn.models import MLP
 
 
@@ -61,7 +62,11 @@ class LinkPredictionDecoder(nn.Module):
                 norm=norm,
             )
 
-    def forward(self, query_embeddings, candidate_embeddings) -> torch.Tensor:
+    def forward(
+        self,
+        query_embeddings: Float[torch.Tensor, "queries embedding_dim"],
+        candidate_embeddings: Float[torch.Tensor, "candidates embedding_dim"],
+    ) -> Float[torch.Tensor, "queries candidates"]:
         if self.decoder_type.value == "inner_product":
             scores = torch.mm(query_embeddings, candidate_embeddings.T)
         elif self.decoder_type.value == "hadamard_MLP":

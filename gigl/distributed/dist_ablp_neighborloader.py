@@ -9,6 +9,7 @@ from graphlearn_torch.distributed import (
     MpDistSamplingWorkerOptions,
     RemoteDistSamplingWorkerOptions,
 )
+from jaxtyping import Int64
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -74,8 +75,8 @@ class DistABLPLoader(BaseDistLoader):
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
-                torch.Tensor,
-                tuple[NodeType, torch.Tensor],
+                Int64[torch.Tensor, "nodes"],
+                tuple[NodeType, Int64[torch.Tensor, "nodes"]],
                 # Graph Store mode inputs
                 dict[int, ABLPInputNodes],
             ]
@@ -98,7 +99,7 @@ class DistABLPLoader(BaseDistLoader):
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         non_blocking_transfers: bool = True,
         use_label_edge_index_output: bool = False,
-    ):
+    ) -> None:
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
 
