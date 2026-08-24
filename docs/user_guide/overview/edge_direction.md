@@ -39,7 +39,7 @@ User X ──follows──► User A ◄──follows── User Y
 Generally, use `"out"` when the signal flows forward along your edges (e.g. a user's taste is defined by what they
 follow). Use `"in"` when the signal flows backward (e.g. a user's influence is defined by who follows them).
 
-______________________________________________________________________
+---
 
 ## Two types of edges
 
@@ -53,7 +53,7 @@ Additionally, there are two types of edges which GiGL distinguishes for the link
   trying to predict*, not the graph topology. **The supervision edge types must always be supplied in the outgoing
   (src→dst) direction, regardless of `edge_dir`.**
 
-______________________________________________________________________
+---
 
 ## Supplying Supervision Edges
 
@@ -134,7 +134,7 @@ loader = DistABLPLoader(
 )
 ```
 
-______________________________________________________________________
+---
 
 ## What happens internally
 
@@ -179,7 +179,7 @@ things:
 
 The invariant: anchor nodes (users in the above example) are always used for splitting regardless of `edge_dir`.
 
-______________________________________________________________________
+---
 
 ### Worked example
 

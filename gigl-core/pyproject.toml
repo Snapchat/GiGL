@@ -1,8 +1,8 @@
 [project]
-name            = "gigl-core"
-description     = "GiGL C++/CUDA kernels (pybind11 extensions)"
-readme          = "README.md"
-version         = "0.3.1"
+name = "gigl-core"
+description = "GiGL C++/CUDA kernels (pybind11 extensions)"
+readme = "README.md"
+version = "0.3.1"
 requires-python = "==3.11.*"
 # Torch is resolved from the ambient environment. gigl-core wheels are ABI-bound
 # to the torch variant they were built against (cpu or cu128). The parent `gigl`
@@ -12,12 +12,12 @@ requires-python = "==3.11.*"
 dependencies = []
 
 [build-system]
-requires      = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
 cmake.version = ">=3.18"
-build-dir     = ".cache/cmake_build"
+build-dir = ".cache/cmake_build"
 # Default editable mode is `redirect`: scikit-build-core writes compiled .so
 # files into .cache/cmake_build/ and installs an import-hook shim into
 # site-packages that resolves them. `editable.rebuild` stays off so imports
@@ -27,10 +27,10 @@ editable.rebuild = false
 [tool.uv]
 # Invalidate the uv build cache when any of these inputs change.
 cache-keys = [
-    { file = "pyproject.toml" },
-    { file = "CMakeLists.txt" },
-    { file = "core/**/*.h" },
-    { file = "core/**/*.cpp" },
-    { file = "core/**/*.cu" },
-    { file = "core/**/*.cuh" },
+  { file = "pyproject.toml" },
+  { file = "CMakeLists.txt" },
+  { file = "core/**/*.h" },
+  { file = "core/**/*.cpp" },
+  { file = "core/**/*.cu" },
+  { file = "core/**/*.cuh" },
 ]

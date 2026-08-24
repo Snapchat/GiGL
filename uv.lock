@@ -556,6 +556,20 @@ wheels = [
 ]
 
 [[package]]
+name = "dprint-py"
+version = "0.56.0.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/60/c4dc641abb7d0294d9683a929bd1ec28d903ef4f65275031faeb78172474/dprint_py-0.56.0.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:0c88d847948b92fafe65ac44123439c6f77ffacfbea068a60bc8fdbecc2cd3d3", size = 26586882, upload-time = "2026-08-18T17:54:41.16Z" },
+    { url = "https://files.pythonhosted.org/packages/75/54/a6fd99571016dc96b59fc79132246740a4ebe017e59825647b6358ddf8f7/dprint_py-0.56.0.0-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:365628de21e88ab32495be0f48976a6d0f0851d796b6d7e0f775e397e8cf2160", size = 30229747, upload-time = "2026-08-18T17:54:43.974Z" },
+    { url = "https://files.pythonhosted.org/packages/65/a8/8eff8dc93f07890a4586e42f04fb329bc4cae05eff1f5887101f9af42505/dprint_py-0.56.0.0-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:5ff62f200b21bd1ec6adf10d34d9aacc7f817b944d4ce4f12609ceb604fea8f4", size = 19096071, upload-time = "2026-08-18T17:54:46.628Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/ab/cb4be6a860eb98bcd022f4c7bc3d33186e48be1d7918bf18afb0dfc4a374/dprint_py-0.56.0.0-py3-none-manylinux_2_17_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:e4ded04fe9d42ec12b8b0830169dc682232e7eadbb19eeeaecdf0afc792c0215", size = 32654721, upload-time = "2026-08-18T17:54:50.186Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/dd/6f08a380612f646e04a97f20a973e2434fe66c17a7d4aea332a5bce65638/dprint_py-0.56.0.0-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:1df620723b02a42fb6333f23eb6db316667b26cbcfc4fe37312b7bf650f422f1", size = 23735854, upload-time = "2026-08-18T17:54:53.047Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/14/9a6f0ee53f873e1818a137ced3ffc9ed059cb48fc235c300923f662100ff/dprint_py-0.56.0.0-py3-none-win_amd64.whl", hash = "sha256:f6e0992176e5772818ecc1ef163c45eede29946a28c2a1dd04dffdf56d290d42", size = 26453141, upload-time = "2026-08-18T17:54:55.692Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/7c/b29819938d906d9b67c73d93f36ae8a180df583f793a97f3dd5158826d44/dprint_py-0.56.0.0-py3-none-win_arm64.whl", hash = "sha256:e213fa172545ee59a903f691d7601a0227398bbbb9657cb6b3a8dd24cecb7930", size = 20271765, upload-time = "2026-08-18T17:54:58.039Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -772,8 +786,7 @@ transform = [
 [package.dev-dependencies]
 dev = [
     { name = "astroid" },
-    { name = "mdformat" },
-    { name = "mdformat-tables" },
+    { name = "dprint-py" },
     { name = "mistune" },
     { name = "mypy-protobuf" },
     { name = "myst-nb" },
@@ -824,8 +837,7 @@ gigl-core-build-backend = [
     { name = "scikit-build-core" },
 ]
 lint = [
-    { name = "mdformat" },
-    { name = "mdformat-tables" },
+    { name = "dprint-py" },
     { name = "mypy-protobuf" },
     { name = "ruff" },
     { name = "ty" },
@@ -901,8 +913,7 @@ provides-extras = ["transform", "pyg27-torch28-cpu", "pyg27-torch28-cu128", "exp
 [package.metadata.requires-dev]
 dev = [
     { name = "astroid", specifier = "==3.3.11" },
-    { name = "mdformat", specifier = "==0.7.22" },
-    { name = "mdformat-tables", specifier = "==1.0.0" },
+    { name = "dprint-py", specifier = "==0.56.0.0" },
     { name = "mistune", specifier = ">=2.0.3" },
     { name = "mypy-protobuf", specifier = "==3.3.0" },
     { name = "myst-nb", specifier = "==1.2.0" },
@@ -953,8 +964,7 @@ gigl-core-build-backend = [
     { name = "scikit-build-core", specifier = ">=0.10" },
 ]
 lint = [
-    { name = "mdformat", specifier = "==0.7.22" },
-    { name = "mdformat-tables", specifier = "==1.0.0" },
+    { name = "dprint-py", specifier = "==0.56.0.0" },
     { name = "mypy-protobuf", specifier = "==3.3.0" },
     { name = "ruff", specifier = "==0.15.10" },
     { name = "ty", specifier = "==0.0.31" },
@@ -2135,31 +2145,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/74/97e72a36efd4ae2bccb3463284300f8953f199b5ffbc04cbbb0ec78f74b1/matplotlib_inline-0.2.1.tar.gz", hash = "sha256:e1ee949c340d771fc39e241ea75683deb94762c8fa5f2927ec57c83c4dffa9fe", size = 8110, upload-time = "2025-10-23T09:00:22.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/33/ee4519fa02ed11a94aef9559552f3b17bb863f2ecfe1a35dc7f548cde231/matplotlib_inline-0.2.1-py3-none-any.whl", hash = "sha256:d56ce5156ba6085e00a9d54fead6ed29a9c47e215cd1bba2e976ef39f5710a76", size = 9516, upload-time = "2025-10-23T09:00:20.675Z" },
-]
-
-[[package]]
-name = "mdformat"
-version = "0.7.22"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "markdown-it-py" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/eb/b5cbf2484411af039a3d4aeb53a5160fae25dd8c84af6a4243bc2f3fedb3/mdformat-0.7.22.tar.gz", hash = "sha256:eef84fa8f233d3162734683c2a8a6222227a229b9206872e6139658d99acb1ea", size = 34610, upload-time = "2025-01-30T18:00:51.418Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/6f/94a7344f6d634fe3563bea8b33bccedee37f2726f7807e9a58440dc91627/mdformat-0.7.22-py3-none-any.whl", hash = "sha256:61122637c9e1d9be1329054f3fa216559f0d1f722b7919b060a8c2a4ae1850e5", size = 34447, upload-time = "2025-01-30T18:00:48.708Z" },
-]
-
-[[package]]
-name = "mdformat-tables"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mdformat" },
-    { name = "wcwidth" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/64/fc/995ba209096bdebdeb8893d507c7b32b7e07d9a9f2cdc2ec07529947794b/mdformat_tables-1.0.0.tar.gz", hash = "sha256:a57db1ac17c4a125da794ef45539904bb8a9592e80557d525e1f169c96daa2c8", size = 6106, upload-time = "2024-08-23T23:41:33.413Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/37/d78e37d14323da3f607cd1af7daf262cb87fe614a245c15ad03bb03a2706/mdformat_tables-1.0.0-py3-none-any.whl", hash = "sha256:94cd86126141b2adc3b04c08d1441eb1272b36c39146bab078249a41c7240a9a", size = 5104, upload-time = "2024-08-23T23:41:31.863Z" },
 ]
 
 [[package]]

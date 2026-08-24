@@ -1,12 +1,12 @@
 [project]
-name            = "gigl"
-description     = "GIgantic Graph Learning Library"
-readme          = "README.md"
-version         = "0.3.1"
-classifiers     = [
-    "Programming Language :: Python",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+name = "gigl"
+description = "GIgantic Graph Learning Library"
+readme = "README.md"
+version = "0.3.1"
+classifiers = [
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
 ]
 requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available for newer python versions.
 
@@ -44,7 +44,6 @@ dependencies = [
   # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
   "tensorflow~=2.16",
 ]
-
 
 [project.optional-dependencies]
 transform = [
@@ -86,7 +85,6 @@ pyg27-torch28-cu128 = [
   "torch_spline_conv; sys_platform != 'darwin'",
   # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
   "torchrec~=1.3.0 ; sys_platform != 'darwin'",
-
 ]
 experimental = [
   "hydra-core==1.3.2",
@@ -99,11 +97,11 @@ experimental = [
 # transitive dependencies between them are resolved separately.
 [tool.uv]
 conflicts = [
-  [{ extra = "pyg27-torch28-cpu" },{ extra = "pyg27-torch28-cu128" }],
+  [{ extra = "pyg27-torch28-cpu" }, { extra = "pyg27-torch28-cu128" }],
 ]
 required-environments = [
-    "sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 # gigl-core must build against torch, which is not on PyPI and cannot be installed
 # into an isolated build environment. Disabling isolation lets cmake find torch from
@@ -116,11 +114,11 @@ no-build-isolation-package = ["gigl-core"]
 # environment before any gigl-core build (uv sync, uv build, Dockerfiles).
 gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 dev = [
-  {include-group = "gigl-core-build-backend"},
-  {include-group = "docs"},
-  {include-group = "lint"},
-  {include-group = "test"},
-  {include-group = "typing-stubs"},
+  { include-group = "gigl-core-build-backend" },
+  { include-group = "docs" },
+  { include-group = "lint" },
+  { include-group = "test" },
+  { include-group = "typing-stubs" },
   "pre-commit==3.3.2",
 ]
 docs = [
@@ -139,7 +137,6 @@ docs = [
   "sphinx-rtd-theme==2.0.0",
   "pydata-sphinx-theme==0.16.1",
   "sphinx-tabs==3.4.5",
-
 ]
 typing-stubs = [
   "pandas-stubs==2.2.2.240807",
@@ -154,13 +151,10 @@ test = [
 ]
 lint = [
   "ruff==0.15.10",
-  "mdformat==0.7.22",
-  "mdformat_tables==1.0.0",
+  "dprint-py==0.56.0.0", # Ships the dprint CLI used for markdown/toml/dockerfile/cmake formatting (see dprint.json).
   "ty==0.0.31",
-  "mypy-protobuf==3.3.0",  # Used for protobuf stub generation (protoc-gen-mypy), not type checking
+  "mypy-protobuf==3.3.0", # Used for protobuf stub generation (protoc-gen-mypy), not type checking
 ]
-
-
 
 # =============================== PyTorch Indexes =============================
 [[tool.uv.index]]
@@ -256,13 +250,12 @@ torch_spline_conv = [
 # from the same GCP registry.
 gigl-core = { path = "gigl-core" }
 
-
 # ===================== Build/Project Configurations ===========================
 # gigl is a pure-Python package. All C++/CUDA kernels live in the gigl-core
 # wheel (see gigl-core/pyproject.toml). Release builds two variants per package:
 # cpu and cu128. gigl's build stays fast because no CMake runs here.
 [build-system]
-requires      = ["setuptools>=68"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
