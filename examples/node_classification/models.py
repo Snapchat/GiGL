@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data
 from typing_extensions import Self
@@ -36,7 +37,9 @@ class HomogeneousNodeClassificationGNN(nn.Module):
     def head(self) -> nn.Module:
         return self._head
 
-    def forward(self, data: Data, device: torch.device) -> torch.Tensor:
+    def forward(
+        self, data: Data, device: torch.device
+    ) -> Float[torch.Tensor, "nodes classes"]:
         """
         Runs the encoder then the classifier head on a sampled subgraph batch.
 

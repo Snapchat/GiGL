@@ -3,6 +3,7 @@ from typing import Optional, Union
 import torch
 import torch.nn as nn
 import torch_geometric
+from jaxtyping import Float
 
 from gigl.common.logger import Logger
 from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
@@ -45,7 +46,7 @@ class LinkPredictionGNN(nn.Module):
         ],
         output_node_types: list[NodeType],
         device: torch.device,
-    ) -> dict[NodeType, torch.Tensor]:
+    ) -> dict[NodeType, Float[torch.Tensor, "_nodes embedding_dim"]]:
         if isinstance(data, torch_geometric.data.hetero_data.HeteroData):
             return self.__encoder(
                 data=data, output_node_types=output_node_types, device=device
@@ -59,9 +60,9 @@ class LinkPredictionGNN(nn.Module):
 
     def decode(
         self,
-        query_embeddings: torch.Tensor,
-        candidate_embeddings: torch.Tensor,
-    ) -> torch.Tensor:
+        query_embeddings: Float[torch.Tensor, "queries embedding_dim"],
+        candidate_embeddings: Float[torch.Tensor, "candidates embedding_dim"],
+    ) -> Float[torch.Tensor, "queries candidates"]:
         return self.__decoder(
             query_embeddings=query_embeddings,
             candidate_embeddings=candidate_embeddings,

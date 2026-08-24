@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.data
+from jaxtyping import Float
 from torch_geometric.nn import (
     GATConv,
     GATv2Conv,
@@ -108,7 +109,7 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         self,
         data: torch_geometric.data.Data,
         device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, "nodes output_dim"]:
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         # pass selected features through an embedding layer
         if self.feature_embedding_layer:
@@ -531,7 +532,9 @@ class TwoLayerGCN(torch.nn.Module, GnnModel):
             in_channels=hid_dim, out_channels=out_dim, **remaining_kwargs
         )
 
-    def forward(self, data: torch_geometric.data.Data) -> torch.Tensor:
+    def forward(
+        self, data: torch_geometric.data.Data
+    ) -> Float[torch.Tensor, "nodes output_dim"]:
         x, edge_index = data.x, data.edge_index
         x = self.conv1(x, edge_index)
         x = F.relu(x)

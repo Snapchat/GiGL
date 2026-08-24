@@ -25,6 +25,7 @@ dependencies = [
   # See https://stackoverflow.com/questions/69759351/error-jupyter-client-kernelspec-nosuchkernel-no-such-kernel-named-python3-occu
   "ipykernel",
   "ipython",
+  "jaxtyping",
   "kfp>=2.0.0",
   "matplotlib",
   "mmh3",
@@ -146,6 +147,7 @@ typing-stubs = [
 ]
 test = [
   "parameterized==0.9.0",
+  "typeguard>=2,<3", # Jaxtyping documents known incompatibilities with Typeguard 3 and 4.
 ]
 lint = [
   "ruff==0.15.10",
