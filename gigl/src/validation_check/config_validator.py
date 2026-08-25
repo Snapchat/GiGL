@@ -546,9 +546,7 @@ if __name__ == "__main__":
         job_name=args.job_name,
         task_config=task_config,
         resource_config=resource_config,
-        task_config_source=_source_config_label(
-            task_config_uri, args.cpu_docker_uri
-        ),
+        task_config_source=_source_config_label(task_config_uri, args.cpu_docker_uri),
         resource_config_source=_source_config_label(
             resource_config_uri, args.cpu_docker_uri
         ),
