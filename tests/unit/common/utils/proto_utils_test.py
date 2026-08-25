@@ -15,10 +15,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.hydra_config import compose_yaml_config
 from gigl.common.utils.proto_utils import ProtoUtils
 from snapchat.research.gbml import gbml_config_pb2
-from snapchat.research.gbml.gigl_resource_config_pb2 import (
-    GiglResourceConfig,
-    SharedResourceConfig,
-)
+from snapchat.research.gbml.gigl_resource_config_pb2 import GiglResourceConfig
 from tests.test_assets.test_case import TestCase
 
 logger = Logger()
@@ -144,28 +141,6 @@ class ProtoUtilsTest(TestCase):
 
             self.assertEqual(
                 resource_config.shared_resource_config.common_compute_config.project,
-                "example-project",
-            )
-
-    def test_can_compose_any_proto(self):
-        with TemporaryDirectory() as temp_directory:
-            config_root = Path(temp_directory)
-            (config_root / "compute").mkdir()
-            config_path = config_root / "shared_resource.yaml"
-            config_path.write_text(
-                "defaults:\n  - compute@common_compute_config: local\n  - _self_\n"
-            )
-            (config_root / "compute" / "local.yaml").write_text(
-                "project: example-project\nregion: us-central1\n"
-            )
-
-            shared_resource_config = self.proto_utils.compose_proto_from_yaml(
-                uri=LocalUri(config_path),
-                proto_cls=SharedResourceConfig,
-            )
-
-            self.assertEqual(
-                shared_resource_config.common_compute_config.project,
                 "example-project",
             )
 

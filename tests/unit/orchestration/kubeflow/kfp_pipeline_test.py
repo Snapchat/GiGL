@@ -10,6 +10,20 @@ from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
 from tests.test_assets.test_case import TestCase
 
 
+def _referenced_output_parameters(pipeline_spec: dict) -> set[tuple[str, str]]:
+    """Returns the (outputParameterKey, producerTask) pairs that any DAG task consumes as an input."""
+    return {
+        (
+            parameter["taskOutputParameter"]["outputParameterKey"],
+            parameter["taskOutputParameter"]["producerTask"],
+        )
+        for component in pipeline_spec["components"].values()
+        for task in component.get("dag", {}).get("tasks", {}).values()
+        for parameter in task.get("inputs", {}).get("parameters", {}).values()
+        if "taskOutputParameter" in parameter
+    }
+
+
 class KfpPipelineTest(TestCase):
     def test_validator_outputs_are_pipeline_inputs_for_downstream_tasks(self) -> None:
         pipeline = generate_pipeline(
@@ -30,20 +44,16 @@ class KfpPipelineTest(TestCase):
         ]["kfp-validation-check"]
         self.assertEqual(validator_task["cachingOptions"], {})
         self.assertNotIn("check-glt-backend", pipeline_text)
-        self.assertIn(
-            "outputParameterKey: resolved_task_config_uri\n"
-            "                  producerTask: kfp-validation-check",
-            pipeline_text,
-        )
-        self.assertIn(
-            "outputParameterKey: resolved_resource_config_uri\n"
-            "                  producerTask: kfp-validation-check",
-            pipeline_text,
-        )
-        self.assertIn(
-            "outputParameterKey: should_use_glt_backend",
-            pipeline_text,
-        )
+
+        referenced_outputs = _referenced_output_parameters(pipeline_spec)
+        for output_parameter_key in (
+            "resolved_task_config_uri",
+            "resolved_resource_config_uri",
+            "should_use_glt_backend",
+        ):
+            self.assertIn(
+                (output_parameter_key, "kfp-validation-check"), referenced_outputs
+            )
 
 
 if __name__ == "__main__":

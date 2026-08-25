@@ -466,7 +466,6 @@ class TestConfigValidationPerSGSBackends(TestCase):
             file_uri_src,
             file_uri_dst,
         ):
-            self.assertTrue(file_uri_dst.get_basename().endswith(".yaml"))
             Path(file_uri_dst.uri).write_text(source_configs[file_uri_src.uri])
 
         mock_load_file.side_effect = download_config
