@@ -157,9 +157,6 @@ def _generate_component_tasks(
         resource_config_uri=resource_config_uri,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
-    # Composition can depend on sibling files and dynamic resolvers, neither of
-    # which is represented in KFP's cache key for the primary config URI.
-    validation_check_task.set_caching_options(enable_caching=False)
     resolved_task_config_uri = validation_check_task.outputs["resolved_task_config_uri"]
     resolved_resource_config_uri = validation_check_task.outputs[
         "resolved_resource_config_uri"

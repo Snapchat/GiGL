@@ -42,7 +42,7 @@ class KfpPipelineTest(TestCase):
         validator_task = pipeline_spec["components"]["comp-exit-handler-1"]["dag"][
             "tasks"
         ]["kfp-validation-check"]
-        self.assertEqual(validator_task["cachingOptions"], {})
+        self.assertEqual(validator_task["cachingOptions"], {"enableCache": True})
         self.assertNotIn("check-glt-backend", pipeline_text)
 
         referenced_outputs = _referenced_output_parameters(pipeline_spec)
