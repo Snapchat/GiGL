@@ -106,6 +106,7 @@ def heterodata_to_graph_transformer_input(
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
     relation_edge_types: Optional[list[GiGLEdgeType]] = None,
     sampling_direction: Literal["in", "out"] = "out",
+    prioritize_hop_order: bool = False,
 ) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
@@ -157,6 +158,9 @@ def heterodata_to_graph_transformer_input(
             with ``sequence_construction_method="khop"``. Directed relative
             encodings such as ``"hop_distance"`` should be computed with the
             same direction.
+        prioritize_hop_order: If True, k-hop sequence construction fills tokens
+            by hop depth before truncating to ``max_seq_len``. The default False
+            preserves existing homogeneous-node-id ordering.
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -233,6 +237,12 @@ def heterodata_to_graph_transformer_input(
             "sequence_construction_method='ppr' supports only sampling_direction='out'."
         )
 
+    if prioritize_hop_order and sequence_construction_method != "khop":
+        raise ValueError(
+            "prioritize_hop_order=True is supported only with "
+            "sequence_construction_method='khop'."
+        )
+
     if (
         PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
         and sequence_construction_method != "ppr"
@@ -278,22 +288,37 @@ def heterodata_to_graph_transformer_input(
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
         if sampling_direction == "in":
             homo_edge_index = homo_edge_index.flip(0)
-        # Use sparse matrix operations for efficient k-hop neighbor extraction
-        # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
-        reachable = _get_k_hop_neighbors_sparse(
-            anchor_indices=anchor_indices,
-            edge_index=homo_edge_index,
-            num_nodes=num_nodes,
-            k=hop_distance,
-            device=device,
-        )
-        node_index_sequences, valid_mask = _build_sequence_layout_from_sparse_neighbors(
-            reachable=reachable,
-            anchor_indices=anchor_indices,
-            max_seq_len=max_seq_len,
-            include_anchor_first=include_anchor_first,
-            device=device,
-        )
+        if prioritize_hop_order:
+            node_index_sequences, valid_mask = (
+                _build_hop_ordered_sequence_layout_from_sparse_edges(
+                    anchor_indices=anchor_indices,
+                    edge_index=homo_edge_index,
+                    num_nodes=num_nodes,
+                    hop_distance=hop_distance,
+                    max_seq_len=max_seq_len,
+                    include_anchor_first=include_anchor_first,
+                    device=device,
+                )
+            )
+        else:
+            # Use sparse matrix operations for efficient k-hop neighbor extraction
+            # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
+            reachable = _get_k_hop_neighbors_sparse(
+                anchor_indices=anchor_indices,
+                edge_index=homo_edge_index,
+                num_nodes=num_nodes,
+                k=hop_distance,
+                device=device,
+            )
+            node_index_sequences, valid_mask = (
+                _build_sequence_layout_from_sparse_neighbors(
+                    reachable=reachable,
+                    anchor_indices=anchor_indices,
+                    max_seq_len=max_seq_len,
+                    include_anchor_first=include_anchor_first,
+                    device=device,
+                )
+            )
     elif sequence_construction_method == "ppr":
         (
             node_index_sequences,
@@ -617,6 +642,280 @@ def _build_sequence_layout_from_sparse_neighbors(
     valid_mask[valid_batch_idx, valid_positions] = True
 
     return node_index_sequences, valid_mask
+
+
+def _build_hop_ordered_sequence_layout_from_sparse_edges(
+    anchor_indices: Tensor,
+    edge_index: Tensor,
+    num_nodes: int,
+    hop_distance: int,
+    max_seq_len: int,
+    include_anchor_first: bool,
+    device: torch.device,
+) -> tuple[Tensor, Tensor]:
+    """
+    Build sequences by visiting lower-hop neighbors before higher-hop neighbors.
+
+    The implementation keeps only the current sparse frontier and a sorted set
+    of visited ``(batch, node)`` keys. It avoids a dense
+    ``batch_size x num_nodes`` distance matrix and stops once all sequences are
+    full.
+    """
+    batch_size = anchor_indices.size(0)
+    node_index_sequences = torch.full(
+        (batch_size, max_seq_len),
+        fill_value=-1,
+        dtype=torch.long,
+        device=device,
+    )
+    valid_mask = torch.zeros(
+        (batch_size, max_seq_len),
+        dtype=torch.bool,
+        device=device,
+    )
+    next_positions = torch.zeros(batch_size, dtype=torch.long, device=device)
+    visited_batch_node_keys = torch.empty(0, dtype=torch.long, device=device)
+
+    current_frontier = torch.sparse_coo_tensor(
+        torch.stack(
+            [
+                torch.arange(batch_size, device=device),
+                anchor_indices,
+            ]
+        ),
+        torch.ones(batch_size, dtype=torch.float, device=device),
+        size=(batch_size, num_nodes),
+    ).coalesce()
+
+    if include_anchor_first and max_seq_len > 0:
+        node_index_sequences[:, 0] = anchor_indices
+        valid_mask[:, 0] = True
+        next_positions.fill_(1)
+        visited_batch_node_keys = (
+            torch.arange(batch_size, device=device, dtype=torch.long) * num_nodes
+            + anchor_indices
+        ).sort()[0]
+
+    if max_seq_len == 0 or (next_positions >= max_seq_len).all().item():
+        return node_index_sequences, valid_mask
+
+    if not include_anchor_first:
+        visited_batch_node_keys, current_frontier = (
+            _append_frontier_tokens_to_sequences(
+                frontier=current_frontier,
+                visited_batch_node_keys=visited_batch_node_keys,
+                next_positions=next_positions,
+                node_index_sequences=node_index_sequences,
+                valid_mask=valid_mask,
+                num_nodes=num_nodes,
+                device=device,
+            )
+        )
+
+    if hop_distance <= 0 or (next_positions >= max_seq_len).all().item():
+        return node_index_sequences, valid_mask
+
+    adj = _build_binarized_sparse_adjacency(
+        edge_index=edge_index,
+        num_nodes=num_nodes,
+        device=device,
+    )
+
+    for _ in range(hop_distance):
+        active_batch_mask = next_positions < max_seq_len
+        current_frontier = _filter_sparse_frontier_by_batch(
+            frontier=current_frontier,
+            active_batch_mask=active_batch_mask,
+            device=device,
+        )
+        if current_frontier._nnz() == 0:
+            break
+
+        current_frontier = torch.sparse.mm(current_frontier, adj).coalesce()
+        if current_frontier._nnz() == 0:
+            break
+        current_frontier = _binarize_sparse_tensor(
+            sparse_tensor=current_frontier,
+            device=device,
+        )
+
+        visited_batch_node_keys, current_frontier = (
+            _append_frontier_tokens_to_sequences(
+                frontier=current_frontier,
+                visited_batch_node_keys=visited_batch_node_keys,
+                next_positions=next_positions,
+                node_index_sequences=node_index_sequences,
+                valid_mask=valid_mask,
+                num_nodes=num_nodes,
+                device=device,
+            )
+        )
+        if (next_positions >= max_seq_len).all().item():
+            break
+
+    return node_index_sequences, valid_mask
+
+
+def _empty_sparse_tensor_like(
+    sparse_tensor: Tensor,
+    device: torch.device,
+) -> Tensor:
+    return torch.sparse_coo_tensor(
+        torch.zeros((2, 0), dtype=torch.long, device=device),
+        torch.zeros(0, dtype=torch.float, device=device),
+        size=sparse_tensor.shape,
+    ).coalesce()
+
+
+def _build_binarized_sparse_adjacency(
+    edge_index: Tensor,
+    num_nodes: int,
+    device: torch.device,
+) -> Tensor:
+    adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)).coalesce()
+    return torch.sparse_coo_tensor(
+        adj.indices(),
+        torch.ones(adj.indices().size(1), device=device, dtype=torch.float),
+        size=(num_nodes, num_nodes),
+    ).coalesce()
+
+
+def _binarize_sparse_tensor(
+    sparse_tensor: Tensor,
+    device: torch.device,
+) -> Tensor:
+    sparse_tensor = sparse_tensor.coalesce()
+    return torch.sparse_coo_tensor(
+        sparse_tensor.indices(),
+        torch.ones(sparse_tensor._nnz(), device=device, dtype=torch.float),
+        size=sparse_tensor.shape,
+    ).coalesce()
+
+
+def _filter_sparse_frontier_by_batch(
+    frontier: Tensor,
+    active_batch_mask: Tensor,
+    device: torch.device,
+) -> Tensor:
+    frontier = frontier.coalesce()
+    indices = frontier.indices()
+    if indices.size(1) == 0:
+        return frontier
+
+    keep = active_batch_mask[indices[0]]
+    if not keep.any().item():
+        return _empty_sparse_tensor_like(sparse_tensor=frontier, device=device)
+
+    kept_indices = indices[:, keep]
+    return torch.sparse_coo_tensor(
+        kept_indices,
+        torch.ones(kept_indices.size(1), dtype=torch.float, device=device),
+        size=frontier.shape,
+    ).coalesce()
+
+
+def _append_frontier_tokens_to_sequences(
+    frontier: Tensor,
+    visited_batch_node_keys: Tensor,
+    next_positions: Tensor,
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    num_nodes: int,
+    device: torch.device,
+) -> tuple[Tensor, Tensor]:
+    frontier = frontier.coalesce()
+    indices = frontier.indices()
+    if indices.size(1) == 0:
+        return visited_batch_node_keys, frontier
+
+    batch_idx = indices[0]
+    node_idx = indices[1]
+    batch_node_keys = batch_idx.long() * num_nodes + node_idx.long()
+
+    if visited_batch_node_keys.numel() > 0:
+        insert_pos = torch.searchsorted(visited_batch_node_keys, batch_node_keys)
+        insert_pos_clamped = insert_pos.clamp(max=visited_batch_node_keys.size(0) - 1)
+        is_visited = visited_batch_node_keys[insert_pos_clamped] == batch_node_keys
+        is_new = ~is_visited
+    else:
+        is_new = torch.ones_like(batch_node_keys, dtype=torch.bool)
+
+    if not is_new.any().item():
+        return visited_batch_node_keys, _empty_sparse_tensor_like(
+            sparse_tensor=frontier,
+            device=device,
+        )
+
+    new_batch_idx = batch_idx[is_new]
+    new_node_idx = node_idx[is_new]
+    new_batch_node_keys = batch_node_keys[is_new]
+
+    has_space = next_positions[new_batch_idx] < node_index_sequences.size(1)
+    if not has_space.any().item():
+        return visited_batch_node_keys, _empty_sparse_tensor_like(
+            sparse_tensor=frontier,
+            device=device,
+        )
+
+    candidate_batch_idx = new_batch_idx[has_space]
+    candidate_node_idx = new_node_idx[has_space]
+    candidate_batch_node_keys = new_batch_node_keys[has_space]
+
+    node_order = torch.argsort(candidate_node_idx, stable=True)
+    candidate_batch_idx = candidate_batch_idx[node_order]
+    candidate_node_idx = candidate_node_idx[node_order]
+    candidate_batch_node_keys = candidate_batch_node_keys[node_order]
+
+    batch_order = torch.argsort(candidate_batch_idx, stable=True)
+    sorted_batch_idx = candidate_batch_idx[batch_order]
+    sorted_node_idx = candidate_node_idx[batch_order]
+    sorted_batch_node_keys = candidate_batch_node_keys[batch_order]
+
+    n = sorted_batch_idx.size(0)
+    is_group_start = torch.zeros(n, dtype=torch.long, device=device)
+    is_group_start[0] = 1
+    if n > 1:
+        is_group_start[1:] = (sorted_batch_idx[1:] != sorted_batch_idx[:-1]).long()
+    group_id = is_group_start.cumsum(0) - 1
+    group_starts = torch.nonzero(is_group_start, as_tuple=True)[0]
+    positions = (
+        torch.arange(n, device=device)
+        - group_starts[group_id]
+        + next_positions[sorted_batch_idx]
+    )
+
+    valid = positions < node_index_sequences.size(1)
+    if not valid.any().item():
+        return visited_batch_node_keys, _empty_sparse_tensor_like(
+            sparse_tensor=frontier,
+            device=device,
+        )
+
+    valid_batch_idx = sorted_batch_idx[valid]
+    valid_positions = positions[valid]
+    valid_node_idx = sorted_node_idx[valid]
+
+    node_index_sequences[valid_batch_idx, valid_positions] = valid_node_idx
+    valid_mask[valid_batch_idx, valid_positions] = True
+
+    inserted_counts = torch.zeros_like(next_positions)
+    inserted_counts.scatter_add_(
+        0,
+        valid_batch_idx,
+        torch.ones_like(valid_batch_idx, dtype=torch.long),
+    )
+    next_positions += inserted_counts
+
+    valid_batch_node_keys = sorted_batch_node_keys[valid]
+    valid_frontier = torch.sparse_coo_tensor(
+        torch.stack([valid_batch_idx, valid_node_idx]),
+        torch.ones(valid_node_idx.size(0), dtype=torch.float, device=device),
+        size=frontier.shape,
+    ).coalesce()
+    return (
+        torch.cat([visited_batch_node_keys, valid_batch_node_keys]).sort()[0],
+        valid_frontier,
+    )
 
 
 def _build_sequence_layout_from_ppr_edges(

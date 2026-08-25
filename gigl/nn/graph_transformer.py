@@ -1122,6 +1122,9 @@ class GraphTransformerEncoder(nn.Module):
             when ``sequence_construction_method="khop"``. Directed relative
             encodings such as ``"hop_distance"`` should be computed with the
             same direction.
+        prioritize_hop_order: If True, k-hop sequence construction fills tokens
+            by hop depth before truncating to ``max_seq_len``. The default False
+            preserves existing homogeneous-node-id ordering.
         feature_embedding_layer_dict: Optional ModuleDict mapping node types to
             feature embedding layers. If provided, these are applied to node
             features before node projection. (default: None)
@@ -1213,6 +1216,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_based_input_embedding_dict: Optional[nn.ModuleDict] = None,
         pairwise_attention_bias_attr_names: Optional[list[str]] = None,
         sampling_direction: Literal["in", "out"] = "out",
+        prioritize_hop_order: bool = False,
         feature_embedding_layer_dict: Optional[nn.ModuleDict] = None,
         pe_integration_mode: Literal["concat", "add"] = "concat",
         activation: str = "gelu",
@@ -1263,6 +1267,11 @@ class GraphTransformerEncoder(nn.Module):
             raise ValueError(
                 "sequence_construction_method='ppr' supports only "
                 "sampling_direction='out'."
+            )
+        if prioritize_hop_order and sequence_construction_method != "khop":
+            raise ValueError(
+                "prioritize_hop_order=True is supported only with "
+                "sequence_construction_method='khop'."
             )
         if sequence_positional_encoding_type is not None:
             sequence_positional_encoding_type = (
@@ -1333,6 +1342,7 @@ class GraphTransformerEncoder(nn.Module):
             )
         self._sequence_construction_method = sequence_construction_method
         self._sampling_direction = sampling_direction
+        self._prioritize_hop_order = prioritize_hop_order
         self._sequence_positional_encoding_type = sequence_positional_encoding_type
         self._should_l2_normalize_embedding_layer_output = (
             should_l2_normalize_embedding_layer_output
@@ -1598,6 +1608,7 @@ class GraphTransformerEncoder(nn.Module):
             hop_distance=self._hop_distance,
             sequence_construction_method=self._sequence_construction_method,
             sampling_direction=self._sampling_direction,
+            prioritize_hop_order=self._prioritize_hop_order,
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,
