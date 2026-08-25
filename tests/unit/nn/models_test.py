@@ -14,7 +14,10 @@ from torchrec.distributed.model_parallel import (
 from gigl.nn.models import LightGCN, LinkPredictionGNN
 from gigl.src.common.types.graph_data import NodeType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
-from tests.test_assets.distributed.utils import get_process_group_init_method
+from tests.test_assets.distributed.utils import (
+    create_test_process_group,
+    get_process_group_init_method,
+)
 from tests.test_assets.test_case import TestCase
 
 # Embedding table name for default homogeneous node type
@@ -42,10 +45,10 @@ class DummyEncoder(nn.Module):
                     "Output node types must be specified for heterogeneous data"
                 )
             return {
-                node_type: torch.tensor([1.0, 2.0]) for node_type in output_node_types
+                node_type: torch.tensor([[1.0, 2.0]]) for node_type in output_node_types
             }
         else:
-            return torch.tensor([1.0, 2.0])
+            return torch.tensor([[1.0, 2.0]])
 
 
 class DummyDecoder(nn.Module):
@@ -59,7 +62,7 @@ class DummyDecoder(nn.Module):
     def forward(
         self, query_embeddings: torch.Tensor, candidate_embeddings: torch.Tensor
     ) -> torch.Tensor:
-        return query_embeddings + candidate_embeddings
+        return torch.mm(query_embeddings, candidate_embeddings.T)
 
 
 class TestLinkPredictionGNN(TestCase):
@@ -73,7 +76,7 @@ class TestLinkPredictionGNN(TestCase):
         data = Data()
         result = model.forward(data, self.device)
         assert isinstance(result, torch.Tensor)
-        self.assert_tensor_equality(result, torch.tensor([1.0, 2.0]))
+        self.assert_tensor_equality(result, torch.tensor([[1.0, 2.0]]))
 
     def test_forward_heterogeneous_with_node_types(self):
         encoder = DummyEncoder()
@@ -85,7 +88,7 @@ class TestLinkPredictionGNN(TestCase):
         assert isinstance(result, dict)
         self.assertEqual(set(result.keys()), set(output_node_types))
         for node_type in output_node_types:
-            self.assert_tensor_equality(result[node_type], torch.tensor([1.0, 2.0]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+            self.assert_tensor_equality(result[node_type], torch.tensor([[1.0, 2.0]]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
 
     def test_forward_heterogeneous_missing_node_types(self):
         encoder = DummyEncoder()
@@ -99,10 +102,10 @@ class TestLinkPredictionGNN(TestCase):
         encoder = DummyEncoder()
         decoder = DummyDecoder()
         model = LinkPredictionGNN(encoder, decoder)
-        q = torch.tensor([1.0, 2.0])
-        c = torch.tensor([3.0, 4.0])
+        q = torch.tensor([[1.0, 2.0]])
+        c = torch.tensor([[3.0, 4.0]])
         result = model.decode(q, c)
-        self.assert_tensor_equality(result, torch.tensor([4.0, 6.0]))
+        self.assert_tensor_equality(result, torch.tensor([[11.0]]))
 
     def test_encoder_property(self):
         encoder = DummyEncoder()
@@ -117,9 +120,7 @@ class TestLinkPredictionGNN(TestCase):
         self.assertIs(model.decoder, decoder)
 
     def test_for_ddp(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         self.addCleanup(torch.distributed.destroy_process_group)
         encoder = DummyEncoder()
         decoder = DummyDecoder()
@@ -132,9 +133,7 @@ class TestLinkPredictionGNN(TestCase):
         self.assertTrue(hasattr(ddp_model.decoder, "module"))
 
     def test_unwrap_from_ddp(self):
-        torch.distributed.init_process_group(
-            rank=0, world_size=1, init_method=get_process_group_init_method()
-        )
+        create_test_process_group()
         self.addCleanup(torch.distributed.destroy_process_group)
         encoder = DummyEncoder()
         decoder = DummyDecoder()

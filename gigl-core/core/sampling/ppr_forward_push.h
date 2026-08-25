@@ -4,25 +4,127 @@
 
 #include <cstdint>
 #include <optional>
-#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace gigl {
 
+// Neighbor fetch input from Python, keyed by integer edge type ID:
+//   node_ids[N], flat_neighbor_ids[sum(counts)], counts[N], optional edge_ids[sum(counts)].
+struct NeighborFetchTensors {
+    torch::Tensor nodeIds;                // node_ids[N]
+    torch::Tensor flatNeighborIds;        // flat_neighbor_ids[sum(counts)]
+    torch::Tensor counts;                 // counts[N]
+    std::optional<torch::Tensor> edgeIds; // optional edge_ids[sum(counts)]
+};
+using NeighborFetchMap = std::unordered_map<int32_t, NeighborFetchTensors>;
+
+// PPR extraction output, keyed by integer node type ID:
+//   ids, weights/edge_attr, valid_counts.
+struct PPRExtractTensors {
+    torch::Tensor ids;         // int64 node IDs, flattened across seeds
+    torch::Tensor weights;     // double feature matrix / edge_attr
+    torch::Tensor validCounts; // int64 selected-node count per seed
+};
+using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
+
+// Original-edge extraction output, keyed by integer edge type ID:
+//   rows, cols, optional edge_ids.
+struct OriginalEdgeExtractTensors {
+    torch::Tensor rows;
+    torch::Tensor cols;
+    std::optional<torch::Tensor> edgeIds;
+};
+using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
+
+struct ResidualState {
+    double residual; // unabsorbed mass waiting to push
+    int32_t minHop;  // minimum discovered hop within one seed's traversal
+};
+
 // Per-seed, per-node-type PPR algorithm state.
-// Grouping all four tables into one struct is a logical convenience: a single
-// _state[seedIdx][nodeTypeId] access reaches all four tables for a given (seed, ntype)
+// Grouping all four containers into one struct is a logical convenience: a single
+// _state[seedIdx][nodeTypeId] access reaches all state for a given (seed, ntype)
 // pair, rather than indexing four separate 2D arrays.  Note that unordered_map and
 // unordered_set heap-allocate their bucket storage, so the actual key-value data is
 // not co-located in memory — only the control-plane metadata (size, bucket pointer)
 // lives inside the struct.
 struct SeedNodeTypeState {
-    std::unordered_map<int32_t, double> pprScores; // absorbed PPR mass
-    std::unordered_map<int32_t, double> residuals; // unabsorbed mass waiting to push
-    std::unordered_set<int32_t> queue;             // nodes queued for the next drain
-    std::unordered_set<int32_t> queuedNodes;       // snapshot captured by drainQueue()
+    std::unordered_map<int32_t, double> pprScores;             // absorbed PPR mass
+    std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
+    std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
+    std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
+};
+
+// Cached adjacency payload stored in PPRForwardPush::_neighborCache.
+// It is part of the class layout, so the complete type lives in this header.
+struct CachedNeighborList {
+    std::vector<int32_t> neighborIds;
+    std::optional<std::vector<int64_t>> edgeIds;
+};
+
+struct OriginalEdgeDedupeKey {
+    // Original-edge extraction merges cached adjacency from several PPR states
+    // in typed PPR. Those states can fetch overlapping rows, so dedupe at the
+    // emitted-edge level rather than skipping a whole cached row. GiGL's logical
+    // edge identity is structural: edge type, source node, and destination node.
+    // Edge IDs are optional payload for edge features, not a separate identity.
+    int32_t edgeTypeId;
+    int32_t sourceNodeId;
+    int32_t destinationNodeId;
+
+    bool operator==(const OriginalEdgeDedupeKey& other) const {
+        return edgeTypeId == other.edgeTypeId && sourceNodeId == other.sourceNodeId &&
+               destinationNodeId == other.destinationNodeId;
+    }
+};
+
+struct OriginalEdgeDedupeKeyHash {
+    // Must match OriginalEdgeDedupeKey::operator==: hash the structural edge
+    // identity that GiGL uses to dedupe sampled edges.
+    size_t operator()(const OriginalEdgeDedupeKey& key) const {
+        size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
+        auto combine = [&seed](size_t value) {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+        };
+        combine(std::hash<int32_t>{}(key.sourceNodeId));
+        combine(std::hash<int32_t>{}(key.destinationNodeId));
+        return seed;
+    }
+};
+
+// Batched drain result for typed-PPR channels.
+//
+// Typed PPR keeps one PPRForwardPush state per channel.  During an iteration,
+// each channel drains its own queue, but Python should issue at most one shared
+// neighbor fetch per edge type. This struct carries both pieces of information:
+// which channel states still need pushResiduals(), and the unioned frontier to
+// fetch once for all channels that requested it.
+struct TypedPPRQueueDrainResult {
+    // Channels whose drainQueue() returned a value this iteration. Channel IDs
+    // are positional indices into the states/channel-target vectors. Python
+    // builds those vectors from typed-channel insertion order, and this function
+    // appends indices in ascending order, so the ordering is stable.
+    //
+    // These channels need pushResiduals(), even when no fetch budget remains.
+    // In that case Python passes an empty fetch map and the channel uses its
+    // existing neighbor cache / budget-exhausted behavior, matching untyped PPR.
+    std::vector<int32_t> drainedChannelIndices;
+
+    // Subset of drainedChannelIndices that still have fetch budget and at least
+    // one non-empty uncached frontier.
+    std::vector<int32_t> fetchChannelIndices;
+
+    // Edge types requested by each fetch channel, aligned with fetchChannelIndices.
+    std::vector<std::vector<int32_t>> edgeTypeIdsByFetchChannel;
+
+    // Unioned node frontier for one shared distributed neighbor fetch. This is
+    // keyed by integer edge type ID, not node type ID, because neighbor fetches
+    // are edge-type scoped; node type alone would lose the relation/destination
+    // distinction for heterogeneous graphs. Tensor values are int64 source node
+    // IDs to fetch.
+    std::unordered_map<int32_t, torch::Tensor> unionedNodeIdsByEdgeTypeId;
 };
 
 // C++ kernel for PPR Forward Push (Andersen et al., 2006).
@@ -51,11 +153,7 @@ public:
     std::optional<std::unordered_map<int32_t, torch::Tensor>> drainQueue();
 
     // Push residuals given fetched neighbor data.
-    // fetchedByEtypeId: {etype_id: (node_ids[N], flat_nbrs[sum(counts)], counts[N])}
-    // TODO: Move these repeated tensor tuple/map types into aliases in a follow-up
-    // refactor-only PR.
-    void pushResiduals(
-        const std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>>& fetchedByEtypeId);
+    void pushResiduals(const NeighborFetchMap& fetchedByEtypeId);
 
     // Return top-k PPR nodes plus residual-mass top-up nodes, sorted by score.
     //
@@ -72,8 +170,18 @@ public:
     // it is not a global top-k over ppr_score + residual when maxPPRNodes is tight.
     // maxPPRNodes is the final per-seed cap across finalized PPR and residual
     // top-up candidates.
-    std::unordered_map<int32_t, std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>> extractTopKWithResidualTopUp(
-        int32_t maxPPRNodes, bool enableResidualTopUp);
+    //
+    // Edge attributes are emitted as [ppr_score, hop_proximity], where
+    // hop_proximity = 1 / (1 + hop): anchor=1.0, 1-hop=0.5, and so on.
+    PPRExtractResult extractTopKWithResidualTopUp(int32_t maxPPRNodes, bool enableResidualTopUp);
+
+    friend PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
+                                                              const std::vector<int32_t>& channelTargetCounts,
+                                                              bool enableResidualTopUp);
+    friend OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+        const std::vector<const PPRForwardPush*>& states,
+        const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+        bool includeEdgeIds);
 
 private:
     // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
@@ -96,6 +204,7 @@ private:
     // _degreeTensors[ntype_id]         → int32 tensor of total out-degrees, indexed by node ID.
     std::vector<std::vector<int32_t>> _nodeTypeToEdgeTypeIds;
     std::vector<int32_t> _edgeTypeToDstNtypeId;
+    std::vector<int32_t> _edgeTypeToSrcNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
 
     // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
@@ -113,7 +222,77 @@ private:
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
-    std::unordered_map<uint64_t, std::vector<int32_t>> _neighborCache;
+    std::unordered_map<uint64_t, CachedNeighborList> _neighborCache;
 };
+
+// Helper function for draining several independent channel states for one
+// typed-PPR iteration.
+//
+// This is the typed wrapper around PPRForwardPush::drainQueue(): it drains the
+// independent channel states, records every channel that still needs
+// pushResiduals(), and unions fetchable frontier nodes by edge type so Python
+// can issue one shared distributed neighbor fetch for duplicate channel
+// requests. Channel drains may run concurrently; the result merge happens in
+// channel order to keep the returned channel-index lists deterministic.
+//
+// Inputs:
+//   states: One PPRForwardPush per typed channel. Each state is mutated by its
+//           drainQueue() call.
+//   fetchIterationCounts: Number of distributed fetches already issued for each
+//                         channel; aligned with states.
+//   maxFetchIterations: -1 means unbounded; otherwise channels at this count
+//                       still need pushResiduals() but contribute no new fetch
+//                       frontier.
+//
+// Expected output: TypedPPRQueueDrainResult, whose drainedChannelIndices are
+// the channels to push this iteration and whose unionedNodeIdsByEdgeTypeId is
+// the shared fetch request.
+TypedPPRQueueDrainResult drainTypedPPRChannelQueues(const std::vector<PPRForwardPush*>& states,
+                                                    const std::vector<int32_t>& fetchIterationCounts,
+                                                    int32_t maxFetchIterations);
+
+// Helper function for extracting and merging completed typed-PPR channel states
+// in one C++ step.
+//
+// For each seed/node-type, typed extraction builds one candidate view per
+// channel. When residual top-up is enabled, residual candidates are included in
+// that same view, so finalized PPR and residual top-up both obey the configured
+// channel target counts. The merge uses emitted PPR scores for selection,
+// deduplicates candidates seen through multiple channels by attributing each
+// node to the channel where it has the highest score, fills each channel
+// target, redistributes unused slots globally by score, and emits
+// per-node-type tensors.
+//
+// Inputs:
+//   states: Completed PPRForwardPush states, one per typed channel.
+//   channelTargetCounts: Per-channel target output counts, aligned with states.
+//                        Their sum is the maximum number of deduplicated nodes
+//                        to return per seed.
+//   enableResidualTopUp: Whether residual candidates may participate in target
+//                        filling alongside finalized PPR candidates.
+//
+// Expected output: per-node-type tensors. Tuple values match
+// extractTopKWithResidualTopUp:
+//   ids: int64 node IDs, flattened across seeds.
+//   weights: double feature matrix with columns
+//            [best_score, hop_proximity,
+//             (channel_score, channel_hop_proximity, channel_presence), ...].
+//            Hop proximity is 1 / (1 + hop). Per-channel proximity is 0 when
+//            that channel did not reach the selected node.
+//            For present channels, the original hop count can be recovered as
+//            (1 - proximity) / proximity; use the presence bit before applying
+//            this inverse because missing channels have proximity 0.
+//   valid_counts: int64 count of selected nodes per seed.
+PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardPush*>& states,
+                                                   const std::vector<int32_t>& channelTargetCounts,
+                                                   bool enableResidualTopUp);
+
+// Extract original graph edges from one or more completed PPR states. Multiple
+// states are used for typed PPR, where each channel owns its own cache. Duplicate
+// emitted edges shared by channels are emitted once.
+OriginalEdgeExtractResult extractOriginalEdgesFromPPRCaches(
+    const std::vector<const PPRForwardPush*>& states,
+    const std::unordered_map<int32_t, torch::Tensor>& selectedNodeIdsByNodeTypeId,
+    bool includeEdgeIds);
 
 } // namespace gigl

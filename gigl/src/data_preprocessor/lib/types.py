@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
@@ -8,6 +9,7 @@ from tensorflow_metadata.proto.v0.schema_pb2 import Feature
 from tensorflow_transform import common_types
 
 from gigl.common import Uri
+from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 
 # TODO (mkolodner-sc): Move these variables to a more general location, as they are used even outside of context of data preprocessor
 
@@ -48,6 +50,26 @@ class NodeOutputIdentifier(str):
     """
 
 
+@dataclass(frozen=True)
+class FeatureQuantizationSpec:
+    """Selects logical feature fields to pack at a fixed bit width."""
+
+    feature_keys: list[str]
+    bits: int
+
+    def __post_init__(self) -> None:
+        if not self.feature_keys:
+            raise ValueError("Feature quantization expects at least one feature key.")
+        if len(set(self.feature_keys)) != len(self.feature_keys):
+            raise ValueError(
+                f"Feature quantization feature_keys contains duplicates: {self.feature_keys}"
+            )
+        if self.bits not in SUPPORTED_QUANTIZATION_BITS:
+            raise ValueError(
+                f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}."
+            )
+
+
 class EdgeOutputIdentifier(NamedTuple):
     """
     References the TFTransform output fields / column names for src and dst node ids of an edge.
@@ -72,6 +94,7 @@ class NodeDataPreprocessingSpec(NamedTuple):
     pretrained_tft_model_uri: Optional[Uri] = None
     features_outputs: Optional[list[str]] = None
     labels_outputs: Optional[list[str]] = None
+    feature_quantization_spec: Optional[FeatureQuantizationSpec] = None
 
     def __repr__(self) -> str:
         return f"""NodeDataPreprocessingSpec(
@@ -80,7 +103,8 @@ class NodeDataPreprocessingSpec(NamedTuple):
             preprocessing_fn={self.preprocessing_fn},
             pretrained_tft_model_uri={self.pretrained_tft_model_uri},
             features_outputs={self.features_outputs},
-            labels_outputs={self.labels_outputs})
+            labels_outputs={self.labels_outputs},
+            feature_quantization_spec={self.feature_quantization_spec})
         """
 
 
@@ -96,6 +120,7 @@ class EdgeDataPreprocessingSpec(NamedTuple):
     pretrained_tft_model_uri: Optional[Uri] = None
     features_outputs: Optional[list[str]] = None
     labels_outputs: Optional[list[str]] = None
+    feature_quantization_spec: Optional[FeatureQuantizationSpec] = None
 
     def __repr__(self) -> str:
         return f"""EdgeDataPreprocessingSpec(

@@ -82,15 +82,15 @@ project. Leaving the variable unset or empty preserves google-auth's default beh
    and [give it relevant IAM perms](https://cloud.google.com/iam/docs/roles-overview):
 
 ```{note}
-  You youself are going to need the following permissions to create new IAM bindings: `roles/resourcemanager.projectIamAdmin`, and `roles/iam.serviceAccountAdmin`
+You youself are going to need the following permissions to create new IAM bindings: `roles/resourcemanager.projectIamAdmin`, and `roles/iam.serviceAccountAdmin`
 ```
 
 a. Firstly give the SA permission to use itself:
 
 ```bash
- gcloud iam service-accounts add-iam-policy-binding $SERVICE_ACCOUNT \
- --member="serviceAccount:$SERVICE_ACCOUNT" \
- --role="roles/iam.serviceAccountUser"
+gcloud iam service-accounts add-iam-policy-binding $SERVICE_ACCOUNT \
+--member="serviceAccount:$SERVICE_ACCOUNT" \
+--role="roles/iam.serviceAccountUser"
 ```
 
 b. Next, the SA will need some permissions at the project level:
@@ -126,9 +126,9 @@ VAI pipelines can pull the docker images you push to the registry you created. Y
 Alternative, you can find your `$PROJECT_NUMBER` from your main project console page: `console.cloud.google.com`
 
 ```bash
- gcloud projects add-iam-policy-binding $PROJECT_ID \
-   --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
-   --role="roles/artifactregistry.reader"
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
 ```
 
 10. Give your SA `storage.objectAdmin` and `roles/storage.legacyBucketReader` on the buckets you created i.e. to grant
@@ -142,6 +142,24 @@ gcloud storage buckets add-iam-policy-binding $BUCKET_NAME \
 
 11. Give your SA `roles/bigquery.dataOwner` on the datasets you created. See
     [instructions](https://cloud.google.com/bigquery/docs/control-access-to-resources-iam#bq_2).
+
+### Console log format
+
+On App Engine and Kubernetes, `gigl.common.logger.Logger` routes records to Google Cloud Logging, which on GKE renders
+each one as a single-line JSON envelope. To get the plain console format instead, set:
+
+```bash
+export GIGL_DISABLE_CLOUD_LOGGING="1"
+```
+
+`1` and `true` (case-insensitive) disable cloud logging; anything else leaves it on.
+
+This is worth setting on processes whose stdout is relayed by another system before it reaches Cloud Logging. Ray is the
+motivating case: it prefixes each worker line it forwards to the driver with `(RayTrainWorker pid=...)`, which makes the
+line invalid JSON, so Cloud Logging stores it as a plain `textPayload` and the structured fields (`severity`,
+`sourceLocation`, trace correlation) are dropped anyway. The variable is read from the environment so that processes
+started with the `spawn` method — which inherit `os.environ` but not the parent's logging configuration — pick it up
+without each entry point having to opt in.
 
 ## AWS Project Setup Guide
 

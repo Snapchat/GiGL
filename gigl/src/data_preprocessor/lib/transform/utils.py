@@ -27,12 +27,18 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
+from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    EDGE_PACKED_FEATURE_KEY,
+    NODE_PACKED_FEATURE_KEY,
+    apply_feature_quantization_transform,
+)
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
     EdgeDataPreprocessingSpec,
+    FeatureQuantizationSpec,
     FeatureSpecDict,
     InstanceDict,
     NodeDataPreprocessingSpec,
@@ -362,6 +368,33 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
+        logical_metadata = (
+            transformed_metadata
+            if should_use_existing_transform_fn
+            else analyzed_transform_fn[1].deferred_metadata  # type: ignore
+        )
+        quantization_spec: FeatureQuantizationSpec | None = None
+        if isinstance(
+            preprocessing_spec, (NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec)
+        ):
+            quantization_spec = preprocessing_spec.feature_quantization_spec
+        if quantization_spec is not None:
+            if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
+                packed_feature_key = EDGE_PACKED_FEATURE_KEY
+            else:
+                packed_feature_key = NODE_PACKED_FEATURE_KEY
+            transformed_features, resolved_transformed_metadata = (
+                apply_feature_quantization_transform(
+                    logical_features=transformed_features,
+                    logical_metadata=logical_metadata,
+                    logical_feature_keys=list(
+                        preprocessing_spec.features_outputs or []
+                    ),
+                    quantization_spec=quantization_spec,
+                    quantization_metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    packed_feature_key=packed_feature_key,
+                )
+            )
 
         transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
             file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,

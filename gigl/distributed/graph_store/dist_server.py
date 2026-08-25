@@ -94,7 +94,12 @@ from gigl.distributed.graph_store.shared_dist_sampling_producer import (
 )
 from gigl.distributed.sampler_options import PPRSamplerOptions
 from gigl.src.common.types.graph_data import EdgeType, NodeType
-from gigl.types.graph import FeatureInfo, reverse_edge_type, select_label_edge_types
+from gigl.types.graph import (
+    FeatureInfo,
+    FeatureQuantizationMetadata,
+    reverse_edge_type,
+    select_label_edge_types,
+)
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 from gigl.utils.share_memory import share_memory
 
@@ -404,6 +409,22 @@ class DistServer:
             - None if no node features are available
         """
         return self.dataset.node_feature_info
+
+    def get_node_quantization_metadata(
+        self,
+    ) -> Union[
+        FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata], None
+    ]:
+        """Get node feature quantization metadata from the dataset."""
+        return self.dataset.node_quantization_metadata
+
+    def get_edge_quantization_metadata(
+        self,
+    ) -> Union[
+        FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata], None
+    ]:
+        """Get main-edge feature quantization metadata from the dataset."""
+        return self.dataset.edge_quantization_metadata
 
     def get_edge_feature_info(
         self,

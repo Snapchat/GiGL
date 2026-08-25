@@ -37,6 +37,7 @@ from typing import Literal, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from jaxtyping import Float
 from torch_geometric.data import HeteroData
 
 import gigl.distributed.utils
@@ -152,6 +153,7 @@ def _setup_dataloaders(
         # This is done so that each process on the current machine which initializes a `main_loader` doesn't compete for memory, causing potential OOM
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        use_label_edge_index_output=True,
     )
 
     logger.info(f"---Rank {rank} finished setting up main loader")
@@ -189,7 +191,7 @@ def _compute_loss(
     loss_fn: RetrievalLoss,
     supervision_edge_type: EdgeType,
     device: torch.device,
-) -> torch.Tensor:
+) -> Float[torch.Tensor, ""]:
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
@@ -226,25 +228,16 @@ def _compute_loss(
     # Local in this case refers to the local index in the batch, while global subsequently refers to the node's unique global ID across all nodes in the dataset.
     # Global ids are stored in data.node, ex. `data.node = [50, 20, 10]` where the `0` is the local index for global id `50`. Note that each global id in data.node is unique.
     # TODO (mkolodner-sc): If GLT migrates towards using PyG's `.n_id` field instead of `.node`, update this code.
-    query_node_idx: torch.Tensor = torch.arange(
-        main_data[query_node_type].batch_size
-    ).to(device)
+    query_node_idx = torch.arange(main_data[query_node_type].batch_size, device=device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    # main_data.y_positive is a dict[query_node_local_index: int, labeled_node_local_indices: torch.Tensor], even in the heterogeneous setting.
-    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    # We also extract a repeated query node index tensor which upsamples each query node based on the number of positives it has
-    repeated_query_node_idx = query_node_idx.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
+    positive_label_edge_index: torch.Tensor = main_data.y_positive
+    repeated_query_node_idx = query_node_idx[positive_label_edge_index[0]]
+    positive_idx = positive_label_edge_index[1]
     if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = torch.cat(
-            list(main_data.y_negative.values())
-        ).to(device)
+        hard_negative_idx: torch.Tensor = main_data.y_negative[1]
     else:
-        hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
+        hard_negative_idx = torch.empty(0, dtype=torch.long, device=device)
 
     # Use local IDs to get the corresponding embeddings in the tensors
 

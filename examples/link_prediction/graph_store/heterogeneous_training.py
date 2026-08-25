@@ -86,6 +86,7 @@ from typing import Literal, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from jaxtyping import Float
 from torch_geometric.data import HeteroData
 
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
@@ -214,6 +215,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        use_label_edge_index_output=True,
     )
 
     print(f"---Rank {rank} finished setting up main loader for split={split}")
@@ -262,7 +264,7 @@ def _compute_loss(
     supervision_edge_type: EdgeType,
     edge_dir: str,
     device: torch.device,
-) -> torch.Tensor:
+) -> Float[torch.Tensor, ""]:
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
@@ -298,23 +300,16 @@ def _compute_loss(
     )
 
     # Extracting local query, random negative, positive, hard_negative, and random_negative indices.
-    query_node_idx: torch.Tensor = torch.arange(
-        main_data[query_node_type].batch_size
-    ).to(device)
+    query_node_idx = torch.arange(main_data[query_node_type].batch_size, device=device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    repeated_query_node_idx = query_node_idx.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
+    positive_label_edge_index: torch.Tensor = main_data.y_positive
+    repeated_query_node_idx = query_node_idx[positive_label_edge_index[0]]
+    positive_idx = positive_label_edge_index[1]
     if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = torch.cat(
-            list(main_data.y_negative.values())
-        ).to(device)
+        hard_negative_idx: torch.Tensor = main_data.y_negative[1]
     else:
-        hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
+        hard_negative_idx = torch.empty(0, dtype=torch.long, device=device)
 
     # Use local IDs to get the corresponding embeddings in the tensors
 

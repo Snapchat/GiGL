@@ -1,5 +1,6 @@
 import argparse
 import concurrent.futures
+import json
 import sys
 import threading
 from collections import defaultdict
@@ -71,6 +72,38 @@ from gigl.src.data_preprocessor.lib.types import (
 from snapchat.research.gbml import preprocessed_metadata_pb2
 
 logger = Logger()
+
+
+def _load_feature_quantization_metadata_pb(
+    metadata_path: str, entity_description: str
+) -> preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata:
+    if not tf.io.gfile.exists(metadata_path):
+        raise RuntimeError(
+            f"Quantization metadata was expected for {entity_description}, "
+            f"but was not produced at {metadata_path}."
+        )
+    logger.info(
+        f"Loading {entity_description} quantization metadata from {metadata_path}"
+    )
+    with tf.io.gfile.GFile(metadata_path) as metadata_file:
+        metadata = json.loads(metadata_file.read())
+    logger.info(f"Loaded {entity_description} quantization metadata {metadata}")
+
+    quantization_metadata = (
+        preprocessed_metadata_pb2.PreprocessedMetadata.FeatureQuantizationMetadata(
+            packed_feature_key=metadata["packed_feature_key"],
+            quantized_feature_indices=metadata["quantized_feature_indices"],
+        )
+    )
+    bits = metadata["bits"]
+    if bits == 1:
+        quantization_metadata.single_bit_state.neg_mean = metadata["neg_mean"]
+        quantization_metadata.single_bit_state.pos_mean = metadata["pos_mean"]
+    else:
+        quantization_metadata.multi_bit_state.bits = bits
+        quantization_metadata.multi_bit_state.clip_min = metadata["clip_min"]
+        quantization_metadata.multi_bit_state.clip_max = metadata["clip_max"]
+    return quantization_metadata
 
 
 class PreprocessedMetadataReferences(NamedTuple):
@@ -215,11 +248,25 @@ class DataPreprocessor:
                 f"Got {type(data_reference)}."
             )
 
+        if isinstance(
+            preprocessing_spec, (NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec)
+        ):
+            feature_quantization_enabled = (
+                preprocessing_spec.feature_quantization_spec is not None
+            )
+        if (
+            isinstance(data_reference, EdgeDataReference)
+            and feature_quantization_enabled
+            and data_reference.edge_usage_type != EdgeUsageType.MAIN
+        ):
+            raise ValueError("Feature quantization is supported only for main edges.")
+
         transformed_features_info = TransformedFeaturesInfo(
             applied_task_identifier=self.applied_task_identifier,
             feature_type=feature_type,
             entity_type=entity_type,
             custom_identifier=custom_identifier,
+            feature_quantization_enabled=feature_quantization_enabled,
         )
 
         def __get_feature_preprocessing_job_msgs(
@@ -418,7 +465,7 @@ class DataPreprocessor:
         transformed_features_info: TransformedFeaturesInfo,
         enumerated_edge_metadata: EnumeratorEdgeTypeMetadata,
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo:
-        return preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
+        output = preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
             tfrecord_uri_prefix=transformed_features_info.transformed_features_file_prefix.uri,
             schema_uri=transformed_features_info.transformed_features_schema_path.uri,
             feature_keys=transformed_features_info.features_outputs,
@@ -427,6 +474,13 @@ class DataPreprocessor:
             feature_dim=transformed_features_info.feature_dim_output,
             transform_fn_assets_uri=transformed_features_info.transformed_features_transform_fn_assets_path.uri,
         )
+        if transformed_features_info.feature_quantization_enabled:
+            quantization_metadata = _load_feature_quantization_metadata_pb(
+                metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                entity_description=f"edge type {transformed_features_info.entity_type}",
+            )
+            output.quantized_feature_metadata.CopyFrom(quantization_metadata)
+        return output
 
     def generate_preprocessed_metadata_pb(
         self,
@@ -481,6 +535,16 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
+            if node_transformed_features_info.feature_quantization_enabled:
+                quantized_feature_metadata_pb = _load_feature_quantization_metadata_pb(
+                    metadata_path=node_transformed_features_info.feature_quantization_metadata_path.uri,
+                    entity_description=f"node type {node_type}",
+                )
+                node_metadata_output_pb.quantized_feature_metadata.CopyFrom(
+                    quantized_feature_metadata_pb
+                )
+            else:
+                logger.info(f"Node feature quantization is disabled for {node_type}")
             preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
                 int(condensed_node_type)
             ].CopyFrom(node_metadata_output_pb)
@@ -698,6 +762,7 @@ class DataPreprocessor:
                 pretrained_tft_model_uri=input_node_preprocessing_spec.pretrained_tft_model_uri,
                 features_outputs=input_node_preprocessing_spec.features_outputs,
                 labels_outputs=input_node_preprocessing_spec.labels_outputs,
+                feature_quantization_spec=input_node_preprocessing_spec.feature_quantization_spec,
             )
             enumerated_node_refs_to_preprocessing_specs[
                 enumerated_node_metadata.enumerated_node_data_reference
@@ -741,6 +806,7 @@ class DataPreprocessor:
                 pretrained_tft_model_uri=input_edge_preprocessing_spec.pretrained_tft_model_uri,
                 features_outputs=input_edge_preprocessing_spec.features_outputs,
                 labels_outputs=input_edge_preprocessing_spec.labels_outputs,
+                feature_quantization_spec=input_edge_preprocessing_spec.feature_quantization_spec,
             )
             enumerated_edge_refs_to_preprocessing_specs[
                 enumerated_edge_metadata.enumerated_edge_data_reference

@@ -19,7 +19,9 @@ from gigl.common.data.dataloaders import (
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     load_torch_tensors_from_tf_record,
+    remove_sampling_weight_from_edge_quantization_metadata,
 )
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 from gigl.src.mocking.lib.versioning import (
@@ -29,6 +31,7 @@ from gigl.src.mocking.lib.versioning import (
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
+from gigl.types.graph import FeatureQuantizationMetadata
 from tests.test_assets.test_case import TestCase
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
@@ -291,7 +294,7 @@ class TFRecordDataLoaderTest(TestCase):
     ):
         """Test TFRecordDataLoader's ability to load features and optionally labels."""
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
                 feature_spec=feature_spec,
@@ -305,11 +308,56 @@ class TFRecordDataLoaderTest(TestCase):
         )
 
         # Verify entity IDs are loaded correctly
-        assert_close(node_ids, expected_id_tensor)
+        assert_close(loaded.ids, expected_id_tensor)
 
-        assert_close(feature_tensor, expected_feature_tensor)
+        assert_close(loaded.features, expected_feature_tensor)
 
-        assert_close(label_tensor, expected_label_tensor)
+        self.assertIsNone(loaded.quantized_features)
+
+        assert_close(loaded.labels, expected_label_tensor)
+
+    def test_load_as_torch_tensors_decodes_packed_node_features(self) -> None:
+        packed_feature_values = [[1, 2], [254, 255]]
+        with tf.io.TFRecordWriter(str(self.data_dir / "packed.tfrecord")) as writer:
+            for node_id, packed_features in enumerate(packed_feature_values):
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(
+                            feature={
+                                "node_id": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[node_id])
+                                ),
+                                "packed_features": tf.train.Feature(
+                                    bytes_list=tf.train.BytesList(
+                                        value=[bytes(packed_features)]
+                                    )
+                                ),
+                            }
+                        )
+                    ).SerializeToString()
+                )
+
+        loaded = TFRecordDataLoader(rank=0, world_size=1).load_as_torch_tensors(
+            serialized_tf_record_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+                packed_feature_key="packed_features",
+                packed_feature_dim=2,
+                tfrecord_uri_pattern="packed.tfrecord",
+            ),
+            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        )
+
+        assert_close(loaded.ids, torch.tensor([0, 1]))
+        self.assertIsNone(loaded.features)
+        assert_close(
+            loaded.quantized_features,
+            torch.tensor(packed_feature_values, dtype=torch.uint8),
+        )
+        self.assertIsNone(loaded.labels)
 
     def test_build_dataset_for_uris(self):
         dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -327,7 +375,7 @@ class TFRecordDataLoaderTest(TestCase):
                 "just_node",
                 feature_keys=[],
                 feature_dim=0,
-                expected_node_ids=torch.empty(0),
+                expected_node_ids=torch.empty(0, dtype=torch.int64),
                 expected_features=None,
                 expected_label_tensor=None,
                 entity_key="node_id",
@@ -336,7 +384,7 @@ class TFRecordDataLoaderTest(TestCase):
                 "node_with_features",
                 feature_keys=["foo_feature"],
                 feature_dim=1,
-                expected_node_ids=torch.empty(0),
+                expected_node_ids=torch.empty(0, dtype=torch.int64),
                 expected_features=torch.empty(0, 1),
                 expected_label_tensor=None,
                 entity_key="node_id",
@@ -345,7 +393,7 @@ class TFRecordDataLoaderTest(TestCase):
                 "just_edge",
                 feature_keys=[],
                 feature_dim=0,
-                expected_node_ids=torch.empty(2, 0),
+                expected_node_ids=torch.empty(2, 0, dtype=torch.int64),
                 expected_features=None,
                 expected_label_tensor=None,
                 entity_key=("src_node_id", "dst_node_id"),
@@ -354,7 +402,7 @@ class TFRecordDataLoaderTest(TestCase):
                 "edge_with_features",
                 feature_keys=["foo_feature", "bar_feature"],
                 feature_dim=3,
-                expected_node_ids=torch.empty(2, 0),
+                expected_node_ids=torch.empty(2, 0, dtype=torch.int64),
                 expected_features=torch.empty(0, 3),
                 expected_label_tensor=None,
                 entity_key=("src_node_id", "dst_node_id"),
@@ -363,7 +411,7 @@ class TFRecordDataLoaderTest(TestCase):
                 "node_with_label_only",
                 feature_keys=[],
                 feature_dim=0,
-                expected_node_ids=torch.empty(0),
+                expected_node_ids=torch.empty(0, dtype=torch.int64),
                 expected_features=None,
                 expected_label_tensor=torch.empty(0, 1),  # 1 label
                 entity_key="node_id",
@@ -373,7 +421,7 @@ class TFRecordDataLoaderTest(TestCase):
                 "node_with_features_and_label",
                 feature_keys=["foo_feature"],
                 feature_dim=1,
-                expected_node_ids=torch.empty(0),
+                expected_node_ids=torch.empty(0, dtype=torch.int64),
                 expected_features=torch.empty(0, 1),  # 1 feature
                 expected_label_tensor=torch.empty(0, 1),  # 1 label
                 entity_key="node_id",
@@ -396,7 +444,7 @@ class TFRecordDataLoaderTest(TestCase):
         self.addCleanup(temp_dir.cleanup)
 
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        node_ids, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
                 feature_spec={},  # Doesn't matter what this is.
@@ -408,9 +456,10 @@ class TFRecordDataLoaderTest(TestCase):
             tf_dataset_options=TFDatasetOptions(deterministic=True),
         )
 
-        assert_close(node_ids, expected_node_ids)
-        assert_close(feature_tensor, expected_features)
-        assert_close(label_tensor, expected_label_tensor)
+        assert_close(loaded.ids, expected_node_ids)
+        assert_close(loaded.features, expected_features)
+        self.assertIsNone(loaded.quantized_features)
+        assert_close(loaded.labels, expected_label_tensor)
 
     @parameterized.expand(
         [
@@ -470,7 +519,7 @@ class TFRecordDataLoaderTest(TestCase):
             condensed_node_type
         ]
         loader = TFRecordDataLoader(rank=0, world_size=1)
-        _, feature_tensor, label_tensor = loader.load_as_torch_tensors(
+        loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(
                     node_metadata.tfrecord_uri_prefix
@@ -487,9 +536,9 @@ class TFRecordDataLoaderTest(TestCase):
             tf_dataset_options=TFDatasetOptions(deterministic=True),
         )
         # Ensure we have loaded data
-        assert feature_tensor is not None and label_tensor is not None
-        self.assertEqual(feature_tensor.size(1), node_metadata.feature_dim)
-        self.assertEqual(label_tensor.size(1), len(node_metadata.label_keys))
+        assert loaded.features is not None and loaded.labels is not None
+        self.assertEqual(loaded.features.size(1), node_metadata.feature_dim)
+        self.assertEqual(loaded.labels.size(1), len(node_metadata.label_keys))
 
     def test_load_edge_weights_from_tf_record(self):
         """Edge weight column is extracted from edge features and returned separately.
@@ -597,6 +646,129 @@ class TFRecordDataLoaderTest(TestCase):
             loaded.edge_features[:, 0].sort().values,
             torch.tensor(sorted(edge_feature_vals), dtype=torch.float32),
         )
+
+    def test_load_edge_weights_rejects_non_raw_field_before_loading(self) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            ),
+            edge_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={
+                    "src_id": tf.io.FixedLenFeature([], tf.int64),
+                    "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                    "edge_packed_features": tf.io.FixedLenFeature([], tf.string),
+                },
+                feature_keys=[],
+                feature_dim=0,
+                entity_key=("src_id", "dst_id"),
+                packed_feature_key="edge_packed_features",
+                packed_feature_dim=1,
+            ),
+        )
+
+        with self.assertRaises(ValueError):
+            load_torch_tensors_from_tf_record(
+                tf_record_dataloader=TFRecordDataLoader(rank=0, world_size=1),
+                serialized_graph_metadata=serialized_graph_metadata,
+                should_load_tensors_in_parallel=False,
+                weight_edge_feat_name="quantized_weight",
+            )
+
+    def test_sampling_weight_removal_updates_edge_quantization_metadata(
+        self,
+    ) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            ),
+            edge_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={
+                    "src_id": tf.io.FixedLenFeature([], tf.int64),
+                    "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                    "raw_embedding": tf.io.FixedLenFeature([2], tf.float32),
+                    "weight": tf.io.FixedLenFeature([], tf.float32),
+                    "edge_packed_features": tf.io.FixedLenFeature([], tf.string),
+                },
+                feature_keys=["raw_embedding", "weight"],
+                feature_dim=3,
+                entity_key=("src_id", "dst_id"),
+                packed_feature_key="edge_packed_features",
+                packed_feature_dim=1,
+            ),
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=4,
+                quantized_feature_indices=(3,),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+
+        adjusted_metadata = remove_sampling_weight_from_edge_quantization_metadata(
+            serialized_graph_metadata=serialized_graph_metadata,
+            weight_edge_feat_name="weight",
+        )
+
+        self.assertEqual(
+            adjusted_metadata,
+            FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=3,
+                quantized_feature_indices=(2,),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+
+    def test_sampling_weight_removal_rejects_scalar_name_for_multiple_edge_types(
+        self,
+    ) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        node_type = NodeType("node")
+        edge_type_a = EdgeType(node_type, Relation("relation_a"), node_type)
+        edge_type_b = EdgeType(node_type, Relation("relation_b"), node_type)
+        edge_info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=missing_path,
+            feature_spec={
+                "src_id": tf.io.FixedLenFeature([], tf.int64),
+                "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                "weight": tf.io.FixedLenFeature([], tf.float32),
+            },
+            feature_keys=["weight"],
+            feature_dim=1,
+            entity_key=("src_id", "dst_id"),
+        )
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=edge_info,
+            edge_entity_info={edge_type_a: edge_info, edge_type_b: edge_info},
+            edge_quantization_metadata={
+                edge_type_b: FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=1,
+                    quantized_feature_indices=(0,),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                )
+            },
+        )
+
+        with self.assertRaises(ValueError):
+            remove_sampling_weight_from_edge_quantization_metadata(
+                serialized_graph_metadata=serialized_graph_metadata,
+                weight_edge_feat_name="weight",
+            )
 
     def test_load_edge_weights_multidim_feature(self):
         """Weight column offset is correct when a preceding feature key is multi-dimensional.

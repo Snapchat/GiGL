@@ -35,6 +35,7 @@ import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.typing import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
@@ -243,14 +244,18 @@ def _extract_hetero_ppr_scores(
         )
 
         ppr_edge_index = datum[ppr_edge_type].edge_index
-        ppr_weights = datum[ppr_edge_type].edge_attr
+        ppr_edge_attr = datum[ppr_edge_type].edge_attr
 
         assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
             f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
         )
-        assert ppr_weights.dim() == 1
-        assert ppr_edge_index.size(1) == ppr_weights.size(0)
+        assert ppr_edge_attr.dim() == 2
+        assert ppr_edge_attr.size(1) == 2
+        assert ppr_edge_index.size(1) == ppr_edge_attr.size(0)
+        ppr_weights = ppr_edge_attr[:, 0]
+        ppr_hop_proximities = ppr_edge_attr[:, 1]
         assert (ppr_weights > 0).all(), f"PPR weights for {ntype} must be positive"
+        _assert_valid_hop_proximities(ppr_hop_proximities)
         assert (ppr_edge_index[0] == 0).all(), (
             "All src indices must be 0 for batch_size=1"
         )
@@ -264,6 +269,31 @@ def _extract_hetero_ppr_scores(
         ntype_to_sampler_ppr[str(ntype)] = type_ppr
 
     return ntype_to_sampler_ppr
+
+
+def _assert_valid_hop_proximities(hop_proximities: torch.Tensor) -> None:
+    """Assert PPR hop proximity is bounded and invertible for emitted rows."""
+    assert (hop_proximities > 0).all()
+    assert (hop_proximities <= 1).all()
+    recovered_hops = (1 - hop_proximities) / hop_proximities
+    assert torch.allclose(recovered_hops, recovered_hops.round())
+
+
+def _assert_typed_channel_hop_proximities(
+    channel_hop_proximities: torch.Tensor,
+    channel_presence: torch.Tensor,
+) -> None:
+    """Assert typed-channel hop proximity is bounded and zero when missing."""
+    assert (channel_hop_proximities >= 0).all()
+    assert (channel_hop_proximities <= 1).all()
+    present_channel_mask = channel_presence == 1
+    assert present_channel_mask.any(dim=1).all()
+    assert (channel_hop_proximities[present_channel_mask] > 0).all()
+    recovered_present_hops = (
+        1 - channel_hop_proximities[present_channel_mask]
+    ) / channel_hop_proximities[present_channel_mask]
+    assert torch.allclose(recovered_present_hops, recovered_present_hops.round())
+    assert (channel_hop_proximities[~present_channel_mask] == 0).all()
 
 
 def _assert_ppr_scores_match_reference(
@@ -300,6 +330,57 @@ def _assert_ppr_scores_match_reference(
                 f"{seed_id}, type {ntype_str}, node {node_id}: "
                 f"sampler={sam_score:.8f} vs reference={ref_score:.8f}"
             )
+
+
+def _assert_typed_ppr_edge_attrs(
+    datum: HeteroData,
+    seed_type: str,
+    node_types: list[str],
+    num_channels: int,
+) -> None:
+    """Assert typed PPR edge attributes have the expected channel layout."""
+    expected_width = 2 + (3 * num_channels)
+    for node_type in node_types:
+        ppr_edge_type = (seed_type, "ppr", node_type)
+        assert ppr_edge_type in datum.edge_types, (
+            f"Missing PPR edge type {ppr_edge_type} on HeteroData"
+        )
+        ppr_edge_index = datum[ppr_edge_type].edge_index
+        ppr_edge_attr = datum[ppr_edge_type].edge_attr
+
+        assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
+            f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
+        )
+        assert ppr_edge_attr.dim() == 2, (
+            f"Expected 2D typed PPR edge_attr, got {ppr_edge_attr.dim()}D"
+        )
+        assert ppr_edge_attr.size(0) == ppr_edge_index.size(1)
+        assert ppr_edge_attr.size(1) == expected_width, (
+            f"Expected typed PPR edge_attr width {expected_width}, "
+            f"got {ppr_edge_attr.size(1)}"
+        )
+
+        if ppr_edge_attr.size(0) == 0:
+            continue
+
+        best_scores = ppr_edge_attr[:, 0]
+        hop_proximities = ppr_edge_attr[:, 1]
+        channel_features = ppr_edge_attr[:, 2:].reshape(
+            ppr_edge_attr.size(0), num_channels, 3
+        )
+        channel_scores = channel_features[:, :, 0]
+        channel_hop_proximities = channel_features[:, :, 1]
+        channel_presence = channel_features[:, :, 2]
+        assert (best_scores >= 0).all()
+        assert (best_scores <= 1).all()
+        _assert_valid_hop_proximities(hop_proximities)
+        assert (channel_scores >= 0).all()
+        assert (channel_scores <= 1).all()
+        _assert_typed_channel_hop_proximities(channel_hop_proximities, channel_presence)
+        if best_scores.size(0) > 1:
+            assert (best_scores[:-1] >= best_scores[1:]).all()
+
+        assert ((channel_presence == 0) | (channel_presence == 1)).all()
 
 
 # ---------------------------------------------------------------------------
@@ -353,16 +434,22 @@ def _run_ppr_loader_correctness_check(
         assert hasattr(datum, "edge_attr"), "Missing edge_attr on Data"
 
         ppr_edge_index = datum.edge_index
-        ppr_weights = datum.edge_attr
+        ppr_edge_attr = datum.edge_attr
 
         assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2, (
             f"Expected [2, X] edge_index, got shape {list(ppr_edge_index.shape)}"
         )
-        assert ppr_weights.dim() == 1, f"Expected 1D weights, got {ppr_weights.dim()}D"
-        assert ppr_edge_index.size(1) == ppr_weights.size(0), (
-            f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_weights.size(0)}"
+        assert ppr_edge_attr.dim() == 2, (
+            f"Expected 2D PPR edge_attr, got {ppr_edge_attr.dim()}D"
         )
+        assert ppr_edge_attr.size(1) == 2
+        assert ppr_edge_index.size(1) == ppr_edge_attr.size(0), (
+            f"Edge count mismatch: {ppr_edge_index.size(1)} vs {ppr_edge_attr.size(0)}"
+        )
+        ppr_weights = ppr_edge_attr[:, 0]
+        ppr_hop_proximities = ppr_edge_attr[:, 1]
         assert (ppr_weights > 0).all(), "PPR weights must be positive"
+        _assert_valid_hop_proximities(ppr_hop_proximities)
         assert (ppr_edge_index[0] == 0).all(), (
             "All src indices must be 0 for batch_size=1"
         )
@@ -487,6 +574,82 @@ def _run_ppr_hetero_loader_correctness_check(
     shutdown_rpc()
 
 
+def _run_typed_ppr_loader_shape_check(_: int) -> None:
+    """Verify typed PPR runs through DistNeighborLoader into HeteroData."""
+    create_test_process_group()
+
+    dataset = create_heterogeneous_dataset(
+        edge_indices=_TEST_HETERO_EDGE_INDICES,
+        edge_dir="out",
+    )
+    node_ids = dataset.node_ids
+    assert isinstance(node_ids, dict)
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, node_ids[USER]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                USER_TO_STORY: 0.5,
+                STORY_TO_USER: 0.5,
+            },
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    batches_checked = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        _assert_typed_ppr_edge_attrs(
+            datum=datum,
+            seed_type=str(USER),
+            node_types=[USER, STORY],
+            num_channels=2,
+        )
+        for edge_type in datum.edge_types:
+            assert edge_type[1] == "ppr", (
+                f"Non-PPR edge type {edge_type} found in PPR sampler output"
+            )
+        batches_checked += 1
+    assert batches_checked == _NUM_TEST_USERS, (
+        f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
+    )
+
+    empty_story_loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, node_ids[USER][:1]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_TEST_MAX_PPR_NODES,
+            typed_channel_ratios={
+                STORY_TO_USER: 0.5,
+                (STORY_TO_USER,): 0.5,
+            },
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+    empty_story_datum = next(iter(empty_story_loader))
+    assert isinstance(empty_story_datum, HeteroData)
+    _assert_typed_ppr_edge_attrs(
+        datum=empty_story_datum,
+        seed_type=str(USER),
+        node_types=[USER, STORY],
+        num_channels=2,
+    )
+    empty_story_edge_attr = empty_story_datum[(str(USER), "ppr", STORY)].edge_attr
+    assert tuple(empty_story_edge_attr.shape) == (0, 8)
+
+    shutdown_rpc()
+
+
 def _run_ppr_ablp_loader_correctness_check(
     _: int,
     alpha: float,
@@ -582,13 +745,17 @@ def _run_ppr_ablp_loader_correctness_check(
             )
 
             ppr_edge_index = datum[ppr_edge_type].edge_index
-            ppr_weights = datum[ppr_edge_type].edge_attr
+            ppr_edge_attr = datum[ppr_edge_type].edge_attr
 
             assert ppr_edge_index.dim() == 2 and ppr_edge_index.size(0) == 2
-            assert ppr_weights.dim() == 1
-            assert ppr_edge_index.size(1) == ppr_weights.size(0)
-            if ppr_weights.numel() > 0:
+            assert ppr_edge_attr.dim() == 2
+            assert ppr_edge_attr.size(1) == 2
+            assert ppr_edge_index.size(1) == ppr_edge_attr.size(0)
+            if ppr_edge_attr.numel() > 0:
+                ppr_weights = ppr_edge_attr[:, 0]
+                ppr_hop_proximities = ppr_edge_attr[:, 1]
                 assert (ppr_weights > 0).all()
+                _assert_valid_hop_proximities(ppr_hop_proximities)
             assert (ppr_edge_index[1] >= 0).all()
             assert (ppr_edge_index[1] < datum[ntype].node.size(0)).all()
 
@@ -644,7 +811,9 @@ def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
     assert hasattr(datum, "y_negative"), "Missing y_negative on Data"
     assert datum.edge_index.dim() == 2
     assert datum.edge_index.size(0) == 2
-    assert datum.edge_index.size(1) == datum.edge_attr.numel()
+    assert datum.edge_attr.dim() == 2
+    assert datum.edge_attr.size(1) == 2
+    assert datum.edge_index.size(1) == datum.edge_attr.size(0)
 
     shutdown_rpc()
 
@@ -694,7 +863,71 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
     assert datum[ppr_edge_type].edge_index.shape[1] > 0, (
         "Expected at least one PPR edge to STORY"
     )
-    assert (datum[ppr_edge_type].edge_attr > 0).all()
+    assert (datum[ppr_edge_type].edge_attr[:, 0] > 0).all()
+
+    shutdown_rpc()
+
+
+def _run_ppr_loader_preserves_original_edges_for_selected_nodes(_: int) -> None:
+    """Verify opt-in hetero PPR output includes original edges over selected nodes."""
+    create_test_process_group()
+
+    edge_index = torch.tensor([[0, 0, 0], [0, 1, 2]])
+    dataset = create_heterogeneous_dataset(
+        edge_indices={USER_TO_STORY: edge_index},
+        edge_dir="out",
+    )
+    node_ids = dataset.node_ids
+    assert isinstance(node_ids, dict)
+
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, torch.tensor([0])),
+        num_neighbors=[],
+        sampler_options=PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=2,
+            include_sampled_edges=True,
+        ),
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    datum = next(iter(loader))
+    assert isinstance(datum, HeteroData)
+
+    ppr_edge_type = (USER, "ppr", STORY)
+    original_output_edge_type = reverse_edge_type(USER_TO_STORY)
+    assert ppr_edge_type in datum.edge_types
+    # Original edges are emitted through GLT's regular sampled-edge path, so
+    # they follow the same edge_dir="out" orientation convention as k-hop.
+    assert original_output_edge_type in datum.edge_types
+
+    ppr_story_edge_index = datum[ppr_edge_type].edge_index
+    original_edge_index = datum[original_output_edge_type].edge_index
+    story_node_ids = datum[STORY].node
+
+    ppr_story_ids = {
+        int(story_node_ids[local_dst].item())
+        for local_dst in ppr_story_edge_index[1].tolist()
+    }
+    original_story_ids = {
+        int(story_node_ids[local_src].item())
+        for local_src in original_edge_index[0].tolist()
+    }
+
+    assert original_story_ids
+    assert original_story_ids <= ppr_story_ids
+    assert len(original_story_ids) < edge_index.size(1)
+    assert [int(count) for count in datum.num_sampled_nodes[USER]] == [1, 0]
+    assert [int(count) for count in datum.num_sampled_nodes[STORY]] == [
+        0,
+        story_node_ids.size(0),
+    ]
+    assert [
+        int(count) for count in datum.num_sampled_edges[original_output_edge_type]
+    ] == [original_edge_index.size(1)]
 
     shutdown_rpc()
 
@@ -813,6 +1046,17 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_destination_only_node_type(self) -> None:
         """Verify PPR output includes destination-only node types."""
         mp.spawn(fn=_run_ppr_destination_only_node_type, args=())
+
+    def test_ppr_sampler_can_preserve_original_edges_for_selected_nodes(self) -> None:
+        """Verify PPR can retain original hetero edges over selected nodes."""
+        mp.spawn(
+            fn=_run_ppr_loader_preserves_original_edges_for_selected_nodes,
+            args=(),
+        )
+
+    def test_typed_ppr_sampler_loader_outputs_channel_attrs(self) -> None:
+        """Verify typed PPR runs end-to-end through the loader."""
+        mp.spawn(fn=_run_typed_ppr_loader_shape_check, args=())
 
     def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
         """Verify ABLP label edges are excluded from anchor-seed PPR walks."""

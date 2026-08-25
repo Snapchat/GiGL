@@ -53,6 +53,7 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
+from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -60,6 +61,8 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
+from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING, is_env_flag_enabled
+from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.share_memory import share_memory
 
@@ -242,8 +245,32 @@ class BaseDistLoader(DistLoader):
         )
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
+        self._node_quantization_metadata = dataset_schema.node_quantization_metadata
+        self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
 
         self._sampler_options = sampler_options
+        # Sampled-edge PPR output requires a final HeteroData batch so virtual
+        # PPR edges and original sampled edges can live under separate edge
+        # types. Pure homogeneous graphs and labeled-homogeneous ABLP both
+        # produce homogeneous Data batches, even though labeled-homogeneous ABLP
+        # is represented as hetero internally to carry label edges.
+        # TODO(mkolodner-sc): Consider supporting homogeneous PPR sampled-edge
+        # output once we have a Data-compatible representation for both virtual
+        # PPR edges and original graph edges.
+        if (
+            isinstance(sampler_options, PPRSamplerOptions)
+            and sampler_options.include_sampled_edges
+            and (
+                dataset_schema.edge_types is None
+                or self._is_homogeneous_with_labeled_edge_type
+            )
+        ):
+            raise ValueError(
+                "include_sampled_edges is only supported for pure heterogeneous "
+                "PPR output. Homogeneous graphs and labeled-homogeneous ABLP "
+                "graphs produce homogeneous Data and cannot represent virtual "
+                "PPR and original edges as separate edge types."
+            )
         self._non_blocking_transfers = non_blocking_transfers
         self._backend_key = backend_key
 
@@ -385,6 +412,7 @@ class BaseDistLoader(DistLoader):
         shuffle: bool = False,
         drop_last: bool = False,
         with_weight: bool = False,
+        seed: Optional[int] = None,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -402,9 +430,23 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
+            seed: Sampling RNG seed. Leave unset unless you want to pin sampling
+                deliberately; an unset seed is derived per sampling worker at sampler
+                construction, in ``gigl.distributed.utils.dist_sampler.create_dist_sampler``.
 
         Returns:
             A fully configured SamplingConfig.
+
+        Note:
+            The returned config must be identical across all ranks that share a sampling
+            backend. Graph Store mode keys one backend per ``backend_key`` and rejects any
+            rank whose config differs, in
+            ``gigl.distributed.graph_store.shared_dist_sampling_producer.SharedDistSamplingBackend.register_input``.
+
+            ``SamplingConfig`` is a dataclass, so every field participates in that equality
+            check. Do not populate a field here with a per-rank value -- deriving the seed in
+            this function, for instance, breaks every rank but the one that wins the
+            initialization race.
         """
         num_neighbors = patch_fanout_for_sampling(
             edge_types=dataset_schema.edge_types,
@@ -416,31 +458,61 @@ class BaseDistLoader(DistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=dataset_schema.edge_feature_info is not None,
+            with_edge=(
+                dataset_schema.edge_feature_info is not None
+                or dataset_schema.edge_quantization_metadata is not None
+            ),
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,
             edge_dir=dataset_schema.edge_dir,
-            seed=None,
+            seed=seed,
         )
 
     @staticmethod
     def create_colocated_channel(
-        worker_options: MpDistSamplingWorkerOptions,
+        worker_options: MpDistSamplingWorkerOptions, channel_name: str
     ) -> ShmChannel:
         """Creates a ShmChannel for colocated mode.
 
         Creates and optionally pin-memories the shared-memory channel.
 
+        Note: When GIGL_ENABLE_PERF_MONITORING is set, a `MonitoredShmChannel` is created and the
+        caller is expected to have already initialized the metrics service by calling
+        `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`. Otherwise, a standard
+        `ShmChannel` is created and `channel_name` is ignored.
+
         Args:
             worker_options: The colocated worker options (must already be fully configured).
+            channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
 
         Returns:
             A ShmChannel ready to be passed to a DistSamplingProducer.
+
+        Raises:
+            RuntimeError: If GIGL_ENABLE_PERF_MONITORING is set but user did not previously call
+                `gigl.src.common.utils.metrics_service_provider.initialize_metrics()`.
         """
-        channel = ShmChannel(
-            worker_options.channel_capacity, worker_options.channel_size
-        )
+        if is_env_flag_enabled(GIGL_ENABLE_PERF_MONITORING):
+            logger.info(f"{GIGL_ENABLE_PERF_MONITORING} set, using MonitoredShmChannel")
+            try:
+                get_metrics_service_instance()
+            except RuntimeError as e:
+                raise RuntimeError(
+                    f"{GIGL_ENABLE_PERF_MONITORING} is set, which uses MonitoredShmChannel, but the metrics "
+                    f"service was not initialized. Call initialize_metrics() or disable {GIGL_ENABLE_PERF_MONITORING}"
+                ) from e
+            channel = MonitoredShmChannel(
+                channel_name,
+                worker_options.channel_capacity,
+                worker_options.channel_size,
+            )
+        else:
+            logger.info(f"{GIGL_ENABLE_PERF_MONITORING} not set, using ShmChannel")
+            channel = ShmChannel(
+                worker_options.channel_capacity, worker_options.channel_size
+            )
+
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel
@@ -452,6 +524,7 @@ class BaseDistLoader(DistLoader):
         sampling_config: SamplingConfig,
         worker_options: MpDistSamplingWorkerOptions,
         sampler_options: SamplerOptions,
+        channel_name: str,
     ) -> DistSamplingProducer:
         """Create a colocated-mode DistSamplingProducer with pre-computed degree tensors.
 
@@ -468,12 +541,16 @@ class BaseDistLoader(DistLoader):
             sampling_config: Sampling configuration.
             worker_options: Colocated worker options (must be fully configured).
             sampler_options: Controls which sampler class is instantiated.
+            channel_name: Named identifier for the channel (used as metrics prefix in `MonitoredShmChannel`).
 
         Returns:
             A fully constructed DistSamplingProducer, ready to be passed to
             ``_init_colocated_connections``.
         """
-        channel = BaseDistLoader.create_colocated_channel(worker_options)
+        channel = BaseDistLoader.create_colocated_channel(
+            worker_options,
+            channel_name=channel_name,
+        )
         if isinstance(sampler_options, PPRSamplerOptions):
             degree_tensors = dataset.degree_tensor
             share_memory(degree_tensors)
@@ -966,7 +1043,20 @@ class BaseDistLoader(DistLoader):
             ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
             attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
             if isinstance(data, HeteroData):
-                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
+                edge_types_to_keep = set(ppr_edge_indices.keys())
+                if self._sampler_options.include_sampled_edges:
+                    # Original edges emitted by the sampler arrive through GLT's
+                    # normal edge stores. Empty feature-only stores can also be
+                    # created for configured edge types, so keep only original
+                    # stores with actual sampled edges.
+                    for edge_type in data.edge_types:
+                        if edge_type in edge_types_to_keep or not hasattr(
+                            data[edge_type], "edge_index"
+                        ):
+                            continue
+                        if data[edge_type].edge_index.numel() > 0:
+                            edge_types_to_keep.add(edge_type)
+                data = strip_non_ppr_edge_types(data, edge_types_to_keep)
 
         return data, metadata
 

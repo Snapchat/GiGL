@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float, Int64
 
 
 class RetrievalLoss(nn.Module):
@@ -38,12 +39,14 @@ class RetrievalLoss(nn.Module):
 
     def _calculate_batch_retrieval_loss(
         self,
-        scores: torch.Tensor,
-        candidate_sampling_probability: Optional[torch.Tensor] = None,
-        query_ids: Optional[torch.Tensor] = None,
-        candidate_ids: Optional[torch.Tensor] = None,
+        scores: Float[torch.Tensor, "queries candidates"],
+        candidate_sampling_probability: Optional[
+            Float[torch.Tensor, "candidates"]
+        ] = None,
+        query_ids: Optional[Int64[torch.Tensor, "queries"]] = None,
+        candidate_ids: Optional[Int64[torch.Tensor, "candidates"]] = None,
         device: torch.device = torch.device("cpu"),
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, ""]:
         """
         Args:
           scores: [num_queries, num_candidates] tensor of candidate and query embeddings similarity
@@ -160,12 +163,14 @@ class RetrievalLoss(nn.Module):
 
     def forward(
         self,
-        repeated_candidate_scores: torch.Tensor,
-        candidate_ids: torch.Tensor,
-        repeated_query_ids: torch.Tensor,
+        repeated_candidate_scores: Float[torch.Tensor, "queries candidates"],
+        candidate_ids: Int64[torch.Tensor, "candidates"],
+        repeated_query_ids: Int64[torch.Tensor, "queries"],
         device: torch.device,
-        candidate_sampling_probability: Optional[torch.Tensor] = None,
-    ):
+        candidate_sampling_probability: Optional[
+            Float[torch.Tensor, "candidates"]
+        ] = None,
+    ) -> Float[torch.Tensor, ""]:
         """
         Args:
             repeated_candidate_scores (torch.Tensor): The prediction scores between each repeated query users and each candidates. In this case, `repeated` means

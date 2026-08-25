@@ -1,12 +1,20 @@
 import asyncio
 from collections import defaultdict
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Optional, Union, cast
 
 import torch
 
 # TODO: Once gigl_core has a stable Python interface, re-export PPRForwardPush
 # under a gigl.core namespace rather than importing directly from the C++ extension.
-from gigl_core import PPRForwardPush
+from gigl_core import (
+    NeighborFetchTensors,
+    PPRExtractTensors,
+    PPRForwardPush,
+    drain_typed_ppr_channel_queues,
+    extract_original_edges_from_ppr_caches,
+    extract_typed_top_k_with_residual_top_up,
+)
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -14,9 +22,17 @@ from graphlearn_torch.sampler import (
     SamplerOutput,
 )
 from graphlearn_torch.typing import EdgeType, NodeType
-from graphlearn_torch.utils import merge_dict
+from graphlearn_torch.utils import merge_dict, reverse_edge_type
+from jaxtyping import Int32
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
+from gigl.distributed.utils.dist_typed_sampler import (
+    TypedPPRChannelKey,
+    TypedPPRChannelTraversalMaps,
+    build_edge_type_channel_group_edge_type_ids,
+    compute_typed_channel_target_counts,
+    parse_typed_channel_ratio_groups,
+)
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
@@ -35,6 +51,33 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
     "to",
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
 )
+
+PPRTensorOutput = Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+PPRCacheState = Optional[Union[PPRForwardPush, list[PPRForwardPush]]]
+
+
+@dataclass(frozen=True)
+class PPRResult:
+    """C++ PPR extraction output plus optional completed cache state.
+
+    Homogeneous extraction uses tensors directly; heterogeneous extraction uses
+    dictionaries keyed by node type.
+    """
+
+    node_ids: PPRTensorOutput
+    weights: PPRTensorOutput
+    valid_counts: PPRTensorOutput
+    cache_state: PPRCacheState
+
+
+@dataclass(frozen=True)
+class SampledEdgeResult:
+    """GLT sampled-edge fields for original edges attached to PPR output."""
+
+    rows: dict[EdgeType, torch.Tensor]
+    cols: dict[EdgeType, torch.Tensor]
+    edge_ids: Optional[dict[EdgeType, torch.Tensor]]
+    num_sampled_edges: dict[EdgeType, list[int]]
 
 
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
@@ -59,6 +102,17 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     the PPR algorithm traverses across all edge types, switching edge types based on the
     current node type and the configured edge direction.
 
+    Internal execution follows the same shape for regular and typed PPR. Regular
+    PPR owns one C++ ``PPRForwardPush`` state per seed type: ``drain_queue``
+    exposes the next frontier, Python performs the distributed neighbor fetch,
+    ``push_residuals`` updates the state, and C++ extraction emits the final
+    top-k plus residual top-up output. Typed PPR runs one ``PPRForwardPush``
+    traversal per configured channel. Its typed drain step unions the channel
+    frontiers before the same distributed fetch, pushes results back into the
+    active channel states, and then uses one typed C++ extraction step to apply
+    channel target counts, deduplicate shared candidates, and emit the final
+    typed edge-attribute features.
+
     The ``edge_index`` and ``edge_attr`` fields on the output Data/HeteroData
     objects are populated with PPR seed-to-neighbor relationships (not edges
     in the original graph). ``N`` is the total number of (seed, neighbor)
@@ -67,12 +121,36 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     **Homogeneous (Data):**
         - ``data.edge_index``: ``[2, N]`` int64 — row 0 is local seed indices,
           row 1 is local neighbor indices.
-        - ``data.edge_attr``: ``[N]`` float — PPR score for each pair.
+        - ``data.edge_attr``: ``[N, 2]`` float — ``[ppr_score, hop_proximity]``
+          for each pair. ``hop_proximity`` is ``1 / (1 + hop)``: ``1.0`` for
+          the anchor, ``0.5`` for 1-hop, and so on.
 
     **Heterogeneous (HeteroData)** — one PPR edge type per
     ``(seed_type, neighbor_type)`` pair, with ``"ppr"`` as the relation:
         - ``data[(seed_type, "ppr", neighbor_type)].edge_index``: same format as above.
-        - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``: same format as above.
+        - ``data[(seed_type, "ppr", neighbor_type)].edge_attr``:
+          ``[ppr_score, hop_proximity]`` for regular PPR. For typed PPR, edge
+          attrs are multi-column:
+          ``[best_score, hop_proximity, (channel_score, channel_hop_proximity,
+          channel_presence), ...]``.
+          Scores use the same PPR mass scale as regular PPR output.
+          Channel columns follow the insertion order of
+          ``typed_channel_ratios``. Column 0 is the scalar best score for
+          consumers that need a single PPR weight, and column 1 is always the
+          global hop proximity. Per-channel hop proximity is ``1 / (1 + hop)``
+          when that channel reached the node, and ``0`` when it did not.
+          For present channels, the original hop count can be recovered as
+          ``(1 - proximity) / proximity``; use the presence bit before applying
+          this inverse because missing channels have proximity ``0``.
+        - When ``include_sampled_edges`` is enabled, original graph edge types are
+          included alongside virtual PPR edges. The sampler emits original edges
+          from adjacency rows fetched while running PPR and whose source and
+          destination are both in the final PPR-selected node set; an emitted edge
+          does not have to be the relation that uniquely caused the destination's
+          PPR score. These original edges are emitted through GLT's regular
+          sampled-edge channel, so their final HeteroData edge orientation follows
+          the same ``edge_dir``
+          convention as k-hop sampling.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -82,18 +160,65 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         max_ppr_nodes: Maximum number of nodes to return per seed. If finalized
             PPR scores produce fewer than this cap and residual top-up is
             enabled, discovered residual candidates fill the remaining slots
-            with score ``ppr_score + residual``.  Returned nodes are sorted by
+            with score ``ppr_score + residual``. Returned nodes are sorted by
             emitted score, but residual candidates do not displace finalized
             PPR nodes when finalized scores already fill the cap.
         enable_residual_topup: Whether to include residual candidates discovered
             during Forward Push when fewer than ``max_ppr_nodes`` finalized PPR
             scores are available.
         num_neighbors_per_hop: Maximum number of neighbors to fetch per hop.
+        typed_channel_ratios: Optional target proportions for typed PPR
+            traversal channels. If not provided, PPR treats all eligible edge
+            types as one shared traversal space and emits a single scalar PPR
+            score per output row.
+            Keys may be either a single canonical edge type
+            ``(src_type, relation, dst_type)`` or a tuple of canonical edge
+            types. Each key defines one traversal channel that may use only
+            those exact edge types. Edge types may appear in multiple channels
+            when those channels intentionally overlap.
+            Channel order follows the insertion order of this mapping, and
+            typed ``edge_attr`` channel columns use that same order. If the
+            mapping is produced from an unordered config source, construct it
+            deterministically before passing it to the sampler. Values are
+            positive ratios that must sum to ``1.0``. The sampler converts
+            ratios to per-channel target counts from ``max_ppr_nodes``.
+            Finalized PPR candidates and residual top-up candidates both obey
+            these target counts. If the same node appears in multiple channels,
+            it is attributed to the channel where it has the highest emitted
+            PPR score for that seed. If sparse channels or duplicate nodes
+            leave unused target slots, the remaining slots are redistributed
+            globally by score so the returned sequence can still fill up to,
+            but never exceed, ``max_ppr_nodes``.
+            Example::
+
+                typed_channel_ratios = {
+                    ("user", "views", "item"): 0.6,
+                    (
+                        ("user", "likes", "item"),
+                        ("user", "shares", "item"),
+                    ): 0.4,
+                }
+
+            With ``max_ppr_nodes=200``, this example targets 120 nodes
+            attributed to the views channel and 80 nodes attributed to the
+            grouped likes/shares channel. The views channel traverses only
+            ``("user", "views", "item")`` edges. The grouped likes/shares
+            channel traverses either likes or shares edges as one channel.
+            Both finalized PPR rows and residual top-up rows fill those same
+            targets. The targets are best-effort rather than strict per-seed
+            guarantees: if a channel cannot provide enough unique candidates,
+            unused slots are filled by the remaining highest-scoring candidates
+            from any channel, up to ``max_ppr_nodes`` total rows.
+
         degree_tensors: Pre-computed total-degree tensors (int32). Homogeneous
             graphs use a single tensor; heterogeneous graphs use tensors keyed
             by NodeType. The colocated and graph-store loader paths retrieve
             these through ``DistDataset.degree_tensor`` and move them to shared
             memory before worker handoff.
+        include_sampled_edges: Whether heterogeneous PPR output should include
+            original graph edges alongside virtual PPR edges. The sampler emits
+            original edges from adjacency rows fetched while running PPR and whose
+            source and destination are both in the final PPR-selected node set.
     """
 
     def __init__(
@@ -104,17 +229,27 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         max_ppr_nodes: int = 50,
         enable_residual_topup: bool = True,
         num_neighbors_per_hop: int = 100_000,
-        degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+        degree_tensors: Union[
+            Int32[torch.Tensor, "nodes"],
+            dict[NodeType, Int32[torch.Tensor, "_nodes"]],
+        ],
         max_fetch_iterations: Optional[int] = None,
+        typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None,
+        include_sampled_edges: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._alpha = alpha
+        if isinstance(max_ppr_nodes, bool) or max_ppr_nodes < 0:
+            raise ValueError(
+                f"max_ppr_nodes must be non-negative, got {max_ppr_nodes}."
+            )
         self._max_ppr_nodes = max_ppr_nodes
         self._enable_residual_topup = enable_residual_topup
         self._requeue_threshold_factor = alpha * eps
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
+        self._include_sampled_edges = include_sampled_edges
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -147,6 +282,22 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             self._is_homogeneous = True
 
+        typed_channel_groups, typed_channel_ratio_list = (
+            parse_typed_channel_ratio_groups(typed_channel_ratios)
+        )
+        self._typed_ppr_channel_target_counts = (
+            compute_typed_channel_target_counts(
+                typed_channel_ratio_list,
+                max_ppr_nodes,
+            )
+            if typed_channel_ratio_list is not None
+            else None
+        )
+        if self._typed_ppr_channel_target_counts is not None:
+            if self._is_homogeneous:
+                raise ValueError(
+                    "Typed PPR channel ratios are only supported for heterogeneous PPR sampling."
+                )
         # Convert the public homogeneous/heterogeneous degree-tensor shape to
         # the node-type keyed form used internally by PPR.
         self._node_type_to_total_degree = self._convert_degree_tensors_to_dict(
@@ -209,6 +360,17 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             for node_type in all_node_types
         ]
 
+        self._typed_ppr_channel_to_node_type_id_to_edge_type_ids: TypedPPRChannelTraversalMaps = []
+        if typed_channel_groups is not None:
+            self._typed_ppr_channel_to_node_type_id_to_edge_type_ids = (
+                build_edge_type_channel_group_edge_type_ids(
+                    edge_type_groups=typed_channel_groups,
+                    edge_type_to_edge_type_id=self._etype_to_etype_id,
+                    node_type_to_edge_types=self._node_type_to_edge_types,
+                    node_types=self._ntype_id_to_ntype,
+                )
+            )
+
     def _convert_degree_tensors_to_dict(
         self,
         degree_tensors: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -237,7 +399,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     async def _batch_fetch_neighbors(
         self,
         nodes_by_edge_type_id: dict[int, torch.Tensor],
-    ) -> dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    ) -> dict[int, NeighborFetchTensors]:
         """Batch fetch neighbors for nodes grouped by integer edge type ID.
 
         Issues one one-hop request per edge type in the frontier. Each node's
@@ -249,11 +411,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 ``drain_queue()`` as CPU tensors; node IDs are already deduplicated.
 
         Returns:
-            Dict mapping edge type ID to ``(node_ids, flat_neighbors, counts)``
-            as int64 tensors, ready to pass directly to ``push_residuals``.
-            ``flat_neighbors`` is the flat concatenation of all neighbor lists
-            for that edge type; ``counts[i]`` is the neighbor count for
-            ``node_ids[i]``.
+            Dict mapping edge type ID to ``(source_nodes, flat_neighbors,
+            counts, optional_edge_ids)``. ``flat_neighbors`` is the flat
+            concatenation of all neighbor lists for that edge type; ``counts[i]``
+            is the neighbor count for ``source_nodes[i]``.
 
         Example::
 
@@ -263,8 +424,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             }
             # Might return (neighbor lists depend on graph structure):
             {
-                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1])),
-                5: (tensor([7]),    tensor([0, 3]),        tensor([2])),
+                2: (tensor([0, 3]), tensor([5, 9, 2, 1]), tensor([3, 1]), None),
+                5: (tensor([7]), tensor([0, 3]), tensor([2]), None),
             }
         """
         edge_type_ids: list[int] = []
@@ -292,10 +453,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
         outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
         return {
-            edge_type_id: (
-                nodes_by_edge_type_id[edge_type_id],
-                output.nbr,
-                output.nbr_num,
+            edge_type_id: NeighborFetchTensors(
+                node_ids=nodes_by_edge_type_id[edge_type_id],
+                flat_neighbor_ids=output.nbr,
+                counts=output.nbr_num,
+                edge_ids=output.edge if self._include_sampled_edges else None,
             )
             for edge_type_id, output in zip(edge_type_ids, outputs)
         }
@@ -303,8 +465,6 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     def _extract_ppr_state_top_k(
         self,
         ppr_state,
-        device: torch.device,
-        max_ppr_nodes: int,
     ) -> tuple[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         Union[torch.Tensor, dict[NodeType, torch.Tensor]],
@@ -327,34 +487,17 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ``flat_ids`` and ``flat_weights`` are concatenated across seeds;
             ``valid_counts`` stores how many selected nodes belong to each seed.
         """
-        # Translate integer node-type IDs back to NodeType strings for the rest
-        # of the pipeline, and move tensors to the correct device.
-        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
-        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
-        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
-
         extracted_results = ppr_state.extract_top_k_with_residual_top_up(
-            max_ppr_nodes,
+            self._max_ppr_nodes,
             self._enable_residual_topup,
         )
-
-        for node_type_id, (
-            flat_ids,
-            flat_weights,
-            valid_counts,
-        ) in extracted_results.items():
-            node_type = self._ntype_id_to_ntype[node_type_id]
-            # TODO: If these copies become a bottleneck, evaluate
-            # non_blocking=True together with pinned extraction output tensors.
-            node_type_to_flat_ids[node_type] = flat_ids.to(device)
-            node_type_to_flat_weights[node_type] = flat_weights.to(device)
-            node_type_to_valid_counts[node_type] = valid_counts.to(device)
+        (
+            node_type_to_flat_ids,
+            node_type_to_flat_weights,
+            node_type_to_valid_counts,
+        ) = self._translate_top_k_extraction_results(extracted_results)
 
         if self._is_homogeneous:
-            assert (
-                len(node_type_to_flat_ids) == 1
-                and DEFAULT_HOMOGENEOUS_NODE_TYPE in node_type_to_flat_ids
-            )
             return (
                 node_type_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
                 node_type_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
@@ -367,15 +510,51 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 node_type_to_valid_counts,
             )
 
+    def _translate_top_k_extraction_results(
+        self,
+        extracted_results: dict[int, PPRExtractTensors],
+    ) -> tuple[
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+    ]:
+        """Translate C++ node-type IDs to GiGL node-type keys."""
+        node_type_to_flat_ids: dict[NodeType, torch.Tensor] = {}
+        node_type_to_flat_weights: dict[NodeType, torch.Tensor] = {}
+        node_type_to_valid_counts: dict[NodeType, torch.Tensor] = {}
+        for node_type_id, extracted in extracted_results.items():
+            node_type = self._ntype_id_to_ntype[node_type_id]
+            node_type_to_flat_ids[node_type] = extracted.ids
+            node_type_to_flat_weights[node_type] = extracted.weights
+            node_type_to_valid_counts[node_type] = extracted.valid_counts
+        return (
+            node_type_to_flat_ids,
+            node_type_to_flat_weights,
+            node_type_to_valid_counts,
+        )
+
+    def _extract_typed_ppr_state_top_k(
+        self,
+        ppr_states,
+        typed_ppr_channel_target_counts: list[int],
+    ) -> tuple[
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+        dict[NodeType, torch.Tensor],
+    ]:
+        """Extract typed PPR results and translate C++ node-type IDs."""
+        extracted_results = extract_typed_top_k_with_residual_top_up(
+            ppr_states,
+            typed_ppr_channel_target_counts,
+            self._enable_residual_topup,
+        )
+        return self._translate_top_k_extraction_results(extracted_results)
+
     async def _compute_ppr_scores(
         self,
         seed_nodes: torch.Tensor,
         seed_node_type: Optional[NodeType] = None,
-    ) -> tuple[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    ]:
+    ) -> PPRResult:
         """
         Compute PPR scores for seed nodes using the push-based approximation algorithm.
 
@@ -401,32 +580,36 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 homogeneous graphs (internally mapped to a sentinel type).
 
         Returns:
-            A 3-tuple ``(flat_neighbor_ids, flat_weights, valid_counts)``.
-            For homogeneous graphs each element is a 1-D tensor; for
-            heterogeneous graphs each element is a ``dict[NodeType, Tensor]``
-            where each tensor has the same structure as the homogeneous case.
+            A ``PPRResult``. For homogeneous graphs, ``node_ids``, ``weights``,
+            and ``valid_counts`` are tensors. For heterogeneous graphs, they are
+            ``dict[NodeType, Tensor]`` objects where each tensor has the same
+            structure as the homogeneous case.
 
             - ``flat_neighbor_ids``: global neighbor IDs selected by top-k PPR
               score, concatenated across seeds.  For batch of size ``B`` with
               ``C_i`` neighbors for seed ``i``, shape is
               ``[sum(C_0, ..., C_{B-1})]``.
-            - ``flat_weights``: PPR scores corresponding to each entry in
-              ``flat_neighbor_ids``, same shape.
+            - ``flat_edge_attrs``: ``[ppr_score, hop_proximity]`` rows
+              corresponding to each entry in ``flat_neighbor_ids``, shape
+              ``[sum(C_0, ..., C_{B-1}), 2]``.
             - ``valid_counts``: number of PPR neighbors contributed by each
               seed, shape ``[batch_size]``.  Used to slice the flat tensors into
               per-seed groups: seed ``i``'s neighbors are at
               ``flat_neighbor_ids[sum(valid_counts[:i]) : sum(valid_counts[:i+1])]``.
+            - ``cache_state``: the completed C++ PPR state when
+              ``include_sampled_edges`` is enabled, otherwise ``None``. Its
+              neighbor cache is used by the optional original-edge output path
+              without triggering extra graph-store reads.
 
         Example::
 
             # 4 seeds, valid_counts = [1, 3, 2, 0]  →  6 total (seed, neighbor) pairs
             flat_neighbor_ids = tensor([d0, d1a, d1b, d1c, d2a, d2b])
-            flat_weights      = tensor([w0, w1a, w1b, w1c, w2a, w2b])
-            valid_counts      = tensor([1,  3,   2,   0])
+            flat_edge_attrs   = tensor([[w0, p0], [w1a, p1a], ..., [w2b, p2b]])
+            valid_counts      = tensor([1, 3, 2, 0])
         """
         if seed_node_type is None:
             seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        device = seed_nodes.device
         loop = asyncio.get_running_loop()
 
         ppr_state = await loop.run_in_executor(
@@ -473,20 +656,205 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 # Fetch budget exhausted; push_residuals will use the existing neighbor cache.
                 fetched_by_edge_type_id = {}
 
-            # Run in executor so the C++ push doesn't block the asyncio event loop.
             await loop.run_in_executor(
-                None, ppr_state.push_residuals, fetched_by_edge_type_id
+                None,
+                ppr_state.push_residuals,
+                fetched_by_edge_type_id,
             )
 
-        # Regular sampling uses residual top-up as fill-only under the
-        # max_ppr_nodes cap.  If finalized PPR scores already fill that cap,
-        # there is no remaining budget for residual candidates.
-        return await loop.run_in_executor(
+        node_ids, weights, valid_counts = await loop.run_in_executor(
             None,
             self._extract_ppr_state_top_k,
             ppr_state,
-            device,
-            self._max_ppr_nodes,
+        )
+        return PPRResult(
+            node_ids=node_ids,
+            weights=weights,
+            valid_counts=valid_counts,
+            cache_state=ppr_state if self._include_sampled_edges else None,
+        )
+
+    async def _compute_typed_ppr_scores(
+        self,
+        seed_nodes: torch.Tensor,
+        seed_node_type: NodeType,
+        typed_ppr_channel_target_counts: list[int],
+    ) -> PPRResult:
+        """Run one PPR traversal per typed channel and extract the merged result.
+
+        Each channel receives the same seed nodes but a different edge-type
+        traversal allowlist. Fetch frontiers are unioned across active channels
+        per iteration so shared graph neighborhoods are fetched once and reused
+        by every channel that requested them. After convergence, C++ deduplicates
+        candidates, attributes each node to its strongest channel, fills channel
+        target counts, redistributes unused slots by score, and emits typed
+        edge-attribute features in one extraction step.
+
+        Args:
+            seed_nodes: Global node IDs for the seed batch.
+            seed_node_type: Heterogeneous node type for ``seed_nodes``.
+            typed_ppr_channel_target_counts: Per-channel target output counts, aligned
+                with ``self._typed_ppr_channel_to_node_type_id_to_edge_type_ids``.
+
+        Returns:
+            Heterogeneous PPR extraction output with typed edge-attribute
+            feature vectors, plus completed C++ PPR states when
+            ``include_sampled_edges`` is enabled, otherwise
+            ``None``. Their neighbor caches are used by the optional
+            original-edge output path without triggering extra graph-store
+            reads.
+        """
+        loop = asyncio.get_running_loop()
+
+        # Build one Forward Push state per typed channel. All states use the
+        # same seeds, restart probability, degree tensors, and destination-type
+        # map; only the per-node-type edge traversal allowlist differs.
+        def build_ppr_states() -> list[PPRForwardPush]:
+            return [
+                PPRForwardPush(
+                    seed_nodes,
+                    self._node_type_to_id[seed_node_type],
+                    self._alpha,
+                    self._requeue_threshold_factor,
+                    node_type_id_to_edge_type_ids,
+                    self._edge_type_id_to_dst_ntype_id,
+                    self._degree_tensors_for_cpp,
+                )
+                for node_type_id_to_edge_type_ids in (
+                    self._typed_ppr_channel_to_node_type_id_to_edge_type_ids
+                )
+            ]
+
+        ppr_states = await loop.run_in_executor(None, build_ppr_states)
+        fetch_iteration_counts = [0 for _ in ppr_states]
+        max_fetch_iterations = (
+            self._max_fetch_iterations if self._max_fetch_iterations is not None else -1
+        )
+
+        while True:
+            queue_drain_result = await loop.run_in_executor(
+                None,
+                drain_typed_ppr_channel_queues,
+                ppr_states,
+                fetch_iteration_counts,
+                max_fetch_iterations,
+            )
+            drained_channel_indices = queue_drain_result.drained_channel_indices
+            fetch_channel_indices = queue_drain_result.fetch_channel_indices
+            edge_type_ids_by_fetch_channel = (
+                queue_drain_result.edge_type_ids_by_fetch_channel
+            )
+            unioned_node_ids_by_edge_type_id = (
+                queue_drain_result.unioned_node_ids_by_edge_type_id
+            )
+            if not drained_channel_indices:
+                break
+
+            fetched_by_channel: list[dict[int, NeighborFetchTensors]] = [
+                {} for _ in ppr_states
+            ]
+
+            if unioned_node_ids_by_edge_type_id:
+                union_fetched_by_edge_type_id = await self._batch_fetch_neighbors(
+                    unioned_node_ids_by_edge_type_id
+                )
+                for channel_index, edge_type_ids in zip(
+                    fetch_channel_indices,
+                    edge_type_ids_by_fetch_channel,
+                    strict=True,
+                ):
+                    fetch_iteration_counts[channel_index] += 1
+                    fetched_by_channel[channel_index] = {
+                        edge_type_id: union_fetched_by_edge_type_id[edge_type_id]
+                        for edge_type_id in edge_type_ids
+                    }
+
+            # Push every non-converged channel. The fetched_by_channel entry is
+            # empty for channels that have no new fetch work; PPRForwardPush will
+            # use its cached neighbors in that case.
+            push_tasks = [
+                loop.run_in_executor(
+                    None,
+                    ppr_states[channel_index].push_residuals,
+                    fetched_by_channel[channel_index],
+                )
+                for channel_index in drained_channel_indices
+            ]
+            await asyncio.gather(*push_tasks)
+
+        node_ids, weights, valid_counts = await loop.run_in_executor(
+            None,
+            self._extract_typed_ppr_state_top_k,
+            ppr_states,
+            typed_ppr_channel_target_counts,
+        )
+        return PPRResult(
+            node_ids=node_ids,
+            weights=weights,
+            valid_counts=valid_counts,
+            cache_state=ppr_states if self._include_sampled_edges else None,
+        )
+
+    def _extract_original_edges_from_ppr_caches(
+        self,
+        node_dict: dict[NodeType, torch.Tensor],
+        ppr_cache_states: list[PPRForwardPush],
+    ) -> SampledEdgeResult:
+        """Extract original edges over selected nodes from C++ PPR caches.
+
+        This intentionally does not issue another graph-store request; it extracts
+        sampled edge rows already cached while computing PPR.
+
+        Returns:
+            GLT sampled-edge dictionaries:
+            ``rows`` maps each original edge type to local source indices.
+            ``cols`` maps each original edge type to local destination indices.
+            ``edge_ids`` maps each original edge type to edge IDs when ``with_edge``
+            is enabled, otherwise it is ``None``.
+            ``num_sampled_edges`` maps each original edge type to GLT's per-hop edge
+            counts list, using one count because these edges are attached as a
+            single sampled-edge layer.
+        """
+        selected_node_ids_by_node_type_id = {
+            self._node_type_to_id[node_type]: node_ids.cpu()
+            for node_type, node_ids in node_dict.items()
+        }
+        extracted_edges = extract_original_edges_from_ppr_caches(
+            ppr_cache_states,
+            selected_node_ids_by_node_type_id,
+            self.with_edge,
+        )
+
+        rows_dict: dict[EdgeType, torch.Tensor] = {}
+        cols_dict: dict[EdgeType, torch.Tensor] = {}
+        edge_dict: dict[EdgeType, torch.Tensor] = {}
+        for edge_type_id, extracted in extracted_edges.items():
+            edge_type = self._etype_id_to_etype[edge_type_id]
+            output_edge_type = (
+                reverse_edge_type(edge_type) if self.edge_dir == "in" else edge_type
+            )
+            rows_dict[output_edge_type] = extracted.rows
+            cols_dict[output_edge_type] = extracted.cols
+            if extracted.edge_ids is not None:
+                edge_dict[output_edge_type] = extracted.edge_ids
+
+        if not rows_dict:
+            empty_edge_dict = {} if self.with_edge else None
+            return SampledEdgeResult(
+                rows={},
+                cols={},
+                edge_ids=empty_edge_dict,
+                num_sampled_edges={},
+            )
+
+        num_sampled_edges = {
+            edge_type: [int(cols.size(0))] for edge_type, cols in cols_dict.items()
+        }
+        return SampledEdgeResult(
+            rows=rows_dict,
+            cols=cols_dict,
+            edge_ids=edge_dict if self.with_edge else None,
+            num_sampled_edges=num_sampled_edges,
         )
 
     async def _sample_from_nodes(
@@ -590,40 +958,57 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # which is most beneficial when there are 2+ distinct seed node types
             # (e.g. cross-type supervision edges like user→story).
             seed_types = list(nodes_by_seed_type.keys())
-            ppr_results = await asyncio.gather(
-                *[
-                    self._compute_ppr_scores(
-                        nodes_by_seed_type[seed_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                        seed_type,
-                    )
-                    for seed_type in seed_types
-                ]
-            )
-
+            typed_ppr_channel_target_counts = self._typed_ppr_channel_target_counts
+            if typed_ppr_channel_target_counts is None:
+                ppr_results = await asyncio.gather(
+                    *[
+                        self._compute_ppr_scores(
+                            nodes_by_seed_type[seed_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                            seed_type,
+                        )
+                        for seed_type in seed_types
+                    ]
+                )
+            else:
+                ppr_results = await asyncio.gather(
+                    *[
+                        self._compute_typed_ppr_scores(
+                            nodes_by_seed_type[seed_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                            seed_type,
+                            typed_ppr_channel_target_counts,
+                        )
+                        for seed_type in seed_types
+                    ]
+                )
             neighbor_dict: dict[EdgeType, list[torch.Tensor]] = {}
             ppr_edge_type_to_flat_weights: dict[EdgeType, torch.Tensor] = {}
 
-            for seed_type, (
-                node_type_to_flat_ids,
-                node_type_to_flat_weights,
-                node_type_to_valid_counts,
-            ) in zip(seed_types, ppr_results):
-                assert isinstance(node_type_to_flat_ids, dict)
-                assert isinstance(node_type_to_flat_weights, dict)
-                assert isinstance(node_type_to_valid_counts, dict)
+            for seed_type, ppr_result in zip(seed_types, ppr_results):
+                assert isinstance(ppr_result.node_ids, dict)
+                assert isinstance(ppr_result.weights, dict)
+                assert isinstance(ppr_result.valid_counts, dict)
+                node_type_to_flat_ids = cast(
+                    dict[NodeType, torch.Tensor], ppr_result.node_ids
+                )
+                node_type_to_flat_weights = cast(
+                    dict[NodeType, torch.Tensor], ppr_result.weights
+                )
+                node_type_to_valid_counts = cast(
+                    dict[NodeType, torch.Tensor], ppr_result.valid_counts
+                )
 
                 for node_type, flat_ids in node_type_to_flat_ids.items():
                     ppr_edge_type: EdgeType = (seed_type, "ppr", node_type)
-                    valid_counts = node_type_to_valid_counts[node_type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    valid_counts = node_type_to_valid_counts[node_type]
                     ppr_edge_type_to_flat_weights[ppr_edge_type] = (
-                        node_type_to_flat_weights[node_type]  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                        node_type_to_flat_weights[node_type]
                     )
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
                     # gets one consistent local index in node_dict[node_type].
-                    if flat_ids.numel() > 0:  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                        neighbor_dict[ppr_edge_type] = [  # ty: ignore[invalid-assignment] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    if flat_ids.numel() > 0:
+                        neighbor_dict[ppr_edge_type] = [
                             source_dict[seed_type],
                             flat_ids,
                             valid_counts,
@@ -655,6 +1040,56 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 if nodes
             }
 
+            sampled_edges = SampledEdgeResult(
+                rows={},
+                cols={},
+                edge_ids={} if self.with_edge else None,
+                num_sampled_edges={},
+            )
+            if self._include_sampled_edges:
+                ppr_cache_states: list[PPRForwardPush] = []
+                for ppr_result in ppr_results:
+                    ppr_cache_state = ppr_result.cache_state
+                    if isinstance(ppr_cache_state, PPRForwardPush):
+                        ppr_cache_states.append(ppr_cache_state)
+                    elif ppr_cache_state is not None:
+                        ppr_cache_states.extend(ppr_cache_state)
+                # Keep the cache scan off the asyncio event-loop thread. The
+                # pybind wrapper releases the GIL around the C++ extraction.
+                sampled_edges = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    self._extract_original_edges_from_ppr_caches,
+                    node_dict,
+                    ppr_cache_states,
+                )
+
+            if sampled_edges.num_sampled_edges:
+                # GLT treats sampled edges as one sampled layer and right-pads
+                # num_sampled_nodes to ``num_hops + 1``. Split the node counts
+                # into seed nodes and PPR-introduced nodes so destination-only
+                # PPR nodes are attributed to the represented edge layer instead
+                # of being classified as roots after GLT padding.
+                num_sampled_nodes = {
+                    node_type: [
+                        (
+                            int(source_dict[node_type].size(0))
+                            if node_type in source_dict
+                            else 0
+                        ),
+                        (
+                            int(new_nodes_dict[node_type].size(0))
+                            if node_type in new_nodes_dict
+                            else 0
+                        ),
+                    ]
+                    for node_type in node_dict
+                }
+            else:
+                num_sampled_nodes = {
+                    node_type: [int(nodes.size(0))]
+                    for node_type, nodes in node_dict.items()
+                }
+
             # Build PyG-style edge-index output per PPR edge type.
             # rows_dict and cols_dict are keyed by PPR edge type and give
             # flat local source/destination indices respectively, aligned with
@@ -669,28 +1104,23 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     edge_index = torch.stack([rows, cols])
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
-                    flat_weights = torch.zeros(
-                        0, dtype=torch.double, device=self.device
-                    )
+                    flat_weights = flat_weights.new_zeros((0, *flat_weights.shape[1:]))
                 edge_type_repr = repr(ppr_edge_type)
                 metadata[f"{PPR_EDGE_INDEX_METADATA_KEY}{edge_type_repr}"] = edge_index
                 metadata[f"{PPR_WEIGHT_METADATA_KEY}{edge_type_repr}"] = flat_weights
 
             sample_output = HeteroSamplerOutput(
                 node=node_dict,
-                # row/col/edge are left empty rather than populated with PPR edges because
-                # the virtual (seed_type, "ppr", neighbor_type) edge types are unknown to
-                # GLT: meaning the collate functions would fail trying to process them.
-                # Instead, edge_index and edge_attr tensors are passed through metadata and
-                # attached directly to the data object in the loader's _collate_fn.
-                row={},
-                col={},
-                edge={},  # Empty dict — GLT SampleQueue requires all values to be tensors
+                # Virtual PPR edge types are unknown to GLT, so they are passed
+                # through metadata and attached in the loader's _collate_fn.
+                # Optional original edges use regular GLT row/col output because
+                # those edge types are part of the dataset schema.
+                row=sampled_edges.rows,
+                col=sampled_edges.cols,
+                edge=sampled_edges.edge_ids,
                 batch={input_type: input_seeds},
-                num_sampled_nodes={
-                    node_type: [nodes.size(0)] for node_type, nodes in node_dict.items()
-                },
-                num_sampled_edges={},
+                num_sampled_nodes=num_sampled_nodes,
+                num_sampled_edges=sampled_edges.num_sampled_edges,
                 input_type=input_type,
                 metadata=metadata,
             )
@@ -717,11 +1147,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # source_nodes holds their global IDs (same values as nodes_to_sample).
             source_nodes = inducer.init_node(homogeneous_nodes_to_sample)
 
-            (
-                homogeneous_flat_ids,
-                homogeneous_flat_weights,
-                homogeneous_valid_counts,
-            ) = await self._compute_ppr_scores(homogeneous_nodes_to_sample, None)
+            ppr_result = await self._compute_ppr_scores(
+                homogeneous_nodes_to_sample, None
+            )
+            homogeneous_flat_ids = ppr_result.node_ids
+            homogeneous_flat_weights = ppr_result.weights
+            homogeneous_valid_counts = ppr_result.valid_counts
             assert isinstance(homogeneous_flat_ids, torch.Tensor)
             assert isinstance(homogeneous_flat_weights, torch.Tensor)
             assert isinstance(homogeneous_valid_counts, torch.Tensor)

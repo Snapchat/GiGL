@@ -4,6 +4,7 @@ from typing import Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 from torch_geometric.nn import GraphConv
 
 from gigl.common.logger import Logger
@@ -46,7 +47,7 @@ class NodeAnchorBasedLinkPredictionBaseTask(ABC, nn.Module):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         raise NotImplementedError
 
     @property
@@ -73,7 +74,7 @@ class Softmax(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         assert len(task_input.batch_scores) > 0
         return self.loss(loss_input=task_input.batch_scores, device=device)
 
@@ -96,7 +97,7 @@ class Margin(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         assert len(task_input.batch_scores) > 0
         return self.loss(loss_input=task_input.batch_scores, device=device)
 
@@ -143,7 +144,7 @@ class Retrieval(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         assert len(task_input.batch_combined_scores) > 0
         assert task_input.batch_embeddings is not None
         running_loss = torch.tensor(0.0, device=device)
@@ -244,7 +245,7 @@ class GRACE(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
@@ -306,7 +307,7 @@ class FeatureReconstruction(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         # TODO (mkolodner) Update GraphMAE logic to work in both heterogeneous use case
         if gbml_config_pb_wrapper.graph_metadata_pb_wrapper.is_heterogeneous:
             raise NotImplementedError(
@@ -383,7 +384,7 @@ class WhiteningDecorrelation(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
@@ -445,7 +446,7 @@ class GBT(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
@@ -517,7 +518,7 @@ class BGRL(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
@@ -603,7 +604,7 @@ class TBGRL(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         main_batch = task_input.input_batch.main_batch
         augmented_graph_1 = get_augmented_graph(
             graph=main_batch.graph.to(device=device),
@@ -674,7 +675,7 @@ class DirectAU(NodeAnchorBasedLinkPredictionBaseTask):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Float[torch.Tensor, ""], int]:
         assert task_input.batch_embeddings is not None
         batch_embeddings = task_input.batch_embeddings
         running_loss = torch.tensor(0.0, device=device)
@@ -728,7 +729,7 @@ class NodeAnchorBasedLinkPredictionTasks:
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         should_eval: bool,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, dict[str, float]]:
+    ) -> Tuple[Float[torch.Tensor, ""], dict[str, float]]:
         loss_to_val_map: dict[str, float] = {}
         loss_to_batch_size_map: dict[str, int] = {}
         for task, weight in self._get_all_tasks():
@@ -744,7 +745,7 @@ class NodeAnchorBasedLinkPredictionTasks:
         for loss_type in loss_to_val_map:
             cur_loss = loss_to_val_map[loss_type]
             sample_wise_loss += cur_loss / loss_to_batch_size_map[loss_type]
-        final_loss: torch.Tensor
+        final_loss: Float[torch.Tensor, ""]
         final_loss_map: dict[str, float]
 
         final_loss = sample_wise_loss

@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 from tensorflow_metadata.proto.v0.schema_pb2 import Feature
 
 from gigl.common.logger import Logger
@@ -122,7 +123,9 @@ class FeatureEmbeddingLayer(nn.Module):
             )
             self.__out_dim += emb_dim - feat_dim  # adjust out_dim based on emb_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: Float[torch.Tensor, "nodes input_dim"]
+    ) -> Float[torch.Tensor, "nodes output_dim"]:
         x_non_embed = filter_features(
             feature_schema=self.__feature_schema,
             feature_names=list(self.__non_embed_features),

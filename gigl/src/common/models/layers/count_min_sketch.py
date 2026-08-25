@@ -2,6 +2,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from jaxtyping import Float32, Int64
 
 from gigl.common.logger import Logger
 
@@ -55,7 +56,7 @@ class CountMinSketch(object):
             self.__table[i][hashed_value % self.__width] += delta
         self.__total += delta
 
-    def add_torch_long_tensor(self, tensor: torch.LongTensor) -> None:
+    def add_torch_long_tensor(self, tensor: Int64[torch.LongTensor, "items"]) -> None:
         """
         Add all items in a torch long tensor to the sketch
         """
@@ -79,7 +80,9 @@ class CountMinSketch(object):
             for i, hashed_value in enumerate(hashed_values)
         )
 
-    def estimate_torch_long_tensor(self, tensor: torch.LongTensor) -> torch.LongTensor:
+    def estimate_torch_long_tensor(
+        self, tensor: Int64[torch.LongTensor, "items"]
+    ) -> Int64[torch.LongTensor, "items"]:
         """
         Return the estimated count of all items in a torch long tensor
         """
@@ -97,8 +100,10 @@ class CountMinSketch(object):
 
 
 def calculate_in_batch_candidate_sampling_probability(
-    frequency_tensor: torch.LongTensor, total_cnt: int, batch_size: int
-) -> torch.Tensor:
+    frequency_tensor: Int64[torch.LongTensor, "candidates"],
+    total_cnt: int,
+    batch_size: int,
+) -> Float32[torch.FloatTensor, "candidates"]:
     """
     Calculate in batch negative sampling rate given the frequency tensor, total count and batch size.
     Please see https://www.tensorflow.org/extras/candidate_sampling.pdf for more details
@@ -117,4 +122,4 @@ def calculate_in_batch_candidate_sampling_probability(
     estimated_prob: torch.FloatTensor = (
         batch_size * frequency_tensor.float() / total_cnt
     )  # ty: ignore[invalid-assignment] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
-    return estimated_prob.clamp(max=1.0)
+    return estimated_prob.clamp(max=1.0)  # ty: ignore[invalid-return-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.

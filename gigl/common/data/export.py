@@ -20,6 +20,7 @@ import torch
 from google.cloud import bigquery
 from google.cloud.bigquery.job import LoadJob
 from google.cloud.exceptions import GoogleCloudError
+from jaxtyping import Int64, Shaped
 from typing_extensions import Self
 
 from gigl.common import GcsUri, LocalUri, Uri
@@ -249,10 +250,10 @@ class EmbeddingExporter(GcsExporter):
 
     def add_embedding(
         self,
-        id_batch: torch.Tensor,
-        embedding_batch: torch.Tensor,
+        id_batch: Int64[torch.Tensor, "batch"],
+        embedding_batch: Shaped[torch.Tensor, "batch embedding_dim"],
         embedding_type: str,
-    ):
+    ) -> None:
         """
         Adds to the in-memory buffer the integer IDs and their corresponding embeddings.
 
@@ -308,10 +309,10 @@ class PredictionExporter(GcsExporter):
 
     def add_prediction(
         self,
-        id_batch: torch.Tensor,
-        prediction_batch: torch.Tensor,
+        id_batch: Int64[torch.Tensor, "batch"],
+        prediction_batch: Shaped[torch.Tensor, "batch"],
         prediction_type: str,
-    ):
+    ) -> None:
         """
         Adds to the in-memory buffer the integer IDs and their corresponding predictions.
 

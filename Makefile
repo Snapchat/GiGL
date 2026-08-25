@@ -43,8 +43,6 @@ GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yam
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-# Find all markdown files in the repo except for those in .venv, tools, or cmake cache directories.
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -120,9 +118,12 @@ check_format_scala:
 	( cd scala; sbt "scalafmtCheckAll; scalafixAll --check"; )
 	( cd scala_spark35; sbt "scalafmtCheckAll; scalafixAll --check"; )
 
+# Markdown (plus toml/dockerfile/cmake) formatting is handled by dprint; file
+# scoping (e.g. excluding .claude/skills, whose SKILL.md YAML frontmatter
+# formatters corrupt) lives in dprint.json.
 check_format_md:
 	@echo "Checking markdown files..."
-	uv run mdformat --check ${MD_FILES}
+	uv run dprint check
 
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
@@ -165,7 +166,7 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	uv run mdformat ${MD_FILES}
+	uv run dprint fmt
 
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
@@ -227,7 +228,7 @@ push_dev_workbench_docker_image: compile_jars
 run_cora_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_nalp_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_nalp_test"
@@ -235,7 +236,7 @@ run_cora_nalp_e2e_test:
 run_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_snc_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_snc_test"
@@ -243,7 +244,7 @@ run_cora_snc_e2e_test:
 run_cora_udl_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_udl_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_udl_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_udl_test"
@@ -251,7 +252,7 @@ run_cora_udl_e2e_test:
 run_dblp_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_dblp_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_dblp_nalp_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="dblp_nalp_test"
@@ -259,7 +260,7 @@ run_dblp_nalp_e2e_test:
 run_hom_cora_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_test"
@@ -267,7 +268,7 @@ run_hom_cora_sup_e2e_test:
 run_het_dblp_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_test"
@@ -275,7 +276,7 @@ run_het_dblp_sup_e2e_test:
 run_hom_cora_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_gs_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_gs_test"
@@ -283,7 +284,7 @@ run_hom_cora_sup_gs_e2e_test:
 run_het_dblp_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_gs_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_gs_test"
@@ -291,7 +292,7 @@ run_het_dblp_sup_gs_e2e_test:
 run_hom_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_snc_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
@@ -299,7 +300,7 @@ run_hom_cora_snc_e2e_test:
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
 

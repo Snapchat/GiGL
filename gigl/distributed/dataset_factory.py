@@ -25,6 +25,7 @@ from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
+    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -180,6 +181,10 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_node_features(
             node_features=loaded_graph_tensors.node_features
         )
+    if loaded_graph_tensors.node_quantized_features is not None:
+        partitioner.register_node_quantized_features(
+            node_quantized_features=loaded_graph_tensors.node_quantized_features
+        )
     if loaded_graph_tensors.node_labels is not None:
         partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
     if loaded_graph_tensors.edge_weights is not None:
@@ -189,6 +194,10 @@ def _load_and_build_partitioned_dataset(
     if loaded_graph_tensors.edge_features is not None:
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
+        )
+    if loaded_graph_tensors.edge_quantized_features is not None:
+        partitioner.register_edge_quantized_features(
+            edge_quantized_features=loaded_graph_tensors.edge_quantized_features
         )
     if loaded_graph_tensors.positive_label is not None:
         partitioner.register_labels(
@@ -205,8 +214,10 @@ def _load_and_build_partitioned_dataset(
     del (
         loaded_graph_tensors.node_ids,
         loaded_graph_tensors.node_features,
+        loaded_graph_tensors.node_quantized_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
+        loaded_graph_tensors.edge_quantized_features,
         loaded_graph_tensors.edge_weights,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,
@@ -217,7 +228,16 @@ def _load_and_build_partitioned_dataset(
     partition_output = partitioner.partition()
 
     logger.info(f"Initializing DistDataset instance with edge direction {edge_dir}")
-    dataset = DistDataset(rank=rank, world_size=world_size, edge_dir=edge_dir)
+    dataset = DistDataset(
+        rank=rank,
+        world_size=world_size,
+        edge_dir=edge_dir,
+        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
+        edge_quantization_metadata=remove_sampling_weight_from_edge_quantization_metadata(
+            serialized_graph_metadata=serialized_graph_metadata,
+            weight_edge_feat_name=weight_edge_feat_name,
+        ),
+    )
 
     dataset.build(
         partition_output=partition_output,

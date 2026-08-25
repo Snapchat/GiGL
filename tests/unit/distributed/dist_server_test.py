@@ -1,10 +1,11 @@
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import torch
 from absl.testing import absltest
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
+from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.graph_store import dist_server
 from gigl.distributed.graph_store.messages import (
     FetchABLPInputRequest,
@@ -12,8 +13,10 @@ from gigl.distributed.graph_store.messages import (
     InitSamplingBackendRequest,
     RegisterBackendRequest,
 )
+from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.graph_store.sharding import ServerSlice
 from gigl.src.common.types.graph_data import Relation
+from gigl.types.graph import FeatureQuantizationMetadata
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -61,6 +64,74 @@ class TestRemoteDataset(TestCase):
 
         # Verify it returns the correct feature info
         self.assertIsNone(node_feature_info)
+
+    def test_get_quantization_metadata(self) -> None:
+        node_metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=2,
+            quantized_feature_indices=(0, 1),
+            clip_min=0.0,
+            clip_max=3.0,
+        )
+        edge_metadata = {
+            USER_TO_STORY: FeatureQuantizationMetadata(
+                bits=4,
+                feature_dim=3,
+                quantized_feature_indices=(0, 2),
+                clip_min=-1.0,
+                clip_max=1.0,
+            )
+        }
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata=node_metadata,
+            edge_quantization_metadata=edge_metadata,
+        )
+
+        server = dist_server.DistServer(dataset)
+
+        self.assertEqual(server.get_node_quantization_metadata(), node_metadata)
+        self.assertEqual(server.get_edge_quantization_metadata(), edge_metadata)
+
+    def test_remote_dataset_fetches_quantization_metadata(self) -> None:
+        node_metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=2,
+            quantized_feature_indices=(0, 1),
+            clip_min=0.0,
+            clip_max=3.0,
+        )
+        edge_metadata = {
+            USER_TO_STORY: FeatureQuantizationMetadata(
+                bits=4,
+                feature_dim=3,
+                quantized_feature_indices=(0, 2),
+                clip_min=-1.0,
+                clip_max=1.0,
+            )
+        }
+        with patch(
+            "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+            side_effect=[node_metadata, edge_metadata],
+        ) as request_server:
+            remote_dataset = RemoteDistDataset(cluster_info=MagicMock(), local_rank=0)
+
+            self.assertEqual(
+                remote_dataset.fetch_node_quantization_metadata(), node_metadata
+            )
+            self.assertEqual(
+                remote_dataset.fetch_edge_quantization_metadata(), edge_metadata
+            )
+
+        self.assertEqual(
+            request_server.call_args_list,
+            [
+                call(0, dist_server.DistServer.get_node_quantization_metadata),
+                call(0, dist_server.DistServer.get_edge_quantization_metadata),
+            ],
+        )
 
     def test_get_edge_feature_info_with_heterogeneous_dataset(self) -> None:
         """Test get_edge_feature_info with a heterogeneous dataset."""

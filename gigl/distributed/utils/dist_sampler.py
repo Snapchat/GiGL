@@ -1,5 +1,6 @@
 """Sampler factory helpers shared across sampling producers."""
 
+import random
 from typing import Optional, Union
 
 import torch
@@ -56,6 +57,40 @@ def create_dist_sampler(
 
     Raises:
         NotImplementedError: If ``sampler_options`` is an unsupported type.
+
+    Note:
+        When ``sampling_config.seed`` is unset we draw one here, per worker. The seed
+        belongs to the process that samples rather than to the config: the config is shared
+        across ranks in Graph Store mode and compared for equality, so a value drawn while
+        building it would differ per rank and be rejected.
+
+        A seed is a large performance win, not just a determinism knob. GLT's
+        ``CPURandomSampler::UniformSample`` reads
+        ``RandomSeedManager::getInstance().getSeed()`` on **every** call, and that call
+        happens once per source row of a batch:
+
+        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L144
+        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L165
+
+        The ``std::mt19937`` it feeds is ``thread_local static``, so after the first call
+        the read is discarded -- but it still runs. With no seed set, ``getSeed()``
+        constructs a ``std::random_device`` and draws from it, about 5 us of real work per
+        source row for a value that is thrown away:
+
+        - https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/common.h#L48-L56
+
+        For the production use case we see up to 7x speed up, and 29x speedup in local
+        testing.
+
+        Passing the seed to the sampler is what sets it: GLT calls
+        ``RandomSeedManager::getInstance().setSeed`` from ``NeighborSampler.__init__`` only
+        when the seed is not ``None``. That manager is process-global and the generator it
+        feeds is ``thread_local``, so the first sampler built on a worker thread fixes that
+        thread's stream. Per-channel seeds therefore are not a determinism guarantee.
+
+        TODO(kmonte): Drop this workaround if GLT ever hoists the ``getSeed()`` call out
+        of ``CPURandomSampler::UniformSample`` and into the engine initializer, so the
+        unseeded path stops paying per-row entropy.
     """
     shared_sampler_kwargs = dict(
         data=data,
@@ -69,7 +104,11 @@ def create_dist_sampler(
         use_all2all=worker_options.use_all2all,
         concurrency=worker_options.worker_concurrency,
         device=current_device,
-        seed=sampling_config.seed,
+        seed=(
+            sampling_config.seed
+            if sampling_config.seed is not None
+            else random.getrandbits(32)
+        ),
     )
     if isinstance(sampler_options, KHopNeighborSamplerOptions):
         sampler: SamplerRuntime = DistNeighborSampler(
@@ -85,6 +124,8 @@ def create_dist_sampler(
             enable_residual_topup=sampler_options.enable_residual_topup,
             max_fetch_iterations=sampler_options.max_fetch_iterations,
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
+            typed_channel_ratios=sampler_options.typed_channel_ratios,
+            include_sampled_edges=sampler_options.include_sampled_edges,
             degree_tensors=degree_tensors,
         )
     else:
