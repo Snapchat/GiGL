@@ -362,11 +362,11 @@ def resolve_configs(
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig]:
     """Resolve task and resource configs into self-contained protobufs."""
     proto_utils = ProtoUtils()
-    task_config = proto_utils.compose_proto_from_yaml(
+    task_config = proto_utils.read_proto_from_yaml(
         uri=task_config_uri,
         proto_cls=gbml_config_pb2.GbmlConfig,
     )
-    resource_config = proto_utils.compose_proto_from_yaml(
+    resource_config = proto_utils.read_proto_from_yaml(
         uri=resource_config_uri,
         proto_cls=GiglResourceConfig,
     )

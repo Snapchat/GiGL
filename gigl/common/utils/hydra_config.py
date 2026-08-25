@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
+from hydra.initialize import get_gh_backup, restore_gh_from_backup
 from omegaconf import OmegaConf
 
 from gigl.common import LocalUri
@@ -20,6 +21,9 @@ _COMPOSE_LOCK = threading.RLock()
 def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
     """Compose a YAML config with Hydra using its parent as the config root.
 
+    A foreign Hydra context (e.g. a user application under ``@hydra.main``)
+    is snapshotted before composition and restored afterwards.
+
     Args:
         uri: Primary YAML config URI.
 
@@ -28,7 +32,6 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
 
     Raises:
         ValueError: If the result is not a mapping.
-        RuntimeError: If another Hydra application owns the global context.
     """
     primary_name = uri.get_basename()
     config_name = primary_name.rsplit(".", 1)[0]
@@ -36,10 +39,11 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
     config_root = Path(uri.uri).absolute().parent
 
     with _COMPOSE_LOCK:
-        if GlobalHydra.instance().is_initialized():
-            raise RuntimeError(
-                "GiGL cannot compose a config while another Hydra context is active."
-            )
+        # Hydra's compose API owns the process-global GlobalHydra singleton,
+        # so the swap below cannot protect user threads composing concurrently
+        # outside this lock.
+        gh_backup = get_gh_backup()
+        GlobalHydra.instance().clear()
         try:
             with initialize_config_dir(
                 config_dir=os.fspath(config_root),
@@ -63,6 +67,7 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
                 now_resolver,
                 replace=True,
             )
+            restore_gh_from_backup(gh_backup)
 
     if not isinstance(resolved, dict):
         raise ValueError(

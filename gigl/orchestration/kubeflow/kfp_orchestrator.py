@@ -148,7 +148,7 @@ class KfpOrchestrator:
         logger.info(f"Skipping pipeline compilation; will use {compiled_pipeline_path}")
 
         resource_config = GiglResourceConfigWrapper(
-            ProtoUtils().compose_proto_from_yaml(
+            ProtoUtils().read_proto_from_yaml(
                 uri=resource_config_uri,
                 proto_cls=GiglResourceConfig,
             )

@@ -83,11 +83,11 @@ def assert_configs_parse(directories: list[str], ignore_regex: list[str] = []) -
                     yaml_file = LocalUri(file_path)
                     try:
                         if "resource_config" in file:
-                            proto_utils.compose_proto_from_yaml(
+                            proto_utils.read_proto_from_yaml(
                                 yaml_file, GiglResourceConfig
                             )
                         elif "task_config" in file:
-                            proto_utils.compose_proto_from_yaml(yaml_file, GbmlConfig)
+                            proto_utils.read_proto_from_yaml(yaml_file, GbmlConfig)
                         else:
                             continue
                         logger.info(f"{yaml_file} parsed successfully.")

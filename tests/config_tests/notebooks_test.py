@@ -62,7 +62,7 @@ class TestExampleNotebooks(unittest.TestCase):
             resource_config_source_uri, LocalUri
         ) and resource_config_source_uri.get_basename().endswith(".yaml"):
             resource_config = GiglResourceConfigWrapper(
-                ProtoUtils().compose_proto_from_yaml(
+                ProtoUtils().read_proto_from_yaml(
                     uri=resource_config_source_uri,
                     proto_cls=GiglResourceConfig,
                 )

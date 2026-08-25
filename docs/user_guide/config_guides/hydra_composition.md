@@ -2,14 +2,16 @@
 
 Task and resource configs can use [Hydra Defaults Lists](https://hydra.cc/docs/advanced/defaults_list/) by adding a
 top-level `defaults` list. ConfigValidator composes every source config before publishing plain YAML snapshots.
-`ProtoUtils.read_proto_from_yaml` remains the URI-agnostic, non-composing reader; `ProtoUtils.compose_proto_from_yaml`
-is the URI-agnostic composition API.
+`ProtoUtils.read_proto_from_yaml` is the single URI-agnostic reader: every YAML config it reads is composed with Hydra.
+Configs without a `defaults` list compose to themselves, so plain configs and materialized snapshots read unchanged.
+Composition snapshots and restores any active foreign Hydra context, so reads also work inside a user application under
+`@hydra.main`.
 
 ## Config root
 
-The primary file's parent directory is its Hydra config root. GiGL does not prevalidate filename extensions; Hydra 1.3
-resolves local config names with its `.yaml` convention. Remote primaries are staged with a `.yaml` extension before
-composition.
+The primary file's parent directory is its Hydra config root. Hydra 1.3 resolves local config names with its `.yaml`
+convention. Remote primaries, and local files not named `*.yaml`, are staged to a temporary `.yaml` file and composed
+standalone.
 
 ```text
 configs/

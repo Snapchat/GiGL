@@ -6,8 +6,9 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from unittest.mock import patch
 
 from absl.testing import absltest
-from hydra import initialize_config_dir
-from hydra.errors import MissingConfigException
+from hydra import compose, initialize_config_dir
+from hydra.core.global_hydra import GlobalHydra
+from hydra.errors import ConfigCompositionException, MissingConfigException
 from omegaconf import OmegaConf
 
 from gigl.common import LocalUri
@@ -76,13 +77,13 @@ class ProtoUtilsTest(TestCase):
             f"{expected_positive_label_date_range_start}:{expected_positive_label_date_range_end}",
         )
 
-    def test_read_proto_from_yaml_raises_typeerror_when_root_is_not_a_mapping(self):
+    def test_read_proto_from_yaml_raises_when_root_is_not_a_mapping(self):
         list_yaml = "- a\n- b\n- c\n"
         tmp_file = NamedTemporaryFile(delete=False)
         tmp_file.write(list_yaml.encode())
         tmp_file.close()
         try:
-            with self.assertRaises(TypeError):
+            with self.assertRaises(ConfigCompositionException):
                 self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(tmp_file.name),
                     proto_cls=gbml_config_pb2.GbmlConfig,
@@ -107,7 +108,7 @@ class ProtoUtilsTest(TestCase):
                 "isGraphDirected: true\n"
             )
 
-            task_config = self.proto_utils.compose_proto_from_yaml(
+            task_config = self.proto_utils.read_proto_from_yaml(
                 uri=LocalUri(config_root / "task.yaml"),
                 proto_cls=gbml_config_pb2.GbmlConfig,
             )
@@ -134,7 +135,7 @@ class ProtoUtilsTest(TestCase):
                 "  temp_regional_assets_bucket: gs://example-bucket\n"
             )
 
-            resource_config = self.proto_utils.compose_proto_from_yaml(
+            resource_config = self.proto_utils.read_proto_from_yaml(
                 uri=LocalUri(config_root / "resource.yaml"),
                 proto_cls=GiglResourceConfig,
             )
@@ -201,7 +202,7 @@ class ProtoUtilsTest(TestCase):
                 'run_name: "${now:%Y%m%d}"\n'
             )
 
-            resource_config = self.proto_utils.compose_proto_from_yaml(
+            resource_config = self.proto_utils.read_proto_from_yaml(
                 uri=LocalUri(config_path),
                 proto_cls=GiglResourceConfig,
             )
@@ -224,7 +225,7 @@ class ProtoUtilsTest(TestCase):
             )
 
             with patch.dict(os.environ, {"PROJECT_ID": "example-project"}):
-                resource_config = self.proto_utils.compose_proto_from_yaml(
+                resource_config = self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
@@ -256,7 +257,7 @@ class ProtoUtilsTest(TestCase):
             )
 
             with patch.dict(os.environ, {"RESOURCE_PROFILE": "local"}):
-                resource_config = self.proto_utils.compose_proto_from_yaml(
+                resource_config = self.proto_utils.read_proto_from_yaml(
                     uri=LocalUri(config_path),
                     proto_cls=GiglResourceConfig,
                 )
@@ -281,7 +282,7 @@ class ProtoUtilsTest(TestCase):
             def read_config(_: int) -> bool:
                 return (
                     ProtoUtils()
-                    .compose_proto_from_yaml(
+                    .read_proto_from_yaml(
                         uri=LocalUri(config_path),
                         proto_cls=gbml_config_pb2.GbmlConfig,
                     )
@@ -297,17 +298,21 @@ class ProtoUtilsTest(TestCase):
         with TemporaryDirectory() as temp_directory:
             config_root = Path(temp_directory)
             config_path = config_root / "task.yaml"
-            config_path.write_text("defaults:\n  - _self_\n")
+            config_path.write_text("sharedConfig:\n  isGraphDirected: true\n")
+            (config_root / "user_app.yaml").write_text("val: user\n")
 
             with initialize_config_dir(
                 config_dir=str(config_root),
                 version_base="1.3",
             ):
-                with self.assertRaises(RuntimeError):
-                    self.proto_utils.compose_proto_from_yaml(
-                        uri=LocalUri(config_path),
-                        proto_cls=gbml_config_pb2.GbmlConfig,
-                    )
+                task_config = self.proto_utils.read_proto_from_yaml(
+                    uri=LocalUri(config_path),
+                    proto_cls=gbml_config_pb2.GbmlConfig,
+                )
+
+                self.assertTrue(task_config.shared_config.is_graph_directed)
+                self.assertTrue(GlobalHydra.instance().is_initialized())
+                self.assertEqual(compose(config_name="user_app").val, "user")
 
     def test_composition_restores_gigl_resolvers_after_failure(self):
         with TemporaryDirectory() as temp_directory:
