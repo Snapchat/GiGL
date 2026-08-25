@@ -94,10 +94,12 @@ must be available wherever the source config is composed.
 ## Pipeline behavior
 
 ConfigValidator composes both primary configs, writes fully resolved plain-protobuf YAML snapshots, initializes its
-runtime from those exact snapshots, and validates them before publishing its outputs. Every downstream pipeline
-component receives those snapshot URIs. ConfigValidator follows the run's KFP caching settings: relaunching a pipeline
-with the same job name reuses the previous resolved snapshots instead of recomposing. After editing config fragments,
-use a new job name (or disable caching for the run) to recompose.
+runtime from those exact snapshots, and validates them before publishing its outputs. Source comments do not survive
+composition; each snapshot starts with a `# Resolved Hydra config from: <source uri>` provenance comment instead, where
+a container-local source is prefixed with its docker image. Every downstream pipeline component receives those snapshot
+URIs. ConfigValidator follows the run's KFP caching settings: relaunching a pipeline with the same job name reuses the
+previous resolved snapshots instead of recomposing. After editing config fragments, use a new job name (or disable
+caching for the run) to recompose.
 
 The final composed mapping must still be a valid `GbmlConfig` or `GiglResourceConfig`. Protobuf parsing remains the
 schema and type validation boundary.

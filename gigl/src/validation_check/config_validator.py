@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from gigl.common import GcsUri, Uri, UriFactory
+from gigl.common import GcsUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils, proto_to_yaml
@@ -404,13 +404,25 @@ def materialize_resolved_configs(
     job_name: str,
     task_config: gbml_config_pb2.GbmlConfig,
     resource_config: GiglResourceConfig,
+    task_config_source: str,
+    resource_config_source: str,
 ) -> tuple[GcsUri, GcsUri]:
     """Write resolved task and resource configs to stable GCS paths.
 
+    Each snapshot starts with a provenance comment naming the source config it
+    was composed from.
+
     Args:
         job_name: Unique name for the pipeline run.
+
         task_config: Resolved task config protobuf.
+
         resource_config: Resolved, self-contained resource config protobuf.
+
+        task_config_source: Provenance label for the task config source.
+
+        resource_config_source: Provenance label for the resource config
+            source.
 
     Returns:
         The resolved task and resource config URIs.
@@ -426,13 +438,30 @@ def materialize_resolved_configs(
     gcs_utils = GcsUtils(project=resource_config_wrapper.project)
     gcs_utils.upload_from_string(
         gcs_path=task_config_uri,
-        content=proto_to_yaml(task_config),
+        content=(
+            f"# Resolved Hydra config from: {task_config_source}\n"
+            + proto_to_yaml(task_config)
+        ),
     )
     gcs_utils.upload_from_string(
         gcs_path=resource_config_uri,
-        content=proto_to_yaml(resource_config),
+        content=(
+            f"# Resolved Hydra config from: {resource_config_source}\n"
+            + proto_to_yaml(resource_config)
+        ),
     )
     return task_config_uri, resource_config_uri
+
+
+def _source_config_label(uri: Uri, docker_uri: Optional[str]) -> str:
+    """Provenance label for a source config.
+
+    A local path only identifies the source together with the image it is
+    baked into, so it is prefixed with the docker image when one is known.
+    """
+    if isinstance(uri, LocalUri) and docker_uri:
+        return f"{docker_uri}:{uri}"
+    return f"{uri}"
 
 
 def _write_kfp_output(path: str, value: str) -> None:
@@ -517,6 +546,12 @@ if __name__ == "__main__":
         job_name=args.job_name,
         task_config=task_config,
         resource_config=resource_config,
+        task_config_source=_source_config_label(
+            task_config_uri, args.cpu_docker_uri
+        ),
+        resource_config_source=_source_config_label(
+            resource_config_uri, args.cpu_docker_uri
+        ),
     )
 
     # Validation imports user-defined classes. Initialize the historical runtime

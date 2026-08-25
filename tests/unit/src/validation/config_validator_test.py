@@ -417,9 +417,17 @@ class TestConfigValidationPerSGSBackends(TestCase):
             job_name="config-resolution-test",
             task_config=task_config,
             resource_config=resource_config,
+            task_config_source=str(task_config_path),
+            resource_config_source=str(resource_config_path),
         )
 
         self.assertEqual(task_uri.get_basename(), "resolved_task_config.yaml")
+        self.assertEqual(
+            (snapshot_directory / "resolved_task_config.yaml")
+            .read_text()
+            .splitlines()[0],
+            f"# Resolved Hydra config from: {task_config_path}",
+        )
         self.assertEqual(resource_uri.get_basename(), "resolved_resource_config.yaml")
         materialized_task_config = self._proto_utils.read_proto_from_yaml(
             UriFactory.create_uri(
