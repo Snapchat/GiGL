@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Make sampling-loader bring-up and steady-state RPC timeouts configurable via `GIGL_SAMPLING_RPC_TIMEOUT_SECONDS`,
+  `GIGL_SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS`, and `GIGL_SAMPLING_WORKER_INIT_TIMEOUT_SECONDS`; a sampling worker
+  dying before its init barrier now fails the job with the dead workers' ranks and exit codes instead of hanging by
+  @dsaini2 in https://github.com/Snapchat/GiGL/pull/PENDING
+
 ### Removed
 
 - Remove the deprecated `RESOURCE_CONFIG_PATH` environment variable; use `GIGL_RESOURCE_CONFIG_URI` instead by
