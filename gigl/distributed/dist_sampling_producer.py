@@ -39,8 +39,8 @@ from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
 from gigl.distributed.constants import (
-    SAMPLING_WORKER_INIT_TIMEOUT_ENV,
-    sampling_steady_state_rpc_timeout_seconds,
+    SAMPLING_RPC_INIT_TIMEOUT_ENV,
+    SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS,
     sampling_worker_init_timeout_seconds,
 )
 from gigl.distributed.sampler_options import SamplerOptions
@@ -58,14 +58,15 @@ def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> Non
     before a stuck request surfaces. The init barrier is precisely the boundary between the two
     regimes, so the worker narrows the timeout immediately after passing it.
 
-    A no-op when the steady-state value already equals the bring-up value.
+    A no-op when the bring-up value already equals the steady-state value.
     """
-    steady_state_timeout = sampling_steady_state_rpc_timeout_seconds()
-    if steady_state_timeout != bringup_rpc_timeout:
-        torch.distributed.rpc._set_rpc_timeout(float(steady_state_timeout))
+    if SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS != bringup_rpc_timeout:
+        torch.distributed.rpc._set_rpc_timeout(
+            float(SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS)
+        )
         logger.info(
             f"sampling worker {rank} past init barrier; RPC request timeout narrowed from "
-            f"{bringup_rpc_timeout}s (bring-up) to {steady_state_timeout}s"
+            f"{bringup_rpc_timeout}s (bring-up) to {SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS}s"
         )
 
 
@@ -298,6 +299,6 @@ class DistSamplingProducer(DistMpSamplingProducer):
             raise RuntimeError(
                 f"sampling workers did not reach the init barrier within {timeout_seconds}s; "
                 f"{diagnosis}. A worker that loses GLT's init_rpc gather dies before this "
-                f"barrier. Raise {SAMPLING_WORKER_INIT_TIMEOUT_ENV} if init is legitimately "
-                f"slower than this on a cold cache."
+                f"barrier. Raise {SAMPLING_RPC_INIT_TIMEOUT_ENV} (this bound is a multiple of "
+                f"it) if init is legitimately slower than this on a cold cache."
             ) from None
