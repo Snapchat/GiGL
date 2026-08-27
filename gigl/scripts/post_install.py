@@ -54,7 +54,10 @@ def main():
         print(f"Executing {cmd}...")
         result = run_command_and_stream_stdout(cmd)
         print("Post-install script finished running, with return code: ", result)
-        return result
+        # The status must live in this process's exit code, not just the log line above: image
+        # builds invoke this file directly, and a swallowed failure here ships an image whose
+        # GLT wheel never built, installed, or verified
+        return 1 if result is None else result
 
     except subprocess.CalledProcessError as e:
         print(f"Error running install_glt.sh: {e}")
@@ -65,4 +68,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

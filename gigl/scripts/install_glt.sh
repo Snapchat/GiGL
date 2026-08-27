@@ -44,11 +44,25 @@ then
     # * https://github.com/alibaba/graphlearn-for-pytorch/pull/153
     # * https://github.com/alibaba/graphlearn-for-pytorch/pull/151
     # Thus, checking out a specific commit instead of a tagged version.
+    # Resolve this script's directory BEFORE cd'ing, so the patch path survives the cd below.
+    GIGL_SCRIPTS_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
     git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
         && cd graphlearn-for-pytorch \
         && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
         && git submodule update --init \
         && bash install_dependencies.sh
+    # Local patches applied on top of the pinned commit, in order. 0001 replaces the
+    # at::_unique distinct-count in InitCPUGraphFromCSR with an exact bitmap count: _unique's
+    # sort allocates ~3x the size of `indices` transiently (measured 3.00x at 200M edges), which
+    # is ~94 GiB at a 4.2B-edge partition and OOM-kills the graph init on hosts whose budget
+    # assumes init holds no copy of the topology. `patch` rather than `git apply` so failure
+    # modes are the familiar reject files; `--forward` + explicit failure so a re-run or an
+    # upstream change that absorbs the fix stops the build LOUDLY instead of shipping an
+    # unpatched wheel that dies 3 hours into a 16-GPU job.
+    for glt_patch in "${GIGL_SCRIPTS_DIR}"/patches/*.patch; do
+        echo "Applying ${glt_patch}"
+        patch -p1 --forward < "${glt_patch}" || { echo "FATAL: ${glt_patch} did not apply"; exit 1; }
+    done
     if has_cuda_driver;
     then
         echo "Will use CUDA for GLT..."
@@ -72,6 +86,13 @@ then
     uv pip install dist/*.whl \
         && cd .. \
         && rm -rf graphlearn-for-pytorch
+    # Applying a patch and SHIPPING it are different guarantees: the loop above proves the source
+    # tree changed, this proves the installed .so behaves. A stale build dir or a second wheel on
+    # the path would otherwise produce an image that silently OOMs (0001) or rejects the int32
+    # topology the trainer builds (0002), hours into a multi-GPU job.
+    echo "Verifying the GLT patches took effect in the installed wheel"
+    python "${GIGL_SCRIPTS_DIR}/verify_glt_patches.py" \
+        || { echo "FATAL: GLT patches did not take effect in the installed wheel"; exit 1; }
 else
     echo "Skipping install of GraphLearn-Torch on Mac"
 fi
