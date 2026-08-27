@@ -1,0 +1,131 @@
+diff --git a/graphlearn_torch/csrc/shm_queue.cc b/graphlearn_torch/csrc/shm_queue.cc
+index 11302e7..b7d3c75 100644
+--- a/graphlearn_torch/csrc/shm_queue.cc
++++ b/graphlearn_torch/csrc/shm_queue.cc
+@@ -18,6 +18,7 @@ limitations under the License.
+ #include <sys/shm.h>
+ 
+ #include <cassert>
++#include <cstdio>
+ #include <cstring>
+ #include <thread>
+ 
+@@ -241,19 +242,67 @@ bool ShmQueue::Empty() {
+ 
+ void ShmQueue::PinMemory() {
+ #ifdef WITH_CUDA
++  auto* deleter = std::get_deleter<ShmQueueMetaDeleter>(meta_);
++  if (deleter == nullptr || deleter->pinned) {
++    // Already pinned by this process: cudaHostRegister would reject the
++    // re-registration of the same range, so a second call is a no-op rather
++    // than an error. A null deleter cannot happen with the constructors
++    // above; refusing to register in that case keeps the invariant that
++    // every registration has a recorded owner to unregister it.
++    return;
++  }
+   cudaHostRegister(meta_.get(), shm_size_, cudaHostRegisterMapped);
+   CUDACheckError();
++  deleter->pinned = true;
+ #endif
+ }
+ 
+ void ShmQueue::ShmQueueMetaDeleter::operator()(ShmQueueMeta* meta_ptr) {
++  bool detach = true;
+   if (meta_ptr) {
+-    if (shmid > 0) {
++#ifdef WITH_CUDA
++    if (pinned) {
++      // cudaHostRegister (PinMemory) is per-process driver state keyed on
++      // this mapping's address range, and the shmdt below does NOT clear it.
++      // A dangling registration poisons whatever mapping later reuses these
++      // addresses: the next overlapping registration or mapped allocation
++      // fails with "resource already mapped", asynchronously and far from
++      // here (observed as torch.AcceleratorError in the first backward pass
++      // after tearing down a pinned loader channel).
++      //
++      // Destructor context, so nothing here may throw or exit. The sticky
++      // per-thread error is cleared BEFORE the call so an unrelated earlier
++      // failure cannot masquerade as ours, and the DIRECT status decides:
++      // NotRegistered (someone beat us to it) and CudartUnloading (process
++      // exit, context already gone) proceed to detach; any other failure
++      // keeps the mapping attached, because a live registration on a live
++      // mapping is harmless while a stale one on a reused range is the
++      // exact bug this patch removes. The kernel detaches at process exit
++      // and IPC_RMID below still marks the segment for destruction, so
++      // nothing outlives the process either way.
++      (void)cudaGetLastError();
++      cudaError_t unregister_status = cudaHostUnregister(meta_ptr);
++      if (unregister_status != cudaSuccess &&
++          unregister_status != cudaErrorHostMemoryNotRegistered &&
++          unregister_status != cudaErrorCudartUnloading) {
++        fprintf(stderr,
++                "ShmQueue teardown: cudaHostUnregister failed (%s); keeping "
++                "the mapping attached rather than leaving a stale pinned "
++                "registration on a reusable address range.\n",
++                cudaGetErrorString(unregister_status));
++        detach = false;
++      }
++      (void)cudaGetLastError();
++    }
++#endif
++    if (shmid >= 0) {
+       meta_ptr->Finalize();
+     }
+-    Check(shmdt(meta_ptr) != -1, "shmdt failed!");
++    if (detach) {
++      Check(shmdt(meta_ptr) != -1, "shmdt failed!");
++    }
+   }
+-  if (shmid > 0) {
++  if (shmid >= 0) {
+     Check(shmctl(shmid, IPC_RMID, 0) != -1, "shmctl(IPC_RMID) failed!");
+   }
+ }
+diff --git a/graphlearn_torch/include/shm_queue.h b/graphlearn_torch/include/shm_queue.h
+index 5eefe97..bd00916 100644
+--- a/graphlearn_torch/include/shm_queue.h
++++ b/graphlearn_torch/include/shm_queue.h
+@@ -227,12 +227,21 @@ private:
+   /// Deleter to release shared memory when the underlying meta is shared
+   /// by multiple shared_ptrs.
+   struct ShmQueueMetaDeleter {
+-    /// If "shmid > 0", which means current instance of `ShmQueue` is the
+-    /// creator of the underlying shm, thus, `shmctl` should be called after
+-    /// detaching the shm in this deleter. Otherwise, current instance is not
+-    /// the creator and only need to detach the shm with `shmdt`.
++    /// If "shmid >= 0", current instance of `ShmQueue` is the creator of the
++    /// underlying shm, thus, `shmctl` should be called after detaching the
++    /// shm in this deleter. Otherwise (-1, the attach constructor's marker),
++    /// current instance is not the creator and only needs to detach with
++    /// `shmdt`. The creator test MUST include zero: shmget returns ids from
++    /// 0 in a fresh IPC namespace, so the first segment every containerized
++    /// process creates has shmid 0 -- under the old `> 0` test its creator
++    /// never removed it (no IPC_RMID, no Finalize).
+     int shmid;
+-    explicit ShmQueueMetaDeleter(int shmid) : shmid(shmid) {}
++    /// Whether this process pinned this mapping via `PinMemory`. The deleter
++    /// is the one place guaranteed to run exactly when the LAST local user of
++    /// the mapping goes away (a queue and its in-flight `ShmData` messages
++    /// share one meta_), so it owns the matching `cudaHostUnregister`.
++    bool pinned;
++    explicit ShmQueueMetaDeleter(int shmid) : shmid(shmid), pinned(false) {}
+     void operator()(ShmQueueMeta* meta_ptr);
+   };
+   std::shared_ptr<ShmQueueMeta> meta_;
+diff --git a/graphlearn_torch/python/py_export_glt.cc b/graphlearn_torch/python/py_export_glt.cc
+index e70ab36..12c013e 100644
+--- a/graphlearn_torch/python/py_export_glt.cc
++++ b/graphlearn_torch/python/py_export_glt.cc
+@@ -129,6 +129,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+   py::class_<SampleQueue>(m, "SampleQueue")
+     .def(py::init<size_t, size_t>(), py::arg("capacity"), py::arg("buf_size"))
+     .def("pin_memory", &SampleQueue::PinMemory)
++    // Compiled capability marker for the teardown-unpin patch. Runtime behaviour cannot be
++    // probed without a CUDA device (image builds have none), and a wheel built from an
++    // UNPATCHED tree is otherwise indistinguishable at build time: every observable CPU-side
++    // behaviour matches. The marker only exists when this file was compiled from the patched
++    // tree, which is the same .so that carries the patched deleter.
++    .def_static("supports_unpin_on_teardown", []() { return true; })
+     .def("empty", &SampleQueue::Empty,
+          py::call_guard<py::gil_scoped_release>())
+     .def("send", &SampleQueue::Enqueue, py::arg("msg"),
