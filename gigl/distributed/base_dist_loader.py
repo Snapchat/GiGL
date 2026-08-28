@@ -36,7 +36,10 @@ from typing_extensions import Self
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
-from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
+from gigl.distributed.constants import (
+    DEFAULT_MASTER_INFERENCE_PORT,
+    sampling_rpc_init_timeout_seconds,
+)
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import (
@@ -670,7 +673,7 @@ class BaseDistLoader(DistLoader):
             # Load testing shows that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset_num_partitions, 16),
-            rpc_timeout=600,
+            rpc_timeout=sampling_rpc_init_timeout_seconds(),
             channel_size=channel_size,
             pin_memory=pin_memory,
         )
