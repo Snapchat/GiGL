@@ -66,7 +66,7 @@ inferencerConfig:
   inferenceBatchSize: 512
   command: python -m examples.link_prediction.heterogeneous_inference
 sharedConfig:
-  shouldSkipAutomaticTempAssetCleanup: false
+  shouldSkipAutomaticTempAssetCleanup: True
   shouldSkipInference: false
   # Model Evaluation is currently only supported for tabularized SGS GiGL pipelines. This will soon be added for in-mem SGS GiGL pipelines.
   shouldSkipModelEvaluation: true
