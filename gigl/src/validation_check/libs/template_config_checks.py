@@ -42,14 +42,11 @@ def check_if_kfp_pipeline_job_name_valid(job_name: str) -> None:
 def check_pipeline_has_valid_start_and_stop_flags(
     start_at: str,
     stop_after: Optional[str],
-    task_config_uri: str,
+    gbml_config_wrapper: GbmlConfigPbWrapper,
 ) -> None:
     """
     Check if start_at and stop_after are valid with current static (gigl) or dynamic (glt) backend
     """
-    gbml_config_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-        gbml_config_uri=UriFactory.create_uri(task_config_uri)
-    )
     components = [start_at] if stop_after is None else [start_at, stop_after]
     for component in components:
         if gbml_config_wrapper.should_use_glt_backend:

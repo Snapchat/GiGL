@@ -25,6 +25,7 @@ dependencies = [
   # See https://stackoverflow.com/questions/69759351/error-jupyter-client-kernelspec-nosuchkernel-no-such-kernel-named-python3-occu
   "ipykernel",
   "ipython",
+  "hydra-core==1.3.2",
   "jaxtyping",
   "kfp>=2.0.0",
   "matplotlib",
@@ -86,9 +87,7 @@ pyg27-torch28-cu128 = [
   # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
   "torchrec~=1.3.0 ; sys_platform != 'darwin'",
 ]
-experimental = [
-  "hydra-core==1.3.2",
-]
+experimental = []
 
 # Declares what deps are conflicting so they are not resolved together.
 # In the case below, we cannot have both pyg27-torch28-cpu and pyg27-torch28-cu128

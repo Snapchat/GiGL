@@ -1,0 +1,11 @@
+# Shared preprocessing capacity for GiGL's end-to-end tests.
+edge_preprocessor_config:
+  num_workers: 1
+  max_num_workers: 128
+  machine_type: "n2-highmem-32"
+  disk_size_gb: 300
+node_preprocessor_config:
+  num_workers: 1
+  max_num_workers: 128
+  machine_type: "n2-highmem-64"
+  disk_size_gb: 300

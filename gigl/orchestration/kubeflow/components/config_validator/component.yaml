@@ -9,6 +9,9 @@ inputs:
 - {name: cpu_docker_uri, type: String, description: "Uri to dockerized source code compiled for cpu at runtime"}
 - {name: cuda_docker_uri, type: String, description: "Uri to dockerized source code compiled for gpu at runtime"}
 outputs:
+- {name: resolved_task_config_uri, type: String, description: 'Resolved task config URI'}
+- {name: resolved_resource_config_uri, type: String, description: 'Resolved resource config URI'}
+- {name: should_use_glt_backend, type: Boolean, description: 'Whether to use the GLT backend'}
 
 implementation:
   container:
@@ -21,5 +24,8 @@ implementation:
       --resource_config_uri, {inputValue: resource_config_uri},
       --stop_after, {inputValue: stop_after},
       --cpu_docker_uri, {inputValue: cpu_docker_uri},
-      --cuda_docker_uri, {inputValue: cuda_docker_uri}
+      --cuda_docker_uri, {inputValue: cuda_docker_uri},
+      --output_file_path_resolved_task_config_uri, {outputPath: resolved_task_config_uri},
+      --output_file_path_resolved_resource_config_uri, {outputPath: resolved_resource_config_uri},
+      --output_file_path_should_use_glt_backend, {outputPath: should_use_glt_backend}
     ]
