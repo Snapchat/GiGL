@@ -13,6 +13,7 @@ from typing import MutableMapping
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
+from graphlearn_torch.data import Graph
 from graphlearn_torch.distributed import shutdown_rpc
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
@@ -828,7 +829,15 @@ class DistributedWeightedSamplingTest(TestCase):
         self.assertTrue(dataset.has_edge_weights)
         self.assertIsNotNone(dataset.edge_weights)
         assert isinstance(dataset.edge_weights, torch.Tensor)
-        torch.testing.assert_close(dataset.edge_weights, expected_weights)
+        # dataset.edge_weights is the topology-owned storage, ordered to match
+        # the topology's edge order; the default edge id of input edge k is k,
+        # so indexing the input weights by topo.edge_ids checks that each edge
+        # kept its weight through the reorder.
+        assert isinstance(dataset.graph, Graph)
+        assert expected_weights is not None
+        torch.testing.assert_close(
+            dataset.edge_weights, expected_weights[dataset.graph.topo.edge_ids]
+        )
 
         mp.spawn(
             fn=_run_weighted_sampling_correctness_homogeneous,

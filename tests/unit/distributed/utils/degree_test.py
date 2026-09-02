@@ -2,6 +2,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
+from graphlearn_torch.data import Graph
 from parameterized import param, parameterized
 
 from gigl.distributed.utils.degree import (
@@ -10,7 +11,8 @@ from gigl.distributed.utils.degree import (
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.distributed.utils.topology import OffsetTopology
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -209,6 +211,123 @@ class TestLocalWorldSizeCorrection(TestCase):
         mp.spawn(
             fn=_run_local_world_size_correction_heterogeneous,
             args=(2, init_method, edge_indices, expected_degrees),
+            nprocs=2,
+        )
+
+
+def _offset_graph_from_degrees(degrees: list[int], offset: int) -> Graph:
+    """Builds a CSR Graph over an OffsetTopology whose local rows [offset,
+    offset + len(degrees)) have the given out-degrees."""
+    counts = torch.tensor(degrees)
+    rows = torch.repeat_interleave(torch.arange(offset, offset + len(degrees)), counts)
+    cols = torch.zeros_like(rows)
+    return Graph(
+        OffsetTopology(
+            edge_index=torch.stack([rows, cols]),
+            layout="CSR",
+            offset=offset,
+            num_nodes=len(degrees),
+        ),
+        "CPU",
+    )
+
+
+def _run_offset_degrees_homogeneous(
+    rank: int,
+    world_size: int,
+    init_method: str,
+) -> None:
+    """Worker: each rank holds a rebased partition over a different, unequal
+    node range; the all-reduce must scatter each slice to its global position."""
+    dist.init_process_group(
+        backend="gloo",
+        init_method=init_method,
+        world_size=world_size,
+        rank=rank,
+    )
+    try:
+        # Ranges [(0, 3), (3, 8)]; degrees are all even because both spawned
+        # ranks run on one host, so the over-counting correction divides the
+        # all-reduced sum by the per-host process count (2). The positional
+        # assertion below fails if either rank's slice lands at the wrong
+        # offset.
+        if rank == 0:
+            offset, degrees = 0, [2, 4, 6]
+        else:
+            offset, degrees = 3, [8, 10, 12, 14, 16]
+        graph = _offset_graph_from_degrees(degrees, offset)
+
+        result = compute_and_broadcast_degree_tensor(graph, "out")
+
+        assert isinstance(result, torch.Tensor)
+        expected = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8], dtype=torch.int32)
+        assert_tensor_equality(result, expected)
+    finally:
+        dist.destroy_process_group()
+
+
+def _run_offset_degrees_heterogeneous(
+    rank: int,
+    world_size: int,
+    init_method: str,
+) -> None:
+    """Worker: two edge types share the anchor node type; their rebased degree
+    slices must merge at the same offset before the global all-reduce."""
+    dist.init_process_group(
+        backend="gloo",
+        init_method=init_method,
+        world_size=world_size,
+        rank=rank,
+    )
+    try:
+        node_b = NodeType("b")
+        b_to_a = EdgeType(node_b, Relation("to"), NodeType("a"))
+        b_to_c = EdgeType(node_b, Relation("to"), NodeType("c"))
+        # Anchor node type "b" has ranges [(0, 3), (3, 5)].
+        if rank == 0:
+            offset = 0
+            degrees_by_type = {b_to_a: [2, 0, 2], b_to_c: [0, 4, 0]}
+        else:
+            offset = 3
+            degrees_by_type = {b_to_a: [6, 0], b_to_c: [2, 8]}
+        graph = {
+            edge_type: _offset_graph_from_degrees(degrees, offset)
+            for edge_type, degrees in degrees_by_type.items()
+        }
+
+        result = compute_and_broadcast_degree_tensor(graph, "out")
+
+        assert not isinstance(result, torch.Tensor)
+        # Per-rank merged: rank 0 -> [2, 4, 2] at offset 0, rank 1 -> [8, 8]
+        # at offset 3; sum [2, 4, 2, 8, 8] halved by the same-host correction.
+        expected = {node_b: torch.tensor([1, 2, 1, 4, 4], dtype=torch.int32)}
+        assert set(result.keys()) == set(expected.keys())
+        assert_tensor_equality(result[node_b], expected[node_b])
+    finally:
+        dist.destroy_process_group()
+
+
+class TestOffsetDegreeScatter(TestCase):
+    """Tests degree aggregation for rebased (OffsetTopology) partitions.
+
+    Two real processes hold different, unequal node ranges; correct results
+    require sizing the all-reduce as MAX(offset + len) and scattering each
+    rank's slice at its own offset.
+    """
+
+    def test_offset_degrees_homogeneous_two_ranks_unequal_ranges(self):
+        init_method = get_process_group_init_method()
+        mp.spawn(
+            fn=_run_offset_degrees_homogeneous,
+            args=(2, init_method),
+            nprocs=2,
+        )
+
+    def test_offset_degrees_heterogeneous_two_ranks(self):
+        init_method = get_process_group_init_method()
+        mp.spawn(
+            fn=_run_offset_degrees_heterogeneous,
+            args=(2, init_method),
             nprocs=2,
         )
 

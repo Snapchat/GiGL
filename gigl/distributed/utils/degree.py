@@ -39,13 +39,14 @@ from collections import Counter
 from typing import Final, Union, overload
 
 import torch
-from graphlearn_torch.data import Graph
+from graphlearn_torch.data import Graph, Topology
 from graphlearn_torch.typing import NodeType
 from torch_geometric.typing import EdgeType
 
 from gigl.common.logger import Logger
 from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
+from gigl.distributed.utils.topology import OffsetTopology
 from gigl.types.graph import is_label_edge_type
 
 logger = Logger()
@@ -64,6 +65,10 @@ def compute_and_broadcast_degree_tensor(
     incident to each anchor node type **locally** before the all-reduce, so the
     per-edge-type tensor is only a transient intermediate and is never stored,
     returned, or transmitted over RPC.
+
+    Rebased (``OffsetTopology``) partitions cover only their local node range;
+    their degrees are scattered back to global positions before aggregation,
+    so the returned tensors are always indexed by global node id.
 
     Over-counting correction (for processes sharing the same data) is handled
     automatically by detecting the distributed topology.
@@ -98,7 +103,9 @@ def compute_and_broadcast_degree_tensor(
             raise ValueError("Topology/indptr not available for graph.")
 
         # Homogeneous graphs keep the usual GiGL shape: a single tensor.
-        result = _all_reduce_degrees(_compute_degrees_from_indptr(topo.indptr))
+        result = _all_reduce_degrees(
+            _compute_degrees_from_indptr(topo.indptr), _topology_offset(topo)
+        )
         if result.numel() > 0:
             logger.info(
                 f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
@@ -108,6 +115,9 @@ def compute_and_broadcast_degree_tensor(
         return result
 
     local_dict: dict[NodeType, torch.Tensor] = {}
+    # Each local degree tensor covers [offset, offset + len) of the global
+    # node-id space; offset is 0 for globally-sized topologies.
+    offset_dict: dict[NodeType, int] = {}
     for edge_type, edge_graph in graph.items():
         # Label edge types are supervision edges and should not contribute to
         # node degree for traversal algorithms like PPR.
@@ -120,20 +130,35 @@ def compute_and_broadcast_degree_tensor(
                 f"Topology/indptr not available for edge type {edge_type}, using empty tensor."
             )
             degrees = torch.empty(0, dtype=torch.int32)
+            offset = 0
         else:
             degrees = _compute_degrees_from_indptr(topo.indptr)
+            offset = _topology_offset(topo)
 
         if anchor_type in local_dict:
+            # Merge in global-id alignment: each tensor is scattered at its own
+            # offset before summing.
             existing = local_dict[anchor_type]
-            max_len = max(len(existing), len(degrees))
-            summed = _pad_to_size(existing, max_len).to(torch.int64)
-            summed[: len(degrees)] += degrees.to(torch.int64)
+            existing_offset = offset_dict[anchor_type]
+            merged_offset = min(existing_offset, offset)
+            merged_size = (
+                max(existing_offset + existing.size(0), offset + degrees.size(0))
+                - merged_offset
+            )
+            summed = _scatter_at_offset(
+                existing.to(torch.int64), existing_offset - merged_offset, merged_size
+            )
+            summed += _scatter_at_offset(
+                degrees.to(torch.int64), offset - merged_offset, merged_size
+            )
             local_dict[anchor_type] = _clamp_to_int32(summed)
+            offset_dict[anchor_type] = merged_offset
         else:
             local_dict[anchor_type] = degrees
+            offset_dict[anchor_type] = offset
 
     # All-reduce across ranks after local per-node-type aggregation.
-    result = _all_reduce_degrees(local_dict)
+    result = _all_reduce_degrees(local_dict, offset_dict)
     for node_type, degrees in result.items():
         if degrees.numel() > 0:
             logger.info(
@@ -158,6 +183,21 @@ def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
         device=tensor.device,
     )
     return torch.cat([tensor, padding])
+
+
+def _scatter_at_offset(
+    tensor: torch.Tensor, offset: int, target_size: int
+) -> torch.Tensor:
+    """Place tensor at [offset, offset + len) of a zero tensor of target_size."""
+    if offset == 0:
+        return _pad_to_size(tensor, target_size)
+    head = torch.zeros(offset, dtype=tensor.dtype, device=tensor.device)
+    return _pad_to_size(torch.cat([head, tensor]), target_size)
+
+
+def _topology_offset(topo: Topology) -> int:
+    """The first global node id covered by a topology's indptr (0 unless rebased)."""
+    return topo.offset if isinstance(topo, OffsetTopology) else 0
 
 
 def _clamp_to_int32(tensor: torch.Tensor) -> torch.Tensor:
@@ -192,15 +232,25 @@ def _all_reduce_single_degree_tensor(
     tensor: torch.Tensor,
     local_world_size: int,
     device: torch.device,
+    offset: int,
 ) -> torch.Tensor:
-    """All-reduce a single tensor with size sync and over-counting correction."""
-    # Synchronize max size across all ranks.
-    local_size = torch.tensor([tensor.size(0)], dtype=torch.long, device=device)
+    """All-reduce a single tensor with size sync and over-counting correction.
+
+    The local tensor covers [offset, offset + len) of the global node-id
+    space (offset 0 for globally-sized topologies). Sizes are synchronized as
+    MAX(offset + len) across ranks and each rank scatters its slice into
+    position before the SUM, so the result is globally aligned.
+    """
+    # Synchronize max global extent across all ranks.
+    local_size = torch.tensor(
+        [offset + tensor.size(0)], dtype=torch.long, device=device
+    )
     torch.distributed.all_reduce(local_size, op=torch.distributed.ReduceOp.MAX)
     max_size = int(local_size.item())
 
-    # Pad, convert to int64 for all_reduce, and move to the process-group device.
-    padded = _pad_to_size(tensor, max_size).to(torch.int64).to(device)
+    # Scatter into global position, convert to int64 for all_reduce, and move
+    # to the process-group device.
+    padded = _scatter_at_offset(tensor, offset, max_size).to(torch.int64).to(device)
     torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
 
     # Correct for over-counting and move back to CPU. Clamp before casting so
@@ -211,15 +261,17 @@ def _all_reduce_single_degree_tensor(
 @overload
 def _all_reduce_degrees(
     local_degrees: dict[NodeType, torch.Tensor],
+    offsets: dict[NodeType, int],
 ) -> dict[NodeType, torch.Tensor]: ...
 
 
 @overload
-def _all_reduce_degrees(local_degrees: torch.Tensor) -> torch.Tensor: ...
+def _all_reduce_degrees(local_degrees: torch.Tensor, offsets: int) -> torch.Tensor: ...
 
 
 def _all_reduce_degrees(
     local_degrees: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
+    offsets: Union[int, dict[NodeType, int]],
 ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
     """All-reduce degree tensors across ranks.
 
@@ -249,6 +301,8 @@ def _all_reduce_degrees(
     Args:
         local_degrees: Either a homogeneous degree tensor or a dict mapping
             NodeType to local degree tensors.
+        offsets: The first global node id each degree tensor covers (matching
+            the shape of ``local_degrees``); 0 for globally-sized topologies.
 
     Returns:
         Aggregated degree tensors matching the input shape.
@@ -259,12 +313,16 @@ def _all_reduce_degrees(
     local_world_size, device = _get_degree_reduce_context()
 
     if isinstance(local_degrees, torch.Tensor):
-        return _all_reduce_single_degree_tensor(local_degrees, local_world_size, device)
+        assert isinstance(offsets, int)
+        return _all_reduce_single_degree_tensor(
+            local_degrees, local_world_size, device, offsets
+        )
 
+    assert isinstance(offsets, dict)
     # Heterogeneous case: all-reduce each node type in deterministic order.
     result: dict[NodeType, torch.Tensor] = {}
     for node_type in sorted(local_degrees.keys()):
         result[node_type] = _all_reduce_single_degree_tensor(
-            local_degrees[node_type], local_world_size, device
+            local_degrees[node_type], local_world_size, device, offsets[node_type]
         )
     return result
