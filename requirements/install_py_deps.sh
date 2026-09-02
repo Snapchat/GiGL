@@ -60,8 +60,8 @@ install_uv_if_needed() {
     if ! command -v uv &> /dev/null
     then
         echo "uv could not be found. Installing uv..."
-        EXPECTED_SHA256="8402ab80d2ef54d7044a71ea4e4e1e8db3b20c87c7bffbc30bff59f1e80ebbd5"
-        curl -LsSf -o uv_installer.sh https://astral.sh/uv/0.9.5/install.sh # Matches the version in .github/actions/setup-python-tools/action.yml
+        EXPECTED_SHA256="222e006c0fe4a0d793031833e469b21df72311f4e3526ffecca0e19e6dfabc32"
+        curl -LsSf -o uv_installer.sh https://astral.sh/uv/0.12.9/install.sh # Matches the version in .github/actions/setup-python-tools/action.yml
 
         # Verify SHA256 checksum - script will exit if this fails due to set -e
         if ! echo "$EXPECTED_SHA256  uv_installer.sh" | sha256sum -c -; then
