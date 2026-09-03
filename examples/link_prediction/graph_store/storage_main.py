@@ -74,7 +74,6 @@ the compute processes signal shutdown via `gigl.distributed.graph_store.compute.
 import argparse
 import ast
 import os
-from distutils.util import strtobool
 from typing import Literal, Optional, Union
 
 import torch
@@ -82,6 +81,7 @@ import torch
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.os_utils import import_obj
+from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.graph_store import (
     GraphStoreInfo,
     build_storage_dataset,
@@ -254,7 +254,7 @@ if __name__ == "__main__":
         splitter=splitter,
         ssl_positive_label_percentage=ssl_positive_label_percentage,
         should_load_tf_records_in_parallel=bool(
-            strtobool(args.should_load_tf_records_in_parallel)
+            str_to_bool(args.should_load_tf_records_in_parallel)
         ),
         num_rpc_threads=args.num_rpc_threads,
         rpc_timeout=args.rpc_timeout,

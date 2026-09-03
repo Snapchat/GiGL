@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import os
-from distutils.util import strtobool
 from typing import Optional, Sequence
 
 import gigl.env.dep_constants as dep_constants
@@ -16,6 +15,7 @@ from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
 from gigl.common.utils.gcs import GcsUtils
+from gigl.common.utils.parse import str_to_bool
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_SUBGRAPH_SAMPLER_S
@@ -101,7 +101,7 @@ class SubgraphSampler:
         # Dataproc image 2.0 starting 2026-08-25. Setting the `use_spark35_runner`
         # experimental flag to "False" remains a temporary escape hatch until then.
         use_spark35: bool = bool(
-            strtobool(
+            str_to_bool(
                 gbml_config_pb_wrapper.dataset_config.subgraph_sampler_config.experimental_flags.get(
                     "use_spark35_runner", "True"
                 )

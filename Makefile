@@ -173,8 +173,14 @@ format_cpp:
 
 format: format_py format_cpp format_scala format_md
 
+# ty resolves the stdlib against a single Python version per invocation, so each end of
+# the supported range needs its own pass.
 type_check:
+# Floor: 3.11, from [tool.ty.environment] in pyproject.toml. Catches stdlib APIs that do
+# not exist that far back.
 	uv run ty check ${PYTHON_DIRS}
+# Ceiling: catches stdlib modules and signatures 3.13 removed or changed.
+	uv run ty check --python-version 3.13 ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
