@@ -47,7 +47,10 @@ dependencies = [
 
 [project.optional-dependencies]
 transform = [
-  # Apache Beam version has to match with what is specified in `containers/Dockerfile.dataflow.base`
+  # Has to match the tag in the `BEAM_SDK_IMAGE` arg default of
+  # `containers/Dockerfile.dataflow.base`, which supplies the Dataflow worker boot harness.
+  # That reference also encodes the Python minor in its image name, which tracks
+  # `.python-version`, so a Python upgrade moves the same line.
   "apache-beam[gcp]==2.56.0",
   "pyarrow==10.0.1",
   # Tensorflow transform packages.
@@ -57,8 +60,10 @@ transform = [
   "tensorflow-data-validation==1.16.1 ; sys_platform != 'darwin'",
   "tensorflow-metadata==1.16.1 ; sys_platform != 'darwin'",
   "tensorflow-transform==1.16.0 ; sys_platform != 'darwin'",
-  # Oct 28, 2025 - Latest ver tfx-bsl==1.17.1 requires latest version of Linux distros using glibc 2.39+
-  # i.e. Ubuntu 24.04. Currently, not compatible with our docker images.
+  # Held one release behind the latest tfx-bsl==1.17.1, which needs glibc 2.39+. All three
+  # base images are Ubuntu 24.04 (glibc 2.39), so the OS floor is met; moving the pin is a
+  # dependency bump, which has to move tensorflow-data-validation, tensorflow-metadata and
+  # tensorflow-transform in step per the compatibility matrix linked above.
   "tfx-bsl==1.16.1 ; sys_platform != 'darwin'",
 ]
 pyg27-torch28-cpu = [

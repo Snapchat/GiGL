@@ -1,15 +1,29 @@
 # syntax=docker/dockerfile:1
 
 
-FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
+# The `-devel` variant ships nvcc at /usr/local/cuda/bin/nvcc, which both gigl-core's
+# CMake build and GraphLearn-for-PyTorch's CUDA build need while installing dependencies;
+# a runtime-only CUDA image cannot compile them.
+# Pinned by digest because the version tag is floating: NVIDIA rebuilds it in place,
+# and it names no cuDNN version, so the tag alone does not identify what ships here.
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed
+
+# Keeping this image's CUDA version matched to the cu128 torch wheels pinned in uv.lock
+# is load-bearing, not cosmetic. The base exports LD_LIBRARY_PATH=/usr/local/cuda/lib64,
+# and glibc searches LD_LIBRARY_PATH ahead of DT_RUNPATH, which is how the nvidia-*-cu12
+# wheels point at each other. So these load out of the image rather than site-packages:
+#   - libcublas.so.12, libcublasLt.so.12  (via the cusolver and cublas wheels' RUNPATH)
+#   - libcufft.so.11                      (via the cufft wheel's RUNPATH)
+#   - libcufile.so.0                      (via the cufile wheel's RUNPATH)
+#   - libcusparse.so.12                   (via the cusolver wheel's RUNPATH)
+#   - libnvJitLink.so.12                  (torch's RPATH omits nvjitlink entirely)
+# torch's own libraries use DT_RPATH, which outranks LD_LIBRARY_PATH, so they are
+# unaffected. Move torch off cu128 without moving this base and the libraries above go
+# stale, failing at `import torch` with an undefined symbol that points nowhere near
+# this line.
 
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Already has python 3.11 installed - no need to install it again.
-# We use system python since it has packages pre-installed for us.
-ENV UV_SYSTEM_PYTHON=true
-ENV UV_PROJECT_ENVIRONMENT=/opt/conda/
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
@@ -31,6 +45,7 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
 COPY gigl/scripts gigl/scripts
+COPY .python-version .python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
@@ -40,8 +55,13 @@ COPY gigl-core/README.md gigl-core/README.md
 
 RUN bash ./requirements/install_py_deps.sh
 
-# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
-# cpu base image.
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
 
