@@ -3,27 +3,32 @@
 
 # The `-devel` variant ships nvcc at /usr/local/cuda/bin/nvcc, which both gigl-core's
 # CMake build and GraphLearn-for-PyTorch's CUDA build need while installing dependencies;
-# a runtime-only CUDA image cannot compile them.
-# Pinned by digest because the version tag is floating: NVIDIA rebuilds it in place,
-# and it names no cuDNN version, so the tag alone does not identify what ships here.
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed
-
-# Keeping this image's CUDA version matched to the cu128 torch wheels pinned in uv.lock
-# is load-bearing, not cosmetic. The base exports LD_LIBRARY_PATH=/usr/local/cuda/lib64,
-# and glibc searches LD_LIBRARY_PATH ahead of DT_RUNPATH, which is how the nvidia-*-cu12
-# wheels point at each other. So these load out of the image rather than site-packages:
-#   - libcublas.so.12, libcublasLt.so.12  (via the cusolver and cublas wheels' RUNPATH)
-#   - libcufft.so.11                      (via the cufft wheel's RUNPATH)
-#   - libcufile.so.0                      (via the cufile wheel's RUNPATH)
-#   - libcusparse.so.12                   (via the cusolver wheel's RUNPATH)
-#   - libnvJitLink.so.12                  (torch's RPATH omits nvjitlink entirely)
-# torch's own libraries use DT_RPATH, which outranks LD_LIBRARY_PATH, so they are
-# unaffected. Move torch off cu128 without moving this base and the libraries above go
-# stale, failing at `import torch` with an undefined symbol that points nowhere near
-# this line.
+# a runtime-only CUDA image cannot compile them. Its CUDA 12.8 toolkit has to stay matched
+# to the cu128 torch wheels pinned in uv.lock, because those two builds compile against
+# the toolkit here and link the wheels' runtime.
+# The image's own torch and Python 3.12 go unused: GiGL is `requires-python = "==3.11.*"`,
+# so requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on the
+# interpreter named in .python-version, and the ENV PATH below puts that venv's bin ahead
+# of the image's Python.
+# Pinned by digest because the version tag is floating: upstream rebuilds it in place.
+# The tag has a single-platform (linux/amd64) manifest, so this digest is that manifest's,
+# not an index's.
+FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
 
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
+
+# The NVIDIA driver — libcuda.so.1 and libnvidia-ml.so.1 — ships in no image: Vertex AI
+# and GKE bind-mount it into /usr/local/nvidia/lib{,64} at container start, so both
+# directories are empty while this image builds and nothing here can verify them.
+# Losing them fails two ways: fbgemm_gpu names libcuda.so.1 in DT_NEEDED across 19 of its
+# extensions, so `import torchrec` raises outright, while plain torch imports fine and
+# reports no CUDA device, which reads as a CPU machine rather than a broken image.
+# Prepended so the base's own entries survive, and set here rather than inherited because
+# upstream shuffles both variables between releases —
+# pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel already puts /usr/local/cuda/lib64 first.
+ENV LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}"
+ENV PATH="/usr/local/nvidia/bin:${PATH}"
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.

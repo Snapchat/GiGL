@@ -12,6 +12,10 @@ The caller declares the import set because the images do not ship the same packa
     ``src`` image can assert it.
   - The Dataflow base skips the GraphLearn-for-PyTorch post-install step, so
     ``graphlearn_torch`` is absent from that image by design.
+  - ``torchrec`` pulls in ``fbgemm_gpu``, whose extensions name ``libcuda.so.1`` in
+    DT_NEEDED. That library belongs to the host GPU driver and is mounted into the
+    container at start, so asserting this import is meaningful only where the driver is
+    present; on a driver-less host it fails whatever the image ships.
 
 Every check raises on mismatch, so a zero exit status is the only signal of success.
 
@@ -33,6 +37,12 @@ Example:
 
         $ python scripts/smoke_test_image.py --python 3.11 \
             --imports torch,graphlearn_torch,gigl_core
+
+    On a GPU host, where the driver is mounted and the CUDA imports can be required::
+
+        $ python scripts/smoke_test_image.py --python 3.11 \
+            --imports torch,graphlearn_torch,torchrec \
+            --cuda --require-nvidia-driver-path
 """
 
 import argparse
@@ -48,11 +58,21 @@ SUPPORTED_PYTHON_VERSIONS: list[str] = ["3.11", "3.12", "3.13"]
 # The packages GiGL images install outside of GiGL's own source tree. Restricting
 # --imports to this set turns a typo into a usage error instead of a failing import that
 # reads like a broken image.
-CHECKABLE_IMPORTS: list[str] = ["torch", "graphlearn_torch", "gigl_core", "apache_beam"]
+CHECKABLE_IMPORTS: list[str] = [
+    "torch",
+    "graphlearn_torch",
+    "gigl_core",
+    "apache_beam",
+    "torchrec",
+]
 
 # Exported by the graphlearn_torch pybind11 extension only when it is compiled with
 # WITH_CUDA=ON, so its absence identifies a CPU-only GLT wheel in a CUDA image.
 GLT_CUDA_ONLY_SYMBOL = "cuda_stitch_sample_results"
+
+# Where the container runtime mounts the host GPU driver, and therefore the only place
+# the loader can find libcuda.so.1 and libnvidia-ml.so.1.
+NVIDIA_DRIVER_LIB_DIRS: list[str] = ["/usr/local/nvidia/lib", "/usr/local/nvidia/lib64"]
 
 
 def assert_equal(what: str, expected: object, actual: object) -> None:
@@ -191,6 +211,38 @@ def check_cuda() -> None:
     assert_equal("CUDA-mode graph edge count", 3, graph.edge_count)
 
 
+def check_nvidia_driver_path() -> None:
+    """Asserts the GPU driver mount points are on ``LD_LIBRARY_PATH``.
+
+    Passes on a machine with no GPU and no such directories, which is the point: they are
+    empty until the container runtime mounts the driver into them, so this asserts only
+    that the loader is pointed at them and runs as a build-time gate. Without them torch
+    imports fine and reports no CUDA device, so the failure otherwise surfaces as a job
+    that quietly trains on CPU.
+
+    Entries are compared whole after splitting on ``os.pathsep``. A substring test would
+    also accept a path that merely contains one, such as
+    ``/opt/vendor/usr/local/nvidia/lib64x``.
+
+    Raises:
+        AssertionError: When either directory is missing from ``LD_LIBRARY_PATH``.
+    """
+    entries = [
+        entry
+        for entry in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+        if entry
+    ]
+    missing = [
+        directory for directory in NVIDIA_DRIVER_LIB_DIRS if directory not in entries
+    ]
+    if missing:
+        raise AssertionError(
+            f"LD_LIBRARY_PATH: expected entries {NVIDIA_DRIVER_LIB_DIRS}, got {entries} "
+            f"(missing {missing})"
+        )
+    print(f"OK  LD_LIBRARY_PATH contains {NVIDIA_DRIVER_LIB_DIRS}")
+
+
 def check_beam(beam_version: str) -> None:
     """Asserts the installed Apache Beam matches the version the worker harness expects.
 
@@ -308,6 +360,12 @@ def main() -> None:
         help="Also require a working CUDA runtime and a CUDA-enabled graphlearn_torch.",
     )
     parser.add_argument(
+        "--require-nvidia-driver-path",
+        action="store_true",
+        help="Also require the GPU driver mount points to be on LD_LIBRARY_PATH. Needs "
+        "no GPU, so it is usable as a build-time gate.",
+    )
+    parser.add_argument(
         "--beam",
         default=None,
         help="Exact apache_beam version the environment must have installed.",
@@ -329,6 +387,10 @@ def main() -> None:
         check_venv_prefix(venv_prefix=args.venv_prefix)
     if args.min_glibc is not None:
         check_min_glibc(min_glibc=args.min_glibc)
+    # Ahead of the imports: torchrec fails on a missing libcuda.so.1, and naming the
+    # unset path first explains why.
+    if args.require_nvidia_driver_path:
+        check_nvidia_driver_path()
     check_imports(module_names=args.imports)
     if args.cuda:
         check_cuda()
