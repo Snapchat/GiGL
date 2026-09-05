@@ -30,6 +30,17 @@ done
 
 ### Helper functions ###
 has_cuda_driver() {
+    # Callers use this as an `if` condition, which suspends `set -e` for the whole
+    # function body. A missing `whereis` would therefore leave $cuda_location empty and
+    # report "no CUDA" with the build still exiting 0, installing CPU torch and a
+    # WITH_CUDA=OFF GLT into a CUDA image. `exit` is the only way out of a
+    # suspended-errexit context, so fail the build outright instead of returning.
+    if ! command -v whereis &> /dev/null
+    then
+        echo "whereis is unavailable, so CUDA presence cannot be determined." >&2
+        exit 1
+    fi
+
     # Use the whereis command to locate the CUDA driver
     cuda_location=$(whereis cuda)
 
@@ -121,23 +132,6 @@ install_gigl_lib_deps() {
         extra_deps_clause+=(--extra "$dep")
     done
 
-    flag_use_inexact_match=""
-    # If we are using system python, we want to use inexact match for dependencies so we don't override system packages.
-    # We currently, only do this in our Dockerfile.cuda.base, and Dockerfile.dataflow.base images, as they have python
-    # pre-installed with relevant packages - and currently reinstalling these in the trivial manner in a new virtual
-    # environment is not able to correctly symlink existing optimizations / bootstrap scripts available in the parent
-    # docker images of our base images.
-    if [[ "${UV_SYSTEM_PYTHON}" == "true" ]]
-    then
-        echo "Recognized using system python due to UV_SYSTEM_PYTHON = true."
-        echo "Will use inexact match for dependencies so we don't override system packages."
-        # Syncing is "exact" by default, which means it will remove any packages that are not present in the lockfile.
-        # To retain extraneous packages, use the --inexact option:
-        # https://docs.astral.sh/uv/concepts/projects/sync/#retaining-extraneous-packages
-        # This is useful for example when we might have packages pre-installed i.e. torch, pyg, etc.
-        flag_use_inexact_match="--inexact"
-    fi
-
     # gigl-core's CMake build requires torch to be present during the build, but
     # torch is a runtime dep of gigl, not a declared build dep of gigl-core.
     # uv sync may ignore no-build-isolation-package for workspace members and always
@@ -148,9 +142,9 @@ install_gigl_lib_deps() {
     if [[ $DEV -eq 1 ]]
     then
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
-        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-package gigl-core
+        uv sync ${extra_deps_clause[@]} --group dev --locked --no-install-package gigl-core
     else
-        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked ${flag_use_inexact_match} --no-install-package gigl-core
+        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked --no-install-package gigl-core
     fi
     uv pip install --no-build-isolation ./gigl-core/
 

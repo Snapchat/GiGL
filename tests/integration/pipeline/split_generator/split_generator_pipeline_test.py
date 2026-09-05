@@ -643,7 +643,7 @@ class SplitGeneratorPipelineTest(TestCase):
             == supervised_node_classification.NodeClassificationSettingType.INDUCTIVE
         ):
             # All edge sets across train/val/test splits must be disjoint.
-            self.assertEquals(
+            self.assertEqual(
                 train_graph.num_edges + val_graph.num_edges + test_graph.num_edges,
                 composed_graph.num_edges,
             )

@@ -1,15 +1,34 @@
 # syntax=docker/dockerfile:1
 
 
-FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
+# The `-devel` variant ships nvcc at /usr/local/cuda/bin/nvcc, which both gigl-core's
+# CMake build and GraphLearn-for-PyTorch's CUDA build need while installing dependencies;
+# a runtime-only CUDA image cannot compile them. Its CUDA 12.8 toolkit has to stay matched
+# to the cu128 torch wheels pinned in uv.lock, because those two builds compile against
+# the toolkit here and link the wheels' runtime.
+# The image's own torch and Python 3.12 go unused: GiGL is `requires-python = "==3.11.*"`,
+# so requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on the
+# interpreter named in .python-version, and the ENV PATH below puts that venv's bin ahead
+# of the image's Python.
+# Pinned by digest because the version tag is floating: upstream rebuilds it in place.
+# The tag has a single-platform (linux/amd64) manifest, so this digest is that manifest's,
+# not an index's.
+FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
 
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Already has python 3.11 installed - no need to install it again.
-# We use system python since it has packages pre-installed for us.
-ENV UV_SYSTEM_PYTHON=true
-ENV UV_PROJECT_ENVIRONMENT=/opt/conda/
+# The NVIDIA driver — libcuda.so.1 and libnvidia-ml.so.1 — ships in no image: Vertex AI
+# and GKE bind-mount it into /usr/local/nvidia/lib{,64} at container start, so both
+# directories are empty while this image builds and nothing here can verify them.
+# Losing them fails two ways: fbgemm_gpu names libcuda.so.1 in DT_NEEDED across 19 of its
+# extensions, so `import torchrec` raises outright, while plain torch imports fine and
+# reports no CUDA device, which reads as a CPU machine rather than a broken image.
+# Prepended so the base's own entries survive, and set here rather than inherited because
+# upstream shuffles both variables between releases —
+# pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel already puts /usr/local/cuda/lib64 first.
+ENV LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}"
+ENV PATH="/usr/local/nvidia/bin:${PATH}"
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
@@ -31,6 +50,7 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
 COPY gigl/scripts gigl/scripts
+COPY .python-version .python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
@@ -40,8 +60,13 @@ COPY gigl-core/README.md gigl-core/README.md
 
 RUN bash ./requirements/install_py_deps.sh
 
-# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
-# cpu base image.
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
 
