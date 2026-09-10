@@ -38,6 +38,55 @@ class UriTest(TestCase):
         with self.subTest("LocalUri with Path"):
             joined = LocalUri.join("/foo/bar", Path("file.text"))
             self.assertEqual(joined, LocalUri("/foo/bar/file.text"))
+        with self.subTest("Uri with concrete first token"):
+            joined = Uri.join(GcsUri("gs://bucket"), "file.txt")
+            self.assertEqual(joined, Uri("gs://bucket/file.txt"))
+            self.assertIsInstance(joined, Uri)
+        with self.subTest("LocalUri suffix"):
+            relative_local_uri = LocalUri("file.txt")
+            joined = LocalUri.join("/foo/bar", relative_local_uri)
+            self.assertEqual(joined, LocalUri("/foo/bar/file.txt"))
+            self.assertIsInstance(joined, LocalUri)
+
+    def test_join_invalid_suffix(self):
+        with self.subTest("relative LocalUri suffix with non-local join"):
+            relative_local_uri = LocalUri("file.txt")
+            with self.assertRaises(TypeError):
+                GcsUri.join("gs://bucket/path", relative_local_uri)
+
+        with self.subTest("mixed Uri first token"):
+            with self.assertRaises(TypeError):
+                LocalUri.join(GcsUri("gs://bucket/path"), "file.txt")
+
+        with self.subTest("absolute LocalUri suffix"):
+            absolute_local_uri = LocalUri("/other/file.txt")
+            with self.assertRaises(TypeError):
+                LocalUri.join("/foo/bar", absolute_local_uri)
+
+        with self.subTest("absolute HttpUri suffix"):
+            http_uri = HttpUri("http://abc.com/file.txt")
+            with self.assertRaises(TypeError):
+                HttpUri.join("http://abc.com/xyz", http_uri)
+
+        with self.subTest("absolute GcsUri suffix"):
+            gcs_uri = GcsUri("gs://bucket/file.txt")
+            with self.assertRaises(TypeError):
+                GcsUri.join("gs://bucket/path", gcs_uri)
+
+    def test_join_rejects_relative_path_with_uri_separator(self):
+        with self.assertRaises(TypeError):
+            LocalUri.join("/foo/bar", "folder://file.txt")
+
+    def test_base_uri_join_rejects_concrete_uri_suffix(self):
+        # Concrete Uri suffixes require a matching concrete join, not base Uri.join.
+        relative_local_uri = LocalUri("file.txt")
+
+        with self.assertRaises(TypeError):
+            Uri.join("/foo/bar", relative_local_uri)
+
+    def test_http_uri_constructor_rejects_invalid_remote_path(self):
+        with self.assertRaises(TypeError):
+            HttpUri("file.txt")
 
     def test_div_join(self):
         joined: Uri
