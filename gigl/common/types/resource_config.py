@@ -15,3 +15,7 @@ class CommonPipelineComponentConfigs:
     additional_job_args: dict[GiGLComponents, dict[str, str]] = field(
         default_factory=dict
     )
+    # Environment variables baked into every GiGL-owned container at compile time.
+    # Applied uniformly across all SPECED_COMPONENTS plus the GLT eligibility check
+    # and log_metrics_to_ui tasks. The managed VertexNotificationEmailOp is excluded.
+    env_vars: dict[str, str] = field(default_factory=dict)
