@@ -149,18 +149,8 @@ class KfpOrchestrator:
             "template_or_frozen_config_uri": task_config_uri.uri,
             "resource_config_uri": resource_config_uri.uri,
         }
-        # We need to provide *some* notification emails, other wise the cleanup component will fail.
-        # Ideally, we'd be able to provide None and have it handle it, but for whatever reason
-        # that's not supported atm. Passing in None gives the below error:
-        # Notification email "recipients" parameter must specify at least one recipient.
         if notification_emails:
             run_keyword_args["notification_emails"] = notification_emails
-        else:
-            run_keyword_args["notification_emails"] = [
-                get_resource_config(
-                    resource_config_uri=resource_config_uri
-                ).service_account_email
-            ]
         if stop_after is not None:
             run_keyword_args["stop_after"] = stop_after
 
