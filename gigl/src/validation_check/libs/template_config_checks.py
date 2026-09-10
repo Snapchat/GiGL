@@ -7,6 +7,7 @@ from gigl.common.utils import os_utils
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.constants.components import GLT_BACKEND_UNSUPPORTED_COMPONENTS
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
+from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.subgraph_sampling_strategy import (
     SubgraphSamplingStrategyPbWrapper,
@@ -456,6 +457,9 @@ def check_if_post_processor_cls_valid(
     check_if_runtime_args_all_str(
         args_name="postProcessorArgs", runtime_args=runtime_args
     )
+    # Mirror PostProcessor._run_post_process which injects applied_task_identifier
+    # into kwargs before instantiation (see post_processor.py).
+    runtime_args["applied_task_identifier"] = AppliedTaskIdentifier("validation_check")
     try:
         post_processor_cls = os_utils.import_obj(post_processor_cls_path)
         post_processor_instance: BasePostProcessor = post_processor_cls(**runtime_args)
