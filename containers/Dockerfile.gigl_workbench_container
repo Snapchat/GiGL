@@ -6,25 +6,32 @@ SHELL ["/bin/bash", "-c"]
 ENV MAMBA_ROOT_PREFIX=/opt/micromamba
 ARG ENVIRONMENT_NAME="gigl"
 ARG PYTHON_VERSION="3.9"
-RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
 
+
+RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
 ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH
 
 RUN micromamba install -c conda-forge pip -y
-RUN pip install ipykernel
+RUN pip install ipykernel ipywidgets db-dtypes
 
 RUN python -m ipykernel install --prefix /opt/micromamba/envs/${ENVIRONMENT_NAME} --name ${ENVIRONMENT_NAME} --display-name ${ENVIRONMENT_NAME}
 # Creation of a micromamba kernel automatically creates a python3 kernel
 # that must be removed if it's in conflict with the new kernel.
 RUN rm -rf "/opt/micromamba/envs/${ENVIRONMENT_NAME}/share/jupyter/kernels/python3"
 
+# We need to initialize the micromamba environment in the jupyter user's bashrc and profile
+# so that the jupyter notebook can use the micromamba environment.
+# RUN micromamba shell init -s bash -r ~/micromamba
+# RUN echo "source /root/.bashrc" >> /home/jupyter/.bashrc
+# RUN echo "source /root/.profile" >> /home/jupyter/.profile
+# RUN echo "micromamba activate gigl" >> /home/jupyter/.bashrc
+
 # Copy the source into the container
 # Point `conda` to `micromamba` as our install scripts still use conda
 RUN ln -s /opt/micromamba/bin/micromamba /usr/local/bin/conda
 
-WORKDIR /home/jupyter/gigl
-COPY . .
-RUN make install_deps
+COPY . /home/jupyter/gigl
+RUN cd /home/jupyter/gigl && make install_deps
 
 # Add coursier (cs) to the path
 # Default cs paths can be found here:

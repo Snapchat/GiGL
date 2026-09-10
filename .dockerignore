@@ -40,7 +40,6 @@ project/target/
 src_managed/
 lib_managed/
 src/test/assets/output/*
-containers/
 
 # ==================== Test / temp / logs
 .test_assets/
