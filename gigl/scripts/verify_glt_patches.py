@@ -183,7 +183,7 @@ def _sysv_segments_created_by_this_process() -> int:
     return count
 
 
-def verify_0003_queue_teardown() -> bool:
+def verify_queue_teardown() -> bool:
     """The teardown-unpin patch must be COMPILED IN, and teardown must stay leak-free.
 
     The runtime payload -- the deleter calling cudaHostUnregister for a mapping this process
@@ -278,7 +278,7 @@ def main() -> int:
     results = {
         "0001-glt-csr-col-count-and-int32-indices (col_count)": verify_bitmap_col_count(),
         "0001-glt-csr-col-count-and-int32-indices (int32)": verify_int32_indices(),
-        "0003-glt-unpin-shm-queue-on-teardown": verify_0003_queue_teardown(),
+        "0002-glt-unpin-shm-queue-on-teardown": verify_queue_teardown(),
     }
     failed = [name for name, passed in results.items() if not passed]
     if failed:
