@@ -9,8 +9,8 @@ WHY THIS EXISTS
     compiled ``.so``. A patch can apply to a file the build then excludes, a stale build directory
     can be reused, or a wheel can be installed from somewhere other than the tree that was
     patched -- and every one of those failures is silent, because the unpatched code paths work.
-    They just work at 3x the memory (patch 0001) or reject the int32 topology the trainer is
-    about to build (patch 0002), several hours into a 16-GPU job.
+    They just work at 3x the memory (the bitmap count) or reject the int32 topology the trainer is
+    about to build (int32 support), several hours into a 16-GPU job.
 
     The unit tests in ``tests/unit/utils/glt_int32_indices_test.py`` cover the same ground in far
     more detail, but they SKIP on an unpatched wheel by design -- GiGL's CI runs against the
@@ -34,7 +34,7 @@ import sys
 import torch
 from graphlearn_torch.data import Graph, Topology
 
-# 0001 replaces at::_unique with a bitmap count; a column id beyond the id domain the bitmap can
+# The CSR patch replaces at::_unique with a bitmap count; a column id beyond the id domain the bitmap can
 # describe must fall back rather than allocate, and a negative id must raise rather than write out
 # of bounds. Both are patch-only behaviours: upstream accepts them silently.
 _NEGATIVE_COLUMN_ID = -1
@@ -61,13 +61,13 @@ def _check(name: str, passed: bool, detail: str = "") -> bool:
     return passed
 
 
-def verify_0001_bitmap_col_count() -> bool:
+def verify_bitmap_col_count() -> bool:
     """The hardened distinct-count: exact on valid input, loud on invalid input."""
     indptr = torch.tensor([0, 2, 3, 5], dtype=torch.int64)
     indices = torch.tensor([7, 3, 7, 1, 4], dtype=torch.int64)
     graph = _cpu_graph(indptr, indices)
     exact = _check(
-        "0001 col_count is exact",
+        "col_count: exact",
         graph.col_count == int(torch.unique(indices).numel()),
         f"{graph.col_count} vs {int(torch.unique(indices).numel())}",
     )
@@ -83,7 +83,7 @@ def verify_0001_bitmap_col_count() -> bool:
     except RuntimeError as error:
         rejects_negative = "non-negative" in str(error)
     rejected = _check(
-        "0001 rejects a negative column id",
+        "col_count: rejects a negative column id",
         rejects_negative,
         "an unpatched wheel accepts this",
     )
@@ -96,14 +96,14 @@ def verify_0001_bitmap_col_count() -> bool:
     except RuntimeError as error:
         rejects_strided = "contiguous" in str(error)
     contiguous = _check(
-        "0001 rejects non-contiguous indices",
+        "col_count: rejects non-contiguous indices",
         rejects_strided,
         "an unpatched wheel accepts this",
     )
     return exact and rejected and contiguous
 
 
-def verify_0002_int32_indices() -> bool:
+def verify_int32_indices() -> bool:
     """int32 columns must be accepted AND sample identically to int64."""
     indptr = torch.tensor([0, 3, 3, 6], dtype=torch.int64)
     columns = [5, 2, 9, 1, 7, 4]
@@ -113,12 +113,12 @@ def verify_0002_int32_indices() -> bool:
     try:
         graph32 = _cpu_graph(indptr, indices32)
     except RuntimeError as error:
-        return _check("0002 accepts int32 indices", False, str(error).splitlines()[0])
-    accepted = _check("0002 accepts int32 indices", True)
+        return _check("int32: accepts int32 indices", False, str(error).splitlines()[0])
+    accepted = _check("int32: accepts int32 indices", True)
 
     graph64 = _cpu_graph(indptr, indices64)
     counts_match = _check(
-        "0002 col_count matches the int64 graph",
+        "int32: col_count matches the int64 graph",
         graph32.col_count == graph64.col_count,
         f"{graph32.col_count} vs {graph64.col_count}",
     )
@@ -135,13 +135,13 @@ def verify_0002_int32_indices() -> bool:
         seeds, 8
     )
     identical = _check(
-        "0002 samples identically to the int64 graph",
+        "int32: samples identically to the int64 graph",
         bool(torch.equal(neighbors64, neighbors32))
         and bool(torch.equal(degrees64, degrees32)),
         f"{neighbors32.tolist()} vs {neighbors64.tolist()}",
     )
     int64_out = _check(
-        "0002 sampled ids stay int64",
+        "int32: sampled ids stay int64",
         neighbors32.dtype == torch.int64,
         str(neighbors32.dtype),
     )
@@ -153,7 +153,7 @@ def verify_0002_int32_indices() -> bool:
     except RuntimeError as error:
         rejects = "int32" in str(error)
     guarded = _check(
-        "0002 untaught samplers reject int32 loudly",
+        "int32: untaught samplers reject int32 loudly",
         rejects,
         "a silent nullptr read would be the alternative",
     )
@@ -196,7 +196,7 @@ def verify_0003_queue_teardown() -> bool:
 
     marker = getattr(pywrap.SampleQueue, "supports_unpin_on_teardown", None)
     compiled_in = _check(
-        "0003 teardown-unpin capability is compiled in",
+        "teardown: teardown-unpin capability is compiled in",
         marker is not None and bool(marker()),
         "an unpatched wheel lacks this binding",
     )
@@ -227,7 +227,7 @@ def verify_0003_queue_teardown() -> bool:
     del sentinel
     count_after_sentinel = _sysv_segments_created_by_this_process()
     observable = _check(
-        "0003 pid filter observes a live segment",
+        "teardown: pid filter observes a live segment",
         count_with_sentinel == count_before_sentinel + 1
         and count_after_sentinel == count_before_sentinel,
         f"{count_before_sentinel} -> {count_with_sentinel} -> {count_after_sentinel}",
@@ -241,7 +241,7 @@ def verify_0003_queue_teardown() -> bool:
         one_cycle()
     leaked = _sysv_segments_created_by_this_process() - baseline
     no_leak = _check(
-        "0003 teardown cycles leak no shm segments",
+        "teardown: teardown cycles leak no shm segments",
         leaked <= 0,
         f"{leaked} leaked over 20 cycles"
         if leaked > 0
@@ -257,7 +257,7 @@ def verify_0003_queue_teardown() -> bool:
     in_flight = consumer.receive(5000)
     del producer, consumer
     survives = _check(
-        "0003 in-flight message survives queue teardown",
+        "teardown: in-flight message survives queue teardown",
         bool(torch.equal(in_flight["ids"], torch.arange(64, dtype=torch.int64))),
     )
     del in_flight
@@ -267,8 +267,8 @@ def verify_0003_queue_teardown() -> bool:
 def main() -> int:
     print(f"Verifying GLT patches against {Graph.__module__}")
     results = {
-        "0001-glt-cpu-graph-col-count-bitmap": verify_0001_bitmap_col_count(),
-        "0002-glt-int32-csr-indices": verify_0002_int32_indices(),
+        "0001-glt-csr-col-count-and-int32-indices (col_count)": verify_bitmap_col_count(),
+        "0001-glt-csr-col-count-and-int32-indices (int32)": verify_int32_indices(),
         "0003-glt-unpin-shm-queue-on-teardown": verify_0003_queue_teardown(),
     }
     failed = [name for name, passed in results.items() if not passed]
@@ -277,8 +277,8 @@ def main() -> int:
             f"\nFATAL: {failed} did not take effect in the installed graphlearn_torch. The patch "
             f"files applied to the source tree, so the wheel that got INSTALLED is not the one "
             f"that was built from it -- check for a stale build directory or a second wheel on "
-            f"the path. Shipping this image would OOM (0001) or reject the int32 topology the "
-            f"trainer builds (0002), hours into a multi-GPU job."
+            f"the path. Shipping this image would OOM (bitmap count) or reject the int32 topology the "
+            f"trainer builds, hours into a multi-GPU job."
         )
         return 1
     print("\nAll GLT patches verified live in the installed graphlearn_torch.")

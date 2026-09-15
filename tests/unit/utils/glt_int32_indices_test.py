@@ -1,6 +1,6 @@
 """make unit_test_py PY_TEST_FILES="glt_int32_indices_test.py"
 
-GLT patch 0002 (``gigl/scripts/patches/0002-glt-int32-csr-indices.patch``): the COMPILED CPU
+The int32 half of ``gigl/scripts/patches/0001-glt-csr-col-count-and-int32-indices.patch``: the COMPILED CPU
 samplers must read int32 column ids and produce byte-identical results to the int64 graph.
 
 Why this file exists rather than a probe script: the code that can corrupt training silently
@@ -82,7 +82,7 @@ def _wheel_supports_int32_indices() -> bool:
 
 
 _HAS_INT32 = _wheel_supports_int32_indices()
-_SKIP_REASON = "installed graphlearn_torch has no int32 CSR support: patch 0002 is not in this wheel"
+_SKIP_REASON = "installed graphlearn_torch has no int32 CSR support: the CSR patch is not in this wheel"
 
 
 class Int32IndicesSupportTest(TestCase):
@@ -103,10 +103,10 @@ class Int32IndicesSupportTest(TestCase):
         """
         if not _HAS_INT32:
             self.skipTest(
-                "patch 0002 absent: int32 CSR indices rejected by the compiled extension, so "
+                "int32 patch support absent: int32 CSR indices rejected by the compiled extension, so "
                 "every parity test in this file skipped. Expected on a wheel that predates the "
                 "patches; NOT expected inside an image whose wheel install_glt.sh built with "
-                "gigl/scripts/patches/0002-glt-int32-csr-indices.patch."
+                "gigl/scripts/patches/0001-glt-csr-col-count-and-int32-indices.patch."
             )
         self.assertTrue(_HAS_INT32)
 

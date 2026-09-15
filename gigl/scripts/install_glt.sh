@@ -53,7 +53,7 @@ then
         && bash install_dependencies.sh
     # TODO (dsaini2-sc): once a Snapchat-maintained GLT fork exists, land these patches as
     # commits on the fork, pin to it, and retire this apply loop.
-    # Local patches applied on top of the pinned commit, in order. 0001 replaces the
+    # Local patches applied on top of the pinned commit, in order. The CSR patch replaces the
     # at::_unique distinct-count in InitCPUGraphFromCSR with an exact bitmap count: _unique's
     # sort allocates ~3x the size of `indices` transiently (measured 3.00x at 200M edges), which
     # is ~94 GiB at a 4.2B-edge partition and OOM-kills the graph init on hosts whose budget
@@ -90,8 +90,8 @@ then
         && rm -rf graphlearn-for-pytorch
     # Applying a patch and SHIPPING it are different guarantees: the loop above proves the source
     # tree changed, this proves the installed .so behaves. A stale build dir or a second wheel on
-    # the path would otherwise produce an image that silently OOMs (0001) or rejects the int32
-    # topology the trainer builds (0002), hours into a multi-GPU job.
+    # the path would otherwise produce an image that silently OOMs (bitmap count) or rejects the int32
+    # topology the trainer builds, hours into a multi-GPU job.
     echo "Verifying the GLT patches took effect in the installed wheel"
     python "${GIGL_SCRIPTS_DIR}/verify_glt_patches.py" \
         || { echo "FATAL: GLT patches did not take effect in the installed wheel"; exit 1; }

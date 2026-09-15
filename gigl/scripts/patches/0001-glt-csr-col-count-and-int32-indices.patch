@@ -1,45 +1,32 @@
-int32 CSR column-id support in the CPU samplers.
+CPU CSR optimizations: exact bitmap distinct-count and int32 column-id support.
 
-When all node ids fit in int32 the CSC column array halves. Exactly one of col_idx_/col_idx32_ is
-set, checked at init. Samplers taught the layout (uniform random, negative, subgraph) sample
-byte-identically to int64 and still emit int64 ids; untaught paths (weighted sampler, CUDA init)
-reject int32 loudly via TORCH_CHECK instead of reading a null pointer. int64-only deployments are
-untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
+Part 1 -- distinct-count: replaces at::_unique's count of column ids in InitCPUGraphFromCSR.
+_unique is sort-based and transiently allocates ~3x the size of the indices tensor, which
+OOM-kills graph init at billion-edge scale. The bitmap gives the identical count in two passes
+over max_col/8 + 1 bytes, falls back to _unique on sparse id domains, and rejects negative ids
+and non-contiguous storage instead of corrupting memory.
 
---- a/graphlearn_torch/include/graph.h
-+++ b/graphlearn_torch/include/graph.h
-@@ -79,6 +79,18 @@
-     return col_idx_;
-   }
- 
-+  // int32 column-id support, CPU sampling only. Column ids are node ids; when they all fit in
-+  // int32 the CSC indices array halves (node id domain < 2^31, checked at init). Exactly one of
-+  // col_idx_ / col_idx32_ is set. Samplers that have not been taught the int32 layout must call
-+  // ColIsInt32() and reject it LOUDLY rather than read reinterpreted garbage.
-+  const int32_t* GetColIdx32() const {
-+    return col_idx32_;
-+  }
-+
-+  bool ColIsInt32() const {
-+    return col_is_int32_;
-+  }
-+
-   const int64_t* GetEdgeId() const {
-     return edge_id_;
-   }
-@@ -122,6 +134,8 @@
- private:
-   int64_t*  row_ptr_;
-   int64_t*  col_idx_;
-+  int32_t*  col_idx32_{nullptr};
-+  bool      col_is_int32_{false};
-   int64_t*  edge_id_;
-   float*    edge_weight_;
-   std::vector<void*>  registered_ptrs_;
+Part 2 -- int32 column ids: when all node ids fit in int32 the CSC column array halves. Exactly
+one of col_idx_/col_idx32_ is set, checked at init. Samplers taught the layout (uniform random,
+negative, subgraph) sample byte-identically to int64 and still emit int64 ids; untaught paths
+(weighted sampler, CUDA init) reject int32 loudly via TORCH_CHECK instead of reading a null
+pointer. int64-only deployments are untouched.
+
+One patch because the two parts rewrite the same region of graph.cc; carrying them separately
+duplicates that text and lets an edit to one silently break the other's context.
+
+diff --git a/graphlearn_torch/csrc/cpu/graph.cc b/graphlearn_torch/csrc/cpu/graph.cc
+index cd8b4ba..59694fd 100644
 --- a/graphlearn_torch/csrc/cpu/graph.cc
 +++ b/graphlearn_torch/csrc/cpu/graph.cc
-@@ -22,6 +22,76 @@
+@@ -16,8 +16,82 @@ limitations under the License.
+ #include "graphlearn_torch/include/graph.h"
+ #include "graphlearn_torch/include/common.h"
  
++#include <algorithm>
++#include <cstdint>
++#include <vector>
++
  namespace graphlearn_torch {
  
 +namespace {
@@ -115,44 +102,14 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
  void Graph::InitCPUGraphFromCSR(
      const torch::Tensor& indptr,
      const torch::Tensor& indices,
-@@ -31,62 +101,23 @@
+@@ -27,10 +101,23 @@ void Graph::InitCPUGraphFromCSR(
    CheckEq<int64_t>(indices.dim(), 1);
  
    row_ptr_ = indptr.data_ptr<int64_t>();
 -  col_idx_ = indices.data_ptr<int64_t>();
    row_count_ = indptr.size(0) - 1;
    edge_count_ = indices.size(0);
--  // Exact distinct-count of the column ids, replacing at::_unique. _unique is sort-based and
--  // allocates ~3x the size of `indices` in transient anonymous memory (measured 3.00x at 200M
--  // edges) -- ~94 GiB at a 4.2B-edge partition, which OOM-kills billion-edge CPU deployments
--  // whose host budget assumes graph init holds no second copy of the topology.
--  //
--  // A seen-bitmap over [0, max_col] gives the identical count in two sequential passes using
--  // max_col/8 + 1 bytes (~115 MiB at 1e9 nodes). It is only VALID for non-negative ids in
--  // contiguous storage, and only CHEAPER when the id domain is dense relative to the edge count.
--  // Both preconditions are checked rather than assumed: an unchecked negative id would cast to a
--  // huge uint64_t and write outside the bitmap, and a sparse-but-huge id would size the bitmap
--  // from the id domain instead of the edge count. The sparse case falls back to _unique, so this
--  // is never worse than upstream; the invalid cases raise instead of corrupting memory.
--  //
--  // Note on strides: `col_idx_` is flat storage and every sampler already reads it that way, so
--  // requiring contiguity here makes col_count_ agree with what sampling actually traverses --
--  // upstream's _unique(indices) followed the view's strides and could disagree with its own
--  // samplers.
--  TORCH_CHECK(indices.is_contiguous(),
--              "InitCPUGraphFromCSR requires contiguous indices: col_idx_ is read as flat "
--              "storage by the samplers, so a strided view would sample the wrong columns");
--  int64_t max_col = -1;
--  for (int64_t i = 0; i < edge_count_; ++i) {
--    const int64_t col = col_idx_[i];
--    TORCH_CHECK(col >= 0,
--                "InitCPUGraphFromCSR requires non-negative column ids (they are node ids), got ",
--                col, " at position ", i);
--    max_col = std::max(max_col, col);
--  }
--  if (max_col < 0) {
--    // No edges. at::_unique of an empty tensor is also empty.
--    col_count_ = 0;
+-  col_count_ = std::get<0>(at::_unique(indices)).size(0);
 +  // Column ids may be int32 (node id domain < 2^31 -- checked below) or int64. Exactly one of
 +  // col_idx_ / col_idx32_ is set; samplers dispatch on ColIsInt32(), and samplers that have not
 +  // been taught the int32 layout reject it loudly at their own entry points.
@@ -160,67 +117,37 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
 +  if (col_is_int32_) {
 +    col_idx32_ = indices.data_ptr<int32_t>();
 +    col_idx_ = nullptr;
-   } else {
--    const uint64_t bitmap_bytes = (static_cast<uint64_t>(max_col) >> 3) + 1;
--    if (bitmap_bytes >
--        static_cast<uint64_t>(edge_count_) * static_cast<uint64_t>(sizeof(int64_t))) {
--      // Domain so sparse that the bitmap would exceed what `indices` itself occupies; the sort
--      // is the cheaper peak here.
--      col_count_ = std::get<0>(at::_unique(indices)).size(0);
--    } else {
--      std::vector<uint8_t> seen(bitmap_bytes, 0);
--      int64_t distinct_cols = 0;
--      for (int64_t i = 0; i < edge_count_; ++i) {
--        const uint64_t col = static_cast<uint64_t>(col_idx_[i]);
--        uint8_t& byte = seen[col >> 3];
--        const uint8_t bit = static_cast<uint8_t>(1u << (col & 7));
--        if (!(byte & bit)) {
--          byte |= bit;
--          ++distinct_cols;
--        }
--      }
--      col_count_ = distinct_cols;
--    }
++  } else {
 +    TORCH_CHECK(indices.scalar_type() == torch::kInt64,
 +                "InitCPUGraphFromCSR requires int32 or int64 indices, got ",
 +                indices.scalar_type());
 +    col_idx_ = indices.data_ptr<int64_t>();
 +    col_idx32_ = nullptr;
-   }
++  }
 +  col_count_ = CountDistinctCols(indices, edge_count_);
  
    if (edge_ids.numel()) {
      CheckEq<int64_t>(edge_ids.dim(), 1);
---- a/graphlearn_torch/csrc/cpu/random_sampler.h
-+++ b/graphlearn_torch/csrc/cpu/random_sampler.h
-@@ -37,21 +37,9 @@
-     const int32_t req_num,  const int64_t row_count,
-     const int64_t* row_ptr, int64_t* out_nbr_num);
- 
--  void CSRRowWiseSample(const int64_t* nodes, const int64_t* nbrs_offset,
--    const int32_t bs, const int32_t req_num, const int64_t row_count,
--    const int64_t* row_ptr, const int64_t* col_idx, int64_t* out_nbrs);
--
--  void CSRRowWiseSample(const int64_t* nodes, const int64_t* nbrs_offset,
--      const int32_t bs, const int32_t req_num, const int64_t row_count,
--      const int64_t* row_ptr, const int64_t* col_idx, const int64_t* edge_id,
--      int64_t* out_nbrs, int64_t* out_eid);
--
--  void UniformSample(const int64_t* col_begin, const int64_t* col_end,
--      const int32_t req_num, int64_t* out_nbrs);
--
--  void UniformSample(const int64_t* col_begin, const int64_t* col_end,
--      const int64_t* eid_begin, const int64_t* eid_end,
--      const int32_t req_num, int64_t* out_nbrs, int64_t* out_eid);
-+  // The row-wise sampling helpers are file-local templates in random_sampler.cc, generic over
-+  // the column-id storage type (int64 or int32; see Graph::ColIsInt32). Outputs are always
-+  // int64 -- the storage dtype is an implementation detail of the graph, not of the API.
- 
- };
- 
+diff --git a/graphlearn_torch/csrc/cpu/random_negative_sampler.cc b/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
+index f9d3e12..4f2a34e 100644
+--- a/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
++++ b/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
+@@ -24,6 +24,10 @@ namespace graphlearn_torch {
+ std::tuple<torch::Tensor, torch::Tensor> CPURandomNegativeSampler::Sample(
+     int32_t req_num, int32_t trials_num, bool padding) {
+   const int64_t* row_ptr = graph_->GetRowPtr();
++  TORCH_CHECK(!graph_->ColIsInt32(),
++              "CPURandomNegativeSampler has not been taught the int32 column-id layout; "
++              "initialize this graph with int64 indices or extend the sampler "
++              "(see Graph::ColIsInt32)");
+   const int64_t* col_idx = graph_->GetColIdx();
+   int64_t row_num = graph_->GetRowCount();
+   int64_t col_num = graph_->GetColCount();
+diff --git a/graphlearn_torch/csrc/cpu/random_sampler.cc b/graphlearn_torch/csrc/cpu/random_sampler.cc
+index 4953680..94bd5f9 100644
 --- a/graphlearn_torch/csrc/cpu/random_sampler.cc
 +++ b/graphlearn_torch/csrc/cpu/random_sampler.cc
-@@ -21,6 +21,104 @@
+@@ -21,6 +21,104 @@ limitations under the License.
  
  namespace graphlearn_torch {
  
@@ -325,7 +252,7 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
  std::tuple<torch::Tensor, torch::Tensor>
  CPURandomSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
    if (req_num < 0) req_num = std::numeric_limits<int32_t>::max();
-@@ -40,8 +138,13 @@
+@@ -40,8 +138,13 @@ CPURandomSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
    }
  
    torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
@@ -341,7 +268,7 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
    return std::make_tuple(nbrs, nbrs_num);
  }
  
-@@ -66,9 +169,15 @@
+@@ -66,9 +169,15 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
  
    torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
    torch::Tensor out_eid = torch::empty(nbrs_offset[bs], nodes.options());
@@ -360,7 +287,7 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
    return std::make_tuple(nbrs, nbrs_num, out_eid);
  }
  
-@@ -91,89 +200,4 @@
+@@ -91,89 +200,4 @@ void CPURandomSampler::FillNbrsNum(const int64_t* nodes,
    });
  }
  
@@ -451,46 +378,40 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
 -
  }  // namespace graphlearn_torch
 \ No newline at end of file
---- a/graphlearn_torch/csrc/cpu/weighted_sampler.cc
-+++ b/graphlearn_torch/csrc/cpu/weighted_sampler.cc
-@@ -28,6 +28,10 @@
-   const int64_t* nodes_ptr = nodes.data_ptr<int64_t>();
-   int64_t bs = nodes.size(0);
-   const auto row_ptr = graph_->GetRowPtr();
-+  TORCH_CHECK(!graph_->ColIsInt32(),
-+              "CPUWeightedSampler has not been taught the int32 column-id layout; "
-+              "initialize this graph with int64 indices or extend the sampler "
-+              "(see Graph::ColIsInt32)");
-   const auto col_idx = graph_->GetColIdx();
-   const auto row_count = graph_->GetRowCount();
-   const auto edge_weights = graph_->GetEdgeWeight();
-@@ -55,6 +59,10 @@
-   const int64_t* nodes_ptr = nodes.data_ptr<int64_t>();
-   int64_t bs = nodes.size(0);
-   const auto row_ptr = graph_->GetRowPtr();
-+  TORCH_CHECK(!graph_->ColIsInt32(),
-+              "CPUWeightedSampler has not been taught the int32 column-id layout; "
-+              "initialize this graph with int64 indices or extend the sampler "
-+              "(see Graph::ColIsInt32)");
-   const auto col_idx = graph_->GetColIdx();
-   const auto edge_ids = graph_->GetEdgeId();
-   const auto row_count = graph_->GetRowCount();
---- a/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
-+++ b/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
-@@ -24,6 +24,10 @@
- std::tuple<torch::Tensor, torch::Tensor> CPURandomNegativeSampler::Sample(
-     int32_t req_num, int32_t trials_num, bool padding) {
-   const int64_t* row_ptr = graph_->GetRowPtr();
-+  TORCH_CHECK(!graph_->ColIsInt32(),
-+              "CPURandomNegativeSampler has not been taught the int32 column-id layout; "
-+              "initialize this graph with int64 indices or extend the sampler "
-+              "(see Graph::ColIsInt32)");
-   const int64_t* col_idx = graph_->GetColIdx();
-   int64_t row_num = graph_->GetRowCount();
-   int64_t col_num = graph_->GetColCount();
+diff --git a/graphlearn_torch/csrc/cpu/random_sampler.h b/graphlearn_torch/csrc/cpu/random_sampler.h
+index c6ab6b0..e19b173 100644
+--- a/graphlearn_torch/csrc/cpu/random_sampler.h
++++ b/graphlearn_torch/csrc/cpu/random_sampler.h
+@@ -37,21 +37,9 @@ private:
+     const int32_t req_num,  const int64_t row_count,
+     const int64_t* row_ptr, int64_t* out_nbr_num);
+ 
+-  void CSRRowWiseSample(const int64_t* nodes, const int64_t* nbrs_offset,
+-    const int32_t bs, const int32_t req_num, const int64_t row_count,
+-    const int64_t* row_ptr, const int64_t* col_idx, int64_t* out_nbrs);
+-
+-  void CSRRowWiseSample(const int64_t* nodes, const int64_t* nbrs_offset,
+-      const int32_t bs, const int32_t req_num, const int64_t row_count,
+-      const int64_t* row_ptr, const int64_t* col_idx, const int64_t* edge_id,
+-      int64_t* out_nbrs, int64_t* out_eid);
+-
+-  void UniformSample(const int64_t* col_begin, const int64_t* col_end,
+-      const int32_t req_num, int64_t* out_nbrs);
+-
+-  void UniformSample(const int64_t* col_begin, const int64_t* col_end,
+-      const int64_t* eid_begin, const int64_t* eid_end,
+-      const int32_t req_num, int64_t* out_nbrs, int64_t* out_eid);
++  // The row-wise sampling helpers are file-local templates in random_sampler.cc, generic over
++  // the column-id storage type (int64 or int32; see Graph::ColIsInt32). Outputs are always
++  // int64 -- the storage dtype is an implementation detail of the graph, not of the API.
+ 
+ };
+ 
+diff --git a/graphlearn_torch/csrc/cpu/subgraph_op.cc b/graphlearn_torch/csrc/cpu/subgraph_op.cc
+index 168caae..cb903c0 100644
 --- a/graphlearn_torch/csrc/cpu/subgraph_op.cc
 +++ b/graphlearn_torch/csrc/cpu/subgraph_op.cc
-@@ -64,6 +64,10 @@
+@@ -64,6 +64,10 @@ void CPUSubGraphOp::Induce(const std::vector<int64_t>& nodes,
                             std::vector<int64_t>& out_cols,
                             std::vector<int64_t>& out_eids) {
    const auto indptr = graph_->GetRowPtr();
@@ -501,3 +422,61 @@ untouched. Applies on top of 0001 (its graph.cc hunks assume the bitmap count).
    const auto indices = graph_->GetColIdx();
    const auto edge_ids = graph_->GetEdgeId();
    const auto row_count = graph_->GetRowCount();
+diff --git a/graphlearn_torch/csrc/cpu/weighted_sampler.cc b/graphlearn_torch/csrc/cpu/weighted_sampler.cc
+index f4ac43e..5b115d5 100644
+--- a/graphlearn_torch/csrc/cpu/weighted_sampler.cc
++++ b/graphlearn_torch/csrc/cpu/weighted_sampler.cc
+@@ -28,6 +28,10 @@ CPUWeightedSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
+   const int64_t* nodes_ptr = nodes.data_ptr<int64_t>();
+   int64_t bs = nodes.size(0);
+   const auto row_ptr = graph_->GetRowPtr();
++  TORCH_CHECK(!graph_->ColIsInt32(),
++              "CPUWeightedSampler has not been taught the int32 column-id layout; "
++              "initialize this graph with int64 indices or extend the sampler "
++              "(see Graph::ColIsInt32)");
+   const auto col_idx = graph_->GetColIdx();
+   const auto row_count = graph_->GetRowCount();
+   const auto edge_weights = graph_->GetEdgeWeight();
+@@ -55,6 +59,10 @@ CPUWeightedSampler::SampleWithEdge(
+   const int64_t* nodes_ptr = nodes.data_ptr<int64_t>();
+   int64_t bs = nodes.size(0);
+   const auto row_ptr = graph_->GetRowPtr();
++  TORCH_CHECK(!graph_->ColIsInt32(),
++              "CPUWeightedSampler has not been taught the int32 column-id layout; "
++              "initialize this graph with int64 indices or extend the sampler "
++              "(see Graph::ColIsInt32)");
+   const auto col_idx = graph_->GetColIdx();
+   const auto edge_ids = graph_->GetEdgeId();
+   const auto row_count = graph_->GetRowCount();
+diff --git a/graphlearn_torch/include/graph.h b/graphlearn_torch/include/graph.h
+index 85d1fd8..4a24485 100644
+--- a/graphlearn_torch/include/graph.h
++++ b/graphlearn_torch/include/graph.h
+@@ -79,6 +79,18 @@ public:
+     return col_idx_;
+   }
+ 
++  // int32 column-id support, CPU sampling only. Column ids are node ids; when they all fit in
++  // int32 the CSC indices array halves (node id domain < 2^31, checked at init). Exactly one of
++  // col_idx_ / col_idx32_ is set. Samplers that have not been taught the int32 layout must call
++  // ColIsInt32() and reject it LOUDLY rather than read reinterpreted garbage.
++  const int32_t* GetColIdx32() const {
++    return col_idx32_;
++  }
++
++  bool ColIsInt32() const {
++    return col_is_int32_;
++  }
++
+   const int64_t* GetEdgeId() const {
+     return edge_id_;
+   }
+@@ -122,6 +134,8 @@ public:
+ private:
+   int64_t*  row_ptr_;
+   int64_t*  col_idx_;
++  int32_t*  col_idx32_{nullptr};
++  bool      col_is_int32_{false};
+   int64_t*  edge_id_;
+   float*    edge_weight_;
+   std::vector<void*>  registered_ptrs_;
