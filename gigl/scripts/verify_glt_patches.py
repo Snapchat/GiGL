@@ -40,7 +40,16 @@ from graphlearn_torch.data import Graph, Topology
 _NEGATIVE_COLUMN_ID = -1
 
 
-def _cpu_graph(indptr: torch.Tensor, indices: torch.Tensor) -> Graph:
+def build_cpu_csr_graph(indptr: torch.Tensor, indices: torch.Tensor) -> Graph:
+    """Build a CPU ``Graph`` over a ready-made CSR, bypassing ``Topology.__init__``.
+
+    Populating the attributes directly keeps the fixture free of the ``arange(num_edges)`` edge
+    ids ``Topology.__init__`` would attach, so the CSR reaches the compiled extension exactly as
+    given -- including a dtype upstream's constructor would upcast.
+
+    Lives here rather than in the test suite because this module must stay importable during an
+    image build, before the test dependencies are installed.
+    """
     topology = Topology.__new__(Topology)
     topology._layout = "CSR"
     topology._indptr = indptr
@@ -65,7 +74,7 @@ def verify_bitmap_col_count() -> bool:
     """The hardened distinct-count: exact on valid input, loud on invalid input."""
     indptr = torch.tensor([0, 2, 3, 5], dtype=torch.int64)
     indices = torch.tensor([7, 3, 7, 1, 4], dtype=torch.int64)
-    graph = _cpu_graph(indptr, indices)
+    graph = build_cpu_csr_graph(indptr, indices)
     exact = _check(
         "col_count: exact",
         graph.col_count == int(torch.unique(indices).numel()),
@@ -76,7 +85,7 @@ def verify_bitmap_col_count() -> bool:
     # it to an unsigned bitmap offset would write outside the allocation.
     rejects_negative = False
     try:
-        _cpu_graph(
+        build_cpu_csr_graph(
             torch.tensor([0, 1], dtype=torch.int64),
             torch.tensor([_NEGATIVE_COLUMN_ID], dtype=torch.int64),
         )
@@ -92,7 +101,7 @@ def verify_bitmap_col_count() -> bool:
     strided = torch.arange(8, dtype=torch.int64)[::2]
     rejects_strided = False
     try:
-        _cpu_graph(torch.tensor([0, 2, 4], dtype=torch.int64), strided)
+        build_cpu_csr_graph(torch.tensor([0, 2, 4], dtype=torch.int64), strided)
     except RuntimeError as error:
         rejects_strided = "contiguous" in str(error)
     contiguous = _check(
@@ -111,12 +120,12 @@ def verify_int32_indices() -> bool:
     indices32 = torch.tensor(columns, dtype=torch.int32)
 
     try:
-        graph32 = _cpu_graph(indptr, indices32)
+        graph32 = build_cpu_csr_graph(indptr, indices32)
     except RuntimeError as error:
         return _check("int32: accepts int32 indices", False, str(error).splitlines()[0])
     accepted = _check("int32: accepts int32 indices", True)
 
-    graph64 = _cpu_graph(indptr, indices64)
+    graph64 = build_cpu_csr_graph(indptr, indices64)
     counts_match = _check(
         "int32: col_count matches the int64 graph",
         graph32.col_count == graph64.col_count,

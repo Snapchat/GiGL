@@ -25,29 +25,8 @@ import torch
 from graphlearn_torch import py_graphlearn_torch as pywrap
 from graphlearn_torch.data import Graph, Topology
 
+from gigl.scripts.verify_glt_patches import build_cpu_csr_graph
 from tests.test_assets.test_case import TestCase
-
-
-def _build_cpu_graph(indptr: torch.Tensor, indices: torch.Tensor) -> Graph:
-    """A CPU ``Graph`` over a ready-made CSR, bypassing ``Topology.__init__``.
-
-    Populating the attributes directly keeps the fixture free of the ``arange(num_edges)`` edge
-    ids ``Topology.__init__`` would attach, so the CSR reaches the compiled extension exactly as
-    given.
-    """
-    topology = Topology.__new__(Topology)
-    topology._layout = "CSR"
-    topology._indptr = indptr
-    topology._indices = indices
-    topology._edge_ids = None
-    topology._edge_weights = None
-    graph = Graph.__new__(Graph)
-    graph.topo = topology
-    graph.mode = "CPU"
-    graph.device = None
-    graph._graph = None
-    graph.lazy_init()
-    return graph
 
 
 def _random_csr(
@@ -72,7 +51,7 @@ def _random_csr(
 def _wheel_supports_int32_indices() -> bool:
     """Whether the installed compiled extension accepts int32 CSR indices."""
     try:
-        _build_cpu_graph(
+        build_cpu_csr_graph(
             torch.tensor([0, 1], dtype=torch.int64),
             torch.tensor([0], dtype=torch.int32),
         )
@@ -123,8 +102,8 @@ class Int32SamplingParityTest(TestCase):
             cls.num_rows, 200_000, seed=7
         )
         cls.indices32 = cls.indices64.to(torch.int32)
-        cls.graph64 = _build_cpu_graph(cls.indptr, cls.indices64)
-        cls.graph32 = _build_cpu_graph(cls.indptr, cls.indices32)
+        cls.graph64 = build_cpu_csr_graph(cls.indptr, cls.indices64)
+        cls.graph32 = build_cpu_csr_graph(cls.indptr, cls.indices32)
         generator = torch.Generator().manual_seed(11)
         cls.seeds = torch.randint(
             0, cls.num_rows, (4_000,), generator=generator, dtype=torch.int64
@@ -206,7 +185,7 @@ class Int32RejectionTest(TestCase):
     def setUp(self) -> None:
         super().setUp()
         self.indptr, indices64, _ = _random_csr(500, 4_000, seed=13)
-        self.graph32 = _build_cpu_graph(self.indptr, indices64.to(torch.int32))
+        self.graph32 = build_cpu_csr_graph(self.indptr, indices64.to(torch.int32))
         self.seeds = torch.arange(10, dtype=torch.int64)
 
     def test_the_weighted_sampler_rejects_an_int32_graph(self) -> None:
@@ -217,7 +196,7 @@ class Int32RejectionTest(TestCase):
     def test_an_unsupported_indices_dtype_is_rejected(self) -> None:
         """Only int32 and int64 are accepted; anything else must not be reinterpreted."""
         with self.assertRaises(RuntimeError):
-            _build_cpu_graph(
+            build_cpu_csr_graph(
                 torch.tensor([0, 1], dtype=torch.int64),
                 torch.tensor([0], dtype=torch.int16),
             )
@@ -227,7 +206,7 @@ class Int32RejectionTest(TestCase):
         indices = torch.arange(8, dtype=torch.int32)[::2]
         self.assertFalse(indices.is_contiguous())
         with self.assertRaises(RuntimeError):
-            _build_cpu_graph(torch.tensor([0, 2, 4], dtype=torch.int64), indices)
+            build_cpu_csr_graph(torch.tensor([0, 2, 4], dtype=torch.int64), indices)
 
     @unittest.skipUnless(
         torch.cuda.is_available() and hasattr(pywrap.Graph(), "init_cuda_from_csr"),
@@ -265,7 +244,7 @@ class Int32EmptyGraphTest(TestCase):
     """An edgeless rank is normal under range partitioning, and it still narrows to int32."""
 
     def test_an_empty_int32_graph_initializes_and_samples_nothing(self) -> None:
-        graph = _build_cpu_graph(
+        graph = build_cpu_csr_graph(
             torch.zeros(11, dtype=torch.int64), torch.empty(0, dtype=torch.int32)
         )
         self.assertEqual(graph.col_count, 0)
