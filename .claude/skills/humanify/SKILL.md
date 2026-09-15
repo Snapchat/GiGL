@@ -1,6 +1,6 @@
 ---
 name: humanify
-description: Use when writing or editing code comments, docstrings, or PR/commit descriptions.
+description: Use when writing or editing code comments, docstrings, or reference documentation that describes current behavior (READMEs, how-to .md files) — not dated design/plan docs.
 ---
 
 # Humanify
