@@ -51,6 +51,8 @@ then
         && git checkout 88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9 \
         && git submodule update --init \
         && bash install_dependencies.sh
+    # TODO (dsaini2-sc): once a Snapchat-maintained GLT fork exists, land these patches as
+    # commits on the fork, pin to it, and retire this apply loop.
     # Local patches applied on top of the pinned commit, in order. 0001 replaces the
     # at::_unique distinct-count in InitCPUGraphFromCSR with an exact bitmap count: _unique's
     # sort allocates ~3x the size of `indices` transiently (measured 3.00x at 200M edges), which

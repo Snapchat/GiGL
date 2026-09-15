@@ -1,3 +1,11 @@
+Exact bitmap distinct-count in CPU CSR graph init.
+
+Replaces at::_unique's distinct-count of column ids in InitCPUGraphFromCSR. _unique is sort-based
+and transiently allocates ~3x the size of the indices tensor, which OOM-kills graph init at
+billion-edge scale. The bitmap gives the identical count in two passes over max_col/8 + 1 bytes,
+falls back to _unique on sparse id domains, and rejects negative ids and non-contiguous storage
+instead of corrupting memory.
+
 --- a/graphlearn_torch/csrc/cpu/graph.cc
 +++ b/graphlearn_torch/csrc/cpu/graph.cc
 @@ -16,6 +16,10 @@

@@ -20,6 +20,10 @@ WHY THIS EXISTS
     Deliberately dependency-free (torch and graphlearn_torch only): it runs inside the image build
     before the rest of the repo's test dependencies are necessarily importable.
 
+TODO (dsaini2-sc): once a Snapchat-maintained GLT fork carries these changes as commits, this
+    script outlives the patch files -- it verifies the installed wheel, wherever it was built
+    from -- but its docstrings and failure messages should be reworded away from "patches".
+
 Usage:
     python gigl/scripts/verify_glt_patches.py
 """

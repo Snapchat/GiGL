@@ -1,3 +1,11 @@
+Unpin and remove shared-memory queue segments on teardown.
+
+The SysV segment is detached and removed (and cudaHostUnregister called for pinned mappings) from
+the shared_ptr deleter, so repeated loader construction/teardown cycles stop leaking segments and
+pinned registrations. An in-flight zero-copy message keeps its mapping alive until released.
+Exposes a supports_unpin_on_teardown marker so verify_glt_patches.py can prove the binary is
+patched without a GPU.
+
 diff --git a/graphlearn_torch/csrc/shm_queue.cc b/graphlearn_torch/csrc/shm_queue.cc
 index 11302e7..b7d3c75 100644
 --- a/graphlearn_torch/csrc/shm_queue.cc
