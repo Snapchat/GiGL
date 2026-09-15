@@ -6,10 +6,11 @@
 
 import datetime
 import queue
-from threading import Barrier
+from threading import Barrier, BrokenBarrierError
 from typing import Optional, Union, cast
 
 import torch
+import torch.distributed.rpc
 import torch.multiprocessing as mp
 from graphlearn_torch.channel import ChannelBase
 from graphlearn_torch.distributed import (
@@ -37,10 +38,36 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import (
+    SAMPLING_RPC_INIT_TIMEOUT_ENV,
+    SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS,
+    sampling_worker_init_timeout_seconds,
+)
 from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import create_dist_sampler
 
 logger = Logger()
+
+
+def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> None:
+    """Reset the RPC agent's request timeout once a sampling worker is past its init barrier.
+
+    ``init_rpc`` sets the agent's default request timeout to the bring-up tolerance, which is
+    deliberately generous so cross-rank skew does not kill the gather -- but leaving it there
+    would mean every steady-state sampling and feature-collection RPC also waits that long
+    before a stuck request surfaces. The init barrier is precisely the boundary between the two
+    regimes, so the worker narrows the timeout immediately after passing it.
+
+    A no-op when the bring-up value already equals the steady-state value.
+    """
+    if SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS != bringup_rpc_timeout:
+        torch.distributed.rpc._set_rpc_timeout(
+            float(SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS)
+        )
+        logger.info(
+            f"sampling worker {rank} past init barrier; RPC request timeout narrowed from "
+            f"{bringup_rpc_timeout}s (bring-up) to {SAMPLING_STEADY_STATE_RPC_TIMEOUT_SECONDS}s"
+        )
 
 
 def _sampling_worker_loop(
@@ -121,6 +148,8 @@ def _sampling_worker_loop(
 
         mp_barrier.wait()
 
+        _narrow_rpc_timeout_after_init(rank, worker_options.rpc_timeout)
+
         keep_running = True
         while keep_running:
             try:
@@ -165,10 +194,12 @@ def _sampling_worker_loop(
     except KeyboardInterrupt:
         # Main process will raise KeyboardInterrupt anyways.
         pass
-
-    if dist_sampler is not None:
-        dist_sampler.shutdown_loop()
-    shutdown_rpc(graceful=False)
+    finally:
+        # In a finally so a worker released through a broken init barrier still tears down
+        # its sampler loop and RPC agent instead of leaking them
+        if dist_sampler is not None:
+            dist_sampler.shutdown_loop()
+        shutdown_rpc(graceful=False)
 
 
 class DistSamplingProducer(DistMpSamplingProducer):
@@ -224,4 +255,50 @@ class DistSamplingProducer(DistMpSamplingProducer):
             worker.daemon = True
             worker.start()
             self._workers.append(worker)
-        barrier.wait()
+        self._wait_for_workers_at_barrier(barrier)
+
+    def _wait_for_workers_at_barrier(self, barrier: Barrier) -> None:
+        """Wait for every sampling worker to reach the init barrier, but not forever.
+
+        An unbounded ``barrier.wait()`` here is the difference between a job that fails and a job
+        that hangs. Each worker must complete GLT's ``init_rpc``, which itself gathers all
+        ``num_workers x world_size`` workers within the bring-up tolerance; a worker that loses
+        that gather dies, never reaches this barrier, and leaves this process blocked forever
+        while its peers sit in collectives until the training process group's own timeout fires.
+        Bounding this wait is what turns that wedge into a fast, attributable failure.
+
+        The barrier is waited on ONCE with the full timeout rather than polled: a timed-out
+        ``wait`` puts a multiprocessing barrier into the broken state permanently, for the children
+        too, so polling it would destroy the very rendezvous it is checking.
+
+        Raises:
+            RuntimeError: if the barrier is not reached within the timeout, naming the workers
+                that died so the failure is diagnosable from one replica's log.
+        """
+        timeout_seconds = sampling_worker_init_timeout_seconds()
+        try:
+            barrier.wait(timeout=timeout_seconds)
+        except BrokenBarrierError:
+            # Diagnose BEFORE shutdown(): it terminates the surviving workers, which would
+            # make every worker look dead and erase the exit codes that matter
+            dead = [
+                rank
+                for rank, worker in enumerate(self._workers)
+                if not worker.is_alive()
+            ]
+            exit_codes = {rank: self._workers[rank].exitcode for rank in dead}
+            diagnosis = (
+                f"dead workers (rank -> exitcode): {exit_codes}"
+                if exit_codes
+                else "no worker has exited, so at least one is still initialising"
+            )
+            # Tear down the queues and processes this producer already created; GLT's
+            # shutdown() joins with a timeout and terminates stragglers, so it cannot
+            # replace the hang this bound exists to remove
+            self.shutdown()
+            raise RuntimeError(
+                f"sampling workers did not reach the init barrier within {timeout_seconds}s; "
+                f"{diagnosis}. A worker that loses GLT's init_rpc gather dies before this "
+                f"barrier. Raise {SAMPLING_RPC_INIT_TIMEOUT_ENV} (this bound is a multiple of "
+                f"it) if init is legitimately slower than this on a cold cache."
+            ) from None
