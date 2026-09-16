@@ -70,30 +70,57 @@ class TopologyBypassTest(TestCase):
 class LeanBuildAppliesTest(TestCase):
     @parameterized.expand(
         [
-            param("no_ids_no_weights", edge_ids=None, edge_weights=None, expected=True),
+            param(
+                "no_ids_no_weights",
+                edge_ids=None,
+                edge_weights=None,
+                edge_features_registered=False,
+                expected=True,
+            ),
             param(
                 "dict_of_none_ids",
                 edge_ids={_EDGE_TYPE: None},
                 edge_weights=None,
+                edge_features_registered=False,
                 expected=True,
             ),
             param(
                 "materialized_ids",
                 edge_ids={_EDGE_TYPE: torch.tensor([0, 1])},
                 edge_weights=None,
+                edge_features_registered=False,
                 expected=False,
             ),
             param(
                 "edge_weights",
                 edge_ids=None,
                 edge_weights=torch.tensor([1.0, 1.0]),
+                edge_features_registered=False,
+                expected=False,
+            ),
+            param(
+                "edge_features",
+                edge_ids=None,
+                edge_weights=None,
+                edge_features_registered=True,
                 expected=False,
             ),
         ]
     )
-    def test_gating(self, _name: str, edge_ids, edge_weights, expected: bool) -> None:
+    def test_gating(
+        self,
+        _name: str,
+        edge_ids,
+        edge_weights,
+        edge_features_registered: bool,
+        expected: bool,
+    ) -> None:
         self.assertEqual(
-            _can_build_topology_directly(edge_ids=edge_ids, edge_weights=edge_weights),
+            _can_build_topology_directly(
+                edge_ids=edge_ids,
+                edge_weights=edge_weights,
+                edge_features_registered=edge_features_registered,
+            ),
             expected,
         )
 
@@ -157,9 +184,29 @@ class InitializeGraphTest(TestCase):
                 edge_index=_random_coo(num_nodes, 200, seed=3), edge_ids=None
             ),
             node_partition_book=self._partition_book(num_nodes),
+            edge_features_registered=False,
         )
 
         self.assertIsInstance(dataset.graph, Graph)
+
+    def test_registered_edge_features_keep_the_edge_ids_the_sampler_reads(self) -> None:
+        """Edge features are looked up by edge id, and the lean path does not materialize any.
+
+        GLT hands ``torch.empty(0)`` to the compiled graph when ``Topology.edge_ids`` is unset, so
+        taking the lean path here segfaults the sampler rather than raising.
+        """
+        num_nodes = 40
+        dataset = self._dataset()
+
+        dataset._initialize_graph(
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=_random_coo(num_nodes, 200, seed=7), edge_ids=None
+            ),
+            node_partition_book=self._partition_book(num_nodes),
+            edge_features_registered=True,
+        )
+
+        self.assertIsNotNone(dataset.graph.topo.edge_ids)
 
     def test_a_heterogeneous_partition_builds_one_graph_per_edge_type(self) -> None:
         num_nodes = 40
@@ -175,6 +222,7 @@ class InitializeGraphTest(TestCase):
                 NodeType("user"): self._partition_book(num_nodes),
                 NodeType("item"): self._partition_book(num_nodes),
             },
+            edge_features_registered=False,
         )
 
         self.assertEqual(set(dataset.graph.keys()), {_EDGE_TYPE})

@@ -55,6 +55,7 @@ def _reference_topology_attributes() -> frozenset[str]:
 def _can_build_topology_directly(
     edge_ids: Union[Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]],
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    edge_features_registered: bool,
 ) -> bool:
     """Whether the memory-lean per-edge-type graph build applies.
 
@@ -62,9 +63,19 @@ def _can_build_topology_directly(
     during the CSR conversion, which is the expensive part, so anything carrying them falls back
     to ``glt.data.Dataset.init_graph``.
 
+    Edge features disqualify a graph as well, though they are not part of the topology: the sampler
+    reads them by the edge id of each sampled edge, and this path leaves ``Topology.edge_ids``
+    unset on purpose. ``Graph.lazy_init`` then passes ``torch.empty(0)`` to ``init_cpu_from_csr``
+    and the first lookup segfaults.
+
     ``edge_ids`` arrives as a dict of ``None`` -- not as ``None`` -- when the partitioner declined
     to materialize ids, so the dict values are what matter.
     """
+    if edge_features_registered:
+        logger.info(
+            "Edge features are registered; using GLT's init_graph for the topology"
+        )
+        return False
     if edge_weights is not None:
         logger.info(
             "Edge weights are registered; using GLT's init_graph for the topology"
@@ -767,6 +778,7 @@ class DistDataset(glt.distributed.DistDataset):
             GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        edge_features_registered: bool,
     ) -> None:
         """Initializes the graph structure from partition output.
 
@@ -779,6 +791,9 @@ class DistDataset(glt.distributed.DistDataset):
                 or a single partition (homogeneous).
             node_partition_book: Node partition book(s), used to size the topology when the
                 memory-lean build applies.
+            edge_features_registered: Whether any edge features or quantized edge features were
+                partitioned. They are read by edge id, which the memory-lean build does not
+                materialize, so their presence forces GLT's build.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -833,7 +848,11 @@ class DistDataset(glt.distributed.DistDataset):
 
         self._edge_weights = edge_weights
 
-        if _can_build_topology_directly(edge_ids=edge_ids, edge_weights=edge_weights):
+        if _can_build_topology_directly(
+            edge_ids=edge_ids,
+            edge_weights=edge_weights,
+            edge_features_registered=edge_features_registered,
+        ):
             if isinstance(partitioned_edge_index, Mapping):
                 assert isinstance(edge_index, dict)
                 streaming_input = edge_index
@@ -1266,6 +1285,10 @@ class DistDataset(glt.distributed.DistDataset):
         self._initialize_graph(
             partitioned_edge_index=partition_output.partitioned_edge_index,
             node_partition_book=partition_output.node_partition_book,
+            edge_features_registered=(
+                partition_output.partitioned_edge_features is not None
+                or partition_output.partitioned_edge_quantized_features is not None
+            ),
         )
         partition_output.partitioned_edge_index = None
         gc.collect()
