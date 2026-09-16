@@ -2,31 +2,33 @@
 
 import gc
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from multiprocessing.reduction import ForkingPickler
 from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
-from graphlearn_torch.data import Feature, Graph
+from graphlearn_torch.data import Feature, Graph, Topology
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
-from gigl.distributed.utils.partition_book import get_ids_on_rank
+from gigl.distributed.utils.partition_book import get_ids_on_rank, get_total_ids
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
     EdgeType,
     NodeType,
 )
 from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     FeatureInfo,
     FeaturePartitionData,
     FeatureQuantizationMetadata,
     GraphPartitionData,
     PartitionOutput,
 )
+from gigl.utils.csr import build_csr_from_coo
 from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
     NodeSplitter,
@@ -36,6 +38,125 @@ from gigl.utils.share_memory import share_memory
 logger = Logger()
 
 _EntityType = TypeVar("_EntityType", NodeType, EdgeType)
+
+
+def _reference_topology_attributes() -> frozenset[str]:
+    """Attribute names a real ``Topology.__init__`` populates, read from a 2-edge instance.
+
+    Bypassing ``__init__`` would silently miss a field if graphlearn_torch added one, and the
+    consumer is a compiled extension that segfaults rather than raises.
+    """
+    reference = Topology(
+        edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.int64), layout="CSR"
+    )
+    return frozenset(reference.__dict__)
+
+
+def _can_build_topology_directly(
+    edge_ids: Union[Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]],
+    edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
+    edge_features_registered: bool,
+) -> bool:
+    """Whether the memory-lean per-edge-type graph build applies.
+
+    It handles topology only. Edge ids and edge weights have to be permuted alongside the columns
+    during the CSR conversion, which is the expensive part, so anything carrying them falls back
+    to ``glt.data.Dataset.init_graph``.
+
+    Edge features disqualify a graph as well, though they are not part of the topology: the sampler
+    reads them by the edge id of each sampled edge, and this path leaves ``Topology.edge_ids``
+    unset on purpose. ``Graph.lazy_init`` then passes ``torch.empty(0)`` to ``init_cpu_from_csr``
+    and the first lookup segfaults.
+
+    ``edge_ids`` arrives as a dict of ``None`` -- not as ``None`` -- when the partitioner declined
+    to materialize ids, so the dict values are what matter.
+    """
+    if edge_features_registered:
+        logger.info(
+            "Edge features are registered; using GLT's init_graph for the topology"
+        )
+        return False
+    if edge_weights is not None:
+        logger.info(
+            "Edge weights are registered; using GLT's init_graph for the topology"
+        )
+        return False
+    if isinstance(edge_ids, Mapping):
+        if any(ids is not None for ids in edge_ids.values()):
+            logger.info(
+                "Edge ids are materialized; using GLT's init_graph for the topology"
+            )
+            return False
+        return True
+    return edge_ids is None
+
+
+def _num_nodes_for_row_dimension(
+    edge_type: EdgeType,
+    layout: Literal["CSR", "CSC"],
+    node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+) -> int:
+    """Global node count for the dimension a CSR/CSC compresses over.
+
+    The count must be global, not the local partition's size: partition books hold global node ids
+    and sampling seeds are global ids, so ``indptr`` has to be indexable by any id a seed can take.
+    Deriving it from the data instead (as ``coo_to_csr`` does) can come up short when the
+    highest-id node this rank owns has no edge in the compressed direction, and the compiled
+    sampler then reads out of bounds.
+
+    Raises:
+        ValueError: If the partition book for the relevant node type is missing.
+    """
+    node_type = edge_type.src_node_type if layout == "CSR" else edge_type.dst_node_type
+    if isinstance(node_partition_book, Mapping):
+        if node_type not in node_partition_book:
+            raise ValueError(
+                f"No node partition book for {node_type}, needed to size the {layout} topology "
+                f"of {edge_type}. Available: {sorted(node_partition_book.keys())}"
+            )
+        partition_book = node_partition_book[node_type]
+    else:
+        partition_book = node_partition_book
+    return get_total_ids(partition_book)
+
+
+def _build_topology_without_edge_ids(
+    indptr: torch.Tensor, indices: torch.Tensor, layout: Literal["CSR", "CSC"]
+) -> Topology:
+    """Wrap a ready-made ``(indptr, indices)`` pair as a GLT ``Topology``.
+
+    ``Topology.__init__`` cannot be used: its matching-layout branch does store the two tensors
+    directly, but it first runs ``edge_ids = torch.arange(num_edges)`` whenever ``edge_ids is
+    None`` -- a full int64 array per edge type, indexing nothing. ``Graph.lazy_init`` already
+    treats ``edge_ids is None`` as supported and substitutes ``torch.empty(0)`` itself, so ``None``
+    here is the state GLT expects.
+
+    A spilled CSR needs no special Topology subclass to survive the boundaries GLT puts it
+    through: ``Graph.__init__`` calls ``share_memory_()``, which is a no-op on a
+    ``from_file(shared=True)`` storage, and ``Graph.share_ipc`` pickles through
+    ``ForkingPickler``, where ``gigl.utils.share_memory`` ships the path rather than the bytes.
+    Both were verified rather than assumed.
+
+    Raises:
+        AttributeError: If the installed graphlearn_torch's ``Topology`` does not have exactly the
+            attributes this bypass populates.
+    """
+    topology = Topology.__new__(Topology)
+    # For both layouts GLT stores the pointer array in _indptr and the neighbour list in _indices;
+    # only the argument order of its constructor differs.
+    topology._layout = layout
+    topology._indptr = indptr
+    topology._indices = indices
+    topology._edge_ids = None
+    topology._edge_weights = None
+    expected = _reference_topology_attributes()
+    if set(topology.__dict__) != expected:
+        raise AttributeError(
+            f"graphlearn_torch Topology attributes changed: a real instance has "
+            f"{sorted(expected)}, this bypass populated {sorted(topology.__dict__)}. "
+            f"Update _build_topology_without_edge_ids before using it."
+        )
+    return topology
 
 
 class DistDataset(glt.distributed.DistDataset):
@@ -656,6 +777,8 @@ class DistDataset(glt.distributed.DistDataset):
         partitioned_edge_index: Union[
             GraphPartitionData, dict[EdgeType, GraphPartitionData]
         ],
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        edge_features_registered: bool,
     ) -> None:
         """Initializes the graph structure from partition output.
 
@@ -666,6 +789,11 @@ class DistDataset(glt.distributed.DistDataset):
         Args:
             partitioned_edge_index: Partitioned graph data per edge type (heterogeneous)
                 or a single partition (homogeneous).
+            node_partition_book: Node partition book(s), used to size the topology when the
+                memory-lean build applies.
+            edge_features_registered: Whether any edge features or quantized edge features were
+                partitioned. They are read by edge id, which the memory-lean build does not
+                materialize, so their presence forces GLT's build.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -720,6 +848,40 @@ class DistDataset(glt.distributed.DistDataset):
 
         self._edge_weights = edge_weights
 
+        if _can_build_topology_directly(
+            edge_ids=edge_ids,
+            edge_weights=edge_weights,
+            edge_features_registered=edge_features_registered,
+        ):
+            if isinstance(partitioned_edge_index, Mapping):
+                assert isinstance(edge_index, dict)
+                streaming_input = edge_index
+                # Drop the GraphPartitionData wrappers so this dict is the only remaining
+                # referrer to each COO tensor; otherwise popping an entry inside the build frees
+                # nothing and converting one edge type at a time buys nothing.
+                if isinstance(partitioned_edge_index, MutableMapping):
+                    partitioned_edge_index.clear()
+                self.graph = self._build_graph_per_edge_type(
+                    streaming_input, node_partition_book=node_partition_book
+                )
+                logger.info(
+                    f"Initialized heterogeneous graph to dataset with edge types: "
+                    f"{sorted(self.graph.keys())}"
+                )
+            else:
+                assert isinstance(edge_index, torch.Tensor)
+                streaming_input = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}
+                # GraphPartitionData is frozen, so its reference to this COO cannot be dropped
+                # here; build() releases the wrapper once this returns. With one edge type there
+                # is no next conversion to free it for anyway.
+                built = self._build_graph_per_edge_type(
+                    streaming_input, node_partition_book=node_partition_book
+                )
+                # GLT expects a bare Graph for a homogeneous dataset, not a one-entry dict.
+                self.graph = built[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+                logger.info("Initialized homogeneous graph to dataset")
+            return
+
         self.init_graph(
             edge_index=edge_index,
             edge_ids=edge_ids,
@@ -734,6 +896,87 @@ class DistDataset(glt.distributed.DistDataset):
             )
         else:
             logger.info("Initialized homogeneous graph to dataset")
+
+    def _build_graph_per_edge_type(
+        self,
+        edge_index: dict[EdgeType, torch.Tensor],
+        node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+    ) -> dict[EdgeType, Graph]:
+        """Build one GLT ``Graph`` per edge type, releasing each COO before starting the next.
+
+        Replaces ``glt.data.Dataset.init_graph`` for a graph with no edge ids and no edge weights.
+        Three things there are unaffordable at billion-edge scale:
+
+        1. ``init_graph`` runs ``convert_to_tensor(edge_index, dtype=torch.int64)`` over the whole
+           dict before its per-edge-type loop, so an int32 input exists as int32 and int64
+           simultaneously for every edge type at once.
+        2. ``Topology.__init__`` fabricates ``torch.arange(num_edges)`` when edge ids are absent
+           and hands it to ``coo_to_csr``, which permutes it -- two full int64 arrays for values
+           that index nothing.
+        3. ``coo_to_csr`` peaks at 7.25x one int64 array (measured), because
+           ``torch_sparse.SparseStorage`` holds row, col, a composite key, a permutation,
+           ``index_sort``'s discarded sorted values, and both gathered outputs at once.
+
+        :func:`gigl.utils.csr.build_csr_from_coo` returns the same ``(indptr, indices)`` as
+        ``coo_to_csr``, so the resulting ``Topology`` is indistinguishable from GLT's -- it just
+        never allocates the copies. Edge types are processed largest-first so the biggest COO is
+        released first.
+
+        Args:
+            edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
+                destructively: entries are removed as they are converted.
+            node_partition_book: Node partition book(s), used to size each ``indptr``.
+
+        Returns:
+            dict[EdgeType, Graph]: One initialized CPU ``Graph`` per edge type.
+        """
+        # 'out' means sample along the edge direction, so rows are sources and CSR is the layout
+        # GLT wants; 'in' reverses both. Matches the layout choice in GLT's init_graph.
+        target_layout: Literal["CSR", "CSC"] = (
+            "CSR" if self.edge_dir == "out" else "CSC"
+        )
+        self._directed = True
+        graph: dict[EdgeType, Graph] = {}
+
+        for edge_type in sorted(
+            edge_index.keys(), key=lambda et: edge_index[et].size(1), reverse=True
+        ):
+            start_time = time.time()
+            coo = edge_index.pop(edge_type)
+            num_edges = coo.size(1)
+            # For CSC the compressed dimension is the column, so hand the builder the columns as
+            # its row key and let it group by destination instead.
+            group_by, other = (0, 1) if target_layout == "CSR" else (1, 0)
+            num_group_rows = _num_nodes_for_row_dimension(
+                edge_type, target_layout, node_partition_book
+            )
+            logger.info(
+                f"Building {target_layout} for {edge_type}: {num_edges:,} edges, "
+                f"{num_group_rows:,} rows, input dtype {coo.dtype}"
+            )
+            # Called for the empty case too, which both partitioners legitimately produce for an
+            # edge type with no edges on this rank; the builder returns a zeroed indptr there.
+            indptr, indices = build_csr_from_coo(
+                row=coo[group_by], col=coo[other], num_rows=num_group_rows
+            )
+            # Both slices are views into `coo`'s single storage, so it is only freed once all
+            # three names are gone.
+            del coo
+            gc.collect()
+
+            topology = _build_topology_without_edge_ids(
+                indptr=indptr, indices=indices, layout=target_layout
+            )
+            del indptr, indices
+            graph_for_type = Graph(topology, "CPU", None)
+            graph_for_type.lazy_init()
+            graph[edge_type] = graph_for_type
+            logger.info(
+                f"Built graph for {edge_type} in {time.time() - start_time:.1f}s"
+            )
+            gc.collect()
+
+        return graph
 
     def _initialize_node_features(
         self,
@@ -1040,7 +1283,12 @@ class DistDataset(glt.distributed.DistDataset):
 
         # Initialize Graph and get edge data for splitting
         self._initialize_graph(
-            partitioned_edge_index=partition_output.partitioned_edge_index
+            partitioned_edge_index=partition_output.partitioned_edge_index,
+            node_partition_book=partition_output.node_partition_book,
+            edge_features_registered=(
+                partition_output.partitioned_edge_features is not None
+                or partition_output.partitioned_edge_quantized_features is not None
+            ),
         )
         partition_output.partitioned_edge_index = None
         gc.collect()
