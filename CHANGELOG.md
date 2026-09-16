@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   to the 600 s steady-state timeout once initialized, and the wait for workers to initialize is bounded at 3x the
   bring-up timeout); a sampling worker dying before its init barrier now fails the job with the dead workers' ranks and
   exit codes instead of hanging by @dsaini2 in https://github.com/Snapchat/GiGL/pull/760
+- Apply local patches to the pinned GraphLearn-Torch build in `install_glt.sh` (`gigl/scripts/patches/`): an exact
+  bitmap distinct-count in CPU graph init replacing `at::_unique`'s ~3x transient allocation, int32 CSR column-id
+  support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
+  build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
+
+### Fixed
+
+- `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
+  a failed GLT build/install exited 0 when the file was invoked directly, as image builds do by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/761
 
 ### Removed
 
