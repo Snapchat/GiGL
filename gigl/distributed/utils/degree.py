@@ -188,24 +188,43 @@ def _get_degree_reduce_context() -> tuple[int, torch.device]:
     return local_world_size, device
 
 
+# All-reduce the degree tensor one slice at a time. The full padded int64
+# tensor for a large graph is several GiB; materializing it (plus the collective
+# buffer) on the process-group device OOMs small GPUs. Since the result is
+# CPU-bound anyway, only one slice is moved to the device per collective. A
+# chunked element-wise SUM is bit-identical to a whole-tensor SUM (every rank
+# pads to the same size and uses identical slice bounds). This runs once at
+# loader setup, so it adds no per-batch throughput cost.
+_DEGREE_ALLREDUCE_CHUNK = 64_000_000
+
+
 def _all_reduce_single_degree_tensor(
     tensor: torch.Tensor,
     local_world_size: int,
     device: torch.device,
 ) -> torch.Tensor:
-    """All-reduce a single tensor with size sync and over-counting correction."""
+    """All-reduce a single tensor with size sync and over-counting correction.
+
+    The reduction is chunked so only one ``_DEGREE_ALLREDUCE_CHUNK``-sized slice
+    is resident on ``device`` at a time, keeping the (potentially multi-GiB)
+    degree tensor off the GPU except for the slice currently being reduced.
+    """
     # Synchronize max size across all ranks.
     local_size = torch.tensor([tensor.size(0)], dtype=torch.long, device=device)
     torch.distributed.all_reduce(local_size, op=torch.distributed.ReduceOp.MAX)
     max_size = int(local_size.item())
 
-    # Pad, convert to int64 for all_reduce, and move to the process-group device.
-    padded = _pad_to_size(tensor, max_size).to(torch.int64).to(device)
-    torch.distributed.all_reduce(padded, op=torch.distributed.ReduceOp.SUM)
+    # Pad and widen on CPU; keep the full tensor off the process-group device.
+    padded = _pad_to_size(tensor, max_size).to(torch.int64)
+    for start in range(0, max_size, _DEGREE_ALLREDUCE_CHUNK):
+        end = min(start + _DEGREE_ALLREDUCE_CHUNK, max_size)
+        chunk = padded[start:end].to(device)
+        torch.distributed.all_reduce(chunk, op=torch.distributed.ReduceOp.SUM)
+        padded[start:end] = chunk.cpu()
 
-    # Correct for over-counting and move back to CPU. Clamp before casting so
-    # high-degree nodes saturate instead of wrapping.
-    return _clamp_to_int32(padded // local_world_size).cpu()
+    # Correct for over-counting. Clamp before casting so high-degree nodes
+    # saturate instead of wrapping. Result stays on CPU.
+    return _clamp_to_int32(padded // local_world_size)
 
 
 @overload
