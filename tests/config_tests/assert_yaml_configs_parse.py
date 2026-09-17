@@ -31,7 +31,7 @@ import argparse
 import os
 import re
 
-from gigl.common import Uri, UriFactory
+from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from snapchat.research.gbml.gbml_config_pb2 import GbmlConfig
@@ -80,7 +80,7 @@ def assert_configs_parse(directories: list[str], ignore_regex: list[str] = []) -
                             )
                             continue
                     total += 1
-                    yaml_file = UriFactory.create_uri(file_path)
+                    yaml_file = LocalUri(file_path)
                     try:
                         if "resource_config" in file:
                             proto_utils.read_proto_from_yaml(
