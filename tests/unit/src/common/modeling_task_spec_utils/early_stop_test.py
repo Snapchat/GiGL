@@ -13,6 +13,9 @@ _EARLY_STOP_PATIENCE = 3
 class _DummyModel(nn.Module):
     def __init__(self):
         super(_DummyModel, self).__init__()
+        # Declared type lets ty resolve the buffer as a Tensor instead of the
+        # Tensor | Module union produced by nn.Module.__getattr__.
+        self.foo: torch.Tensor
         self.register_buffer("foo", torch.tensor(0.0))
 
     def forward(self, x):
@@ -82,7 +85,7 @@ class EarlyStopTests(TestCase):
         mocked_criteria_values: list[float],
         improvement_steps: list[int],
         should_maximize: bool,
-        model: Optional[nn.Module],
+        model: Optional[_DummyModel],
         expected_best_criterion: float,
     ):
         early_stopper = EarlyStopper(
@@ -93,7 +96,7 @@ class EarlyStopTests(TestCase):
         for step_num, value in enumerate(mocked_criteria_values):
             has_metric_improved, should_early_stop = early_stopper.step(value=value)
             if model is not None:
-                model.foo += 1  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[unsupported-operator] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+                model.foo += 1
             if step_num in improvement_steps:
                 self.assertTrue(has_metric_improved)
             else:
