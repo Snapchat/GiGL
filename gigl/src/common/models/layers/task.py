@@ -709,10 +709,13 @@ class NodeAnchorBasedLinkPredictionTasks:
         tasks_list: list[Tuple[NodeAnchorBasedLinkPredictionBaseTask, float]] = []
         for task in list(self._task_to_weights_map.keys()):
             fn = self._task_to_fn_map[task]
+            # ModuleDict values are typed as plain Module; add_task only ever
+            # stores NodeAnchorBasedLinkPredictionBaseTask instances.
+            assert isinstance(fn, NodeAnchorBasedLinkPredictionBaseTask), (
+                f"Expected a NodeAnchorBasedLinkPredictionBaseTask, got {type(fn).__name__}"
+            )
             weight = self._task_to_weights_map[task]
-            tasks_list.append(
-                (fn, weight)  # ty: ignore[invalid-argument-type] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
-            )  # https://github.com/Snapchat/GiGL/issues/408
+            tasks_list.append((fn, weight))
         return tasks_list
 
     def add_task(

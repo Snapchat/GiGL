@@ -129,7 +129,10 @@ class GraphSageTemplateTrainerSpec(
     @model.setter
     def model(self, model: torch.nn.Module) -> None:
         self.__model = model
-        self.__model.graph_backend = GraphBackend.PYG  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+        # Dynamically attach the backend marker read by InferencerV1 via the
+        # GnnModel protocol; setattr keeps the intentional dynamic attribute
+        # explicit for the type checker.
+        setattr(self.__model, "graph_backend", GraphBackend.PYG)
 
     def init_model(
         self,

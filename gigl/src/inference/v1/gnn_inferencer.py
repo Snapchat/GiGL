@@ -7,7 +7,7 @@ import sys
 import threading
 import traceback
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
@@ -24,6 +24,7 @@ from gigl.src.common.constants.metrics import TIMER_INFERENCER_S
 from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.model import GnnModel
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
@@ -248,8 +249,13 @@ class InferencerV1:
 
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
+        model = inferencer_instance.model
+        assert isinstance(model, GnnModel), (
+            f"Inferencer model {type(model).__name__} does not expose a graph_backend"
+        )
+        gnn_model = cast(GnnModel, model)
         graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=inferencer_instance.model.graph_backend  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+            backend_name=gnn_model.graph_backend
         )
 
         inference_blueprint: BaseInferenceBlueprint = (

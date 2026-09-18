@@ -31,6 +31,7 @@ class GraphBackend(str, Enum):
     PYG = "PyG"
 
 
+@runtime_checkable
 class GnnModel(Protocol):
     """
     read-only property to infer graph-backend from a GNN model
