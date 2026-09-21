@@ -339,16 +339,38 @@ def heterodata_to_graph_transformer_input(
             device=device,
         )
     elif sequence_construction_method == "ppr":
-        # Build the PPR sequence from PPR edges ONLY. When include_sampled_edges is
-        # on, the batch also carries the original relation edge types; those are
-        # consumed separately by _lookup_pairwise_relation_indices for the
-        # relation-message channel. Homogenizing the full batch would pad the
-        # original edges with zero-weight edge_attr and leak them into the
-        # sequence, so restrict to the "ppr" edge types here. Node set/order is
-        # unchanged (edge_type_subgraph keeps all nodes), so anchor_indices and
-        # num_nodes computed from homo_data stay valid.
+        # Build the PPR sequence from the "ppr" edges only. When
+        # include_sampled_edges is on, the batch also carries the original
+        # relation edge types; those feed the relation-message channel via
+        # _lookup_pairwise_relation_indices and must not leak into the sequence.
+        #
+        # Gather just the "ppr" edges and remap their endpoints with the SAME
+        # node_type_offsets used for homo_data, so the indices line up with
+        # anchor_indices and num_nodes (both computed over the full graph).
+        # NB: data.edge_type_subgraph(ppr_edge_types).to_homogeneous() must NOT be
+        # used here -- it drops node types absent from PPR edges and renumbers the
+        # rest, silently shifting indices out of sync with anchor_indices.
         ppr_edge_types = [et for et in data.edge_types if et[1] == "ppr"]
-        ppr_homo_data = data.edge_type_subgraph(ppr_edge_types).to_homogeneous()
+        ppr_source_indices: list[Tensor] = []
+        ppr_target_indices: list[Tensor] = []
+        ppr_edge_features: list[Tensor] = []
+        for ppr_edge_type in ppr_edge_types:
+            edge_store = data[ppr_edge_type]
+            edge_index = edge_store.edge_index.to(device=device, dtype=torch.long)
+            ppr_source_indices.append(
+                edge_index[0] + node_type_offsets[ppr_edge_type[0]]
+            )
+            ppr_target_indices.append(
+                edge_index[1] + node_type_offsets[ppr_edge_type[2]]
+            )
+            ppr_edge_features.append(edge_store.edge_attr.to(device))
+        ppr_homo_data = Data(
+            edge_index=torch.stack(
+                [torch.cat(ppr_source_indices), torch.cat(ppr_target_indices)]
+            ),
+            edge_attr=torch.cat(ppr_edge_features, dim=0),
+            num_nodes=num_nodes,
+        )
         (
             node_index_sequences,
             valid_mask,
