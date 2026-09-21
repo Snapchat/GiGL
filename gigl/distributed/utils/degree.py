@@ -216,11 +216,19 @@ def _all_reduce_single_degree_tensor(
 
     # Pad and widen on CPU; keep the full tensor off the process-group device.
     padded = _pad_to_size(tensor, max_size).to(torch.int64)
+    # Reduce the degree tensor one contiguous slice at a time. Every rank agreed
+    # on max_size above, so all ranks iterate identical [start, end) bounds and
+    # issue the same number of all_reduce calls -- the collective stays in
+    # lockstep and cannot hang on a rank-count mismatch. Only the current slice is
+    # copied to the device and each summed slice is written straight back to CPU,
+    # so peak device memory is a single chunk rather than the whole (multi-GiB)
+    # tensor. Summing per-slice is exact: each element belongs to exactly one
+    # slice and is reduced across all ranks there.
     for start in range(0, max_size, _DEGREE_ALLREDUCE_CHUNK):
         end = min(start + _DEGREE_ALLREDUCE_CHUNK, max_size)
-        chunk = padded[start:end].to(device)
+        chunk = padded[start:end].to(device)  # CPU -> device: just this slice
         torch.distributed.all_reduce(chunk, op=torch.distributed.ReduceOp.SUM)
-        padded[start:end] = chunk.cpu()
+        padded[start:end] = chunk.cpu()  # summed slice back to CPU, in place
 
     # Correct for over-counting. Clamp before casting so high-degree nodes
     # saturate instead of wrapping. Result stays on CPU.
