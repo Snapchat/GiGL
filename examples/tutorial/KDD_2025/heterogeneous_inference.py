@@ -26,7 +26,6 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 import argparse
 import datetime
 from collections.abc import Mapping
-from distutils.util import strtobool
 from pathlib import Path
 
 import fastavro
@@ -38,6 +37,7 @@ from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.common import Uri, UriFactory
 from gigl.common.data.export import EmbeddingExporter
 from gigl.common.logger import Logger
+from gigl.common.utils.parse import str_to_bool
 from gigl.distributed import (
     DistDataset,
     DistNeighborLoader,
@@ -154,7 +154,7 @@ if __name__ == "__main__":
         task_config_uri,
         _tfrecord_uri_pattern=".*tfrecord",
     )
-    if strtobool(args.use_local_saved_model):
+    if str_to_bool(args.use_local_saved_model):
         model_uri = LOCAL_SAVED_MODEL_URI
     else:
         model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri

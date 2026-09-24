@@ -25,7 +25,7 @@ class PygGraphDataTest(TestCase):
         data2["1", "1", "1"].edge_index = torch.LongTensor([[0], [1]])
         data2["1", "1", "2"].edge_index = torch.LongTensor([[0, 1], [0, 0]])
 
-        self.assertEquals(data, data2)
+        self.assertEqual(data, data2)
 
         data = PygGraphData()
         data["1"].x = torch.tensor([[1, 1], [2, 2]])
@@ -39,7 +39,7 @@ class PygGraphDataTest(TestCase):
         data2["1"].x = torch.tensor([[1, 1], [2, 2]])
         data2["2"].x = torch.tensor([[3, 3]])
 
-        self.assertNotEquals(data, data2)
+        self.assertNotEqual(data, data2)
 
         data = PygGraphData()
         data["1"].x = torch.tensor([[1, 1], [2, 2]])
@@ -49,7 +49,7 @@ class PygGraphDataTest(TestCase):
         data2["1"].x = torch.tensor([[1, 1], [2, 2]])
         data2["2"].x = torch.tensor([[3, 3]])
 
-        self.assertEquals(data, data2)
+        self.assertEqual(data, data2)
 
         data = PygGraphData()
         data["1"].x = torch.tensor([[1, 1], [2, 2]])
@@ -59,4 +59,4 @@ class PygGraphDataTest(TestCase):
         data2["1"].x = torch.tensor([[1, 2], [2, 2]])
         data2["2"].x = torch.tensor([[3, 3]])
 
-        self.assertNotEquals(data, data2)
+        self.assertNotEqual(data, data2)

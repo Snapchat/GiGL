@@ -87,6 +87,6 @@ class TfRecordsIterableDatasetTest(TestCase):
         loopy_dataset_entries = [
             next(loopy_dataset_iter) for _ in range(num_records + 5)
         ]
-        self.assertEquals(
+        self.assertEqual(
             loopy_dataset_entries[0], loopy_dataset_entries[0 + num_records]
         )

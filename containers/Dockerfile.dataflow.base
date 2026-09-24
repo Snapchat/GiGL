@@ -1,10 +1,15 @@
-FROM apache/beam_python3.11_sdk:2.56.0
+# This reference is coupled twice over, and the two halves live in different places:
+#   - the tag (`2.56.0`) must match the `apache-beam` pin in pyproject.toml, because Beam
+#     requires a worker's installed apache-beam to be the same version as the submitting
+#     environment's, and the boot harness copied out of this stage is that entrypoint.
+#   - the Python minor in the image *name* (`beam_python3.11_sdk`) must match
+#     .python-version, which is the interpreter uv installs into /gigl_deps/.venv below.
+ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.56.0
+FROM ${BEAM_SDK_IMAGE} AS beam_sdk
+
+FROM ubuntu:noble-20251001
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# We use system python for dataflow images since it has python and apache beam pre-installed.
-ENV UV_SYSTEM_PYTHON=true
-ENV UV_PROJECT_ENVIRONMENT=/usr/local
 
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
 # Once VAI natively supports this communication, we can remove this requirement.
@@ -25,6 +30,7 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
 COPY gigl/scripts gigl/scripts
+COPY .python-version .python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
@@ -34,9 +40,28 @@ COPY gigl-core/README.md gigl-core/README.md
 
 RUN bash ./requirements/install_py_deps.sh --skip-glt-post-install
 
-# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
-# cpu base image.
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
 
+# Required, not optional. Unset, boot creates a per-worker venv with
+# `python -m venv --system-site-packages` from the `python` on PATH, then requires
+# apache-beam to import inside it. Seeded from /gigl_deps/.venv/bin/python, that venv
+# inherits the *base* interpreter's site-packages rather than this venv's, so the import
+# fails and every worker dies with "Apache Beam is not installed in the runtime
+# environment". Set, boot runs the SDK directly in the environment on PATH.
+ENV RUN_PYTHON_SDK_IN_DEFAULT_ENVIRONMENT=1
+
 WORKDIR /
+
+# boot is the Dataflow worker harness. It is a statically linked Go binary, so it runs on
+# this rootfs unaltered even though the SDK image is built on a different distro.
+# Dockerfile.dataflow.src declares no ENTRYPOINT, so this one is what workers execute.
+COPY --from=beam_sdk /opt/apache/beam /opt/apache/beam
+ENTRYPOINT ["/opt/apache/beam/boot"]
