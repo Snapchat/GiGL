@@ -34,17 +34,8 @@ def run_command_and_stream_stdout(cmd: str) -> Optional[int]:
     return return_code
 
 
-def main() -> int:
-    """Main entry point for the post-install script.
-
-    Returns:
-        int: 0, when install_glt.sh succeeds.
-
-    Raises:
-        SystemExit: With a non-zero code when install_glt.sh is missing, fails, or
-            reports no exit status. Callers must propagate it: swallowing it lets a
-            build succeed while shipping an environment with no working GLT.
-    """
+def main():
+    """Main entry point for the post-install script."""
     print("Running GIGL post-install script...")
 
     # Get the directory where this script is located
@@ -61,16 +52,12 @@ def main() -> int:
 
     try:
         print(f"Executing {cmd}...")
-        return_code = run_command_and_stream_stdout(cmd)
-        print("Post-install script finished running, with return code: ", return_code)
-        # `Popen.poll()` returns None while the child has no recorded status, so an
-        # unknown outcome is not evidence of success.
-        if return_code is None:
-            print("Error: could not determine the exit status of install_glt.sh")
-            sys.exit(1)
-        if return_code != 0:
-            sys.exit(return_code)
-        return return_code
+        result = run_command_and_stream_stdout(cmd)
+        print("Post-install script finished running, with return code: ", result)
+        # The status must live in this process's exit code, not just the log line above: image
+        # builds invoke this file directly, and a swallowed failure here ships an image whose
+        # GLT wheel never built, installed, or verified
+        return 1 if result is None else result
 
     except subprocess.CalledProcessError as e:
         print(f"Error running install_glt.sh: {e}")
@@ -81,4 +68,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
