@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Set, Union, cast
+from typing import Callable, Set, Union, cast
 
 import torch
 import torch.nn as nn
@@ -7,8 +7,8 @@ from jaxtyping import Float, Int64
 from torch_geometric.data import Data
 from torch_geometric.data.hetero_data import HeteroData
 
-from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.loss import ModelResultType
+from gigl.src.common.models.pyg.link_prediction import LinkPredictionGNN
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,
     CondensedNodeType,
@@ -132,16 +132,19 @@ def infer_task_inputs(
     input_batch = InputBatch(main_batch=main_batch, random_neg_batch=random_neg_batch)
 
     batch_result_types: Set[ModelResultType]
-    decoder: LinkPredictionDecoder
+    # The model's bound decode method: (query_embeddings, candidate_embeddings) -> scores.
+    decoder: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
     # Unwrap any DDP layers
-    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        decoder = model.module.decode
-        batch_result_types = model.module.tasks.result_types
-    else:
-        decoder = model.decode  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        batch_result_types = (
-            model.tasks.result_types  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        )  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+    base_model = (
+        model.module
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else model
+    )
+    assert isinstance(base_model, LinkPredictionGNN), (
+        f"Expected model to be a LinkPredictionGNN, got {type(base_model).__name__}"
+    )
+    decoder = base_model.decode
+    batch_result_types = base_model.tasks.result_types
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.

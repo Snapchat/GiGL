@@ -185,6 +185,9 @@ class LightGCN(nn.Module):
                 )
 
         # Register layer weights as a buffer so it moves with the model to different devices
+        # Declared type lets ty resolve the buffer as a Tensor instead of the
+        # Tensor | Module union produced by nn.Module.__getattr__.
+        self._layer_weights: torch.Tensor
         self.register_buffer(
             "_layer_weights",
             torch.tensor(layer_weights, dtype=torch.float32),
@@ -406,20 +409,16 @@ class LightGCN(nn.Module):
         Returns:
             torch.Tensor: Weighted sum of all layer embeddings, shape [N, D].
         """
-        if len(all_layer_embeddings) != len(
-            self._layer_weights  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        ):  # https://github.com/Snapchat/GiGL/issues/408
+        if len(all_layer_embeddings) != len(self._layer_weights):
             raise ValueError(
-                f"Got {len(all_layer_embeddings)} layer tensors but {len(self._layer_weights)} weights."  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+                f"Got {len(all_layer_embeddings)} layer tensors but {len(self._layer_weights)} weights."
             )
 
         # Stack all layer embeddings and compute weighted sum
         # _layer_weights is already a tensor buffer registered in __init__
         stacked = torch.stack(all_layer_embeddings, dim=0)  # shape [K+1, N, D]
         w = self._layer_weights.to(stacked.device)  # shape [K+1], ensure on same device
-        out = (
-            stacked * w.view(-1, 1, 1)  # ty: ignore[call-non-callable] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        ).sum(  # https://github.com/Snapchat/GiGL/issues/408
+        out = (stacked * w.view(-1, 1, 1)).sum(
             dim=0
         )  # shape [N, D], w_0*X_0 + w_1*X_1 + ...
 
