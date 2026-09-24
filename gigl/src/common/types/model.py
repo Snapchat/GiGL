@@ -1,5 +1,4 @@
 from collections import OrderedDict
-from enum import Enum
 from typing import Optional, Protocol, runtime_checkable
 
 import torch
@@ -25,16 +24,3 @@ class BaseModelOperationsProtocol(Protocol):
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
         state_dict: Optional[OrderedDict[str, torch.Tensor]] = None,
     ) -> torch.nn.Module: ...
-
-
-class GraphBackend(str, Enum):
-    PYG = "PyG"
-
-
-class GnnModel(Protocol):
-    """
-    read-only property to infer graph-backend from a GNN model
-    """
-
-    @property
-    def graph_backend(self) -> GraphBackend: ...

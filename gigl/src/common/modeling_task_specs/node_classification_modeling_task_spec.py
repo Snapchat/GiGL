@@ -117,7 +117,6 @@ class NodeClassificationModelingTaskSpec(
         if state_dict is not None:
             model.load_state_dict(state_dict)
         self.model = model
-        self._graph_backend = model.graph_backend
 
         return model
 
@@ -246,7 +245,6 @@ class NodeClassificationModelingTaskSpec(
         ), "Expected a node classification dataset"
         data_loaders = self._dataloaders.get_training_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=self._graph_backend,
             device=device,
         )
         assert data_loaders.train_main is not None, (
@@ -294,7 +292,6 @@ class NodeClassificationModelingTaskSpec(
 
         data_loaders = self._dataloaders.get_test_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=self._graph_backend,
             device=device,
         )
         test_acc = self.score(data_loader=data_loaders.test_main, device=device)

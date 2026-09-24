@@ -21,7 +21,7 @@ from gigl.common.utils import os_utils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_INFERENCER_S
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -248,9 +248,7 @@ class InferencerV1:
 
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=inferencer_instance.model.graph_backend  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        )
+        graph_builder = PygGraphBuilder()
 
         inference_blueprint: BaseInferenceBlueprint = (
             InferenceBlueprintFactory.get_inference_blueprint(
