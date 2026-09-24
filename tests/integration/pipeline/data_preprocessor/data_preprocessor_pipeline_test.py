@@ -168,21 +168,21 @@ class DataPreprocessorPipelineTest(TestCase):
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map
         )
 
-        self.assertEquals(
+        self.assertEqual(
             len(condensed_node_type_to_node_type_map),
             len(mocked_dataset_info.node_types),
         )
-        self.assertEquals(
+        self.assertEqual(
             len(condensed_edge_type_to_edge_type_map),
             len(mocked_dataset_info.edge_types),
         )
 
-        self.assertEquals(
+        self.assertEqual(
             condensed_node_type_to_node_type_map[DEFAULT_CONDENSED_NODE_TYPE],
             mocked_dataset_info.default_node_type,
         )
 
-        self.assertEquals(
+        self.assertEqual(
             condensed_edge_type_to_edge_type_map[DEFAULT_CONDENSED_EDGE_TYPE].relation,
             mocked_dataset_info.default_edge_type.relation,
         )
