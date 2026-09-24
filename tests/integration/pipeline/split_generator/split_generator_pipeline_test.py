@@ -13,11 +13,9 @@ from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.local_fs import get_project_root_directory
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.types.graph_data import EdgeUsageType
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.types.pb_wrappers.dataset_metadata_utils import _get_tfrecord_uris
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
@@ -430,25 +428,19 @@ class SplitGeneratorPipelineTest(TestCase):
         train_split = supervised_node_classification.build_single_data_split_subgraph_from_dataset_samples(
             split_samples=train_split_samples,
             graph_metadata_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         val_split = supervised_node_classification.build_single_data_split_subgraph_from_dataset_samples(
             split_samples=val_split_samples,
             graph_metadata_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         test_split = supervised_node_classification.build_single_data_split_subgraph_from_dataset_samples(
             split_samples=test_split_samples,
             graph_metadata_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         return train_split, val_split, test_split
@@ -525,27 +517,21 @@ class SplitGeneratorPipelineTest(TestCase):
             split_main_samples=main_train_split_samples,
             split_random_negatives=random_neg_train_split_samples,
             graph_metadata_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         val_split = node_anchor_based_link_prediction.build_single_data_split_subgraph_from_samples(
             split_main_samples=main_val_split_samples,
             split_random_negatives=random_neg_val_split_samples,
             graph_metadata_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         test_split = node_anchor_based_link_prediction.build_single_data_split_subgraph_from_samples(
             split_main_samples=main_test_split_samples,
             split_random_negatives=random_neg_test_split_samples,
             graph_metadata_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         return train_split, val_split, test_split
@@ -602,10 +588,7 @@ class SplitGeneratorPipelineTest(TestCase):
         val_graph: PygGraphData = cast(PygGraphData, val_split.graph)
         test_graph: PygGraphData = cast(PygGraphData, test_split.graph)
 
-        graph_builder = cast(
-            PygGraphBuilder,
-            GraphBuilderFactory.get_graph_builder(backend_name=GraphBackend.PYG),
-        )
+        graph_builder = PygGraphBuilder()
         for graph_data in (train_graph, val_graph, test_graph):
             graph_builder.add_graph_data(graph_data=graph_data)
         composed_graph = graph_builder.build()
@@ -705,9 +688,7 @@ class SplitGeneratorPipelineTest(TestCase):
         val_graph: PygGraphData = cast(PygGraphData, val_split.graph)
         test_graph: PygGraphData = cast(PygGraphData, test_split.graph)
 
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=GraphBackend.PYG
-        )
+        graph_builder = PygGraphBuilder()
         for graph_data in (train_graph, val_graph, test_graph):
             graph_builder.add_graph_data(graph_data=graph_data)
         composed_graph = graph_builder.build()

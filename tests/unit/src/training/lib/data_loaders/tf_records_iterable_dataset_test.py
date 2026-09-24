@@ -4,10 +4,9 @@ from typing import cast
 import tensorflow as tf
 
 from gigl.common import LocalUri
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.training.v1.lib.data_loaders.tf_records_iterable_dataset import (
     LoopyIterableDataset,
     TfRecordsIterableDataset,
@@ -41,9 +40,7 @@ class TfRecordsIterableDatasetTest(TestCase):
         return tfrecord_files
 
     def test_can_load_data(self):
-        pyg_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=GraphBackend.PYG
-        )
+        pyg_builder = PygGraphBuilder()
         proto_translator = GbmlProtosTranslator()
 
         def preprocess_raw_sample_fn(

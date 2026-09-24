@@ -24,12 +24,11 @@ from gigl.src.common.models.pyg.nn.conv.gin_conv import GINEConv
 from gigl.src.common.models.pyg.nn.models.feature_embedding import FeatureEmbeddingLayer
 from gigl.src.common.models.pyg.nn.models.feature_interaction import FeatureInteraction
 from gigl.src.common.models.pyg.nn.models.jumping_knowledge import JumpingKnowledge
-from gigl.src.common.types.model import GnnModel, GraphBackend
 
 logger = Logger()
 
 
-class BasicHomogeneousGNN(nn.Module, GnnModel):
+class BasicHomogeneousGNN(nn.Module):
     def __init__(
         self,
         in_dim: int,
@@ -163,10 +162,6 @@ class BasicHomogeneousGNN(nn.Module, GnnModel):
         **kwargs,
     ) -> nn.ModuleList:
         raise NotImplementedError
-
-    @property
-    def graph_backend(self) -> GraphBackend:
-        return GraphBackend.PYG
 
 
 class GraphSAGE(BasicHomogeneousGNN):
@@ -486,7 +481,7 @@ class Transformer(BasicHomogeneousGNN):
         )
 
 
-class TwoLayerGCN(torch.nn.Module, GnnModel):
+class TwoLayerGCN(torch.nn.Module):
     def __init__(
         self,
         in_dim: int,
@@ -543,7 +538,3 @@ class TwoLayerGCN(torch.nn.Module, GnnModel):
         if self.should_normalize:
             x = F.normalize(x, p=2, dim=1)
         return x
-
-    @property
-    def graph_backend(self) -> GraphBackend:
-        return GraphBackend.PYG

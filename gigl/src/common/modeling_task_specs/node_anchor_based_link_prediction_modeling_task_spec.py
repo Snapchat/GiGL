@@ -309,7 +309,6 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
 
         self.model = model
         self.tasks = model.tasks
-        self._graph_backend = model.graph_backend
 
         return self.model
 
@@ -347,7 +346,6 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         # Retrieving training and validation dataloaders
         data_loaders: Dataloaders = self._dataloaders.get_training_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=self._graph_backend,
             device=device,
         )
 
@@ -597,7 +595,6 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         # Retrieving testing dataloaders
         data_loaders: Dataloaders = self._dataloaders.get_test_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=self._graph_backend,
             device=device,
         )
 
