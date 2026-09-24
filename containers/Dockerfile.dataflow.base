@@ -1,10 +1,10 @@
 # This reference is coupled twice over, and the two halves live in different places:
-#   - the tag (`2.56.0`) must match the `apache-beam` pin in pyproject.toml, because Beam
+#   - the tag (`2.76.0`) must match the `apache-beam` pin in pyproject.toml, because Beam
 #     requires a worker's installed apache-beam to be the same version as the submitting
 #     environment's, and the boot harness copied out of this stage is that entrypoint.
 #   - the Python minor in the image *name* (`beam_python3.11_sdk`) must match
 #     .python-version, which is the interpreter uv installs into /gigl_deps/.venv below.
-ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.56.0
+ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.76.0
 FROM ${BEAM_SDK_IMAGE} AS beam_sdk
 
 FROM ubuntu:noble-20251001

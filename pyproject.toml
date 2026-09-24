@@ -40,9 +40,11 @@ dependencies = [
   "python-dotenv",
   "pyyaml",
   "scikit-learn",
+  # tf.summary needs TensorBoard installed, and TensorFlow does not depend on it.
+  "tensorboard~=2.21",
   # When updating to a new tensorflow version, please ensure that the version changes align with
   # `transform` deps listed below. Package versions for `apache-beam`, `tensorflow-transform`, etc
-  "tensorflow~=2.16",
+  "tensorflow~=2.21.0",
 ]
 
 [project.optional-dependencies]
@@ -51,20 +53,18 @@ transform = [
   # `containers/Dockerfile.dataflow.base`, which supplies the Dataflow worker boot harness.
   # That reference also encodes the Python minor in its image name, which tracks
   # `.python-version`, so a Python upgrade moves the same line.
-  "apache-beam[gcp]==2.56.0",
-  "pyarrow==10.0.1",
+  "apache-beam[gcp]==2.76.0",
+  "pyarrow>14",
   # Tensorflow transform packages.
   # There is no official MAC support for these packages - thus we ignore them on darwin machines.
   # These packages are also required to be in sync.
   # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
-  "tensorflow-data-validation==1.16.1 ; sys_platform != 'darwin'",
-  "tensorflow-metadata==1.16.1 ; sys_platform != 'darwin'",
-  "tensorflow-transform==1.16.0 ; sys_platform != 'darwin'",
-  # Held one release behind the latest tfx-bsl==1.17.1, which needs glibc 2.39+. All three
-  # base images are Ubuntu 24.04 (glibc 2.39), so the OS floor is met; moving the pin is a
-  # dependency bump, which has to move tensorflow-data-validation, tensorflow-metadata and
-  # tensorflow-transform in step per the compatibility matrix linked above.
-  "tfx-bsl==1.16.1 ; sys_platform != 'darwin'",
+  # tensorflow-data-validation 1.21.0 publishes manylinux_2_39 wheels only, so installing
+  # this extra on Linux needs glibc 2.39+; every runtime image is Ubuntu 24.04 (glibc 2.39).
+  "tensorflow-data-validation==1.21.0 ; sys_platform != 'darwin'",
+  "tensorflow-metadata==1.21.0 ; sys_platform != 'darwin'",
+  "tensorflow-transform==1.21.0 ; sys_platform != 'darwin'",
+  "tfx-bsl==1.21.0 ; sys_platform != 'darwin'",
 ]
 pyg27-torch28-cpu = [
   "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'", # Compatiblity table: https://docs.pytorch.org/FBGEMM/general/Releases.html#fbgemm-releases-compatibility

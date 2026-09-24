@@ -291,6 +291,18 @@ class DataPreprocessor:
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
             feature_transform_pipeline_result = p.run()
+            if not isinstance(
+                feature_transform_pipeline_result, DataflowPipelineResult
+            ):
+                # A pipeline that does not run on Dataflow executes in this process,
+                # and local runners such as Prism, which DirectRunner can hand
+                # pipelines to, return from run() while it still executes. TFT keeps
+                # a process-global object tracker that both pipeline construction
+                # and execution enter, so overlapping TFT pipelines trip its
+                # `_OBJECT_TRACKER is None` assertion. Such pipelines finish before
+                # the lock is released; Dataflow jobs run remotely and are waited on
+                # below, outside the lock.
+                feature_transform_pipeline_result.wait_until_finish()
             logger.debug(f"[{feature_type}:{entity_type}] releasing lock.")
 
         logger.info(
