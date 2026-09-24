@@ -43,5 +43,8 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.0.1
     hooks:
+      # A unified-diff context line is a single space, so both fixers corrupt a .patch.
       - id: end-of-file-fixer
+        exclude: '\.patch$'
       - id: trailing-whitespace
+        exclude: '\.patch$'
