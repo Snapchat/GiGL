@@ -4,9 +4,8 @@ from typing import Generic, Optional, Set
 
 from gigl.common.logger import Logger
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder, TGraph
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.types.pb_wrappers.graph_data_types import NodePbWrapper
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from snapchat.research.gbml import training_samples_schema_pb2
@@ -53,9 +52,7 @@ def build_single_data_split_subgraph_from_dataset_samples(
                 graph_metadata_pb_wrapper=GraphMetadataPbWrapper(
                     graph_metadata_wrapper.graph_metadata_pb
                 ),
-                builder=GraphBuilderFactory.get_graph_builder(
-                    backend_name=GraphBackend.PYG
-                ),
+                builder=PygGraphBuilder(),
             )
             graph_builder.add_graph_data(graph_data=graph_data)
 

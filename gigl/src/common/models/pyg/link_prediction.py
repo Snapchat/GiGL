@@ -9,7 +9,6 @@ from gigl.common.logger import Logger
 from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.task import NodeAnchorBasedLinkPredictionTasks
 from gigl.src.common.types.graph_data import NodeType
-from gigl.src.common.types.model import GraphBackend
 
 logger = Logger()
 
@@ -71,7 +70,3 @@ class LinkPredictionGNN(nn.Module):
     @property
     def tasks(self) -> NodeAnchorBasedLinkPredictionTasks:
         return self.__tasks  # ty: ignore[invalid-return-type] TODO(ty-torch-container-shapes): fix ty false positives for torch container and return shapes.
-
-    @property
-    def graph_backend(self) -> GraphBackend:
-        return GraphBackend.PYG
