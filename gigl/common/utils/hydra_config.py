@@ -62,6 +62,8 @@ def compose_yaml_config(uri: LocalUri) -> dict[str, Any]:
                 composed = compose(config_name=config_name, overrides=[])
                 resolved = OmegaConf.to_container(composed, resolve=True)
         finally:
+            # GlobalHydra restoration does not restore OmegaConf resolvers.
+            # Reset now even when initialization or composition fails.
             OmegaConf.register_new_resolver(
                 "now",
                 now_resolver,

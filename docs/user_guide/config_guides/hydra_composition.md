@@ -76,6 +76,10 @@ them.
 defaults:
   - compute@shared_resource_config: local
   - _self_
+
+shared_resource_config:
+  common_compute_config:
+    region: us-east1
 ```
 
 ```yaml
@@ -85,6 +89,12 @@ common_compute_config:
   region: us-central1
   temp_regional_assets_bucket: gs://example-bucket
 ```
+
+`compute@shared_resource_config: local` places all fields from `compute/local.yaml` under `shared_resource_config`. The
+primary file can then set any fields in that section. Here, `_self_` is last, so the composed
+`shared_resource_config.common_compute_config.region` is `us-east1`; `project` and `temp_regional_assets_bucket` still
+come from the fragment. Put a setting in the fragment for its protobuf section, and use the primary file for any
+pipeline-specific override.
 
 KFP submission composes a local resource source once to select the project, region, service account, and staging bucket.
 ConfigValidator composes it again inside the pipeline, and that validation-time result becomes the resource config used
@@ -114,9 +124,10 @@ GiGL's three E2E resource configs share their infrastructure and preprocessing s
 
 Each primary selects [`e2e/shared.yaml`](../../../deployment/configs/e2e/shared.yaml) and
 [`e2e/preprocessor.yaml`](../../../deployment/configs/e2e/preprocessor.yaml), then defines only its pipeline-specific
-resources. Their names intentionally omit `resource_config` so repository validation does not mistake these partial
-fragments for complete resource configs. The unit-test resource config remains standalone because its buckets, datasets,
-and runner intentionally differ.
+resources. The `@shared_resource_config` and `@preprocessor_config` targets place those fragments under their respective
+protobuf sections; each fragment may contain several fields within its section. Their names intentionally omit
+`resource_config` so repository validation does not mistake these partial fragments for complete resource configs. The
+unit-test resource config remains standalone because its buckets, datasets, and runner intentionally differ.
 
 ## Boundaries
 

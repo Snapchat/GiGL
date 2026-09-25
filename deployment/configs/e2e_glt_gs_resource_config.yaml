@@ -1,6 +1,8 @@
 # Diffs from e2e_glt_resource_config.yaml
 # - Swap vertex_ai_inferencer_config for vertex_ai_graph_store_inferencer_config
 # - Swap vertex_ai_trainer_config for vertex_ai_graph_store_trainer_config
+# The fragments fill shared_resource_config and preprocessor_config.
+# _self_ merges this file last, so its values take precedence.
 defaults:
   - e2e/shared@shared_resource_config
   - e2e/preprocessor@preprocessor_config

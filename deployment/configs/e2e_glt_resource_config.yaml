@@ -1,3 +1,5 @@
+# The fragments fill shared_resource_config and preprocessor_config.
+# _self_ merges this file last, so its values take precedence.
 defaults:
   - e2e/shared@shared_resource_config
   - e2e/preprocessor@preprocessor_config
