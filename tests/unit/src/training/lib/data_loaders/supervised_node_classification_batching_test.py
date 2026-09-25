@@ -6,13 +6,12 @@ from gigl.src.common.constants.graph_metadata import (
     DEFAULT_CONDENSED_EDGE_TYPE,
     DEFAULT_CONDENSED_NODE_TYPE,
 )
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.translators.training_samples_protos_translator import (
     SupervisedNodeClassificationSample,
     TrainingSamplesProtosTranslator,
 )
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.utils.data.feature_serialization import FeatureSerializationUtils
 from gigl.src.training.v1.lib.data_loaders.supervised_node_classification_data_loader import (
     SupervisedNodeClassificationBatch,
@@ -137,9 +136,7 @@ class SupervisedNodeClassificationBatchingTest(TestCase):
             root_node_labels=self.chain_labels,
         )
 
-        self.builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=GraphBackend.PYG
-        )
+        self.builder = PygGraphBuilder()
 
     def test_translated_sample_from_training_sample_pb(self):
         # Build a translated sample via TrainingSamplesProtosTranslators

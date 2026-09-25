@@ -7,8 +7,7 @@ import yaml
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
-from gigl.src.common.types.model import GraphBackend
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.inference.v1.lib.base_inferencer import (
     InferBatchResults,
@@ -89,9 +88,7 @@ class NodeAnchorBasedLinkPredictionInferencerTest(TestCase):
         inference_blueprint = NodeAnchorBasedLinkPredictionInferenceBlueprint(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
             inferencer=inferencer,
-            graph_builder=GraphBuilderFactory.get_graph_builder(
-                backend_name=GraphBackend.PYG
-            ),
+            graph_builder=PygGraphBuilder(),
         )
 
         batch_generator_fn = inference_blueprint.get_batch_generator_fn()
