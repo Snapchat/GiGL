@@ -1,28 +1,170 @@
 name: Release GiGL
 
 on:
-  # Triggers the workflow manually for now until we have full support for releasing:
-  # - building and releasing docker images
-  # - building and releasing KFP pipeline
+  # Dispatch with the release tag (e.g. v0.4.0) selected as the ref; the build job's guard fails any other ref.
   workflow_dispatch:
 
+# The build jobs run ahead of the `release` environment's approval gate, so they hold no GCP credentials. Only
+# `publish` can request an OIDC token.
 permissions:
   contents: read
-  id-token: write # Needed for the auth w/ GCP to upload to Google Artifact Registry.
+
+# One release at a time: a retry of a partially published release must not race a second dispatch.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to both the Python minor and the torch
+  # variant, so every (minor, variant) pair gets its own wheel. Nothing is published until all six build and import.
   build:
-    name: Build and release pip whl (${{ matrix.torch-variant }})
+    name: Build gigl-core (${{ matrix.torch-variant }}, py${{ matrix.python }})
     strategy:
+      # fail-fast (default true): one failed build cancels the rest, and `publish` never runs.
       matrix:
+        python: ["3.11", "3.12", "3.13"]
+        torch-variant: [cpu, cu128]
+        # Each `include` record keys off an existing torch-variant value and only adds `runner`.
         include:
-          - runner: ubuntu-latest
-            torch-variant: cpu
-            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
-          - runner: gigl-gpu-instances
-            torch-variant: cu128
-            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
+          - torch-variant: cpu
+            runner: ubuntu-latest
+          - torch-variant: cu128
+            runner: gigl-gpu-instances
     runs-on: ${{ matrix.runner }}
+    env:
+      # Every uv call in this job, including the `uv sync` inside install_py_deps.sh, targets this minor instead of
+      # .python-version.
+      UV_PYTHON: ${{ matrix.python }}
+      # Hosted runners ship a system Python 3.12 that uv would otherwise pick for UV_PYTHON=3.12.
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Guard - dispatched on a tag that equals the checked-out version
+      run: |
+        test "${GITHUB_REF_TYPE}" = "tag" \
+          || { echo "dispatched on ${GITHUB_REF_TYPE} ${GITHUB_REF_NAME}; select the release tag vX.Y.Z as the ref"; exit 1; }
+        version="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
+        test "v${version}" = "${GITHUB_REF_NAME}" || { echo "pyproject.toml version ${version} != tag ${GITHUB_REF_NAME}"; exit 1; }
+
+    # GAR rejects a second upload of an existing filename, so `uv publish --check-url` can only skip a rebuilt wheel
+    # that is byte-identical to the uploaded one. Pinning every archive timestamp to the commit time keeps the
+    # wheels independent of when the job ran.
+    - name: Pin wheel timestamps to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "${GITHUB_ENV}"
+
+    - name: Setup uv
+      uses: ./.github/actions/setup-python-tools
+
+    # cmake and a C++ compiler for the extension build.
+    - name: Install C++ toolchain
+      run: bash ./gigl-core/requirements/install_cpp_deps.sh
+
+    # Installs this variant's torch and gigl-core's build backend into the project environment. GLT is not needed to
+    # build or import gigl-core.
+    - name: Install build dependencies
+      run: bash ./requirements/install_py_deps.sh --skip-glt-post-install
+
+    # --no-sync: a plain `uv run` would also install the default `dev` group, which the build does not use.
+    - name: Assert the project environment is this job's minor and torch variant
+      run: |
+        uv run --no-sync python scripts/smoke_test_image.py --python ${{ matrix.python }} --imports torch
+        # install_py_deps.sh picks the torch variant from whether the runner has CUDA, not from the matrix.
+        uv run --no-sync python -c 'import torch; v = "${{ matrix.torch-variant }}"; assert torch.__version__.endswith("+" + v), torch.__version__; assert torch.version.cuda == ("12.8" if v == "cu128" else None), torch.version.cuda'
+
+    # Build isolation is disabled via no-build-isolation-package in pyproject.toml
+    # so cmake can find torch from the ambient environment (not on PyPI).
+    - name: Build gigl-core wheel
+      run: |
+        # Self-hosted runners keep the cmake cache and wheels from earlier runs.
+        rm -rf gigl-core/.cache/cmake_build gigl-core/dist
+        uv build --wheel gigl-core/
+        tag="cp$(echo ${{ matrix.python }} | tr -d .)"
+        # dist/ was emptied above, so this is the job's only wheel; it must carry this job's ABI tag.
+        ls gigl-core/dist/gigl_core-*-"${tag}-${tag}"-*.whl
+        # The wheel writes the specifiers sorted (`<3.14,>=3.11`), so compare them as a set, not as a string.
+        requires="$(unzip -p gigl-core/dist/*.whl '*.dist-info/METADATA' | sed -n 's/^Requires-Python: //p')"
+        test "$(echo "${requires}" | tr ',' '\n' | sort | paste -sd,)" = "<3.14,>=3.11" \
+          || { echo "unexpected Requires-Python: ${requires}"; exit 1; }
+        # The cu128 wheel's extension must link libtorch_cuda.so and the cpu wheel's must not. readelf writes to a
+        # file so that a failing readelf fails the step instead of reading as "not linked".
+        so_dir="${RUNNER_TEMP}/wheel-so"
+        rm -rf "${so_dir}"
+        unzip -q gigl-core/dist/*.whl 'gigl_core/*.so' -d "${so_dir}"
+        readelf -d "${so_dir}"/gigl_core/*.so > "${so_dir}/dynamic.txt"
+        linked=cpu
+        if grep -q 'NEEDED.*\[libtorch_cuda\.so\]' "${so_dir}/dynamic.txt"; then linked=cu128; fi
+        test "${linked}" = "${{ matrix.torch-variant }}" \
+          || { echo "extension links torch ${linked}, expected ${{ matrix.torch-variant }}"; grep NEEDED "${so_dir}/dynamic.txt"; exit 1; }
+
+    - name: Validate the wheel in a clean venv of this minor
+      env:
+        TORCH_INDEX: ${{ matrix.torch-variant == 'cpu' && 'https://download.pytorch.org/whl/cpu' || 'https://download.pytorch.org/whl/cu128' }}
+      run: |
+        # gigl-core declares no dependencies, but its extension links torch and gigl_core/__init__.py imports it
+        # eagerly, so this variant's torch must be installed alongside it.
+        # --clear: on self-hosted runners the venv survives from earlier jobs, and uv refuses to reuse it.
+        uv venv --clear --python ${{ matrix.python }} "${RUNNER_TEMP}/wheel-check"
+        uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.8.0 gigl-core/dist/*.whl
+        "${RUNNER_TEMP}/wheel-check/bin/python" -c 'import sys, torch, gigl_core; assert "%d.%d" % sys.version_info[:2] == "${{ matrix.python }}", sys.version; print(torch.__version__, gigl_core.__file__)'
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: gigl-core-${{ matrix.torch-variant }}-py${{ matrix.python }}
+        path: gigl-core/dist/*.whl
+        if-no-files-found: error
+
+  # gigl is pure Python (py3-none-any), so one wheel serves every minor and both registries. Building it once
+  # means both publish jobs, and any re-run of either, upload the same file.
+  build-gigl:
+    name: Build gigl
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Pin wheel timestamps to the commit
+      run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "${GITHUB_ENV}"
+
+    - name: Setup uv
+      uses: ./.github/actions/setup-python-tools
+
+    - name: Build gigl wheel
+      run: uv build --wheel
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: gigl
+        path: dist/gigl-*.whl
+        if-no-files-found: error
+
+  # One publish job per registry, after every build has passed; the deployment gate fronts these two jobs.
+  #
+  # To recover from a partial publish, use "Re-run failed jobs" on the same run: the re-run uploads this run's
+  # artifacts, and --check-url skips the files the registry already has. A fresh dispatch rebuilds every wheel
+  # instead; --check-url then skips a file only if the rebuild is byte-identical to the uploaded one, and any other
+  # rebuilt file fails the upload on its existing filename.
+  publish:
+    name: Publish (${{ matrix.torch-variant }})
+    needs: [build, build-gigl]
+    permissions:
+      contents: read
+      id-token: write # Needed for the auth w/ GCP to upload to Google Artifact Registry.
+    strategy:
+      # One registry's failure must not cancel the other's upload midway.
+      fail-fast: false
+      matrix:
+        # The check URLs name the user because uv sends credentials on the --check-url request only when the URL
+        # carries a username, and the gigl-cu128 index answers anonymous requests with 401.
+        include:
+          - torch-variant: cpu
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
+            check-url: https://oauth2accesstoken@us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/
+          - torch-variant: cu128
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
+            check-url: https://oauth2accesstoken@us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/
+    runs-on: ubuntu-latest
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
@@ -32,16 +174,14 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Setup Python deps and gcloud
+    - name: Setup gcloud
       uses: ./.github/actions/setup-python-tools
       with:
-          install_dev_deps: "true"
           setup_gcloud: "true"
           gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
           gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-    # We need build and twine to build the whl and upload it to Google Artifact Registry.
     # keyrings.google-artifactregistry-auth is needed to authenticate with Google Artifact Registry.
     # See: https://cloud.google.com/artifact-registry/docs/python/store-python
     # And: https://cloud.google.com/artifact-registry/docs/python/authentication
@@ -50,28 +190,26 @@ jobs:
         # Pre-install keyring and Artifact Registry plugin from the public PyPI
         uv tool install keyring --with keyrings.google-artifactregistry-auth==1.1.2
 
-    # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to the
-    # torch variant. Build and publish one wheel per variant.
-    # Build isolation is disabled via no-build-isolation-package in pyproject.toml
-    # so cmake can find torch from the ambient environment (not on PyPI).
-    # scikit-build-core is declared in the build-backend dependency group and installed by uv.
-    - name: Build gigl-core wheel
-      run: |
-        # Remove stale cmake cache from previous runs on self-hosted runners.
-        rm -rf gigl-core/.cache/cmake_build
-        uv build --wheel gigl-core/
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: gigl-core-${{ matrix.torch-variant }}-py*
+        path: gigl-core/dist
+        merge-multiple: true
 
-    - name: Publish gigl-core wheel
-      working-directory: gigl-core
-      run: |
-        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
+    - uses: actions/download-artifact@v4
+      with:
+        name: gigl
+        path: dist
 
-    # gigl is pure Python — build is fast and produces the same wheel on both
-    # runners. Publish to each variant's registry so the registry is
-    # self-contained: a user only needs one GCP extra-index URL per variant.
-    # gigl-core is published first so its dependency is already in the registry
-    # when gigl becomes available.
-    - name: Build and publish gigl wheel
+    # gigl-core is published first so gigl's dependency is already in the registry when gigl becomes available.
+    - name: Publish gigl-core and gigl wheels
       run: |
-        uv build --wheel
-        uv publish --publish-url ${{ matrix.publish-url }} --username oauth2accesstoken --keyring-provider subprocess
+        # One gigl-core wheel per minor. A separate command, not `test ... && ls`: `bash -e` does not exit
+        # on a failure inside an && list.
+        core_wheels=(gigl-core/dist/*.whl)
+        test "${#core_wheels[@]}" -eq 3
+        ls gigl-core/dist dist
+        uv publish --publish-url ${{ matrix.publish-url }} --check-url ${{ matrix.check-url }} \
+          --username oauth2accesstoken --keyring-provider subprocess gigl-core/dist/*.whl
+        uv publish --publish-url ${{ matrix.publish-url }} --check-url ${{ matrix.check-url }} \
+          --username oauth2accesstoken --keyring-provider subprocess dist/gigl-*.whl

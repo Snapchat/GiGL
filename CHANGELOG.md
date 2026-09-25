@@ -17,6 +17,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
   build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
 
+### Changed
+
+- Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`). The published images and the full CI suite
+  run on Python 3.13.15; 3.11 and 3.12 are covered by install-and-import tests, and `gigl-core` wheels are published for
+  all three. Ray and Beam require one Python per job, so consumers on 3.11 or 3.12 build the CPU, CUDA and Dataflow
+  images from `containers/` at their own minor. The stack moves to TensorFlow 2.21, Apache Beam 2.76.0 and the TFX
+  libraries `tfx-bsl`, `tensorflow-transform` and `tensorflow-data-validation` 1.21.0, tested with protobuf 6, pyarrow
+  25 and numpy 2; TensorBoard is now a declared dependency. All runtime images require glibc >= 2.39 (Ubuntu 24.04), and
+  Dataflow images are published for `linux/amd64` only. The CUDA base image is
+  `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel` and puts the NVIDIA driver paths (`/usr/local/nvidia/lib{,64}`) on
+  `LD_LIBRARY_PATH` explicitly by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+
 ### Fixed
 
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously

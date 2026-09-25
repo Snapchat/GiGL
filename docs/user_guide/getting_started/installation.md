@@ -4,9 +4,13 @@
 
 These are the current environments supported by GiGL
 
-| Python | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
-| ------ | --------------- | --------- | ---------- | ------- | --- |
-| 3.11   | Supported       | Supported | 12.8       | 2.8     | 2.7 |
+| Python      | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
+| ----------- | --------------- | --------- | ---------- | ------- | --- |
+| 3.11 – 3.13 | Supported       | Supported | 12.8       | 2.8     | 2.7 |
+
+GiGL is tested and shipped on Python 3.13: the published Docker images and the full CI suite run on it. Python 3.11 and
+3.12 are covered by install-and-import tests. See
+[Docker images on other Python versions](#docker-images-on-other-python-versions) if you need images on 3.11 or 3.12.
 
 ## Available Versions
 
@@ -110,14 +114,20 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ### Install Wheel
 
-1. Create a python virtual environment w/ `python==3.11.*`
+1. Create a python virtual environment w/ `python>=3.11,<3.14`
 
 2. Install GiGL
 
 #### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CUDA 12.8
 
+The `gigl-cu128` registry needs Google Cloud credentials; anonymous requests get HTTP 401. Install the Artifact Registry
+keyring backend into the same environment, and pip authenticates with your Application Default Credentials
+(`gcloud auth application-default login`). See
+[Artifact Registry authentication](https://cloud.google.com/artifact-registry/docs/python/authentication).
+
 ```bash
-pip install "gigl[pyg27-torch28-cu128, transform]==0.2.0" \
+pip install keyring keyrings.google-artifactregistry-auth
+pip install "gigl[pyg27-torch28-cu128, transform]" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cu128 \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
@@ -126,7 +136,7 @@ pip install "gigl[pyg27-torch28-cu128, transform]==0.2.0" \
 #### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CPU
 
 ```bash
-pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
+pip install "gigl[pyg27-torch28-cpu, transform]" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cpu \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
@@ -159,3 +169,42 @@ tooling:
 ```bash
 make install_dev_deps
 ```
+
+### Docker images on other Python versions
+
+The published GiGL images ship one interpreter, Python 3.13. Ray requires every node in a cluster to run the same Python
+version, and Dataflow requires the worker container's Python minor to match the launching environment's, so if you
+launch pipelines from Python 3.11 or 3.12, build all three base images at that minor. The bases read the interpreter
+from `.python-version`; the Dataflow base also takes the Beam SDK image as a build argument, whose name carries the same
+minor. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
+
+For Python 3.12:
+
+```bash
+# Edits a tracked file: restore it with `git checkout -- .python-version` and do not commit it.
+echo 3.12.14 > .python-version
+CPU_BASE=gigl-cpu-base:py3.12
+CUDA_BASE=gigl-cuda-base:py3.12
+DATAFLOW_BASE=gigl-dataflow-base:py3.12
+docker build --platform linux/amd64 -f containers/Dockerfile.cpu.base -t "${CPU_BASE}" .
+docker build --platform linux/amd64 -f containers/Dockerfile.cuda.base -t "${CUDA_BASE}" .
+docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.base \
+  --build-arg BEAM_SDK_IMAGE=apache/beam_python3.12_sdk:2.76.0 -t "${DATAFLOW_BASE}" .
+```
+
+For Python 3.11, use `3.11.16`, `apache/beam_python3.11_sdk:2.76.0` and `py3.11` tags instead.
+
+The src images must then be built on these bases, not the published ones. `scripts/build_and_push_docker_image.py` takes
+its bases from the `DOCKER_LATEST_BASE_*` lines in `gigl/dep_vars.env`, so either point those lines at your bases (and
+do not commit them), or build the src images directly:
+
+```bash
+docker build --platform linux/amd64 -f containers/Dockerfile.src --build-arg BASE_IMAGE="${CPU_BASE}" \
+  -t gigl-cpu-src:py3.12 .
+docker build --platform linux/amd64 -f containers/Dockerfile.src --build-arg BASE_IMAGE="${CUDA_BASE}" \
+  -t gigl-cuda-src:py3.12 .
+docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.src --build-arg BASE_IMAGE="${DATAFLOW_BASE}" \
+  -t gigl-dataflow-src:py3.12 .
+```
+
+GiGL's CI does not build images for 3.11 or 3.12.
