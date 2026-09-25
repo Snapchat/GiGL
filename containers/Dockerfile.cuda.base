@@ -6,8 +6,8 @@
 # a runtime-only CUDA image cannot compile them. Its CUDA 12.8 toolkit has to stay matched
 # to the cu128 torch wheels pinned in uv.lock, because those two builds compile against
 # the toolkit here and link the wheels' runtime.
-# The image's own torch and Python 3.12 go unused: GiGL is `requires-python = "==3.11.*"`,
-# so requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on the
+# The image's own torch 2.10 and Python 3.12 go unused: GiGL pins torch 2.8, so
+# requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on the
 # interpreter named in .python-version, and the ENV PATH below puts that venv's bin ahead
 # of the image's Python.
 # Pinned by digest because the version tag is floating: upstream rebuilds it in place.

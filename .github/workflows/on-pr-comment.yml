@@ -193,3 +193,61 @@ jobs:
           # It is setup in the setup-python-tools action.
           source ~/.profile
           make lint_test
+
+  smoke-test-python-3-11:
+    # Hosted, not cloud-run: the builder image carries a single interpreter. run-command-on-pr checks out the
+    # PR head and, with install_dev_deps, runs `make install_dev_deps` under this job's env.
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/smoke_test') || contains(github.event.comment.body, '/all_test')) }}
+    runs-on: ubuntu-latest # Ubuntu 24.04, glibc 2.39
+    timeout-minutes: 40
+    env:
+      UV_PYTHON: "3.11" # inherited by every step, including the composite action's `make install_dev_deps`
+      # Without this, UV_PYTHON=3.11 can select the runner's system python3.11 instead of the uv-managed
+      # build the images use, and native sdists (pyfarmhash) need Python headers that interpreter may lack.
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+    - name: Run Python 3.11 install-and-import smoke
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Python 3.11 Smoke Test"
+        install_dev_deps: "true" # production install path under UV_PYTHON (install_py_deps.sh --dev)
+        setup_gcloud: "true" # install_dev_deps needs gcloud and gsutil
+        use_cloud_run: "false"
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: |
+          source ~/.profile
+          bash .github/scripts/smoke_test_python_minor.sh 3.11
+
+  smoke-test-python-3-12:
+    # Hosted, not cloud-run: the builder image carries a single interpreter. run-command-on-pr checks out the
+    # PR head and, with install_dev_deps, runs `make install_dev_deps` under this job's env.
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/smoke_test') || contains(github.event.comment.body, '/all_test')) }}
+    runs-on: ubuntu-latest # Ubuntu 24.04, glibc 2.39
+    timeout-minutes: 40
+    env:
+      UV_PYTHON: "3.12" # inherited by every step, including the composite action's `make install_dev_deps`
+      # Without this, UV_PYTHON=3.12 can select the runner's system python3.12 instead of the uv-managed
+      # build the images use, and native sdists (pyfarmhash) need Python headers that interpreter may lack.
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+    - name: Run Python 3.12 install-and-import smoke
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Python 3.12 Smoke Test"
+        install_dev_deps: "true" # production install path under UV_PYTHON (install_py_deps.sh --dev)
+        setup_gcloud: "true" # install_dev_deps needs gcloud and gsutil
+        use_cloud_run: "false"
+        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        command: |
+          source ~/.profile
+          bash .github/scripts/smoke_test_python_minor.sh 3.12

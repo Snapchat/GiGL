@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
 billion-scale. It supports node classification, link prediction, and both supervised and unsupervised learning. Python
-3.11, `uv` for package management.
+3.11–3.13; 3.13 is the primary (images and full CI run on it). `uv` for package management.
 
 ## Common Commands
 

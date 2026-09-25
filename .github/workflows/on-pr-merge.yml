@@ -169,3 +169,57 @@ jobs:
         # It is setup in the setup-python-tools action.
         source ~/.profile
         make lint_test
+
+  ci-smoke-test-python-3-11:
+    # Install-and-import smoke for a non-primary Python minor; the full suites run on .python-version.
+    # One job per minor, not a matrix, so each check has a stable name that can be marked required.
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest # Ubuntu 24.04, glibc 2.39
+    timeout-minutes: 40
+    env:
+      UV_PYTHON: "3.11"
+      # Without this, UV_PYTHON=3.11 can select the runner's system python3.11 instead of the uv-managed
+      # build the images use, and native sdists (pyfarmhash) need Python headers that interpreter may lack.
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment for Python 3.11
+      uses: ./.github/actions/setup-python-tools
+      with:
+          install_dev_deps: "true"
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Python 3.11 smoke
+      shell: bash
+      run: |
+        source ~/.profile
+        bash .github/scripts/smoke_test_python_minor.sh 3.11
+
+  ci-smoke-test-python-3-12:
+    # Install-and-import smoke for a non-primary Python minor; the full suites run on .python-version.
+    # One job per minor, not a matrix, so each check has a stable name that can be marked required.
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest # Ubuntu 24.04, glibc 2.39
+    timeout-minutes: 40
+    env:
+      UV_PYTHON: "3.12"
+      # Without this, UV_PYTHON=3.12 can select the runner's system python3.12 instead of the uv-managed
+      # build the images use, and native sdists (pyfarmhash) need Python headers that interpreter may lack.
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment for Python 3.12
+      uses: ./.github/actions/setup-python-tools
+      with:
+          install_dev_deps: "true"
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Python 3.12 smoke
+      shell: bash
+      run: |
+        source ~/.profile
+        bash .github/scripts/smoke_test_python_minor.sh 3.12

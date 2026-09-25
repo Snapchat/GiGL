@@ -7,8 +7,13 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
-requires-python = "==3.11.*" # Limited by tfx-bsl not having wheels available for newer python versions.
+# Upper bound: TensorFlow publishes no cp314 wheel. The glibc 2.39 floor comes from
+# tensorflow-data-validation's manylinux_2_39 wheels, not from the interpreter.
+# .python-version names the primary interpreter (images and full CI).
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
   "argo-workflows",
@@ -117,7 +122,10 @@ no-build-isolation-package = ["gigl-core"]
 # These are gigl-core's [build-system].requires. With no-build-isolation-package set,
 # uv does not install them automatically, so they must be present in the ambient
 # environment before any gigl-core build (uv sync, uv build, Dockerfiles).
-gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+# setuptools is for the GLT build (`python setup.py bdist_wheel` in
+# gigl/scripts/install_glt.sh); a fresh uv venv does not include it. 70.1 is the
+# first release with bdist_wheel built in, so the `wheel` package is not needed.
+gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12", "setuptools>=70.1"]
 dev = [
   { include-group = "gigl-core-build-backend" },
   { include-group = "docs" },

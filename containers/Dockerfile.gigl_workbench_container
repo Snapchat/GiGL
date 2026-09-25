@@ -5,7 +5,7 @@ SHELL ["/bin/bash", "-c"]
 
 ENV MAMBA_ROOT_PREFIX=/opt/micromamba
 ARG ENVIRONMENT_NAME="gigl"
-ARG PYTHON_VERSION="3.9"
+ARG PYTHON_VERSION="3.13"
 RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
 
 ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH
