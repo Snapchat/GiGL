@@ -4,7 +4,9 @@
 #     environment's, and the boot harness copied out of this stage is that entrypoint.
 #   - the Python minor in the image *name* (`beam_python3.11_sdk`) must match
 #     .python-version, which is the interpreter uv installs into /gigl_deps/.venv below.
-ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.56.0
+# Pinned by digest so that a re-push of the tag upstream cannot change what this stage copies.
+# The tag is a multi-platform index, so this digest is the index's.
+ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.56.0@sha256:290c96299771fc3368f6e46f0808f39ee891fd39c7d1a56056e300f159481459
 FROM ${BEAM_SDK_IMAGE} AS beam_sdk
 
 FROM ubuntu:noble-20251001
