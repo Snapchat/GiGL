@@ -129,14 +129,17 @@ check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
 
 # end-of-file-fixer and trailing-whitespace from .pre-commit-config.yaml, over every tracked
-# file. Both hooks rewrite what they flag, so `make format_whitespace` is the same command.
-check_format_whitespace format_whitespace:
-	uv run pre-commit run --all-files --show-diff-on-failure end-of-file-fixer
-	uv run pre-commit run --all-files --show-diff-on-failure trailing-whitespace
+# file. The hooks have no check-only mode: they fix what they flag and exit non-zero when
+# they change a file, so this one target both formats and fails check_format in CI. Both
+# hooks always run, so one invocation fixes everything either hook flags.
+format_whitespace:
+	uv run pre-commit run --all-files --show-diff-on-failure end-of-file-fixer; eof_rc=$$?; \
+	uv run pre-commit run --all-files --show-diff-on-failure trailing-whitespace; ws_rc=$$?; \
+	[ $$eof_rc -eq 0 ] && [ $$ws_rc -eq 0 ]
 
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
-check_format: check_format_py check_format_cpp check_format_scala check_format_md check_format_whitespace
+check_format: check_format_py check_format_cpp check_format_scala check_format_md format_whitespace
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
