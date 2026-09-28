@@ -11,10 +11,14 @@ uv run python -c "import gigl, tensorflow, apache_beam, tensorflow_transform, te
 # The test runner is called directly rather than through `make unit_test_py`, which type-checks the
 # whole repository first; that belongs to the lint job, not an install check.
 # tests/unit/main.py selects whole files by name, so only hermetic files (no GCS reads) are listed.
+# The runner exits 0 when a pattern matches no tests, so each file must also report `Ran <n>`, n > 0.
 run_unit_test_file() {
+    local log
+    log="$(mktemp)"
     uv run python -m tests.unit.main --env=test \
         --resource_config_uri=deployment/configs/unittest_resource_config.yaml \
-        --test_file_pattern="$1"
+        --test_file_pattern="$1" 2>&1 | tee "${log}"
+    grep -Eq 'Ran [1-9][0-9]* tests? in ' "${log}" || { echo "$1 ran no tests"; exit 1; }
 }
 # tf.data.TFRecordDataset + tf.io.parse_example over tempfile TFRecords.
 run_unit_test_file tf_records_iterable_dataset_test.py
