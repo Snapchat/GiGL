@@ -47,8 +47,8 @@ class KfpPipelineTest(TestCase):
 
         referenced_outputs = _referenced_output_parameters(pipeline_spec)
         for output_parameter_key in (
-            "resolved_task_config_uri",
-            "resolved_resource_config_uri",
+            "composed_task_config_snapshot_uri",
+            "composed_resource_config_snapshot_uri",
             "should_use_glt_backend",
         ):
             self.assertIn(

@@ -357,17 +357,17 @@ def _validate_resolved_configs(
 
 
 def resolve_configs(
-    task_config_uri: Uri,
-    resource_config_uri: Uri,
+    source_task_config_uri: Uri,
+    source_resource_config_uri: Uri,
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig]:
     """Resolve task and resource configs into self-contained protobufs."""
     proto_utils = ProtoUtils()
     task_config = proto_utils.read_proto_from_yaml(
-        uri=task_config_uri,
+        uri=source_task_config_uri,
         proto_cls=gbml_config_pb2.GbmlConfig,
     )
     resource_config = proto_utils.read_proto_from_yaml(
-        uri=resource_config_uri,
+        uri=source_resource_config_uri,
         proto_cls=GiglResourceConfig,
     )
     if resource_config.WhichOneof("shared_resource") == "shared_resource_config_uri":
@@ -381,14 +381,14 @@ def resolve_configs(
 
 def kfp_validation_checks(
     job_name: str,
-    task_config_uri: Uri,
+    source_task_config_uri: Uri,
     start_at: str,
-    resource_config_uri: Uri,
+    source_resource_config_uri: Uri,
     stop_after: Optional[str] = None,
 ) -> tuple[gbml_config_pb2.GbmlConfig, GiglResourceConfig, bool]:
     task_config, resource_config = resolve_configs(
-        task_config_uri=task_config_uri,
-        resource_config_uri=resource_config_uri,
+        source_task_config_uri=source_task_config_uri,
+        source_resource_config_uri=source_resource_config_uri,
     )
     should_use_live_sgs_backend = _validate_resolved_configs(
         job_name=job_name,
@@ -400,14 +400,14 @@ def kfp_validation_checks(
     return task_config, resource_config, should_use_live_sgs_backend
 
 
-def materialize_resolved_configs(
+def materialize_composed_config_snapshots(
     job_name: str,
     task_config: gbml_config_pb2.GbmlConfig,
     resource_config: GiglResourceConfig,
     task_config_source: str,
     resource_config_source: str,
 ) -> tuple[GcsUri, GcsUri]:
-    """Write resolved task and resource configs to stable GCS paths.
+    """Write composed task and resource config snapshots to stable GCS paths.
 
     Each snapshot starts with a provenance comment naming the source config it
     was composed from.
@@ -425,7 +425,7 @@ def materialize_resolved_configs(
             source.
 
     Returns:
-        The resolved task and resource config URIs.
+        The composed task and resource config snapshot URIs.
     """
     resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
     snapshot_root = (
@@ -433,24 +433,26 @@ def materialize_resolved_configs(
         / job_name
         / "config_validator"
     )
-    task_config_uri = snapshot_root / "resolved_task_config.yaml"
-    resource_config_uri = snapshot_root / "resolved_resource_config.yaml"
+    composed_task_config_snapshot_uri = snapshot_root / "resolved_task_config.yaml"
+    composed_resource_config_snapshot_uri = (
+        snapshot_root / "resolved_resource_config.yaml"
+    )
     gcs_utils = GcsUtils(project=resource_config_wrapper.project)
     gcs_utils.upload_from_string(
-        gcs_path=task_config_uri,
+        gcs_path=composed_task_config_snapshot_uri,
         content=(
             f"# Resolved Hydra config from: {task_config_source}\n"
             + proto_to_yaml(task_config)
         ),
     )
     gcs_utils.upload_from_string(
-        gcs_path=resource_config_uri,
+        gcs_path=composed_resource_config_snapshot_uri,
         content=(
             f"# Resolved Hydra config from: {resource_config_source}\n"
             + proto_to_yaml(resource_config)
         ),
     )
-    return task_config_uri, resource_config_uri
+    return composed_task_config_snapshot_uri, composed_resource_config_snapshot_uri
 
 
 def _source_config_label(uri: Uri, docker_uri: Optional[str]) -> str:
@@ -480,9 +482,9 @@ if __name__ == "__main__":
         help="Unique identifier for the job name",
     )
     parser.add_argument(
-        "--task_config_uri",
+        "--source_task_config_uri",
         type=str,
-        help="GCS URI to template_or_frozen_config_uri",
+        help="User-supplied template or frozen task config URI to compose",
     )
     parser.add_argument(
         "--start_at",
@@ -495,21 +497,21 @@ if __name__ == "__main__":
         help="Specify the component where to stop the pipeline",
     )
     parser.add_argument(
-        "--resource_config_uri",
+        "--source_resource_config_uri",
         type=str,
-        help="Runtime argument for resource and env specifications of each component",
+        help="User-supplied resource config URI to compose",
     )
     parser.add_argument(
-        "--output_file_path_resolved_task_config_uri",
+        "--output_file_path_composed_task_config_snapshot_uri",
         type=str,
         required=True,
-        help="KFP output path for the resolved task config URI",
+        help="KFP output path for the composed task config snapshot URI",
     )
     parser.add_argument(
-        "--output_file_path_resolved_resource_config_uri",
+        "--output_file_path_composed_resource_config_snapshot_uri",
         type=str,
         required=True,
-        help="KFP output path for the resolved resource config URI",
+        help="KFP output path for the composed resource config snapshot URI",
     )
     parser.add_argument(
         "--output_file_path_should_use_glt_backend",
@@ -531,33 +533,35 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    task_config_uri = UriFactory.create_uri(args.task_config_uri)
-    resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
+    source_task_config_uri = UriFactory.create_uri(args.source_task_config_uri)
+    source_resource_config_uri = UriFactory.create_uri(args.source_resource_config_uri)
 
     check_if_kfp_pipeline_job_name_valid(job_name=args.job_name)
     task_config, resource_config = resolve_configs(
-        task_config_uri=task_config_uri,
-        resource_config_uri=resource_config_uri,
+        source_task_config_uri=source_task_config_uri,
+        source_resource_config_uri=source_resource_config_uri,
     )
     (
-        resolved_task_config_uri,
-        resolved_resource_config_uri,
-    ) = materialize_resolved_configs(
+        composed_task_config_snapshot_uri,
+        composed_resource_config_snapshot_uri,
+    ) = materialize_composed_config_snapshots(
         job_name=args.job_name,
         task_config=task_config,
         resource_config=resource_config,
-        task_config_source=_source_config_label(task_config_uri, args.cpu_docker_uri),
+        task_config_source=_source_config_label(
+            source_task_config_uri, args.cpu_docker_uri
+        ),
         resource_config_source=_source_config_label(
-            resource_config_uri, args.cpu_docker_uri
+            source_resource_config_uri, args.cpu_docker_uri
         ),
     )
 
     # Validation imports user-defined classes. Initialize the historical runtime
-    # contract first, but point it at the authoritative resolved snapshots.
+    # contract first, but point it at the authoritative composed snapshots.
     initialize_gigl_runtime(
         applied_task_identifier=args.job_name,
-        task_config_uri=resolved_task_config_uri,
-        resource_config_uri=resolved_resource_config_uri,
+        task_config_uri=composed_task_config_snapshot_uri,
+        resource_config_uri=composed_resource_config_snapshot_uri,
         service_name=args.job_name,
         component=GiGLComponents.ConfigValidator,
         cpu_docker_uri=args.cpu_docker_uri,
@@ -572,12 +576,12 @@ if __name__ == "__main__":
     )
 
     _write_kfp_output(
-        args.output_file_path_resolved_task_config_uri,
-        resolved_task_config_uri.uri,
+        args.output_file_path_composed_task_config_snapshot_uri,
+        composed_task_config_snapshot_uri.uri,
     )
     _write_kfp_output(
-        args.output_file_path_resolved_resource_config_uri,
-        resolved_resource_config_uri.uri,
+        args.output_file_path_composed_resource_config_snapshot_uri,
+        composed_resource_config_snapshot_uri.uri,
     )
     _write_kfp_output(
         args.output_file_path_should_use_glt_backend,

@@ -13,7 +13,7 @@ from gigl.common import GcsUri, Uri, UriFactory
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.validation_check.config_validator import (
     kfp_validation_checks,
-    materialize_resolved_configs,
+    materialize_composed_config_snapshots,
     resolve_configs,
 )
 from snapchat.research.gbml import (
@@ -339,9 +339,9 @@ class TestConfigValidationPerSGSBackends(TestCase):
 
         kfp_validation_checks(
             job_name="resource_config_validation_test",
-            task_config_uri=task_config_uri,
+            source_task_config_uri=task_config_uri,
             start_at="config_populator",
-            resource_config_uri=resource_config_uri,
+            source_resource_config_uri=resource_config_uri,
         )
 
     def test_resource_config_validation_failure_with_mock_configs(
@@ -352,9 +352,9 @@ class TestConfigValidationPerSGSBackends(TestCase):
         with self.assertRaises(AssertionError):
             kfp_validation_checks(
                 job_name="resource_config_validation_test",
-                task_config_uri=self._offline_task_config_uri,
+                source_task_config_uri=self._offline_task_config_uri,
                 start_at="config_populator",
-                resource_config_uri=self._live_resource_config_uri,
+                source_resource_config_uri=self._live_resource_config_uri,
             )
 
     @patch("gigl.src.validation_check.config_validator.GcsUtils")
@@ -392,8 +392,10 @@ class TestConfigValidationPerSGSBackends(TestCase):
             {"CONFIG_VALIDATOR_TEST_PROJECT": "composed-project"},
         ):
             task_config, resource_config = resolve_configs(
-                task_config_uri=UriFactory.create_uri(str(task_config_path)),
-                resource_config_uri=UriFactory.create_uri(str(resource_config_path)),
+                source_task_config_uri=UriFactory.create_uri(str(task_config_path)),
+                source_resource_config_uri=UriFactory.create_uri(
+                    str(resource_config_path)
+                ),
             )
 
         self.assertTrue(task_config.shared_config.is_graph_directed)
@@ -413,7 +415,7 @@ class TestConfigValidationPerSGSBackends(TestCase):
             (snapshot_directory / gcs_path.get_basename()).write_text(content)
 
         mock_gcs_utils.return_value.upload_from_string.side_effect = write_snapshot
-        task_uri, resource_uri = materialize_resolved_configs(
+        task_uri, resource_uri = materialize_composed_config_snapshots(
             job_name="config-resolution-test",
             task_config=task_config,
             resource_config=resource_config,
@@ -478,8 +480,8 @@ class TestConfigValidationPerSGSBackends(TestCase):
 
         mock_load_file.side_effect = download_config
         task_config, resource_config = resolve_configs(
-            task_config_uri=task_uri,
-            resource_config_uri=resource_uri,
+            source_task_config_uri=task_uri,
+            source_resource_config_uri=resource_uri,
         )
 
         self.assertTrue(task_config.shared_config.is_graph_directed)
