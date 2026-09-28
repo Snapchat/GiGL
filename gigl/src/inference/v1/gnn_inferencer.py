@@ -7,7 +7,7 @@ import sys
 import threading
 import traceback
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 from apache_beam.runners.dataflow.dataflow_runner import DataflowPipelineResult
 from apache_beam.runners.runner import PipelineState
@@ -21,10 +21,9 @@ from gigl.common.utils import os_utils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_INFERENCER_S
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
-from gigl.src.common.types.model import GnnModel
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
@@ -249,15 +248,7 @@ class InferencerV1:
 
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
-        model = inferencer_instance.model
-        if not isinstance(model, GnnModel):
-            raise TypeError(
-                f"Inferencer model {type(model).__name__} does not expose a graph_backend"
-            )
-        gnn_model = cast(GnnModel, model)
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=gnn_model.graph_backend
-        )
+        graph_builder = PygGraphBuilder()
 
         inference_blueprint: BaseInferenceBlueprint = (
             InferenceBlueprintFactory.get_inference_blueprint(
