@@ -101,6 +101,21 @@ reads, and this reader does not write a resolved snapshot.
 The final composed mapping must still be a valid `GbmlConfig` or `GiglResourceConfig`. Protobuf parsing remains the
 schema and type validation boundary.
 
+## End-to-end test resource configs
+
+The repository's E2E resource configs select [shared infrastructure](../../../deployment/configs/e2e/shared.yaml) and
+[preprocessing capacity](../../../deployment/configs/e2e/preprocessor.yaml):
+
+- [CICD](../../../deployment/configs/e2e_cicd_resource_config.yaml)
+- [GLT](../../../deployment/configs/e2e_glt_resource_config.yaml)
+- [GLT graph store](../../../deployment/configs/e2e_glt_gs_resource_config.yaml)
+
+Each primary keeps its pipeline-specific settings while the fragments supply the shared infrastructure and preprocessing
+capacity.
+
+The notebook test uploads a materialized YAML config to GCS. This includes the selected fragments and any external
+`shared_resource_config_uri`, so notebook workers can read the uploaded file without access to the source bundle.
+
 ## Boundaries
 
 - GiGL does not consume Hydra command-line overrides, multirun, launchers, or output-directory behavior.
