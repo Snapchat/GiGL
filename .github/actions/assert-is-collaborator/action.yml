@@ -50,7 +50,7 @@ runs:
 
     - name: Comment workflow permissions
       if: ${{ failure() && steps.assert-is-collaborator.conclusion == 'failure' && inputs.initiating-pr-number != '' }}
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      uses: snapchat/gigl/.github/actions/comment-on-pr@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         pr_number: ${{ inputs.initiating-pr-number }}
         message: |
