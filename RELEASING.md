@@ -48,8 +48,15 @@ The workflow runs:
 - Two publish jobs, one per variant registry, behind the `release` environment. They start only once every build job has
   passed, and each publishes three `gigl-core` wheels and the `gigl` wheel.
 
-If a publish job fails partway, use **Re-run failed jobs** on the same run. The re-run uploads the same wheels and skips
-the files the registry already has.
+If a publish job fails partway, use **Re-run failed jobs** on the same run. The re-run uploads this run's wheels and
+skips the files the registry already has. A fresh dispatch rebuilds every wheel instead. The builds set
+`SOURCE_DATE_EPOCH` so that a rebuild matches the uploaded file and is skipped, but that is best-effort: a rebuilt file
+that differs from the one already in the registry fails the publish rather than replacing it.
+
+The build jobs, including the `cu128` jobs on the self-hosted GPU pool, run before the `release` environment's approval;
+only the publish jobs wait for it. The build jobs hold no cloud credentials. Who can start a release is bounded by
+repository write access and the protection on `v*` tags. `workflow_dispatch` runs the workflow file from the chosen ref,
+so an approval gate on the build jobs would not stop someone who can push a tag.
 
 ### Step 3 — Merge the PR
 

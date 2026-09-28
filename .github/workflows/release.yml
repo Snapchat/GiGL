@@ -15,6 +15,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The build jobs, including the cu128 jobs on the self-hosted `gigl-gpu-instances` pool, run before the `release`
+  # environment's approval and hold no cloud credentials. Who can start them is bounded by repository write access and
+  # the protection on `v*` tags. `workflow_dispatch` runs the workflow file from the chosen ref, so an environment gate
+  # on these jobs would not stop someone who can push a tag: they could remove the gate in that tag's copy.
+  #
   # gigl-core contains compiled C++/CUDA extensions that are ABI-bound to both the Python minor and the torch
   # variant, so every (minor, variant) pair gets its own wheel. Nothing is published until all six build and import.
   build:
@@ -48,9 +53,10 @@ jobs:
         version="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
         test "v${version}" = "${GITHUB_REF_NAME}" || { echo "pyproject.toml version ${version} != tag ${GITHUB_REF_NAME}"; exit 1; }
 
-    # GAR rejects a second upload of an existing filename, so `uv publish --check-url` can only skip a rebuilt wheel
-    # that is byte-identical to the uploaded one. Pinning every archive timestamp to the commit time keeps the
-    # wheels independent of when the job ran.
+    # "Re-run failed jobs" publishes this run's artifacts and does not depend on this. A fresh dispatch rebuilds every
+    # wheel, and `uv publish --check-url` skips a rebuilt wheel only if it is byte-identical to the uploaded one; a
+    # differing file with an existing filename fails the publish instead of replacing it. Pinning every archive
+    # timestamp to the commit time is a best-effort way to make such a rebuild match.
     - name: Pin wheel timestamps to the commit
       run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "${GITHUB_ENV}"
 
