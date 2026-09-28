@@ -128,14 +128,10 @@ check_format_md:
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
 
-# end-of-file-fixer and trailing-whitespace from .pre-commit-config.yaml, over every tracked
-# file. The hooks have no check-only mode: they fix what they flag and exit non-zero when
-# they change a file, so this one target both formats and fails check_format in CI. Both
-# hooks always run, so one invocation fixes everything either hook flags.
+# Runs the `whitespace` pre-commit alias (end-of-file-fixer and trailing-whitespace) on every
+# tracked file. It fixes files in place and exits non-zero if it changed anything.
 format_whitespace:
-	uv run pre-commit run --all-files --show-diff-on-failure end-of-file-fixer; eof_rc=$$?; \
-	uv run pre-commit run --all-files --show-diff-on-failure trailing-whitespace; ws_rc=$$?; \
-	[ $$eof_rc -eq 0 ] && [ $$ws_rc -eq 0 ]
+	uv run pre-commit run --all-files --show-diff-on-failure whitespace
 
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
