@@ -1,0 +1,106 @@
+name: Push Security Smoke Test for PR 780
+
+on:
+  push:
+    branches:
+    - codex/ci-security-test
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  prepare:
+    if: ${{ github.repository == 'Snapchat/GiGL' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      is_cross_repository: ${{ steps.resolve.outputs.is_cross_repository }}
+    steps:
+    - name: Verify triggering actor is a collaborator
+      uses: snapchat/gigl/.github/actions/assert-is-collaborator@b40339e291143ec918cbfbca50216265ff0344a1
+      with:
+        username: ${{ github.triggering_actor }}
+    - name: Verify authorized collaborator probe
+      uses: snapchat/gigl/.github/actions/assert-is-collaborator@b40339e291143ec918cbfbca50216265ff0344a1
+      with:
+        username: kmontemayor2-sc
+    - name: Verify unauthorized collaborator probe is rejected
+      id: unauthorized_probe
+      continue-on-error: true
+      uses: snapchat/gigl/.github/actions/assert-is-collaborator@b40339e291143ec918cbfbca50216265ff0344a1
+      with:
+        username: kmonte
+    - name: Assert unauthorized probe failed
+      env:
+        PROBE_OUTCOME: ${{ steps.unauthorized_probe.outcome }}
+      run: test "$PROBE_OUTCOME" = failure
+    - name: Resolve and freeze PR 780 head SHA
+      id: resolve
+      uses: snapchat/gigl/.github/actions/get-pr-src-branch@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
+      with:
+        pr_number: '780'
+    - name: Verify approval environment is protected (fork PRs only)
+      if: ${{ steps.resolve.outputs.is_cross_repository == 'true' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const environment_name = "pr-command-execution";
+          let data;
+          try {
+            ({ data } = await github.rest.repos.getEnvironment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment_name,
+            }));
+          } catch (error) {
+            throw new Error(
+              `Cannot verify the '${environment_name}' environment (${error.status || "error"}: ${error.message}). ` +
+              `Refusing to run fork-PR commands.`
+            );
+          }
+          const rules = data.protection_rules || [];
+          const hasRequiredReviewers = rules.some(
+            (rule) => rule.type === "required_reviewers" && (rule.reviewers || []).length > 0
+          );
+          if (!hasRequiredReviewers) {
+            throw new Error(
+              `The '${environment_name}' environment has no required-reviewers protection rule. ` +
+              `Refusing to run fork-PR commands (the approval gate would fail open). ` +
+              `Configure required reviewers under Settings -> Environments.`
+            );
+          }
+          console.log(`Verified '${environment_name}' has a required-reviewers protection rule.`);
+    - name: Summarize frozen SHA and approval
+      env:
+        HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+        IS_CROSS_REPOSITORY: ${{ steps.resolve.outputs.is_cross_repository }}
+      run: |
+        printf '## PR #780 push security smoke test\n\n' >> "$GITHUB_STEP_SUMMARY"
+        printf 'Frozen PR head: `%s`\n\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+        printf 'Smoke test only: this run checks collaborator authorization, fork approval, and pinned checkout; it does not run test suites.\n\n' >> "$GITHUB_STEP_SUMMARY"
+        if [[ "$IS_CROSS_REPOSITORY" == true ]]; then
+          printf 'Fork PR: review the frozen SHA above, then approve the `pr-command-execution` environment only if this is the commit you intend to execute.\n' >> "$GITHUB_STEP_SUMMARY"
+        else
+          printf 'Same-repository PR: no environment approval is required.\n' >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+  smoke:
+    needs: prepare
+    if: ${{ github.repository == 'Snapchat/GiGL' }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Check pinned PR 780 checkout
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ github.token }}
+        pr_number: '780'
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: 'false'
+        descriptive_workflow_name: PR 780 Push Security Smoke Test
+        command: |
+          printf 'PR 780 security smoke test at %s\n' "$(git rev-parse HEAD)"
