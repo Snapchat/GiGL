@@ -13,8 +13,18 @@ permissions:
   issues: 'write'
 
 jobs:
+  # Temporary PR #780 security smoke route; remove after the command gate is verified.
+  ci-security-test:
+    if: ${{ github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: Snapchat/GiGL/.github/workflows/ci-security-test.yml@16400a519972b68009e15853cd12b8bcf569cc5f
+
   help:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -40,7 +50,7 @@ jobs:
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   unit-test-python:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
@@ -65,7 +75,7 @@ jobs:
           make unit_test_py
 
   unit-test-cpp:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_cpp') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_cpp') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -84,7 +94,7 @@ jobs:
           make unit_test_cpp
 
   unit-test-scala:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -104,7 +114,7 @@ jobs:
           make unit_test_scala
 
   integration-test:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
@@ -126,7 +136,7 @@ jobs:
             make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
 
   integration-e2e-test:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
@@ -146,7 +156,7 @@ jobs:
           make run_all_e2e_tests
 
   notebooks-e2e-test:
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
@@ -167,7 +177,7 @@ jobs:
 
 
   lint-test:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/lint_test') || contains(github.event.comment.body, '/all_test')) }}
+    if: ${{ github.event.issue.number != 780 && github.event.issue.pull_request && (contains(github.event.comment.body, '/lint_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
     steps:
