@@ -1,0 +1,179 @@
+name: PR Command Security Smoke Test
+
+on:
+  workflow_call:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      is_cross_repository: ${{ steps.resolve.outputs.is_cross_repository }}
+    steps:
+    - name: Verify commenter is a collaborator
+      uses: snapchat/gigl/.github/actions/assert-is-collaborator@b40339e291143ec918cbfbca50216265ff0344a1
+      with:
+        username: ${{ github.event.comment.user.login }}
+        initiating-pr-number: ${{ github.event.issue.number }}
+    - name: Resolve and freeze PR head SHA
+      id: resolve
+      uses: snapchat/gigl/.github/actions/get-pr-src-branch@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
+      with:
+        pr_number: ${{ github.event.issue.number }}
+    - name: Verify approval environment is protected (fork PRs only)
+      if: ${{ steps.resolve.outputs.is_cross_repository == 'true' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const environment_name = "pr-command-execution";
+          let data;
+          try {
+            ({ data } = await github.rest.repos.getEnvironment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment_name,
+            }));
+          } catch (error) {
+            throw new Error(
+              `Cannot verify the '${environment_name}' environment (${error.status || "error"}: ${error.message}). ` +
+              `Refusing to run fork-PR commands.`
+            );
+          }
+          const rules = data.protection_rules || [];
+          const hasRequiredReviewers = rules.some(
+            (rule) => rule.type === "required_reviewers" && (rule.reviewers || []).length > 0
+          );
+          if (!hasRequiredReviewers) {
+            throw new Error(
+              `The '${environment_name}' environment has no required-reviewers protection rule. ` +
+              `Refusing to run fork-PR commands (the approval gate would fail open). ` +
+              `Configure required reviewers under Settings -> Environments.`
+            );
+          }
+          console.log(`Verified '${environment_name}' has a required-reviewers protection rule.`);
+    - name: Post frozen SHA and run URL
+      uses: snapchat/gigl/.github/actions/comment-on-pr@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
+      with:
+        pr_number: ${{ github.event.issue.number }}
+        message: |
+          🔒 Security smoke test [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) pinned to commit `${{ steps.resolve.outputs.head_sha }}`
+          ([view commit](${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.resolve.outputs.head_sha }})).
+          This run checks command routing and safeguards only; it does not run the real test suites.
+          Any push after this point will NOT change what runs: the job aborts if the PR branch has moved off this SHA.
+          ${{ steps.resolve.outputs.is_cross_repository == 'true' && 'This PR is from a fork, so a reviewer must approve the `pr-command-execution` environment before the command runs — approve only if this is the commit you intend to execute.' || 'Same-repo PR: the command runs without extra approval.' }}
+
+  unit-test-python:
+    needs: prepare
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Run Python unit smoke test
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Python Unit Smoke Test"
+        command: |
+          printf 'Python unit smoke test at %s\n' "$(git rev-parse HEAD)"
+
+  unit-test-cpp:
+    needs: prepare
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Run C++ unit smoke test
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "C++ Unit Smoke Test"
+        command: |
+          printf 'C++ unit smoke test at %s\n' "$(git rev-parse HEAD)"
+
+  unit-test-scala:
+    needs: prepare
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Run Scala unit smoke test
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Scala Unit Smoke Test"
+        command: |
+          printf 'Scala unit smoke test at %s\n' "$(git rev-parse HEAD)"
+
+  integration-test:
+    needs: prepare
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Run integration smoke test
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Integration Smoke Test"
+        command: |
+          printf 'Integration smoke test at %s\n' "$(git rev-parse HEAD)"
+
+  integration-e2e-test:
+    needs: prepare
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Run E2E smoke test
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "E2E Smoke Test"
+        command: |
+          printf 'E2E smoke test at %s\n' "$(git rev-parse HEAD)"
+
+  lint-test:
+    needs: prepare
+    if: ${{ github.event_name == 'issue_comment' && github.repository == 'Snapchat/GiGL' && github.event.issue.number == 780 && github.event.issue.pull_request && contains(github.event.comment.body, '/all_test') }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    timeout-minutes: 10
+    steps:
+    - name: Run lint smoke test
+      uses: snapchat/gigl/.github/actions/run-command-on-pr@8323ae3a62e3437d360160ee8d5a15565cdc6684
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
+        should_leave_progress_comments: "true"
+        descriptive_workflow_name: "Lint Smoke Test"
+        command: |
+          printf 'Lint smoke test at %s\n' "$(git rev-parse HEAD)"
