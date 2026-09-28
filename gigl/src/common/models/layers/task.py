@@ -711,9 +711,10 @@ class NodeAnchorBasedLinkPredictionTasks:
             fn = self._task_to_fn_map[task]
             # ModuleDict values are typed as plain Module; add_task only ever
             # stores NodeAnchorBasedLinkPredictionBaseTask instances.
-            assert isinstance(fn, NodeAnchorBasedLinkPredictionBaseTask), (
-                f"Expected a NodeAnchorBasedLinkPredictionBaseTask, got {type(fn).__name__}"
-            )
+            if not isinstance(fn, NodeAnchorBasedLinkPredictionBaseTask):
+                raise TypeError(
+                    f"Expected a NodeAnchorBasedLinkPredictionBaseTask, got {type(fn).__name__}"
+                )
             weight = self._task_to_weights_map[task]
             tasks_list.append((fn, weight))
         return tasks_list

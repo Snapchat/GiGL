@@ -185,12 +185,8 @@ class LightGCN(nn.Module):
                 )
 
         # Register layer weights as a buffer so it moves with the model to different devices
-        # Declared type lets ty resolve the buffer as a Tensor instead of the
-        # Tensor | Module union produced by nn.Module.__getattr__.
-        self._layer_weights: torch.Tensor
-        self.register_buffer(
-            "_layer_weights",
-            torch.tensor(layer_weights, dtype=torch.float32),
+        self._layer_weights = nn.Buffer(
+            torch.tensor(layer_weights, dtype=torch.float32)
         )
 
         # Build TorchRec EBC (one table per node type)

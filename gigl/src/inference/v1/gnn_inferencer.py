@@ -250,9 +250,10 @@ class InferencerV1:
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
         model = inferencer_instance.model
-        assert isinstance(model, GnnModel), (
-            f"Inferencer model {type(model).__name__} does not expose a graph_backend"
-        )
+        if not isinstance(model, GnnModel):
+            raise TypeError(
+                f"Inferencer model {type(model).__name__} does not expose a graph_backend"
+            )
         gnn_model = cast(GnnModel, model)
         graph_builder = GraphBuilderFactory.get_graph_builder(
             backend_name=gnn_model.graph_backend

@@ -13,10 +13,7 @@ _EARLY_STOP_PATIENCE = 3
 class _DummyModel(nn.Module):
     def __init__(self):
         super(_DummyModel, self).__init__()
-        # Declared type lets ty resolve the buffer as a Tensor instead of the
-        # Tensor | Module union produced by nn.Module.__getattr__.
-        self.foo: torch.Tensor
-        self.register_buffer("foo", torch.tensor(0.0))
+        self.foo = nn.Buffer(torch.tensor(0.0))
 
     def forward(self, x):
         return x
