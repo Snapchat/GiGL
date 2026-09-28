@@ -6,7 +6,9 @@
 #     .python-version by convention. Nothing copied out of this stage depends on it: `boot`
 #     is the same binary in every Python minor's SDK image, and the rest is license files
 #     and an apache-beam sdist that this image does not install.
-ARG BEAM_SDK_IMAGE=apache/beam_python3.13_sdk:2.76.0
+# Pinned by digest so that a re-push of the tag upstream cannot change what this stage copies.
+# The tag is a multi-platform index, so this digest is the index's.
+ARG BEAM_SDK_IMAGE=apache/beam_python3.13_sdk:2.76.0@sha256:ca5843866f5f692f3a9ef55193773e8496d73a82e4f5e8528f2b6e157de8054a
 FROM ${BEAM_SDK_IMAGE} AS beam_sdk
 
 FROM ubuntu:noble-20251001

@@ -22,15 +22,15 @@ Every check raises on mismatch, so a zero exit status is the only signal of succ
 Example:
     Inside a CUDA base image::
 
-        $ python scripts/smoke_test_image.py --python 3.11 \
+        $ python scripts/smoke_test_image.py --python 3.13 \
             --imports torch,graphlearn_torch \
             --venv-prefix /gigl_deps/.venv --min-glibc 2.39
 
     Inside a Dataflow base image::
 
-        $ python scripts/smoke_test_image.py --python 3.11 \
+        $ python scripts/smoke_test_image.py --python 3.13 \
             --imports torch,apache_beam \
-            --venv-prefix /gigl_deps/.venv --beam 2.56.0 --boot-env --min-glibc 2.39
+            --venv-prefix /gigl_deps/.venv --beam 2.76.0 --boot-env --min-glibc 2.39
 
     Inside a src image, or on a developer checkout where the venv path varies by
     checkout and so cannot be asserted::

@@ -6,6 +6,8 @@ on:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
   pull_request:
   merge_group:
+  # Runs only the Python-minor smoke jobs, on the chosen ref.
+  workflow_dispatch:
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -173,7 +175,7 @@ jobs:
   ci-smoke-test-python-3-11:
     # Install-and-import smoke for a non-primary Python minor; the full suites run on .python-version.
     # One job per minor, not a matrix, so each check has a stable name that can be marked required.
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest # Ubuntu 24.04, glibc 2.39
     timeout-minutes: 40
     env:
@@ -200,7 +202,7 @@ jobs:
   ci-smoke-test-python-3-12:
     # Install-and-import smoke for a non-primary Python minor; the full suites run on .python-version.
     # One job per minor, not a matrix, so each check has a stable name that can be marked required.
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest # Ubuntu 24.04, glibc 2.39
     timeout-minutes: 40
     env:
