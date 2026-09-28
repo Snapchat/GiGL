@@ -9,6 +9,7 @@
   "cmakefmt": {},
   "excludes": [
     "**/.cache",
+    "**/.claude/agents",
     "**/.claude/skills",
     "**/.venv",
     "**/experimental",

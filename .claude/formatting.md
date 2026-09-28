@@ -15,5 +15,6 @@ Do not suppress errors with workarounds like `# type: ignore`:
 - **dprint**: Markdown formatter (wrap 120, tables built in; also formats toml/dockerfile/cmake). Configured in
   `dprint.json`.
 
-**Note:** `make format` is NOT a pre-commit hook — pre-commit only runs whitespace and EOF fixes. Always run
-`make format` (or `make check_format`) manually before submitting.
+**Note:** pre-commit formats the staged Python and Markdown files (ruff + dprint) plus whitespace/EOF fixes. It does not
+cover Scala or C++, and it only sees staged files, so still run the formatter(s) for what you edited (e.g.
+`make format_scala`) and `make check_format` before submitting.

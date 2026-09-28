@@ -569,10 +569,10 @@ class TestHeteroToGraphTransformerInput(TestCase):
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
         )
 
-    def test_ppr_sequence_construction_requires_only_ppr_relations(self):
+    def test_ppr_sequence_construction_requires_at_least_one_ppr_relation(self):
         data = create_simple_hetero_data()
 
-        with self.assertRaisesRegex(ValueError, "contain only PPR edges"):
+        with self.assertRaisesRegex(ValueError, "at least one PPR edge type"):
             heterodata_to_graph_transformer_input(
                 data=data,
                 batch_size=1,
@@ -580,6 +580,98 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 anchor_node_type="user",
                 sequence_construction_method="ppr",
             )
+
+    def test_ppr_sequence_construction_ignores_non_ppr_edges(self):
+        # With include_sampled_edges the batch also carries the original
+        # (non-"ppr") relation edges; they must not leak into the PPR sequence.
+        data = create_ppr_sequence_hetero_data()
+        data["user", "buys", "item"].edge_index = torch.tensor([[0, 1], [0, 1]])
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=2,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+        )
+
+        expected_anchor_0 = torch.tensor(
+            [[10.0, 0.0], [0.0, 21.0], [0.0, 20.0], [11.0, 0.0]]
+        )
+        expected_anchor_1 = torch.tensor(
+            [[11.0, 0.0], [0.0, 20.0], [10.0, 0.0], [0.0, 0.0]]
+        )
+        self.assertTrue(torch.allclose(sequences[0], expected_anchor_0))
+        self.assertTrue(torch.allclose(sequences[1], expected_anchor_1))
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, True, True]))
+        )
+        self.assertTrue(
+            torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
+        )
+
+    def test_ppr_sequence_preserves_indices_with_non_ppr_node_types(self):
+        # A node type absent from every PPR edge (inserted before the anchor
+        # type) must not shift homogeneous indices. Regression test: the
+        # PPR-only homogenization previously dropped/renumbered such node types
+        # and lost otherwise-valid PPR edges.
+        data = HeteroData()
+        data["extra"].x = torch.zeros((3, 2))
+        data["user"].x = torch.tensor([[1.0, 0.0], [2.0, 0.0]])
+        data["item"].x = torch.tensor([[0.0, 3.0], [0.0, 4.0]])
+        data["user", "ppr", "item"].edge_index = torch.tensor([[0], [1]])
+        data["user", "ppr", "item"].edge_attr = torch.tensor([0.9])
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=2,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+        )
+
+        # user0 -> item1 must survive: anchor at pos 0, item1 at pos 1.
+        self.assertTrue(
+            torch.equal(valid_mask[0], torch.tensor([True, True, False, False]))
+        )
+        self.assertTrue(torch.allclose(sequences[0, 0], torch.tensor([1.0, 0.0])))
+        self.assertTrue(torch.allclose(sequences[0, 1], torch.tensor([0.0, 4.0])))
+
+    def test_ppr_sequence_returns_relation_features_aligned_to_weight_order(self):
+        # PPR edge_attr columns beyond the scalar weight (col 0) are exposed as
+        # the ppr_relation_features token input, aligned to descending-weight
+        # order.
+        data = create_ppr_sequence_hetero_data()
+        data["user", "ppr", "item"].edge_attr = torch.tensor(
+            [[0.9, 0.91], [0.6, 0.61], [0.8, 0.81]]
+        )
+        data["user", "ppr", "user"].edge_attr = torch.tensor([[0.4, 0.41], [0.3, 0.31]])
+
+        _, _, sequence_auxiliary_data = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=2,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+            anchor_based_input_attr_names=["ppr_weight", "ppr_relation_features"],
+        )
+        token_input = sequence_auxiliary_data["token_input"]
+        assert token_input is not None
+        relation_features = token_input["ppr_relation_features"]
+
+        self.assertEqual(relation_features.shape, (2, 4, 1))
+        self.assertTrue(
+            torch.allclose(
+                relation_features[0],
+                torch.tensor([[0.0], [0.91], [0.61], [0.41]]),
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                relation_features[1],
+                torch.tensor([[0.0], [0.81], [0.31], [0.0]]),
+            )
+        )
 
     def test_ppr_sequence_can_return_token_input_and_attention_bias_features(self):
         data = create_ppr_sequence_hetero_data()

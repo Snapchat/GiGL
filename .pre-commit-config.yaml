@@ -10,6 +10,36 @@ repos:
       pass_filenames: false
       stages: [manual]
 
+# Format the Python and Markdown files in each commit; mirrors `make format_py` /
+# `make format_md` but scoped to the staged files instead of the whole repo. These are
+# pre-commit-only: `ruff --fix` and `dprint fmt` rewrite files, which would leave a dirty
+# tree mid-push if they also ran at pre-push.
+  - repo: local
+    hooks:
+    - id: ruff-check
+      name: ruff-check
+      entry: uv run ruff check --fix --force-exclude --config pyproject.toml
+      language: system
+      types: [python]
+      files: '^(\.github/scripts|examples|gigl|scripts|snapchat|tests)/'
+      stages: [pre-commit]
+    - id: ruff-format
+      name: ruff-format
+      entry: uv run ruff format --force-exclude --config pyproject.toml
+      language: system
+      types: [python]
+      files: '^(\.github/scripts|examples|gigl|scripts|snapchat|tests)/'
+      stages: [pre-commit]
+    # dprint filters the passed files through the excludes in dprint.json, so this hook
+    # formats exactly what `make format_md` does; --allow-no-files keeps it green when
+    # every staged file is excluded. types_or covers each plugin dprint.json configures.
+    - id: dprint-fmt
+      name: dprint-fmt
+      entry: uv run dprint fmt --allow-no-files
+      language: system
+      types_or: [markdown, toml, dockerfile, cmake]
+      stages: [pre-commit]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.0.1
     hooks:
