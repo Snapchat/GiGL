@@ -109,9 +109,13 @@ def build_and_push_image(
             "--push",
         ]
     else:
+        # GiGL's runtime images and their locked Linux dependencies are amd64-only, so a
+        # single-arch build targets amd64 even on an arm64 host.
         build_command = [
             "docker",
             "build",
+            "--platform",
+            "linux/amd64",
             "-f",
             str(dockerfile_path),
             "-t",
