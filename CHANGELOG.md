@@ -17,10 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
   build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
 - Replace `coo_to_csr` on the dataset's graph-build path with a memory-lean two-pass counting sort
-  (`gigl/utils/csr.py`), and build each edge type's `Topology` directly so GLT's unused per-edge `arange` edge-id array
-  is never allocated. Peak conversion memory drops from ~7.25x one int64 edge array to ~2.0x, and the CSC column array
-  narrows to int32 when the installed graphlearn_torch accepts it and the ids are verified to fit by @dsaini2 in
-  https://github.com/Snapchat/GiGL/pull/PENDING
+  (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
+  edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
+  drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 
 ### Fixed
 

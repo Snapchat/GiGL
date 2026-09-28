@@ -6,20 +6,9 @@ import torch
 from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
-from gigl.utils.csr import (
-    _scatter_in_bands,
-    _scatter_whole,
-    build_csr_from_coo,
-    glt_accepts_int32_indices,
-)
+from gigl.utils.csr import _scatter_in_bands, _scatter_whole, build_csr_from_coo
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
-
-# The narrowest dtype this WHEEL can be handed: int64 on the released graphlearn_torch, int32 on
-# one built with the CSR patch. The expected dtype of every output below is therefore a property
-# of the installed binary, and hardcoding either value would make this suite pass in one
-# environment and fail in the other for a correct implementation.
-_EXPECTED_NARROW_DTYPE = torch.int32 if glt_accepts_int32_indices() else torch.int64
 
 
 def _reference_csr(
@@ -40,19 +29,7 @@ class BuildCsrFromCooTest(TestCase):
     compare against the upstream implementation directly instead of asserting hand-written
     expectations.
 
-    Equivalence is of VALUES, not width: ``indices`` narrows to int32 whenever every column id
-    fits and the installed graphlearn_torch can read it, so comparisons against upstream's
-    always-int64 reference go through :meth:`_assert_same_indices`. When the narrowing happens is
-    a separate contract, covered by ``IndicesDtypeTest``.
     """
-
-    def _assert_same_indices(
-        self, indices: torch.Tensor, expected: torch.Tensor
-    ) -> None:
-        """Exact value equality against upstream's int64 reference, whatever our width."""
-        torch.testing.assert_close(
-            indices.to(torch.int64), expected.to(torch.int64), rtol=0, atol=0
-        )
 
     @parameterized.expand(
         [
@@ -78,11 +55,9 @@ class BuildCsrFromCooTest(TestCase):
         )
 
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        self._assert_same_indices(indices, expected_indices)
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
         self.assertEqual(indptr.dtype, torch.int64)
-        # 1000 column ids fit int32 whatever the input width, so the only remaining question
-        # is whether this wheel can read it; see IndicesDtypeTest for the rest of the contract.
-        self.assertEqual(indices.dtype, _EXPECTED_NARROW_DTYPE)
+        self.assertEqual(indices.dtype, torch.int64)
 
     def test_matches_upstream_with_mostly_empty_rows(self) -> None:
         generator = torch.Generator().manual_seed(11)
@@ -94,7 +69,7 @@ class BuildCsrFromCooTest(TestCase):
         indptr, indices = build_csr_from_coo(row, col, num_rows=num_rows)
 
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        self._assert_same_indices(indices, expected_indices)
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_with_row_larger_than_sort_block(self) -> None:
         """A single row exceeding ``sort_block_edges`` must still terminate and be correct.
@@ -115,7 +90,7 @@ class BuildCsrFromCooTest(TestCase):
         )
 
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        self._assert_same_indices(indices, expected_indices)
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_with_duplicate_edges(self) -> None:
         generator = torch.Generator().manual_seed(17)
@@ -126,7 +101,7 @@ class BuildCsrFromCooTest(TestCase):
         indptr, indices = build_csr_from_coo(row, col, num_rows=4, chunk_size=333)
 
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        self._assert_same_indices(indices, expected_indices)
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
 
     def test_trailing_rows_beyond_max_row_id_are_empty(self) -> None:
         generator = torch.Generator().manual_seed(19)
@@ -192,7 +167,7 @@ class BuildCsrFromCooTest(TestCase):
         indptr, indices = build_csr_from_coo(col, row, num_rows=num_rows)
 
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        self._assert_same_indices(indices, expected_indices)
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
 
     def test_empty_input(self) -> None:
         empty = torch.empty(0, dtype=torch.int64)
@@ -202,9 +177,7 @@ class BuildCsrFromCooTest(TestCase):
         self.assertEqual(indptr.numel(), 11)
         self.assertEqual(int(indptr.sum()), 0)
         self.assertEqual(indices.numel(), 0)
-        # The dtype selection runs before the empty early-return, so an edgeless rank (normal
-        # under range partitioning) follows the same narrowing contract as everyone else.
-        self.assertEqual(indices.dtype, _EXPECTED_NARROW_DTYPE)
+        self.assertEqual(indices.dtype, torch.int64)
 
     def test_row_id_beyond_num_rows_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -221,144 +194,6 @@ class BuildCsrFromCooTest(TestCase):
                 torch.zeros((2, 4), dtype=torch.int64),
                 num_rows=4,
             )
-
-
-class IndicesDtypeTest(TestCase):
-    """When ``indices`` narrows to int32, which halves the CSC column array.
-
-    Two conditions gate it, each with its own failure mode:
-
-    - **can the wheel read it** (``glt_accepts_int32_indices``): only a wheel built with the CSR
-      patch can, and on a released one the narrowed output would be rejected downstream by
-      ``Graph.lazy_init``. The tests below therefore expect ``_EXPECTED_NARROW_DTYPE`` rather than
-      a hardcoded int32.
-    - **do the values fit**, verified against the data rather than assumed from ``num_cols``: a
-      wrong bound makes the output wider, never truncated.
-    """
-
-    def test_an_int32_input_narrows_by_construction(self) -> None:
-        row = torch.tensor([0, 1, 1], dtype=torch.int32)
-        col = torch.tensor([2, 0, 1], dtype=torch.int32)
-
-        _, indices = build_csr_from_coo(row, col, num_rows=3)
-
-        self.assertEqual(indices.dtype, _EXPECTED_NARROW_DTYPE)
-        self.assertEqual(indices.tolist(), [2, 0, 1])
-
-    def test_an_int64_input_narrows_once_the_observed_values_are_verified(self) -> None:
-        """The production case if the int32-edge-index lever were ever turned off upstream."""
-        generator = torch.Generator().manual_seed(31)
-        row = torch.randint(0, 100, (5_000,), generator=generator, dtype=torch.int64)
-        col = torch.randint(0, 100, (5_000,), generator=generator, dtype=torch.int64)
-
-        # chunk_size below numel so the verification max actually runs chunked.
-        _, indices = build_csr_from_coo(row, col, num_rows=100, chunk_size=997)
-
-        self.assertEqual(indices.dtype, _EXPECTED_NARROW_DTYPE)
-
-    def test_the_output_is_always_consumable_by_the_installed_graph(self) -> None:
-        """The property the capability gate exists to guarantee, asserted end to end.
-
-        This is the composition that was broken: ``build_csr_from_coo`` chose a width the
-        installed compiled graph could not read, so every caller that went on to build a
-        ``Graph`` failed -- in GiGL's CI, on any unpatched dev box, and ~30 minutes into a
-        cluster job if an image ever shipped without the patch. Passing here on BOTH wheels is
-        the whole point.
-
-        Initialization alone is too weak a check, which is why this also SAMPLES. A sampler that
-        read int32 storage through an int64 pointer would not raise -- it would return plausible
-        garbage, so the only way to catch it is to compare neighbours against the known
-        adjacency. Full fanout (``req_num`` above the max degree) makes the sampler copy every
-        neighbour rather than draw, so the comparison is exact rather than distributional.
-        """
-        from graphlearn_torch import py_graphlearn_torch as pywrap
-        from graphlearn_torch.data import Graph
-
-        from gigl.distributed.dist_dataset import _build_topology_without_edge_ids
-
-        # Row 0 -> [1, 2], row 1 -> [0], row 2 -> [1].
-        row = torch.tensor([0, 0, 1, 2], dtype=torch.int64)
-        col = torch.tensor([1, 2, 0, 1], dtype=torch.int64)
-        indptr, indices = build_csr_from_coo(row=row, col=col, num_rows=3)
-
-        topology = _build_topology_without_edge_ids(
-            indptr=indptr, indices=indices, layout="CSR"
-        )
-        graph = Graph(topology, "CPU", None)
-        graph.lazy_init()  # raises on a dtype the compiled init cannot read
-
-        self.assertEqual(graph.col_count, 3)
-
-        neighbors, counts = pywrap.CPURandomSampler(graph.graph_handler).sample(
-            torch.tensor([0, 1, 2], dtype=torch.int64), 8
-        )
-        self.assertEqual(counts.tolist(), [2, 1, 1])
-        self.assertEqual(neighbors.tolist(), [1, 2, 0, 1])
-        self.assertEqual(
-            neighbors.dtype,
-            torch.int64,
-            "sampled ids must stay int64 whatever the storage width",
-        )
-
-    def test_a_column_id_beyond_int32_keeps_int64_whatever_num_cols_claims(
-        self,
-    ) -> None:
-        """The no-silent-truncation property.
-
-        ``num_cols`` defaults to ``num_rows`` = 2 here, which CLAIMS the domain fits int32; the
-        actual value 2**31 does not. The observed-max verification must win over the declared
-        bound, and the value must survive exactly.
-        """
-        row = torch.tensor([0, 1], dtype=torch.int64)
-        col = torch.tensor([2**31, 5], dtype=torch.int64)
-
-        _, indices = build_csr_from_coo(row, col, num_rows=2)
-
-        self.assertEqual(indices.dtype, torch.int64)
-        self.assertEqual(indices.tolist(), [2**31, 5])
-
-    def test_a_sampling_mismatch_is_refused_rather_than_silently_downgraded(
-        self,
-    ) -> None:
-        """The capability probe's loudest branch, proven to fire.
-
-        A guard that cannot be observed failing proves nothing, and this one covers the scenario
-        the whole int32 change is most exposed to: a binary that ACCEPTS int32 columns but reads
-        them wrongly, which returns plausible garbage instead of raising. Falling back to int64
-        there would be false comfort (same dispatch), so the probe must refuse outright.
-        """
-        if _EXPECTED_NARROW_DTYPE is not torch.int32:
-            self.skipTest(
-                "needs a wheel that accepts int32 to reach the sampling check"
-            )
-
-        from graphlearn_torch import py_graphlearn_torch as pywrap
-
-        class _WrongSampler:
-            def __init__(self, _handler) -> None:
-                pass
-
-            def sample(self, _seeds, _req_num):
-                # Right shape, wrong ids -- exactly what an int64 read of int32 storage gives.
-                return torch.tensor([9, 9, 9, 9, 9]), torch.tensor([2, 1, 2])
-
-        glt_accepts_int32_indices.cache_clear()
-        self.addCleanup(glt_accepts_int32_indices.cache_clear)
-        with mock.patch.object(pywrap, "CPURandomSampler", _WrongSampler):
-            with self.assertRaises(RuntimeError) as raised:
-                glt_accepts_int32_indices()
-
-        self.assertIn("samples it incorrectly", str(raised.exception))
-
-    def test_a_declared_domain_beyond_int32_skips_narrowing(self) -> None:
-        """A huge ``num_cols`` opts out up front -- no verification pass, no narrowing."""
-        row = torch.tensor([0, 0], dtype=torch.int64)
-        col = torch.tensor([3, 1], dtype=torch.int64)
-
-        _, indices = build_csr_from_coo(row, col, num_rows=1, num_cols=2**31 + 1)
-
-        self.assertEqual(indices.dtype, torch.int64)
-        self.assertEqual(indices.tolist(), [1, 3])
 
 
 class ScatterPlacementTest(TestCase):
@@ -449,8 +284,7 @@ class ScatterPlacementTest(TestCase):
             row=row, col=col, num_rows=rows, chunk_size=7, sort_within_row=False
         )
 
-        # Same layout AND same dtype as production would allocate (int32 here -- the ids fit),
-        # filled by the banded path instead.
+        # Same layout and dtype as production would allocate, filled by the banded path instead.
         banded = torch.empty(edges, dtype=expected_indices.dtype)
         _scatter_in_bands(
             row=row,
@@ -539,9 +373,8 @@ class ScatterPlacementTest(TestCase):
         row, col = self._random_coo(64, 500)
         row, col = row.to(dtype), col.to(dtype)
         with (
-            # The destination is 500 int32 = 2000 B (64 rows always narrow), so the threshold
-            # has to be under that for the file path to be taken at all -- at the default 4096 B
-            # this test silently exercised the memory path.
+            # The destination is 500 int64 = 4000 B, so the threshold has to be under that for
+            # the file path to be taken at all.
             self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="1024"),
             mock.patch(
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1024

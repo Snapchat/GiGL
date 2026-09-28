@@ -15,13 +15,15 @@ transients are bounded by chunk size rather than by edge count::
 which is 2.0x one int64 array with int32 inputs. The ``max_degree`` term comes from the optional
 within-row sort, which cannot split a single row across blocks; it only matters for a graph whose
 largest row is a meaningful fraction of its edge count.
+
+:class:`CompactTopology` wraps the result as a GLT ``Topology``.
 """
 
-import functools
 import gc
-from typing import Optional, Tuple
+from typing import Literal, Tuple
 
 import torch
+from graphlearn_torch.data import Topology
 
 from gigl.common.logger import Logger
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
@@ -37,93 +39,6 @@ DEFAULT_SORT_BLOCK_EDGES = 1 << 25
 # memory. Small enough that a band's pages stay cached while being written, large enough that the
 # number of input passes stays low.
 DEFAULT_BAND_BYTES = 4 * 2**30
-
-_INT32_MAX_COLUMN_ID = 2**31 - 1
-
-
-def _is_int32_dtype_rejection(error: BaseException) -> bool:
-    """Whether ``error`` is an unpatched wheel declining an int32 column array.
-
-    Upstream's ``init_cpu_from_csr`` calls ``data_ptr<int64_t>()``, so torch raises ``expected
-    scalar type Long but found Int``. Matched on the message because that is the only thing
-    separating this expected rejection from a genuinely broken install.
-    """
-    if not isinstance(error, RuntimeError):
-        return False
-    message = str(error)
-    return "scalar type" in message and "Long" in message and "Int" in message
-
-
-@functools.lru_cache(maxsize=1)
-def glt_accepts_int32_indices() -> bool:
-    """Whether the installed ``graphlearn_torch`` can consume an int32 CSR column array.
-
-    Narrowing ``indices`` halves the dominant allocation here, but only a wheel built with
-    ``gigl/scripts/patches/0001-glt-csr-col-count-and-int32-indices.patch`` can read it. The width
-    is therefore a property of the installed binary, not of the data, and has to be asked: a
-    released wheel raises on int32 input, and assuming otherwise would break every caller that
-    composes this with ``Graph.lazy_init``.
-
-    The probe samples as well as initializes, because the two halves of the patch fail
-    independently and only one is loud: a sampler reading int32 storage as int64 returns plausible
-    garbage rather than raising. Accepting int32 at init but sampling it wrongly means the binary
-    is in an unknown state, so that case raises instead of falling back -- the int64 path shares
-    the same dispatch and would be equally suspect.
-
-    Returns:
-        bool: True when an int32 column array can be both initialized and sampled correctly.
-
-    Raises:
-        RuntimeError: If the compiled graph accepts int32 columns but samples them incorrectly.
-    """
-    try:
-        from graphlearn_torch import py_graphlearn_torch as pywrap
-        from graphlearn_torch.data import Graph, Topology
-    except ImportError as error:
-        logger.warning(
-            f"CSR indices will stay int64: graphlearn_torch is not importable ({error})"
-        )
-        return False
-
-    # Row 0 -> [1, 2], row 1 -> [0], row 2 -> [1, 2].
-    expected_neighbors = [1, 2, 0, 1, 2]
-    expected_counts = [2, 1, 2]
-    topology = Topology.__new__(Topology)
-    topology._layout = "CSR"
-    topology._indptr = torch.tensor([0, 2, 3, 5], dtype=torch.int64)
-    topology._indices = torch.tensor(expected_neighbors, dtype=torch.int32)
-    topology._edge_ids = None
-    topology._edge_weights = None
-    graph = Graph.__new__(Graph)
-    graph.topo = topology
-    graph.mode = "CPU"
-    graph.device = None
-    graph._graph = None
-    try:
-        graph.lazy_init()
-    except RuntimeError as error:
-        if not _is_int32_dtype_rejection(error):
-            raise
-        logger.info(
-            f"CSR indices will stay int64: the installed graphlearn_torch does not accept an "
-            f"int32 column array ({error}). Expected on the released wheel; in an image built by "
-            f"install_glt.sh it means the CSR patch is missing."
-        )
-        return False
-
-    # Full fanout: req_num above the max degree makes the sampler copy every neighbour, so this
-    # is deterministic and comparable element-wise.
-    neighbors, counts = pywrap.CPURandomSampler(graph.graph_handler).sample(
-        torch.tensor([0, 1, 2], dtype=torch.int64), 8
-    )
-    if neighbors.tolist() != expected_neighbors or counts.tolist() != expected_counts:
-        raise RuntimeError(
-            f"The installed graphlearn_torch accepts an int32 CSR column array but samples it "
-            f"incorrectly: expected {expected_neighbors} with counts {expected_counts}, got "
-            f"{neighbors.tolist()} with {counts.tolist()}. This wheel would return plausible but "
-            f"wrong neighbourhoods."
-        )
-    return True
 
 
 def _degrees(keys: torch.Tensor, num_rows: int, chunk_size: int) -> torch.Tensor:
@@ -312,40 +227,10 @@ def _sort_within_rows(
         row_start = row_end
 
 
-def _indices_dtype(
-    col: torch.Tensor, num_cols: int, num_edges: int, chunk_size: int
-) -> torch.dtype:
-    """The narrowest dtype the column array may use.
-
-    Two independent conditions, both asked rather than assumed: whether the installed compiled
-    graph can read int32 columns at all, and whether the values fit. An int32 input fits by
-    construction; an int64 input is narrowed only after a chunked min/max confirms every value
-    fits, so a wrong ``num_cols`` makes the output wider, never truncated. Both bounds are
-    checked, since a column id below -2**31 wraps exactly as silently as one above 2**31-1.
-    """
-    if not glt_accepts_int32_indices():
-        return torch.int64
-    if col.dtype == torch.int32:
-        return torch.int32
-    if num_cols - 1 > _INT32_MAX_COLUMN_ID:
-        return torch.int64
-    observed_max = -1
-    observed_min = 0
-    for start in range(0, num_edges, chunk_size):
-        chunk = col[start : start + chunk_size]
-        observed_max = max(observed_max, int(chunk.max().item()))
-        observed_min = min(observed_min, int(chunk.min().item()))
-    fits = observed_max <= _INT32_MAX_COLUMN_ID and observed_min >= -(
-        _INT32_MAX_COLUMN_ID + 1
-    )
-    return torch.int32 if fits else torch.int64
-
-
 def build_csr_from_coo(
     row: torch.Tensor,
     col: torch.Tensor,
     num_rows: int,
-    num_cols: Optional[int] = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     sort_within_row: bool = True,
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
@@ -366,8 +251,6 @@ def build_csr_from_coo(
         row (torch.Tensor): 1-D row indices, int32 or int64.
         col (torch.Tensor): 1-D column indices, same length as ``row``.
         num_rows (int): Size of the row dimension. ``indptr`` has ``num_rows + 1`` entries.
-        num_cols (Optional[int]): Column-id domain bound, defaulting to ``num_rows``. Gates the
-            int32 narrowing of ``indices``; the within-row sort needs no column bound.
         chunk_size (int): Edges per scatter chunk. Bounds the transient working set.
         sort_within_row (bool): Sort each row's columns ascending, matching ``coo_to_csr``. Costs
             one extra bounded-memory pass over the output.
@@ -377,8 +260,7 @@ def build_csr_from_coo(
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: ``indptr`` of shape ``[num_rows + 1]``, always int64,
-        and ``indices`` of shape ``[num_edges]``, int32 when the installed graphlearn_torch
-        accepts it and every column id fits, int64 otherwise.
+        and ``indices`` of shape ``[num_edges]``, both int64.
 
     Raises:
         ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range, or the
@@ -390,10 +272,7 @@ def build_csr_from_coo(
         raise ValueError(
             f"row and col must be the same length, got {row.numel()} and {col.numel()}"
         )
-    if num_cols is None:
-        num_cols = num_rows
     num_edges = row.numel()
-    indices_dtype = _indices_dtype(col, num_cols, num_edges, chunk_size)
 
     # Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
     # allocate_preshared. Uninitialised rather than zeroed: element 0 is set below and [1:] is
@@ -405,7 +284,7 @@ def build_csr_from_coo(
         # indptr is the correct CSR for a graph with no edges, and a rank owning no edges of some
         # edge type is normal under range partitioning.
         indptr.zero_()
-        return indptr, torch.empty(0, dtype=indices_dtype)
+        return indptr, torch.empty(0, dtype=torch.int64)
 
     row_max = int(row.max().item())
     if row_max >= num_rows:
@@ -418,7 +297,7 @@ def build_csr_from_coo(
 
     # random_access=True: the direct scatter writes to offsets spread across the whole array, so
     # memory is preferred. The banded path below is what runs if it lands on disk anyway.
-    indices = allocate_preshared((num_edges,), indices_dtype, random_access=True)
+    indices = allocate_preshared((num_edges,), torch.int64, random_access=True)
     if is_disk_backed(indices):
         _scatter_in_bands(
             row=row,
@@ -443,3 +322,33 @@ def build_csr_from_coo(
         f"{indices.dtype}, indptr {indptr.numel() * indptr.element_size() / 2**30:.1f} GiB)"
     )
     return indptr, indices
+
+
+class CompactTopology(Topology):
+    """A GLT ``Topology`` built by :func:`build_csr_from_coo`, with no edge ids or weights.
+
+    ``Topology.__init__`` is not called: it would fabricate ``torch.arange(num_edges)`` edge ids
+    and convert with ``coo_to_csr``, the two costs this class exists to avoid. Edge features are
+    read by edge id, so a graph that has them cannot use this class.
+
+    Args:
+        edge_index (torch.Tensor): ``[2, num_edges]`` COO, int32 or int64.
+        num_nodes (int): Size of the compressed dimension -- source nodes for CSR, destination
+            nodes for CSC.
+        layout (Literal["CSR", "CSC"]): The layout GLT samples from.
+    """
+
+    def __init__(
+        self,
+        edge_index: torch.Tensor,
+        num_nodes: int,
+        layout: Literal["CSR", "CSC"],
+    ) -> None:
+        # CSC compresses destinations, so it is the CSR of the reversed edges.
+        compressed, other = (0, 1) if layout == "CSR" else (1, 0)
+        self._layout = layout
+        self._indptr, self._indices = build_csr_from_coo(
+            row=edge_index[compressed], col=edge_index[other], num_rows=num_nodes
+        )
+        self._edge_ids = None
+        self._edge_weights = None

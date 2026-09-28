@@ -12,13 +12,12 @@ from parameterized import param, parameterized
 
 from gigl.distributed.dist_dataset import (
     DistDataset,
-    _build_topology_without_edge_ids,
     _can_build_topology_directly,
     _num_nodes_for_row_dimension,
-    _reference_topology_attributes,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData
+from gigl.utils.csr import CompactTopology
 from tests.test_assets.test_case import TestCase
 
 _EDGE_TYPE = EdgeType(NodeType("user"), Relation("to"), NodeType("item"))
@@ -31,40 +30,19 @@ def _random_coo(num_nodes: int, num_edges: int, seed: int) -> torch.Tensor:
     )
 
 
-class TopologyBypassTest(TestCase):
-    def test_it_populates_exactly_what_a_real_topology_has(self) -> None:
-        topology = _build_topology_without_edge_ids(
-            indptr=torch.tensor([0, 2, 3], dtype=torch.int64),
-            indices=torch.tensor([1, 0, 1], dtype=torch.int64),
-            layout="CSR",
+class CompactTopologyTest(TestCase):
+    def test_it_has_exactly_the_attributes_of_a_real_topology(self) -> None:
+        """``__init__`` skips GLT's, so a field GLT adds later would otherwise be missed."""
+        coo = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64)
+        self.assertEqual(
+            set(CompactTopology(coo, num_nodes=2, layout="CSR").__dict__),
+            set(Topology(edge_index=coo, layout="CSR").__dict__),
         )
-        self.assertEqual(set(topology.__dict__), set(_reference_topology_attributes()))
 
     def test_no_edge_ids_are_fabricated(self) -> None:
         """``Topology.__init__`` would allocate ``arange(num_edges)`` here; that is the point."""
-        topology = _build_topology_without_edge_ids(
-            indptr=torch.tensor([0, 2, 3], dtype=torch.int64),
-            indices=torch.tensor([1, 0, 1], dtype=torch.int64),
-            layout="CSR",
-        )
-        self.assertIsNone(topology._edge_ids)
-
-    def test_a_missing_attribute_is_reported_rather_than_segfaulting(self) -> None:
-        import gigl.distributed.dist_dataset as dist_dataset
-
-        original = dist_dataset._reference_topology_attributes
-        dist_dataset._reference_topology_attributes = lambda: frozenset(
-            {"_layout", "_indptr", "_indices", "_edge_ids", "_edge_weights", "_new"}
-        )
-        try:
-            with self.assertRaises(AttributeError):
-                _build_topology_without_edge_ids(
-                    indptr=torch.tensor([0, 1], dtype=torch.int64),
-                    indices=torch.tensor([0], dtype=torch.int64),
-                    layout="CSR",
-                )
-        finally:
-            dist_dataset._reference_topology_attributes = original
+        coo = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64)
+        self.assertIsNone(CompactTopology(coo, num_nodes=2, layout="CSR").edge_ids)
 
 
 class LeanBuildAppliesTest(TestCase):
@@ -241,21 +219,11 @@ class SamplingParityTest(TestCase):
     def test_full_fanout_sampling_matches_glt(self, _name: str, layout: str) -> None:
         from graphlearn_torch import py_graphlearn_torch as pywrap
 
-        from gigl.utils.csr import build_csr_from_coo
-
         num_nodes = 500
         coo = _random_coo(num_nodes, 4_000, seed=11)
-        group_by, other = (0, 1) if layout == "CSR" else (1, 0)
 
-        indptr, indices = build_csr_from_coo(
-            row=coo[group_by], col=coo[other], num_rows=num_nodes
-        )
         lean = Graph(
-            _build_topology_without_edge_ids(
-                indptr=indptr, indices=indices, layout=layout
-            ),
-            "CPU",
-            None,
+            CompactTopology(coo, num_nodes=num_nodes, layout=layout), "CPU", None
         )
         lean.lazy_init()
 

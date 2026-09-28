@@ -8,7 +8,7 @@ from typing import Literal, Optional, Tuple, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
-from graphlearn_torch.data import Feature, Graph, Topology
+from graphlearn_torch.data import Feature, Graph
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
@@ -28,7 +28,7 @@ from gigl.types.graph import (
     GraphPartitionData,
     PartitionOutput,
 )
-from gigl.utils.csr import build_csr_from_coo
+from gigl.utils.csr import CompactTopology
 from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
     NodeSplitter,
@@ -38,18 +38,6 @@ from gigl.utils.share_memory import share_memory
 logger = Logger()
 
 _EntityType = TypeVar("_EntityType", NodeType, EdgeType)
-
-
-def _reference_topology_attributes() -> frozenset[str]:
-    """Attribute names a real ``Topology.__init__`` populates, read from a 2-edge instance.
-
-    Bypassing ``__init__`` would silently miss a field if graphlearn_torch added one, and the
-    consumer is a compiled extension that segfaults rather than raises.
-    """
-    reference = Topology(
-        edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.int64), layout="CSR"
-    )
-    return frozenset(reference.__dict__)
 
 
 def _can_build_topology_directly(
@@ -118,45 +106,6 @@ def _num_nodes_for_row_dimension(
     else:
         partition_book = node_partition_book
     return get_total_ids(partition_book)
-
-
-def _build_topology_without_edge_ids(
-    indptr: torch.Tensor, indices: torch.Tensor, layout: Literal["CSR", "CSC"]
-) -> Topology:
-    """Wrap a ready-made ``(indptr, indices)`` pair as a GLT ``Topology``.
-
-    ``Topology.__init__`` cannot be used: its matching-layout branch does store the two tensors
-    directly, but it first runs ``edge_ids = torch.arange(num_edges)`` whenever ``edge_ids is
-    None`` -- a full int64 array per edge type, indexing nothing. ``Graph.lazy_init`` already
-    treats ``edge_ids is None`` as supported and substitutes ``torch.empty(0)`` itself, so ``None``
-    here is the state GLT expects.
-
-    A spilled CSR needs no special Topology subclass to survive the boundaries GLT puts it
-    through: ``Graph.__init__`` calls ``share_memory_()``, which is a no-op on a
-    ``from_file(shared=True)`` storage, and ``Graph.share_ipc`` pickles through
-    ``ForkingPickler``, where ``gigl.utils.share_memory`` ships the path rather than the bytes.
-    Both were verified rather than assumed.
-
-    Raises:
-        AttributeError: If the installed graphlearn_torch's ``Topology`` does not have exactly the
-            attributes this bypass populates.
-    """
-    topology = Topology.__new__(Topology)
-    # For both layouts GLT stores the pointer array in _indptr and the neighbour list in _indices;
-    # only the argument order of its constructor differs.
-    topology._layout = layout
-    topology._indptr = indptr
-    topology._indices = indices
-    topology._edge_ids = None
-    topology._edge_weights = None
-    expected = _reference_topology_attributes()
-    if set(topology.__dict__) != expected:
-        raise AttributeError(
-            f"graphlearn_torch Topology attributes changed: a real instance has "
-            f"{sorted(expected)}, this bypass populated {sorted(topology.__dict__)}. "
-            f"Update _build_topology_without_edge_ids before using it."
-        )
-    return topology
 
 
 class DistDataset(glt.distributed.DistDataset):
@@ -917,10 +866,9 @@ class DistDataset(glt.distributed.DistDataset):
            ``torch_sparse.SparseStorage`` holds row, col, a composite key, a permutation,
            ``index_sort``'s discarded sorted values, and both gathered outputs at once.
 
-        :func:`gigl.utils.csr.build_csr_from_coo` returns the same ``(indptr, indices)`` as
-        ``coo_to_csr``, so the resulting ``Topology`` is indistinguishable from GLT's -- it just
-        never allocates the copies. Edge types are processed largest-first so the biggest COO is
-        released first.
+        :class:`gigl.utils.csr.CompactTopology` holds the same ``(indptr, indices)`` as GLT's
+        ``Topology`` without allocating any of those copies. Edge types are processed
+        largest-first so the biggest COO is released first.
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
@@ -943,31 +891,18 @@ class DistDataset(glt.distributed.DistDataset):
         ):
             start_time = time.time()
             coo = edge_index.pop(edge_type)
-            num_edges = coo.size(1)
-            # For CSC the compressed dimension is the column, so hand the builder the columns as
-            # its row key and let it group by destination instead.
-            group_by, other = (0, 1) if target_layout == "CSR" else (1, 0)
-            num_group_rows = _num_nodes_for_row_dimension(
+            num_nodes = _num_nodes_for_row_dimension(
                 edge_type, target_layout, node_partition_book
             )
             logger.info(
-                f"Building {target_layout} for {edge_type}: {num_edges:,} edges, "
-                f"{num_group_rows:,} rows, input dtype {coo.dtype}"
+                f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
+                f"{num_nodes:,} rows, input dtype {coo.dtype}"
             )
-            # Called for the empty case too, which both partitioners legitimately produce for an
-            # edge type with no edges on this rank; the builder returns a zeroed indptr there.
-            indptr, indices = build_csr_from_coo(
-                row=coo[group_by], col=coo[other], num_rows=num_group_rows
-            )
-            # Both slices are views into `coo`'s single storage, so it is only freed once all
-            # three names are gone.
+            # Also run for an edge type with no edges on this rank, which both partitioners
+            # produce; the topology then has a zeroed indptr.
+            topology = CompactTopology(coo, num_nodes=num_nodes, layout=target_layout)
             del coo
             gc.collect()
-
-            topology = _build_topology_without_edge_ids(
-                indptr=indptr, indices=indices, layout=target_layout
-            )
-            del indptr, indices
             graph_for_type = Graph(topology, "CPU", None)
             graph_for_type.lazy_init()
             graph[edge_type] = graph_for_type
