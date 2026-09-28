@@ -44,6 +44,11 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# The base ships its own uv at /usr/local/bin. install_py_deps.sh installs the pinned uv only
+# when none is on PATH, so leaving this one would build the venv with the base's uv, which may
+# not know the interpreter .python-version names.
+RUN rm -f /usr/local/bin/uv /usr/local/bin/uvx
+
 WORKDIR /gigl_deps
 
 COPY pyproject.toml pyproject.toml
