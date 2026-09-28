@@ -128,9 +128,15 @@ check_format_md:
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
 
+# end-of-file-fixer and trailing-whitespace from .pre-commit-config.yaml, over every tracked
+# file. Both hooks rewrite what they flag, so `make format_whitespace` is the same command.
+check_format_whitespace format_whitespace:
+	uv run pre-commit run --all-files --show-diff-on-failure end-of-file-fixer
+	uv run pre-commit run --all-files --show-diff-on-failure trailing-whitespace
+
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
-check_format: check_format_py check_format_cpp check_format_scala check_format_md
+check_format: check_format_py check_format_cpp check_format_scala check_format_md check_format_whitespace
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
@@ -171,7 +177,7 @@ format_md:
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
 
-format: format_py format_cpp format_scala format_md
+format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
 	uv run ty check ${PYTHON_DIRS}
