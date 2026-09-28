@@ -1,33 +1,63 @@
-name: Get PR Source Branch
-description: Outputs the source branch name of a given pull request number
+name: Resolve PR Head
+description: |
+  Resolves the head of a pull request into its immutable commit SHA plus branch/repo metadata.
+
+  Used by "prepare" jobs to FREEZE the PR head SHA once per workflow run so that every
+  downstream job pins to the same authorized commit (anti-TOCTOU). The resolved SHA is what a
+  reviewer approves and what checkout-pr-branch verifies against.
 
 inputs:
   pr_number:
     description: 'Pull request number'
     required: true
+  github-token:
+    description: 'Token used to read the pull request'
+    required: false
+    default: ${{ github.token }}
 
 outputs:
+  head_sha:
+    description: 'The immutable head commit SHA of the PR at resolution time'
+    value: ${{ steps.resolve.outputs.head_sha }}
+  head_ref:
+    description: 'The head branch name of the PR'
+    value: ${{ steps.resolve.outputs.head_ref }}
+  head_repo:
+    description: 'The head repository full name (owner/name); empty if the fork was deleted'
+    value: ${{ steps.resolve.outputs.head_repo }}
+  is_cross_repository:
+    description: 'true if the PR head is from a fork (a different repo than the base)'
+    value: ${{ steps.resolve.outputs.is_cross_repository }}
   branch_name:
-    description: 'The source branch name of the PR'
-    value: ${{steps.get_branch_name.outputs.result}}
+    description: 'Alias of head_ref, kept for backwards compatibility'
+    value: ${{ steps.resolve.outputs.head_ref }}
 
 runs:
   using: "composite"
   steps:
-    - name: Get PR source branch
-      id: get_branch_name
+    - name: Resolve PR head
+      id: resolve
       uses: actions/github-script@v7
       env:
         PR_NUMBER: ${{ inputs.pr_number }}
       with:
-        result-encoding: string
+        github-token: ${{ inputs.github-token }}
         script: |
           const pr_number = process.env.PR_NUMBER;
-          const pr = await github.rest.pulls.get({
+          const { data: pr } = await github.rest.pulls.get({
             owner: context.repo.owner,
             repo: context.repo.repo,
             pull_number: pr_number,
           });
-          const branch_name = pr.data.head.ref;
-          console.log("Branch name is:", branch_name);
-          return branch_name;
+          const headSha = pr.head.sha;
+          const headRef = pr.head.ref;
+          const headRepo = pr.head.repo ? pr.head.repo.full_name : "";
+          const baseRepo = pr.base.repo.full_name;
+          // Fail closed: an unknown head repo (e.g. the fork was deleted) is still untrusted
+          // fork-authored code, so classify it as cross-repository rather than same-repo.
+          const isCrossRepository = String(headRepo === "" || headRepo !== baseRepo);
+          console.log(`PR #${pr_number} head: ${headRepo}@${headRef} (${headSha}); cross-repo=${isCrossRepository}`);
+          core.setOutput("head_sha", headSha);
+          core.setOutput("head_ref", headRef);
+          core.setOutput("head_repo", headRepo);
+          core.setOutput("is_cross_repository", isCrossRepository);

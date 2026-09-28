@@ -1,5 +1,5 @@
 name: 'Checkout PR Branch'
-description: 'Checkout the PR branch associated with the PR comment'
+description: 'Checkout a PR branch, pinned to a specific commit SHA that was authorized upstream'
 inputs:
   pr_number:
     description: 'The pull request number'
@@ -7,14 +7,56 @@ inputs:
   github-token:
     description: 'GitHub token to use for authentication'
     required: true
+  sha:
+    description: |
+      The exact commit SHA the caller authorized (frozen upstream, e.g. by a prepare job
+      or supplied at workflow_dispatch time).
+
+      After checking out the PR head, this action verifies HEAD equals this SHA and fails
+      closed if the branch tip has moved. This is the anti-TOCTOU control: it guarantees the
+      code that runs is the code that was reviewed/approved, never a commit pushed into the
+      approval->checkout window.
+    required: true
 runs:
   using: "composite"
   steps:
-  # First checkout the default code
+  # Never persist the git token in .git/config. This action checks out UNTRUSTED PR code, and
+  # nothing here needs to push: writeback callers push via commit-and-push, which supplies its
+  # own token scoped to the push. (gh pr checkout below authenticates via GH_TOKEN, not git config.)
   - uses: actions/checkout@v4
-  # Next checkout to the specific PR
+    with:
+      persist-credentials: false
+  # Pass the PR number via env, never interpolated into the shell, to prevent command
+  # injection from attacker-controlled input.
   - name: Checkout PR
     shell: bash
     env:
       GH_TOKEN: ${{ inputs.github-token }}
-    run: gh pr checkout ${{ inputs.pr_number }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+    run: |
+      if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+        echo "::error::Invalid PR number: '${PR_NUMBER}'."
+        exit 1
+      fi
+      gh pr checkout "$PR_NUMBER"
+  # Fail closed unless the checked-out tip is exactly the authorized SHA. A non-fast-forward
+  # push (attacker racing the approval) leaves HEAD != EXPECTED_SHA and aborts the job here,
+  # before any PR code runs.
+  - name: Verify checked-out commit matches the authorized SHA
+    shell: bash
+    env:
+      EXPECTED_SHA: ${{ inputs.sha }}
+    run: |
+      # Normalize to lowercase so an uppercase-pasted SHA (e.g. from workflow_dispatch) still
+      # matches `git rev-parse` output, which is always lowercase.
+      EXPECTED_SHA="$(printf '%s' "$EXPECTED_SHA" | tr '[:upper:]' '[:lower:]')"
+      if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "::error::Authorized SHA is not a full 40-character commit hash: '${EXPECTED_SHA}'. Refusing to run."
+        exit 1
+      fi
+      ACTUAL_SHA="$(git rev-parse HEAD)"
+      if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+        echo "::error::PR head moved since authorization. Expected ${EXPECTED_SHA}, got ${ACTUAL_SHA}. Aborting."
+        exit 1
+      fi
+      echo "Verified checkout is pinned to authorized commit ${EXPECTED_SHA}."

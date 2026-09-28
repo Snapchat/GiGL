@@ -6,6 +6,13 @@ on:
       pr_number:
         description: 'PR to run the workflow on'
         required: true
+      commit_sha:
+        description: |
+          The exact commit SHA to build (must be the current head of the PR you reviewed).
+          Every build job is pinned to this SHA and aborts if the PR head has moved off it,
+          which closes the dispatch->checkout race. Paste the full SHA of the commit you
+          actually reviewed (not blindly the latest tip).
+        required: true
 
 env:
   DOCKER_BUILDKIT: 1
@@ -19,6 +26,10 @@ jobs:
   comment-workflow-started:
 
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
     - name: Comment on PR
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
@@ -36,14 +47,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -64,14 +80,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -92,14 +113,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -119,14 +145,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -151,12 +182,19 @@ jobs:
       - build-dataflow-base-image
       - build-builder-image
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit-and-push writes back to the PR branch
+      pull-requests: write
+      issues: write
     steps:
     - name: Commit and Push Base Images
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+        # The (pinned, PR-authored) update script runs with NO git token on disk; the
+        # subsequent commit-and-push authenticates its own push.
         should_leave_progress_comments: "false"
         command: bash .github/scripts/update_docker_image_refs.sh
     - name: Commit and Push Dep Vars

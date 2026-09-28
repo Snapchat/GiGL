@@ -13,34 +13,40 @@ runs:
     - name: Check if user is a collaborator
       id: assert-is-collaborator
       # For API Docs, See: https://octokit.github.io/rest.js/v21/
-      # github --> maps to an octokit instance in the script
+      # github --> maps to an octokit instance in the script.
+      # No token input: actions/github-script authenticates via its default `github-token`,
+      # which is ${{ github.token }} (the workflow's automatic GITHUB_TOKEN).
       uses: actions/github-script@v7
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        USERNAME: ${{ inputs.username }}
       with:
         # https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator
         script: |
+          // Fail closed: authorization succeeds ONLY on an explicit 204 from
+          // checkCollaborator. Every other outcome -- 404 (not a collaborator),
+          // 403 (token/permission/rate-limit), any other status, or any thrown
+          // error -- denies the run. A previous version logged 403/other errors
+          // instead of throwing, which let a non-collaborator through.
+          const username = process.env.USERNAME;
+          let result;
           try {
-            const username = "${{ inputs.username }}";
-            const result = await github.rest.repos.checkCollaborator({
+            result = await github.rest.repos.checkCollaborator({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              username: username
+              username: username,
             });
-            if (result.status === 204) {
-              console.log(`${username} is a collaborator.`);
-            } else {
-              throw new Error(`${username} is NOT a collaborator.`);
-            }
           } catch (error) {
-            if (error.status === 404) {
-              throw new Error(`${username} is NOT a collaborator.`);
-            } else if (error.status === 403) {
-              console.log(`User is not a collaborator: ${error.message}`);
-            } else {
-              console.log(`Error checking collaborator status: ${error.message}`);
-            }
+            const status = error.status || "unknown";
+            throw new Error(
+              `${username} is NOT authorized to run this workflow (collaborator check failed: ${status} ${error.message}).`
+            );
           }
+          if (result.status !== 204) {
+            throw new Error(
+              `${username} is NOT authorized to run this workflow (unexpected status ${result.status} from collaborator check).`
+            );
+          }
+          console.log(`${username} is a collaborator.`);
 
     - name: Comment workflow permissions
       if: ${{ failure() && steps.assert-is-collaborator.conclusion == 'failure' && inputs.initiating-pr-number != '' }}
