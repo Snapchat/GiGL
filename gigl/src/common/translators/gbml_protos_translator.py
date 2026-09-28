@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 
@@ -27,14 +27,14 @@ class GbmlProtosTranslator:
     def node_from_NodePb(
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         node_pb: graph_schema_pb2.Node,
-    ) -> Tuple[Node, Optional[torch.Tensor]]:
+    ) -> tuple[Node, Optional[torch.Tensor]]:
         """
         Args:
             graph_metadata (GraphMetadataPbWrapper)
             node_pb (graph_schema_pb2.Node)
 
         Returns:
-            Tuple[Node, torch.tensor]: Tuple of Node and related Node features
+            tuple[Node, torch.tensor]: Tuple of Node and related Node features
         """
         node = Node(
             type=graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
@@ -57,7 +57,7 @@ class GbmlProtosTranslator:
     def edge_from_EdgePb(
         graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
         edge_pb: graph_schema_pb2.Edge,
-    ) -> Tuple[Edge, Optional[torch.Tensor]]:
+    ) -> tuple[Edge, Optional[torch.Tensor]]:
         edge_type: EdgeType = (
             graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map[
                 CondensedEdgeType(edge_pb.condensed_edge_type)

@@ -6,7 +6,7 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 import time
 from collections.abc import Mapping
 from distutils.util import strtobool
-from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
+from typing import Literal, MutableMapping, Optional, Type, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -252,7 +252,7 @@ def _build_dataset_process(
     output_dict: MutableMapping[str, DistDataset],
     serialized_graph_metadata: SerializedGraphMetadata,
     master_ip_address: str,
-    master_dataset_building_ports: Tuple[int, int],
+    master_dataset_building_ports: tuple[int, int],
     node_rank: int,
     node_world_size: int,
     sample_edge_direction: Literal["in", "out"],
@@ -287,7 +287,7 @@ def _build_dataset_process(
             will be written to for use by the parent process
         serialized_graph_metadata (SerializedGraphMetadata): Metadata about TFRecords that are serialized to disk
         master_ip_address (str): IP address of the master node
-        master_dataset_building_ports (Tuple[int, int]): Free ports on the master node to use to build the dataset, the first port is used for partitioning and the second is used for splitting
+        master_dataset_building_ports (tuple[int, int]): Free ports on the master node to use to build the dataset, the first port is used for partitioning and the second is used for splitting
         node_rank (int): Rank of the node (machine) on which this process is running
         node_world_size (int): World size (total #) of the nodes participating in hosting the dataset
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
@@ -435,7 +435,7 @@ def build_dataset(
     node_world_size: int
     node_rank: int
     master_ip_address: str
-    master_dataset_building_ports: Tuple[int, int]
+    master_dataset_building_ports: tuple[int, int]
     if distributed_context is None:
         should_cleanup_distributed_context: bool = False
         if _dataset_building_port is not None:

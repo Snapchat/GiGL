@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union
+from typing import Any, Union
 
 import google.cloud.bigquery as bigquery
 import pandas as pd
@@ -343,7 +343,7 @@ class EnumeratorTest(TestCase):
         self,
         int_to_orig_node_id_map: dict[int, str],
         map_enum_edge_type_metadata: dict[
-            Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
+            tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ],
     ):
         main_enumerated_edge_type_metadata = map_enum_edge_type_metadata[
@@ -505,7 +505,7 @@ class EnumeratorTest(TestCase):
         }
 
         map_enum_edge_type_metadata: dict[
-            Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
+            tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ] = {
             (
                 edge_type_metadata.enumerated_edge_data_reference.edge_type,

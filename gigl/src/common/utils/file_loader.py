@@ -2,7 +2,7 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper
-from typing import IO, AnyStr, Optional, Sequence, Tuple, Type, Union, cast
+from typing import IO, AnyStr, Optional, Sequence, Type, Union, cast
 
 from gigl.common import GcsUri, HttpUri, LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -32,7 +32,7 @@ class FileLoader:
     @staticmethod
     def __get_uri_map_schema(
         uri_map: Mapping[Uri, Uri],
-    ) -> Tuple[Optional[Type[Uri]], Optional[Type[Uri]]]:
+    ) -> tuple[Optional[Type[Uri]], Optional[Type[Uri]]]:
         uniform_src_type: Optional[Type[Uri]] = None
         uniform_dst_type: Optional[Type[Uri]] = None
         src_types: list[Type[Uri]] = [uri.__class__ for uri in uri_map.keys()]

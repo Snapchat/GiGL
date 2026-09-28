@@ -1,6 +1,5 @@
 import datetime as dt
 from datetime import datetime
-from typing import Tuple
 
 import pandas as pd
 
@@ -17,7 +16,7 @@ COSINE_SIM_FIELD = "_cosine"
 
 def get_table_paths_via_timedelta(
     bq_utils: BqUtils, reference_table: str, lookback_days: int
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """
     Args:
         bq_utils (BqUtils)

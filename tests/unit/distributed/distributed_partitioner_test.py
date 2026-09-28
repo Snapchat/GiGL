@@ -1,7 +1,7 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
 from collections import abc, defaultdict
-from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union, cast
+from typing import Iterable, Literal, MutableMapping, Optional, Type, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -139,7 +139,7 @@ class DistRandomPartitionerTestCase(TestCase):
         # To unify logic between homogeneous and heterogeneous cases, we define an iterable which we'll loop over.
         # Each iteration contains an EdgeType, an edge partition book, and a graph consisting of edge indices and ids.
         entity_iterable: list[
-            Tuple[EdgeType, Optional[PartitionBook], GraphPartitionData]
+            tuple[EdgeType, Optional[PartitionBook], GraphPartitionData]
         ] = []
         if isinstance(output_edge_index, abc.Mapping):
             if isinstance(output_edge_partition_book, abc.Mapping):
@@ -309,7 +309,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
         # To unify logic between homogeneous and heterogeneous cases, we define an iterable which we'll loop over.
         # Each iteration contains an EdgeType and a graph consisting of edge indices and ids.
-        entity_iterable: Iterable[Tuple[EdgeType, GraphPartitionData]]
+        entity_iterable: Iterable[tuple[EdgeType, GraphPartitionData]]
         if is_heterogeneous:
             assert isinstance(output_graph, abc.Mapping), (
                 f"Homogeneous output detected from node {entity_name} for heterogeneous input"
@@ -447,7 +447,7 @@ class DistRandomPartitionerTestCase(TestCase):
         # To unify logic between homogeneous and heterogeneous cases, we define an iterable which we'll loop over.
         # Each iteration contains an EdgeType, a feature object containing edge features and edge ids, and a graph consisting of edge indices and ids.
         entity_iterable: Iterable[
-            Tuple[EdgeType, Optional[FeaturePartitionData], GraphPartitionData]
+            tuple[EdgeType, Optional[FeaturePartitionData], GraphPartitionData]
         ]
         if is_heterogeneous:
             assert isinstance(output_edge_feat, abc.Mapping), (
@@ -564,7 +564,7 @@ class DistRandomPartitionerTestCase(TestCase):
             expected_entity_types=expected_edge_types,
         )
 
-        entity_iterable: Iterable[Tuple[EdgeType, torch.Tensor]]
+        entity_iterable: Iterable[tuple[EdgeType, torch.Tensor]]
         if is_heterogeneous:
             assert isinstance(output_labeled_edge_index, abc.Mapping), (
                 "Homogeneous output detected from labels for heterogeneous input"

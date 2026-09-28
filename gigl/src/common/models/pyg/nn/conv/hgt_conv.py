@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 import torch
 from torch import Tensor
@@ -36,7 +36,7 @@ class HGTConv(MessagePassing):
             node type, or :obj:`-1` to derive the size from the first input(s)
             to the forward method.
         out_channels (int): Size of each output sample.
-        metadata (Tuple[list[str], list[Tuple[str, str, str]]]): The metadata
+        metadata (tuple[list[str], list[tuple[str, str, str]]]): The metadata
             of the heterogeneous graph, *i.e.* its node and edge types given
             by a list of strings and a list of string triplets, respectively.
             See :meth:`torch_geometric.data.HeteroData.metadata` for more
@@ -105,7 +105,7 @@ class HGTConv(MessagePassing):
         ones(self.skip)
         ones(self.p_rel)
 
-    def _cat(self, x_dict: dict[str, Tensor]) -> Tuple[Tensor, dict[str, int]]:
+    def _cat(self, x_dict: dict[str, Tensor]) -> tuple[Tensor, dict[str, int]]:
         """Concatenates a dictionary of features."""
         cumsum = 0
         outs: list[Tensor] = []
@@ -121,7 +121,7 @@ class HGTConv(MessagePassing):
         k_dict: dict[str, Tensor],
         v_dict: dict[str, Tensor],
         edge_index_dict: dict[EdgeType, Adj],
-    ) -> Tuple[Tensor, Tensor, dict[EdgeType, int]]:
+    ) -> tuple[Tensor, Tensor, dict[EdgeType, int]]:
         """Constructs the source node representations."""
         cumsum = 0
         num_edge_types = len(self.edge_types)
@@ -169,7 +169,7 @@ class HGTConv(MessagePassing):
         Args:
             x_dict (dict[str, torch.Tensor]): A dictionary holding input node
                 features  for each individual node type.
-            edge_index_dict (dict[Tuple[str, str, str], torch.Tensor]): A
+            edge_index_dict (dict[tuple[str, str, str], torch.Tensor]): A
                 dictionary holding graph connectivity information for each
                 individual edge type, either as a :class:`torch.Tensor` of
                 shape :obj:`[2, num_edges]` or a

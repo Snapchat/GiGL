@@ -1,4 +1,4 @@
-from typing import Any, Callable, Iterable, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, Optional, Union
 
 import apache_beam as beam
 import pyarrow as pa
@@ -314,8 +314,8 @@ def get_load_data_and_transform_pipeline_component(
         # )
 
         # Read previous TransformFn assets from a pretrained path if specified, else build a new asset.
-        pretrained_transform_fn: Optional[Tuple[Any, Any]] = None
-        analyzed_transform_fn: Optional[Tuple[Any, Any]] = None
+        pretrained_transform_fn: Optional[tuple[Any, Any]] = None
+        analyzed_transform_fn: Optional[tuple[Any, Any]] = None
         should_use_existing_transform_fn: bool = (
             preprocessing_spec.pretrained_tft_model_uri is not None
         )
@@ -349,7 +349,7 @@ def get_load_data_and_transform_pipeline_component(
         )
 
         # The transformed_features returned by tft_beam.TransformDataset is a
-        # PCollection of Tuple[pa.RecordBatch, dict[str, pa.Array]]. The first
+        # PCollection of tuple[pa.RecordBatch, dict[str, pa.Array]]. The first
         # one are the transformed features. The second one are the passthrough
         # features, which doesn't apply here since we do not specify passthrough_keys
         # in tft_beam.Context. Hence we drop the second one in the tuple.

@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import absl
 import absl.logging
 import tensorflow as tf
@@ -15,7 +13,7 @@ from gigl.src.data_preprocessor.lib.types import FeatureIndexDict, FeatureSpecDi
 absl.logging.set_verbosity(absl.logging.FATAL)
 
 
-def load_tf_schema_uri_str_to_feature_spec(uri: Uri) -> Tuple[Schema, FeatureSpecDict]:
+def load_tf_schema_uri_str_to_feature_spec(uri: Uri) -> tuple[Schema, FeatureSpecDict]:
     if not (GcsUri.is_valid(uri) or LocalUri.is_valid(uri)):
         raise ValueError(
             f"Invalid uri: {uri}. Uri has to either be a GCS or local uri string."

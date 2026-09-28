@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union, overload
+from typing import Literal, Optional, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
@@ -545,8 +545,8 @@ class DistDataset(glt.distributed.DistDataset):
         node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         splits: Optional[
             Union[
-                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
             ]
         ],
     ) -> None:
@@ -557,7 +557,7 @@ class DistDataset(glt.distributed.DistDataset):
 
         Args:
             node_ids_on_machine(Union[torch.Tensor, dict[NodeType, torch.Tensor]]): The node ids on the current machine
-            splits(Optional[Union[Tuple[torch.Tensor, torch.Tensor, torch.Tensor], Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]]): The splits to use for data splitting.
+            splits(Optional[Union[tuple[torch.Tensor, torch.Tensor, torch.Tensor], Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]]): The splits to use for data splitting.
         """
 
         # If the nodes are split, then we set the total number of nodes in each split here.
@@ -1098,7 +1098,7 @@ class DistDataset(glt.distributed.DistDataset):
 
     def share_ipc(
         self,
-    ) -> Tuple[
+    ) -> tuple[
         int,
         int,
         Literal["in", "out"],
@@ -1295,21 +1295,21 @@ def _append_non_split_node_ids(
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: None,
-) -> Tuple[None, None]: ...
+) -> tuple[None, None]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: FeaturePartitionData,
-) -> Tuple[torch.Tensor, TensorDataType]: ...
+) -> tuple[torch.Tensor, TensorDataType]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: dict[_EntityType, PartitionBook],
     partitioned_data: dict[_EntityType, FeaturePartitionData],
-) -> Tuple[
+) -> tuple[
     dict[_EntityType, torch.Tensor],
     dict[_EntityType, TensorDataType],
 ]: ...
@@ -1323,7 +1323,7 @@ def _prepare_feature_data(
             dict[_EntityType, FeaturePartitionData],
         ]
     ],
-) -> Tuple[
+) -> tuple[
     Optional[
         Union[
             torch.Tensor,
@@ -1348,7 +1348,7 @@ def _prepare_feature_data(
         partition_book (Union[PartitionBook, dict[_EntityType, PartitionBook]]): The partition book for the data type
         partitioned_data (Optional[Union[FeaturePartitionData, dict[_EntityType, FeaturePartitionData]]]): The partitioned data containing features/labels
     Returns:
-        Tuple[
+        tuple[
             Optional[Union[torch.Tensor, dict[_EntityType, torch.Tensor]]]:
                 Partitioned features or labels
             Optional[Union[TensorDataType, dict[_EntityType, TensorDataType]]]:
@@ -1417,7 +1417,7 @@ def _prepare_feature_data(
 
 
 def _rebuild_distributed_dataset(
-    ipc_handle: Tuple[
+    ipc_handle: tuple[
         int,  # Rank on current machine
         int,  # World size across machines
         Literal["in", "out"],  # Edge Direction

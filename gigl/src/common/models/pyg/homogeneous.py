@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -154,7 +154,7 @@ class BasicHomogeneousGNN(nn.Module):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -170,7 +170,7 @@ class GraphSAGE(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -204,7 +204,7 @@ class GIN(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -251,7 +251,7 @@ class GINE(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -299,7 +299,7 @@ class GAT(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -345,7 +345,7 @@ class GATv2(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -388,7 +388,7 @@ class EdgeAttrGAT(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,
@@ -439,7 +439,7 @@ class Transformer(BasicHomogeneousGNN):
 
     def init_conv_layers(
         self,
-        in_dim: Union[int, Tuple[int, int]],
+        in_dim: Union[int, tuple[int, int]],
         out_dim: int,
         edge_dim: Optional[int],
         hid_dim: int,

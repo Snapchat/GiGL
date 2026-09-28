@@ -1,6 +1,6 @@
 import itertools
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -47,7 +47,7 @@ class MarginLoss(nn.Module):
         hard_neg_scores: Float[torch.Tensor, "1 hard_negatives"],
         random_neg_scores: Float[torch.Tensor, "1 random_negatives"],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         all_neg_scores = torch.cat(
             (hard_neg_scores, random_neg_scores),
             dim=1,
@@ -76,7 +76,7 @@ class MarginLoss(nn.Module):
         self,
         loss_input: list[dict[CondensedEdgeType, BatchScores]],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         batch_loss = torch.tensor(0.0).to(device=device)
         batch_size = 0
         # In case we have an empty list as input, avoids division by zero error
@@ -132,7 +132,7 @@ class SoftmaxLoss(nn.Module):
         hard_neg_scores: Float[torch.Tensor, "1 hard_negatives"],
         random_neg_scores: Float[torch.Tensor, "1 random_negatives"],
         device: torch.device,
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         all_neg_scores = torch.cat(
             (hard_neg_scores, random_neg_scores),
             dim=1,
@@ -163,7 +163,7 @@ class SoftmaxLoss(nn.Module):
         self,
         loss_input: list[dict[CondensedEdgeType, BatchScores]],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         batch_loss = torch.tensor(0.0).to(device=device)
         batch_size = 0
         # In case we have an empty list as input, avoids division by zero error
@@ -355,7 +355,7 @@ class RetrievalLoss(nn.Module):
             Float[torch.Tensor, "candidates"]
         ] = None,
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         candidate_ids = torch.cat(
             (
                 batch_combined_scores.positive_ids.to(device=device),
@@ -397,7 +397,7 @@ class GRACELoss(nn.Module):
         h1: Float[torch.Tensor, "nodes embedding_dim"],
         h2: Float[torch.Tensor, "nodes embedding_dim"],
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         """
         Args:
             h1 (torch.Tensor): First input tensor
@@ -405,7 +405,7 @@ class GRACELoss(nn.Module):
             device (torch.device): the device to set as default
 
         Returns:
-            Tuple[torch.Tensor, int]: The loss and the sample size
+            tuple[torch.Tensor, int]: The loss and the sample size
         """
 
         def sim_matrix(a: torch.Tensor, b: torch.Tensor, eps=1e-8) -> torch.Tensor:
@@ -452,7 +452,7 @@ class FeatureReconstructionLoss(nn.Module):
         self,
         x_target: Float[torch.Tensor, "nodes feature_dim"],
         x_pred: Float[torch.Tensor, "nodes feature_dim"],
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         x = F.normalize(x_target, p=2, dim=-1)  # SCE Loss Computation
         y = F.normalize(x_pred, p=2, dim=-1)
         loss = (1 - (x * y).sum(dim=-1)).pow_(self.alpha)
@@ -479,7 +479,7 @@ class WhiteningDecorrelationLoss(nn.Module):
         h2: Float[torch.Tensor, "nodes embedding_dim"],
         N: int,
         device: torch.device = torch.device("cpu"),
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         """
         Args:
             h1 (torch.Tensor): First input tensor
@@ -488,7 +488,7 @@ class WhiteningDecorrelationLoss(nn.Module):
             device (torch.device): the device to set as default
 
         Returns:
-            Tuple[torch.Tensor, int]: The loss and the sample size
+            tuple[torch.Tensor, int]: The loss and the sample size
         """
         z1 = (h1 - h1.mean(0)) / h1.std(0)
         z2 = (h2 - h2.mean(0)) / h2.std(0)
@@ -525,7 +525,7 @@ class GBTLoss(nn.Module):
         z_a: Float[torch.Tensor, "nodes feature_dim"],
         z_b: Float[torch.Tensor, "nodes feature_dim"],
         device: torch.device,
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         """
         Args:
             z_a (torch.Tensor): First input matrix
@@ -533,7 +533,7 @@ class GBTLoss(nn.Module):
             device (torch.device): the device to set as default
 
         Returns:
-            Tuple[torch.Tensor, int]: The Barlow Twins loss and the sample size
+            tuple[torch.Tensor, int]: The Barlow Twins loss and the sample size
         """
         batch_size = z_a.size(0)
         feature_dim = z_a.size(1)
@@ -566,7 +566,7 @@ class BGRLLoss(nn.Module):
         q2: Float[torch.Tensor, "nodes embedding_dim"],
         y1: Float[torch.Tensor, "nodes embedding_dim"],
         y2: Float[torch.Tensor, "nodes embedding_dim"],
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         loss = (
             2
             - F.cosine_similarity(q1, y2.detach(), dim=-1).mean()
@@ -596,7 +596,7 @@ class TBGRLLoss(nn.Module):
         y1: Float[torch.Tensor, "nodes embedding_dim"],
         y2: Float[torch.Tensor, "nodes embedding_dim"],
         neg_y: Optional[Float[torch.Tensor, "nodes embedding_dim"]],
-    ) -> Tuple[Float[torch.Tensor, ""], int]:
+    ) -> tuple[Float[torch.Tensor, ""], int]:
         sim1 = F.cosine_similarity(q1, y2.detach()).mean()
         sim2 = F.cosine_similarity(q2, y1.detach()).mean()
         neg_sim1 = F.cosine_similarity(q1, neg_y.detach()).mean()  # type: ignore

@@ -8,7 +8,6 @@ from typing import (
     Optional,
     Protocol,
     Sequence,
-    Tuple,
     Union,
     overload,
     runtime_checkable,
@@ -95,19 +94,19 @@ class NodeAnchorLinkSplitter(Protocol):
     def __call__(
         self,
         edge_index: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         edge_index: Mapping[EdgeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+    ) -> Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self, *args, **kwargs
     ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]: ...
 
     @property
@@ -128,19 +127,19 @@ class NodeSplitter(Protocol):
     def __call__(
         self,
         node_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         node_ids: Mapping[NodeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+    ) -> Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self, *args, **kwargs
     ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]: ...
 
 
@@ -296,13 +295,13 @@ class DistNodeAnchorLinkSplitter:
     def __call__(
         self,
         edge_index: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         edge_index: Mapping[EdgeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+    ) -> Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self,
@@ -310,8 +309,8 @@ class DistNodeAnchorLinkSplitter:
             torch.Tensor, Mapping[EdgeType, torch.Tensor]
         ],  # 2 x N (num_edges)
     ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         # Validate distributed process group
         if not torch.distributed.is_initialized():
@@ -380,7 +379,7 @@ class DistNodeAnchorLinkSplitter:
         # collected_anchor_nodes (the values of node_ids_by_node_type) is a list of tensors for a given node type.
         # For example if we have `{(A to B): [0, 1], (A to C): [0, 2]}` then we will have
         # `collected_anchor_nodes` = [[0, 1], [0, 2]].
-        splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+        splits: dict[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         for anchor_node_type, collected_anchor_nodes in node_ids_by_node_type.items():
             max_node_id = max_node_id_by_type[anchor_node_type]
             # Set device explicitly here so we don't default to CPU.
@@ -479,20 +478,20 @@ class DistNodeSplitter:
     def __call__(
         self,
         node_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
 
     @overload
     def __call__(
         self,
         node_ids: Mapping[NodeType, torch.Tensor],
-    ) -> Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
+    ) -> Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]: ...
 
     def __call__(
         self,
         node_ids: Union[torch.Tensor, Mapping[NodeType, torch.Tensor]],
     ) -> Union[
-        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-        Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
     ]:
         # Validate distributed process group
         if not torch.distributed.is_initialized():
@@ -507,7 +506,7 @@ class DistNodeSplitter:
             is_heterogeneous = False
             node_ids_dict = {DEFAULT_HOMOGENEOUS_NODE_TYPE: node_ids}
 
-        splits: dict[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+        splits: dict[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
 
         for node_type, nodes_to_split in node_ids_dict.items():
             _check_node_ids(nodes_to_split)  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
@@ -544,7 +543,7 @@ def _create_distributed_splits_from_hash(
     hash_values: torch.Tensor,
     num_val: float,
     num_test: float,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Creates train, val, test splits from hash values using distributed coordination.
 

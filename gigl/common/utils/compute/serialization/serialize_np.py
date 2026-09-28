@@ -1,4 +1,4 @@
-from typing import Tuple, TypedDict
+from typing import TypedDict
 
 import msgpack
 import numpy as np
@@ -8,7 +8,7 @@ from gigl.common.utils.compute.serialization.coder import CoderProtocol
 
 class EncodedNdArray(TypedDict):
     dtype: str
-    shape: Tuple
+    shape: tuple
     data: bytes
 
 

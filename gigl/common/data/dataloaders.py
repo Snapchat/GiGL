@@ -2,7 +2,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Callable, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Callable, NamedTuple, Optional, Sequence, Union
 
 import psutil
 import tensorflow as tf
@@ -44,8 +44,8 @@ class SerializedTFRecordInfo:
     feature_spec: FeatureSpecDict
     # Feature dimension of current entity
     feature_dim: int
-    # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
-    entity_key: Union[str, Tuple[str, str]]
+    # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a tuple[str, str] for the source and destination ids.
+    entity_key: Union[str, tuple[str, str]]
     # Packed uint8 feature name to load for the current node entity.
     packed_feature_key: Optional[str] = None
     # Number of packed uint8 columns for the current node entity.
@@ -153,7 +153,7 @@ def _concatenate_features_by_names(
         label_keys (Sequence[str]): Name of the label columns for the current entity.
 
     Returns:
-        Tuple[
+        tuple[
             Optional[tf.Tensor]: A concatenated tensor of the features in the specified order of feature_keys.
             Optional[tf.Tensor]: A concatenated tensor of the labels in the specified order of label_keys.
         ]

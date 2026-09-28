@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -60,7 +60,7 @@ class DatasetAssetMockingSuite:
     @staticmethod
     def _get_pyg_cora_dataset(
         store_at: str = "/tmp/Cora",
-    ) -> Tuple[CoraFromGCS, NodeType, EdgeType]:
+    ) -> tuple[CoraFromGCS, NodeType, EdgeType]:
         """Cora graph is the graph in the first index in the returned dataset
         i.e. the Planetoid object is subscriptable, data = dataset[0]
         Train and tests masks are defined by `train_mask` and `test_mask`` properties on data.
@@ -76,7 +76,7 @@ class DatasetAssetMockingSuite:
     @staticmethod
     def _get_pyg_dblp_dataset(
         store_at: str = "/tmp/DBLP",
-    ) -> Tuple[DBLPFromGCS, dict[str, NodeType], dict[str, EdgeType]]:
+    ) -> tuple[DBLPFromGCS, dict[str, NodeType], dict[str, EdgeType]]:
         """DBLP graph is the graph in the first index in the returned dataset.
         https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.datasets.DBLP.html
         Detailed description of the dataset:
