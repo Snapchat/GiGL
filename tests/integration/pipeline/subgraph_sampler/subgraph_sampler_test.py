@@ -1,7 +1,7 @@
 import tempfile
 from collections import defaultdict
 from itertools import chain
-from typing import Iterable, Set, Tuple
+from typing import Iterable, Set
 
 from gigl.common import LocalUri, Uri, UriFactory
 from gigl.common.logger import Logger
@@ -77,7 +77,7 @@ class SubgraphSamplerTest(TestCase):
         gbml_config_uri: Uri,
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
         use_spark35: bool = False,
-    ) -> Tuple[ExpectedGraphFromPreprocessor, GbmlConfigPbWrapper]:
+    ) -> tuple[ExpectedGraphFromPreprocessor, GbmlConfigPbWrapper]:
         """
         Helper function to compile and run an SGS pipeline locally using the provided GbmlConfig and SubgraphSamplerConfig.
         Also returns the ExpectedGraphFromPreprocessor object reconstructed from the preprocessor output since this is
@@ -171,7 +171,7 @@ class SubgraphSamplerTest(TestCase):
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
         should_check_user_defined_labels: bool = False,
         use_spark35: bool = False,
-    ) -> Tuple[
+    ) -> tuple[
         ExpectedGraphFromPreprocessor,
         dict[NodeType, list[RootedNodeNeighborhood]],
         list[NodeAnchorBasedLinkPredictionSample],
@@ -1272,7 +1272,7 @@ class SubgraphSamplerTest(TestCase):
         self,
         gbml_config_uri: Uri,
         subgraph_sampler_config_pb: gbml_config_pb2.GbmlConfig.DatasetConfig.SubgraphSamplerConfig,
-    ) -> Tuple[
+    ) -> tuple[
         ExpectedGraphFromPreprocessor,
         list[RootedNodeNeighborhood],
         list[RootedNodeNeighborhood],

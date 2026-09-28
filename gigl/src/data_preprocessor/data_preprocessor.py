@@ -5,7 +5,7 @@ import sys
 import threading
 from collections import defaultdict
 from itertools import chain, repeat
-from typing import Callable, Iterable, NamedTuple, Optional, Tuple, Union
+from typing import Callable, Iterable, NamedTuple, Optional, Union
 
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
@@ -403,13 +403,13 @@ class DataPreprocessor:
             logger.info(f"Launching {num_dataflow_jobs} dataflow jobs in parallel.")
             futures: dict[
                 concurrent.futures.Future[TransformedFeaturesInfo],
-                Tuple[Union[NodeDataReference, EdgeDataReference], FeatureTypes],
+                tuple[Union[NodeDataReference, EdgeDataReference], FeatureTypes],
             ] = dict()
 
             data_ref_and_prep_specs: Iterable[
                 Union[
-                    Tuple[NodeDataReference, NodeDataPreprocessingSpec],
-                    Tuple[EdgeDataReference, EdgeDataPreprocessingSpec],
+                    tuple[NodeDataReference, NodeDataPreprocessingSpec],
+                    tuple[EdgeDataReference, EdgeDataPreprocessingSpec],
                 ]
             ] = chain(
                 node_ref_to_preprocessing_spec.items(),
@@ -499,7 +499,7 @@ class DataPreprocessor:
 
         # Populate all node data.
         logger.info("Populating preprocessed metadata with node data.")
-        node_info: Tuple[NodeDataReference, TransformedFeaturesInfo]
+        node_info: tuple[NodeDataReference, TransformedFeaturesInfo]
         for node_info in preprocessed_metadata_references.node_data.items():
             node_data_ref: NodeDataReference
             node_transformed_features_info: TransformedFeaturesInfo
@@ -565,7 +565,7 @@ class DataPreprocessor:
         preprocessed_metadata_references_map: dict[
             EdgeType, dict[EdgeUsageType, TransformedFeaturesInfo]
         ] = defaultdict(dict)
-        edge_info: Tuple[EdgeDataReference, TransformedFeaturesInfo]
+        edge_info: tuple[EdgeDataReference, TransformedFeaturesInfo]
         for edge_info in preprocessed_metadata_references.edge_data.items():
             edge_data_ref: EdgeDataReference
             edge_transformed_features_info: TransformedFeaturesInfo
@@ -707,7 +707,7 @@ class DataPreprocessor:
         ],
         enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata],
         enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata],
-    ) -> Tuple[
+    ) -> tuple[
         dict[NodeDataReference, NodeDataPreprocessingSpec],
         dict[EdgeDataReference, EdgeDataPreprocessingSpec],
     ]:
@@ -883,7 +883,7 @@ class DataPreprocessor:
 
         # Enumerate all graph data.
         enumerator = Enumerator()
-        enumerator_results: Tuple[
+        enumerator_results: tuple[
             list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]
         ] = enumerator.run(
             applied_task_identifier=self.applied_task_identifier,

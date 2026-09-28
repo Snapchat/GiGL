@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Tuple
 
 from gigl.common.logger import Logger
 from gigl.common.utils.func_tools import lru_cache
@@ -20,7 +19,7 @@ class GraphMetadataPbWrapper:
     graph_metadata_pb: graph_schema_pb2.GraphMetadata
 
     __condensed_edge_type_to_condensed_node_types: dict[
-        CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
+        CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]
     ] = field(init=False)
     __hash: int = field(init=False)
 
@@ -46,7 +45,7 @@ class GraphMetadataPbWrapper:
             )
 
         condensed_edge_type_to_condensed_node_types: dict[
-            CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]
+            CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]
         ] = dict()
         for condensed_edge_type in self.graph_metadata_pb.condensed_edge_type_map:
             edge_type_pb = self.graph_metadata_pb.condensed_edge_type_map[
@@ -87,7 +86,7 @@ class GraphMetadataPbWrapper:
     @property
     def condensed_edge_type_to_condensed_node_types(
         self,
-    ) -> dict[CondensedEdgeType, Tuple[CondensedNodeType, CondensedNodeType]]:
+    ) -> dict[CondensedEdgeType, tuple[CondensedNodeType, CondensedNodeType]]:
         """
         Allows access to a mapping which simplifies looking up src/dst
         CondensedNodeTypes for each CondensedEdgeType.

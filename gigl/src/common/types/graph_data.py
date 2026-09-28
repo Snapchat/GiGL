@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import NamedTuple, NewType, Tuple
+from typing import NamedTuple, NewType
 
 from gigl.common.utils.func_tools import lru_cache
 
@@ -29,7 +29,7 @@ class EdgeType(NamedTuple):
     def __repr__(self):
         return f"{self.src_node_type}-{self.relation}-{self.dst_node_type}"
 
-    def tuple_repr(self) -> Tuple[NodeType, Relation, NodeType]:
+    def tuple_repr(self) -> tuple[NodeType, Relation, NodeType]:
         return (self.src_node_type, self.relation, self.dst_node_type)
 
 

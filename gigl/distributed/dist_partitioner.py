@@ -1,7 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -54,7 +54,7 @@ class _DistLinkPredicitonPartitionManager(DistPartitionManager):
         logger.info(
             f"Since the world size is {world_size}, using dtype of {self._pb_dtype} for partition book"
         )
-        self.cur_part_val_list: list[Tuple[torch.Tensor, ...]] = []
+        self.cur_part_val_list: list[tuple[torch.Tensor, ...]] = []
         self.generate_pb: bool
         super().__init__(total_val_size, generate_pb)
 
@@ -404,7 +404,7 @@ class DistPartitioner:
         self._num_nodes = defaultdict(int)
         self._max_node_ids = defaultdict(int)
 
-        node_type_to_num_nodes_and_max_node: dict[NodeType, Tuple[int, int]] = {}
+        node_type_to_num_nodes_and_max_node: dict[NodeType, tuple[int, int]] = {}
         for node_type in self._node_types:
             if input_node_ids[node_type].numel() > 0:
                 node_type_to_num_nodes_and_max_node[node_type] = (
@@ -419,7 +419,7 @@ class DistPartitioner:
         # num_nodes_on_rank and max_node_id_on_rank are ints.
         # Gathered_node_info is then used to identify the number of nodes and max node id on each rank,
         # allowing us to access the total number of nodes and max node id across all ranks
-        gathered_node_info: dict[str, Tuple[int, dict[NodeType, Tuple[int, int]]]] = (
+        gathered_node_info: dict[str, tuple[int, dict[NodeType, tuple[int, int]]]] = (
             glt_rpc.all_gather((self._rank, node_type_to_num_nodes_and_max_node))
         )
 
@@ -474,7 +474,7 @@ class DistPartitioner:
         # The tuple here represents a (rank, num_edges_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`
         # num_edges_on_rank is a dict[EdgeType, int].
         # Gathered_num_edges is then used to identify the number of edges on each rank, allowing us to access the total number of edges across all ranks
-        gathered_edge_info: dict[str, Tuple[int, dict[EdgeType, int]]]
+        gathered_edge_info: dict[str, tuple[int, dict[EdgeType, int]]]
         self._num_edges = {}
         edge_ids: dict[EdgeType, tuple[int, int]] = {}
         edge_type_to_num_edges: dict[EdgeType, int] = {
@@ -823,9 +823,9 @@ class DistPartitioner:
 
     def _partition_single_chunk_data(
         self,
-        input_data: Optional[Tuple[torch.Tensor, ...]],
+        input_data: Optional[tuple[torch.Tensor, ...]],
         rank_indices: torch.Tensor,
-        partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
+        partition_function: Callable[[torch.Tensor, tuple[int, int]], torch.Tensor],
         chunk_start_pos: int,
         chunk_end_pos: int,
         generate_pb: bool,
@@ -835,7 +835,7 @@ class DistPartitioner:
         Then, we loop over all the ranks and, for each rank, the inputs are masked to only contain the information belonging to that rank. We then send that
         information to other machines using the partition manager.
         Args:
-            input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned on the current chunk, which any information that should be partitioned across machines.
+            input_data (Optional[tuple[torch.Tensor, ...]]): generic data type of items to be partitioned on the current chunk, which any information that should be partitioned across machines.
             rank_indices (torch.Tensor): torch tensor of indices which are used to determine the rank of each item to be partitioned on the current chunk
             partition_function (Callable): Function for determining ranks of current chunk. The first argument to this function is
                 the specified indices in the chunk range while the second argument is the chunk start and end values. It returns a tuple indicating the rank
@@ -846,9 +846,9 @@ class DistPartitioner:
                 for the current rank to the partition manager to make the rpc communication easier
 
         """
-        # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
+        # chunk_res is a list where index `i` corresponds to tuple[input_data_on_i, rank_indices_on_i]
         chunk_res: list[
-            Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
+            tuple[Optional[tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
         ] = []
         chunk_length = chunk_end_pos - chunk_start_pos
         chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
@@ -869,15 +869,15 @@ class DistPartitioner:
 
     def _partition_by_chunk(
         self,
-        input_data: Optional[Tuple[torch.Tensor, ...]],
+        input_data: Optional[tuple[torch.Tensor, ...]],
         rank_indices: torch.Tensor,
-        partition_function: Callable[[torch.Tensor, Tuple[int, int]], torch.Tensor],
+        partition_function: Callable[[torch.Tensor, tuple[int, int]], torch.Tensor],
         total_val_size: int = 0,
         generate_pb: bool = False,
-    ) -> Tuple[list[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
+    ) -> tuple[list[tuple[torch.Tensor, ...]], Optional[torch.Tensor]]:
         r"""Partitions input data chunk by chunk.
         Args:
-            input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned across machine, which any information that should be partitioned across machines.
+            input_data (Optional[tuple[torch.Tensor, ...]]): generic data type of items to be partitioned across machine, which any information that should be partitioned across machines.
             rank_indices (torch.Tensor): torch tensor of indices which are used to determine the rank of each item to be partitioned
             partition_function (Callable): Function for determining ranks of current chunk. The first argument to this function is
                 the specified indices in the chunk range while the second argument is the chunk start and end values. It returns a tuple indicating the rank
@@ -886,7 +886,7 @@ class DistPartitioner:
             generate_pb (bool): Whether a partition book should be generated, defaults to False. This should only be set to true if partitioning nodes or edges for
                 tensor-based partitioning and should be false if partitioning node features or edge features or if doing range-based partitioning.
         Return:
-            list[Tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
+            list[tuple[torch.Tensor, ...]]: Partitioned results of the input generic data type
             Optional[torch.Tensor]: Torch Tensor if `generate_pb` is True, returns None if `generate_pb` is False
         """
         num_items = len(rank_indices)
@@ -1106,7 +1106,7 @@ class DistPartitioner:
                 f"Found no node features, quantized node features, or node labels to partition for node type {node_type}"
             )
         input_parts.append(node_ids)
-        input_data: Tuple[torch.Tensor, ...] = tuple(input_parts)
+        input_data: tuple[torch.Tensor, ...] = tuple(input_parts)
 
         has_node_features = node_features is not None
         has_node_quantized_features = node_quantized_features is not None
@@ -1234,7 +1234,7 @@ class DistPartitioner:
         self,
         node_partition_book: dict[NodeType, PartitionBook],
         edge_type: EdgeType,
-    ) -> Tuple[
+    ) -> tuple[
         GraphPartitionData,
         Optional[FeaturePartitionData],
         Optional[FeaturePartitionData],
@@ -1774,13 +1774,13 @@ class DistPartitioner:
     def partition_edge_index_and_edge_features(
         self, node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]]
     ) -> Union[
-        Tuple[
+        tuple[
             GraphPartitionData,
             Optional[FeaturePartitionData],
             Optional[FeaturePartitionData],
             Optional[PartitionBook],
         ],
-        Tuple[
+        tuple[
             dict[EdgeType, GraphPartitionData],
             Optional[dict[EdgeType, FeaturePartitionData]],
             Optional[dict[EdgeType, FeaturePartitionData]],
@@ -1794,8 +1794,8 @@ class DistPartitioner:
             node_partition_book (Union[PartitionBook, dict[NodeType, PartitionBook]]): The computed Node Partition Book
         Returns:
             Union[
-                Tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
-                Tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
+                tuple[GraphPartitionData, Optional[FeaturePartitionData], Optional[FeaturePartitionData], Optional[PartitionBook]],
+                tuple[dict[EdgeType, GraphPartitionData], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, FeaturePartitionData]], Optional[dict[EdgeType, PartitionBook]]],
             ]: Partitioned Graph Data, Feature Data, and corresponding edge partition book, is a dictionary if heterogeneous.
             The second and third elements of this tuple are only present if there are edge features to partition, and are None
             otherwise.

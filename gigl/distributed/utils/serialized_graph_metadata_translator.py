@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
@@ -19,7 +19,7 @@ def _build_serialized_tfrecord_entity_info(
         PreprocessedMetadata.NodeMetadataOutput, PreprocessedMetadata.EdgeMetadataInfo
     ],
     feature_spec_dict: FeatureSpecDict,
-    entity_key: Union[str, Tuple[str, str]],
+    entity_key: Union[str, tuple[str, str]],
     tfrecord_uri_pattern: str,
     quantization_metadata: Optional[FeatureQuantizationMetadata] = None,
 ) -> SerializedTFRecordInfo:
@@ -30,7 +30,7 @@ def _build_serialized_tfrecord_entity_info(
             PreprocessedMetadata.NodeMetadataOutput, PreprocessedMetadata.EdgeMetadataInfo
         ]): Preprocessed metadata pb for either NodeMetadataOutput or EdgeMetadataInfo
         feature_spec_dict (FeatureSpecDict): Feature spec to register to SerializedTFRecordInfo
-        entity_key (Union[str, Tuple[str, str]]): Entity key to register to SerializedTFRecordInfo, is a str if Node entity or Tuple[str, str] if Edge entity
+        entity_key (Union[str, tuple[str, str]]): Entity key to register to SerializedTFRecordInfo, is a str if Node entity or tuple[str, str] if Edge entity
         tfrecord_uri_pattern (str): Regex pattern for loading serialized tf records
         quantization_metadata (Optional[FeatureQuantizationMetadata]): Quantization
             metadata for a node or main-edge entity when its features are quantized.

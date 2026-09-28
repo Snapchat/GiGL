@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
     EdgePbWrapper,
@@ -13,12 +13,12 @@ class TrainingSamplesSchemaProtoUtils:
     def build_NodeAnchorBasedLinkPredictionSamplePb(
         target_node: NodePbWrapper,
         target_neighborhood: GraphPbWrapper,
-        pos_neighborhoods: list[Tuple[EdgePbWrapper, GraphPbWrapper]],
+        pos_neighborhoods: list[tuple[EdgePbWrapper, GraphPbWrapper]],
         hard_neg_neighborhoods: Optional[
-            list[Tuple[EdgePbWrapper, GraphPbWrapper]]
+            list[tuple[EdgePbWrapper, GraphPbWrapper]]
         ] = None,
         random_neg_neighborhoods: Optional[
-            list[Tuple[EdgePbWrapper, GraphPbWrapper]]
+            list[tuple[EdgePbWrapper, GraphPbWrapper]]
         ] = None,
     ) -> training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample:
         training_sample = (

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple, Optional, Tuple
+from typing import Any, Callable, NamedTuple, Optional
 
 import apache_beam as beam
 import tensorflow as tf
@@ -16,7 +16,7 @@ from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 InstanceDict = dict[str, Any]
 TFTensorDict = dict[str, common_types.TensorType]
 FeatureSpecDict = dict[str, common_types.FeatureSpecType]
-FeatureIndexDict = dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
+FeatureIndexDict = dict[str, tuple[int, int]]  # feature_name -> (start, end) index
 FeatureSchemaDict = dict[str, Feature]
 FeatureVocabDict = dict[str, list[str]]
 

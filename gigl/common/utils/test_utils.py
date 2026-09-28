@@ -3,7 +3,7 @@ import time
 import unittest
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Iterator, Tuple
+from typing import Iterator
 from unittest import TestCase
 
 from gigl.common import LocalUri
@@ -49,7 +49,7 @@ def parse_args() -> TestArgs:
     return test_args
 
 
-def _run_individual_test(test: TestCase) -> Tuple[bool, int]:
+def _run_individual_test(test: TestCase) -> tuple[bool, int]:
     # If we don't have any test cases, we skip running the test.
     # This reduces some noise in the logs.
     if test.countTestCases() == 0:
@@ -92,7 +92,7 @@ def run_tests(
         total_num_test_cases = suite.countTestCases()
     else:
         with ProcessPoolExecutor() as executor:
-            was_successful_iter: Iterator[Tuple[bool, int]] = executor.map(
+            was_successful_iter: Iterator[tuple[bool, int]] = executor.map(
                 _run_individual_test, suite._tests
             )
         was_successful = True
