@@ -57,7 +57,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: snapchat/gigl/.github/actions/assert-is-collaborator@main
+    - uses: snapchat/gigl/.github/actions/assert-is-collaborator@b40339e291143ec918cbfbca50216265ff0344a1
       id: assert_collaborator_ran_workflow
       with:
         username: ${{ github.triggering_actor }}
@@ -70,14 +70,14 @@ runs:
     - name: Commment workflow started
       if: ${{ inputs.should_leave_progress_comments == 'true' }}
       id: comment_workflow_started
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      uses: snapchat/gigl/.github/actions/comment-on-pr@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
           🔄 `${{ inputs.descriptive_workflow_name }}` [started](${{ env.WORKFLOW_URL }}).
 
     - name: Checkout PR
-      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
+      uses: snapchat/gigl/.github/actions/checkout-pr-branch@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         pr_number: ${{ inputs.pr_number }}
         github-token: ${{ inputs.github-token }}
@@ -85,7 +85,7 @@ runs:
 
     - name: Setup development environment
       if: ${{ inputs.install_dev_deps == 'true' || inputs.setup_gcloud == 'true' }}
-      uses: snapchat/gigl/.github/actions/setup-python-tools@main
+      uses: snapchat/gigl/.github/actions/setup-python-tools@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         install_dev_deps: ${{ inputs.install_dev_deps }}
         setup_gcloud: ${{ inputs.setup_gcloud }}
@@ -100,7 +100,7 @@ runs:
 
     - name: Run specified command on the PR branch using Cloud Run
       if: ${{ inputs.use_cloud_run == 'true' }}
-      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
+      uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         cmd: ${{ inputs.command }}
         service_account: ${{ inputs.gcp_service_account_email }}
@@ -108,7 +108,7 @@ runs:
 
     - name: Commment workflow succeeded
       if: ${{ inputs.should_leave_progress_comments == 'true' }}
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      uses: snapchat/gigl/.github/actions/comment-on-pr@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
@@ -119,7 +119,7 @@ runs:
     - name: Comment workflow failed
       # If assert_collaborator_ran_workflow step failed we can skip commenting, as that is handled already in the assertion step
       if: ${{ inputs.should_leave_progress_comments == 'true' && failure() && steps.assert_collaborator_ran_workflow.outcome != 'failure' }}
-      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      uses: snapchat/gigl/.github/actions/comment-on-pr@b5f3ba9c3156c03ab4a01348f9ade5d6aad95552
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
