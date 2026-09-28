@@ -92,6 +92,21 @@ class BuildCsrFromCooTest(TestCase):
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
 
+    def test_matches_upstream_when_sort_blocks_are_capped_by_rows(self) -> None:
+        """Blocks crossing long runs of empty rows are cut by row count as well as by edges."""
+        generator = torch.Generator().manual_seed(17)
+        num_rows = 2_000
+        row = torch.randint(0, 20, (400,), generator=generator) * 100
+        col = torch.randint(0, num_rows, (400,), generator=generator)
+
+        expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
+        indptr, indices = build_csr_from_coo(
+            row, col, num_rows=num_rows, sort_block_edges=7
+        )
+
+        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+
     def test_matches_upstream_with_duplicate_edges(self) -> None:
         generator = torch.Generator().manual_seed(17)
         row = torch.randint(0, 4, (10_000,), generator=generator)

@@ -40,72 +40,26 @@ logger = Logger()
 _EntityType = TypeVar("_EntityType", NodeType, EdgeType)
 
 
-def _can_build_topology_directly(
+def _has_per_edge_metadata(
     edge_ids: Union[Optional[torch.Tensor], dict[EdgeType, Optional[torch.Tensor]]],
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     edge_features_registered: bool,
 ) -> bool:
-    """Whether the memory-lean per-edge-type graph build applies.
+    """Whether edges carry ids, weights, or features, which ``CompactTopology`` cannot hold.
 
-    It handles topology only. Edge ids and edge weights have to be permuted alongside the columns
-    during the CSR conversion, which is the expensive part, so anything carrying them falls back
-    to ``glt.data.Dataset.init_graph``.
+    Ids and weights would have to be permuted alongside the columns, the expensive part of
+    ``coo_to_csr``. Features are read by edge id, which ``CompactTopology`` leaves unset:
+    ``Graph.lazy_init`` then hands ``torch.empty(0)`` to ``init_cpu_from_csr`` and the first
+    lookup segfaults.
 
-    Edge features disqualify a graph as well, though they are not part of the topology: the sampler
-    reads them by the edge id of each sampled edge, and this path leaves ``Topology.edge_ids``
-    unset on purpose. ``Graph.lazy_init`` then passes ``torch.empty(0)`` to ``init_cpu_from_csr``
-    and the first lookup segfaults.
-
-    ``edge_ids`` arrives as a dict of ``None`` -- not as ``None`` -- when the partitioner declined
-    to materialize ids, so the dict values are what matter.
+    ``edge_ids`` arrives as a dict of ``None`` when the partitioner declined to materialize ids,
+    so the dict values are what matter.
     """
-    if edge_features_registered:
-        logger.info(
-            "Edge features are registered; using GLT's init_graph for the topology"
-        )
-        return False
-    if edge_weights is not None:
-        logger.info(
-            "Edge weights are registered; using GLT's init_graph for the topology"
-        )
-        return False
     if isinstance(edge_ids, Mapping):
-        if any(ids is not None for ids in edge_ids.values()):
-            logger.info(
-                "Edge ids are materialized; using GLT's init_graph for the topology"
-            )
-            return False
-        return True
-    return edge_ids is None
-
-
-def _num_nodes_for_row_dimension(
-    edge_type: EdgeType,
-    layout: Literal["CSR", "CSC"],
-    node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-) -> int:
-    """Global node count for the dimension a CSR/CSC compresses over.
-
-    The count must be global, not the local partition's size: partition books hold global node ids
-    and sampling seeds are global ids, so ``indptr`` has to be indexable by any id a seed can take.
-    Deriving it from the data instead (as ``coo_to_csr`` does) can come up short when the
-    highest-id node this rank owns has no edge in the compressed direction, and the compiled
-    sampler then reads out of bounds.
-
-    Raises:
-        ValueError: If the partition book for the relevant node type is missing.
-    """
-    node_type = edge_type.src_node_type if layout == "CSR" else edge_type.dst_node_type
-    if isinstance(node_partition_book, Mapping):
-        if node_type not in node_partition_book:
-            raise ValueError(
-                f"No node partition book for {node_type}, needed to size the {layout} topology "
-                f"of {edge_type}. Available: {sorted(node_partition_book.keys())}"
-            )
-        partition_book = node_partition_book[node_type]
+        has_edge_ids = any(ids is not None for ids in edge_ids.values())
     else:
-        partition_book = node_partition_book
-    return get_total_ids(partition_book)
+        has_edge_ids = edge_ids is not None
+    return edge_features_registered or edge_weights is not None or has_edge_ids
 
 
 class DistDataset(glt.distributed.DistDataset):
@@ -797,7 +751,7 @@ class DistDataset(glt.distributed.DistDataset):
 
         self._edge_weights = edge_weights
 
-        if _can_build_topology_directly(
+        if not _has_per_edge_metadata(
             edge_ids=edge_ids,
             edge_weights=edge_weights,
             edge_features_registered=edge_features_registered,
@@ -831,6 +785,9 @@ class DistDataset(glt.distributed.DistDataset):
                 logger.info("Initialized homogeneous graph to dataset")
             return
 
+        logger.info(
+            "Edges carry ids, weights, or features; using GLT's init_graph for the topology"
+        )
         self.init_graph(
             edge_index=edge_index,
             edge_ids=edge_ids,
@@ -891,8 +848,18 @@ class DistDataset(glt.distributed.DistDataset):
         ):
             start_time = time.time()
             coo = edge_index.pop(edge_type)
-            num_nodes = _num_nodes_for_row_dimension(
-                edge_type, target_layout, node_partition_book
+            # Size indptr from the partition book's global count, not from max(row) + 1: seeds are
+            # global ids, and the highest-id node this rank owns may have no edge in the
+            # compressed direction, which would send the sampler out of bounds.
+            node_type = (
+                edge_type.src_node_type
+                if target_layout == "CSR"
+                else edge_type.dst_node_type
+            )
+            num_nodes = get_total_ids(
+                node_partition_book[node_type]
+                if isinstance(node_partition_book, Mapping)
+                else node_partition_book
             )
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
@@ -1195,6 +1162,9 @@ class DistDataset(glt.distributed.DistDataset):
             )
             logger.info("Starting splitting edges...")
             splits = splitter(edge_index=edge_index)
+            # Otherwise this frame keeps every edge type's COO alive through _initialize_graph,
+            # and freeing each one before converting the next frees nothing.
+            del edge_index
             logger.info(
                 f"Finished splitting edges in {time.time() - split_start:.2f} seconds."
             )

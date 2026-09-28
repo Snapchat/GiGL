@@ -5,18 +5,17 @@ so these compare sampled neighbourhoods against GLT's own build rather than asse
 hand-written expectations.
 """
 
+import weakref
+from unittest import mock
+
 import torch
 from graphlearn_torch.data import Graph, Topology
 from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
 
-from gigl.distributed.dist_dataset import (
-    DistDataset,
-    _can_build_topology_directly,
-    _num_nodes_for_row_dimension,
-)
+from gigl.distributed.dist_dataset import DistDataset, _has_per_edge_metadata
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from gigl.types.graph import GraphPartitionData
+from gigl.types.graph import GraphPartitionData, PartitionOutput
 from gigl.utils.csr import CompactTopology
 from tests.test_assets.test_case import TestCase
 
@@ -45,43 +44,43 @@ class CompactTopologyTest(TestCase):
         self.assertIsNone(CompactTopology(coo, num_nodes=2, layout="CSR").edge_ids)
 
 
-class LeanBuildAppliesTest(TestCase):
+class PerEdgeMetadataTest(TestCase):
     @parameterized.expand(
         [
             param(
-                "no_ids_no_weights",
+                "nothing_per_edge",
                 edge_ids=None,
                 edge_weights=None,
                 edge_features_registered=False,
-                expected=True,
+                expected=False,
             ),
             param(
                 "dict_of_none_ids",
                 edge_ids={_EDGE_TYPE: None},
                 edge_weights=None,
                 edge_features_registered=False,
-                expected=True,
+                expected=False,
             ),
             param(
                 "materialized_ids",
                 edge_ids={_EDGE_TYPE: torch.tensor([0, 1])},
                 edge_weights=None,
                 edge_features_registered=False,
-                expected=False,
+                expected=True,
             ),
             param(
                 "edge_weights",
                 edge_ids=None,
                 edge_weights=torch.tensor([1.0, 1.0]),
                 edge_features_registered=False,
-                expected=False,
+                expected=True,
             ),
             param(
                 "edge_features",
                 edge_ids=None,
                 edge_weights=None,
                 edge_features_registered=True,
-                expected=False,
+                expected=True,
             ),
         ]
     )
@@ -94,45 +93,13 @@ class LeanBuildAppliesTest(TestCase):
         expected: bool,
     ) -> None:
         self.assertEqual(
-            _can_build_topology_directly(
+            _has_per_edge_metadata(
                 edge_ids=edge_ids,
                 edge_weights=edge_weights,
                 edge_features_registered=edge_features_registered,
             ),
             expected,
         )
-
-
-class RowDimensionTest(TestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.books = {
-            NodeType("user"): RangePartitionBook(
-                partition_ranges=[(0, 50), (50, 100)], partition_idx=0
-            ),
-            NodeType("item"): RangePartitionBook(
-                partition_ranges=[(0, 10), (10, 20)], partition_idx=0
-            ),
-        }
-
-    def test_csr_sizes_from_the_source_node_type(self) -> None:
-        self.assertEqual(
-            _num_nodes_for_row_dimension(_EDGE_TYPE, "CSR", self.books), 100
-        )
-
-    def test_csc_sizes_from_the_destination_node_type(self) -> None:
-        """CSC compresses columns, which are destination nodes -- the layout GiGL uses."""
-        self.assertEqual(
-            _num_nodes_for_row_dimension(_EDGE_TYPE, "CSC", self.books), 20
-        )
-
-    def test_a_missing_partition_book_is_named(self) -> None:
-        with self.assertRaises(ValueError):
-            _num_nodes_for_row_dimension(
-                EdgeType(NodeType("absent"), Relation("to"), NodeType("item")),
-                "CSR",
-                self.books,
-            )
 
 
 class InitializeGraphTest(TestCase):
@@ -205,6 +172,95 @@ class InitializeGraphTest(TestCase):
 
         self.assertEqual(set(dataset.graph.keys()), {_EDGE_TYPE})
         self.assertIsInstance(dataset.graph[_EDGE_TYPE], Graph)
+
+    @parameterized.expand(
+        [
+            param("out_compresses_sources", edge_dir="out", expected_rows=100),
+            param("in_compresses_destinations", edge_dir="in", expected_rows=20),
+        ]
+    )
+    def test_indptr_is_sized_from_the_partition_book(
+        self, _name: str, edge_dir: str, expected_rows: int
+    ) -> None:
+        """The global count of the compressed node type, not ``max(row) + 1`` of the data."""
+        dataset = DistDataset.__new__(DistDataset)
+        dataset.edge_dir = edge_dir
+
+        dataset._initialize_graph(
+            partitioned_edge_index={
+                _EDGE_TYPE: GraphPartitionData(
+                    edge_index=torch.tensor([[0, 3], [1, 2]]), edge_ids=None
+                )
+            },
+            node_partition_book={
+                NodeType("user"): RangePartitionBook(
+                    partition_ranges=[(0, 50), (50, 100)], partition_idx=0
+                ),
+                NodeType("item"): RangePartitionBook(
+                    partition_ranges=[(0, 10), (10, 20)], partition_idx=0
+                ),
+            },
+            edge_features_registered=False,
+        )
+
+        self.assertEqual(
+            dataset.graph[_EDGE_TYPE].topo.indptr.numel(), expected_rows + 1
+        )
+
+
+class BuildReleasesEachCooTest(TestCase):
+    def test_each_coo_is_freed_before_the_next_edge_type_is_built(self) -> None:
+        """Through ``build()`` with an edge splitter, whose local once kept every COO alive."""
+        user, item = NodeType("user"), NodeType("item")
+        larger = EdgeType(user, Relation("to"), item)
+        smaller = EdgeType(item, Relation("to"), user)
+        book = RangePartitionBook(partition_ranges=[(0, 40)], partition_idx=0)
+        coos = {
+            larger: _random_coo(40, 200, seed=1),
+            smaller: _random_coo(40, 50, seed=2),
+        }
+        refs = {edge_type: weakref.ref(coo) for edge_type, coo in coos.items()}
+        partition_output = PartitionOutput(
+            node_partition_book={user: book, item: book},
+            edge_partition_book=None,
+            partitioned_edge_index={
+                edge_type: GraphPartitionData(edge_index=coo, edge_ids=None)
+                for edge_type, coo in coos.items()
+            },
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        del coos
+
+        alive_at_each_build: list[set[EdgeType]] = []
+
+        def recording_topology(edge_index, num_nodes, layout):
+            alive_at_each_build.append(
+                {edge_type for edge_type, ref in refs.items() if ref() is not None}
+            )
+            return CompactTopology(edge_index, num_nodes=num_nodes, layout=layout)
+
+        class _EdgeSplitter:
+            should_convert_labels_to_edges = False
+
+            def __call__(self, edge_index):
+                ids = torch.arange(40)
+                return {
+                    node_type: (ids, ids[:0], ids[:0]) for node_type in (user, item)
+                }
+
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        # A plain function, not a Mock: a Mock records its call args and would keep each COO alive.
+        with mock.patch(
+            "gigl.distributed.dist_dataset.CompactTopology", new=recording_topology
+        ):
+            dataset.build(partition_output, splitter=_EdgeSplitter())
+
+        # Largest first, so the smaller COO is the only one left when its turn comes.
+        self.assertEqual(alive_at_each_build, [{larger, smaller}, {smaller}])
 
 
 class SamplingParityTest(TestCase):

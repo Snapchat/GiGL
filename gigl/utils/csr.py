@@ -41,11 +41,16 @@ DEFAULT_SORT_BLOCK_EDGES = 1 << 25
 DEFAULT_BAND_BYTES = 4 * 2**30
 
 
-def _degrees(keys: torch.Tensor, num_rows: int, chunk_size: int) -> torch.Tensor:
-    """Count occurrences of each row id, chunked so no full-size int64 copy of ``keys`` exists."""
+def _compute_degrees_from_coo_rows(
+    row: torch.Tensor, num_rows: int, chunk_size: int
+) -> torch.Tensor:
+    """``[num_rows]`` edge count per row id, chunked so no full-size int64 copy of ``row`` exists.
+
+    The COO counterpart of ``gigl.distributed.utils.degree._compute_degrees_from_indptr``.
+    """
     degrees = torch.zeros(num_rows, dtype=torch.int64)
-    for start in range(0, keys.numel(), chunk_size):
-        chunk = keys[start : start + chunk_size].to(torch.int64)
+    for start in range(0, row.numel(), chunk_size):
+        chunk = row[start : start + chunk_size].to(torch.int64)
         degrees.index_add_(0, chunk, torch.ones(chunk.numel(), dtype=torch.int64))
         del chunk
     return degrees
@@ -57,15 +62,25 @@ def _place_chunk(
     cursor: torch.Tensor,
     indices: torch.Tensor,
 ) -> None:
-    """Write one chunk's columns to their CSR destinations and advance ``cursor``.
+    """Write one chunk of edges into ``indices`` and advance ``cursor`` past them.
 
-    ``row_chunk`` must already be int64 and indexed relative to ``cursor``'s first row.
+    Args:
+        row_chunk: ``[C]`` int64 row id of each edge, relative to ``cursor``'s first row.
+        col_chunk: ``[C]`` column id of each edge.
+        cursor: ``[R]`` the slot in ``indices`` where each row's next edge goes. Starts as
+            ``indptr[:-1]`` and ends as ``indptr[1:]`` once every chunk is placed.
+        indices: ``[E]`` the CSR column array being filled.
+
+    Example: with ``cursor = [0, 2, 3]`` (row 0 owns slots 0-1, row 1 slot 2, row 2 slots 3-4),
+    the chunk ``row_chunk = [2, 0, 2]``, ``col_chunk = [7, 8, 9]`` writes ``indices[0] = 8``,
+    ``indices[3] = 7`` and ``indices[4] = 9``, and leaves ``cursor = [1, 2, 5]``.
     """
     order = torch.argsort(row_chunk, stable=True)
     row_chunk = row_chunk[order]
     col_chunk = col_chunk[order]
     del order
 
+    # [U] distinct rows in this chunk, and [U] edges for each.
     unique_rows, counts = torch.unique_consecutive(row_chunk, return_counts=True)
     del row_chunk
     run_starts = torch.cumsum(counts, dim=0) - counts
@@ -73,6 +88,7 @@ def _place_chunk(
         col_chunk.numel(), dtype=torch.int64
     ) - torch.repeat_interleave(run_starts, counts)
     del run_starts
+    # [C] slot in `indices` for each edge: its row's cursor plus its rank within the row.
     destination = (
         torch.repeat_interleave(cursor[unique_rows], counts) + offset_within_run
     )
@@ -196,8 +212,8 @@ def _sort_within_rows(
     column and then stably by row preserves the column order established by the first pass, with
     no arithmetic on ids at all.
 
-    ``block_edges`` bounds the transient working set except for a single row larger than a block,
-    which is sorted whole: transients are then O(degree) for that row. Pass
+    ``block_edges`` caps both the edges and the rows in a block, so transients are bounded except
+    for a single row larger than a block, which is sorted whole: O(degree) for that row. Pass
     ``sort_within_row=False`` to skip this pass entirely if that is not affordable -- GLT's
     samplers do not require columns to be ordered within a row, only ``coo_to_csr`` parity does.
     """
@@ -207,7 +223,9 @@ def _sort_within_rows(
         row_end = int(
             torch.searchsorted(indptr, indptr[row_start] + block_edges).item()
         )
-        row_end = min(max(row_end, row_start + 1), num_rows)
+        # Capping rows too keeps `counts` and `rows_expanded` bounded across long runs of
+        # empty rows, which the edge budget alone does not.
+        row_end = min(max(row_end, row_start + 1), row_start + block_edges, num_rows)
         edge_start = int(indptr[row_start].item())
         edge_end = int(indptr[row_end].item())
         if edge_end > edge_start:
@@ -290,7 +308,7 @@ def build_csr_from_coo(
     if row_max >= num_rows:
         raise ValueError(f"Row id {row_max} is out of range for num_rows={num_rows}")
 
-    degrees = _degrees(row, num_rows, chunk_size)
+    degrees = _compute_degrees_from_coo_rows(row, num_rows, chunk_size)
     torch.cumsum(degrees, dim=0, out=indptr[1:])
     del degrees
     gc.collect()
