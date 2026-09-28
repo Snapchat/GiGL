@@ -16,19 +16,6 @@ logger = Logger()
 T = TypeVar("T", bound=message.Message)
 
 
-def proto_to_yaml(proto: message.Message) -> str:
-    """Serialize a protobuf message to canonical YAML.
-
-    Args:
-        proto: Protobuf message to serialize.
-
-    Returns:
-        YAML containing the protobuf JSON representation.
-    """
-    proto_dict = MessageToDict(message=proto)
-    return yaml.safe_dump(proto_dict, default_flow_style=False, sort_keys=True)
-
-
 class ProtoUtils:
     def __init__(self, project: Optional[str] = None) -> None:
         self.__file_loader = FileLoader(project=project)

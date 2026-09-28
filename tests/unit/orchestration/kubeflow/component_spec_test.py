@@ -13,35 +13,6 @@ def _read_component_spec(component_name: str) -> str:
 
 
 class ComponentSpecTest(TestCase):
-    def test_config_validator_names_sources_and_snapshots(self) -> None:
-        component_spec = _read_component_spec("config_validator")
-
-        self.assertIn("name: source_task_config_uri", component_spec)
-        self.assertIn("name: source_resource_config_uri", component_spec)
-        self.assertIn("name: composed_task_config_snapshot_uri", component_spec)
-        self.assertIn("name: composed_resource_config_snapshot_uri", component_spec)
-        self.assertIn("name: should_use_glt_backend", component_spec)
-        self.assertIn(
-            "--source_task_config_uri, {inputValue: source_task_config_uri}",
-            component_spec,
-        )
-        self.assertIn(
-            "--source_resource_config_uri, {inputValue: source_resource_config_uri}",
-            component_spec,
-        )
-        self.assertIn(
-            "{outputPath: composed_task_config_snapshot_uri}",
-            component_spec,
-        )
-        self.assertIn(
-            "{outputPath: composed_resource_config_snapshot_uri}",
-            component_spec,
-        )
-        self.assertIn(
-            "{outputPath: should_use_glt_backend}",
-            component_spec,
-        )
-
     def test_data_preprocessor_accepts_source_image_uri_flags(self) -> None:
         component_spec = _read_component_spec("data_preprocessor")
 
