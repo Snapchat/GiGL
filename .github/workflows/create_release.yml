@@ -168,7 +168,12 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         python_version: ${{ matrix.python }}
+        # The first line fails the leg unless the builder's venv runs this leg's minor. An action
+        # that ignores python_version runs every leg in the default builder, and those legs would
+        # push default-minor content under this minor's refs. The cmd reaches Cloud Build as a
+        # comma-separated substitution inside double quotes, so it avoids `$`, `"` and `,`.
         cmd: |
+            uv run --no-sync python --version | grep -F 'Python ${{ matrix.python }}.'
             make \
             DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=${{ steps.release_refs.outputs.dataflow }} \
             DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=${{ steps.release_refs.outputs.cuda }} \

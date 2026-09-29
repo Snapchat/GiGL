@@ -178,8 +178,12 @@ running it, so the default images and pipeline always match the launching interp
 every node in a cluster to run the same Python version, and Dataflow requires the worker container's Python minor to
 match the launching environment's.
 
-To build your own base images, pass the minor as `PYTHON_VERSION`; without it, the bases use `.python-version`. The
-images are built for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
+The images for the `.python-version` minor (currently `-py311`) run the exact patch that file pins. The images for the
+other minors run the newest patch of their minor that GiGL's pinned uv version installs when the images are built.
+
+To build your own base images, pass the minor, or a full version such as `3.12.9`, as `PYTHON_VERSION`; without it, the
+bases use `.python-version`. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes
+no aarch64 Linux wheel.
 
 ```bash
 for image in cpu cuda dataflow; do
