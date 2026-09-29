@@ -1,10 +1,9 @@
 from typing import cast
 
 from gigl.common.logger import Logger
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from tests.test_assets.celeb_test_graph.assets import (
     get_celeb_expected_pyg_graph,
@@ -21,9 +20,7 @@ class GbmlProtosTranslatorTest(TestCase):
         _, khop_subgraph = get_celeb_khop_subgraph_for_node1()
         graph_metadata = get_celeb_graph_metadata_pb2()
 
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=GraphBackend.PYG
-        )
+        graph_builder = PygGraphBuilder()
         graph_data = cast(
             PygGraphData,
             GbmlProtosTranslator.graph_data_from_GraphPb(
