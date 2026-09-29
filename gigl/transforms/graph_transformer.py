@@ -57,7 +57,7 @@ Example Usage:
     >>> # attention_bias_data['anchor_bias']: (batch_size, max_seq_len, 1)
 """
 
-from typing import Literal, NamedTuple, Optional, TypedDict
+from typing import Final, Literal, NamedTuple, Optional, TypedDict
 
 import torch
 from jaxtyping import Bool, Float, Int64
@@ -81,6 +81,12 @@ class SequenceAuxiliaryData(TypedDict):
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
+
+# The CSR lookup scans a dense (queries, longest row) workspace. Bound the
+# number of cells allocated per chunk so a single high-degree row cannot make
+# every query share an unbounded temporary. The largest simultaneous
+# temporaries use about 26 bytes per cell, so this budget is roughly 800 MiB.
+_CSR_LOOKUP_CELLS_PER_CHUNK: Final[int] = 32_000_000
 
 
 def _validate_reserved_anchor_feature_usage(
@@ -1471,11 +1477,20 @@ def _lookup_csr_values_and_found(
     col_indices_csr = csr_matrix.col_indices()
     values_csr = csr_matrix.values()
 
+    # Sparse positional encodings can be built on a different device from the
+    # query tensors. All advanced indexing below must happen on one device.
+    if crow_indices.device != device:
+        crow_indices = crow_indices.to(device)
+        col_indices_csr = col_indices_csr.to(device)
+        values_csr = values_csr.to(device)
+    if col_indices.device != device:
+        col_indices = col_indices.to(device)
+
     # Get row start/end pointers
     row_starts = crow_indices[row_indices]
     row_ends = crow_indices[row_indices + 1]
     row_lengths = row_ends - row_starts
-    max_row_len = row_lengths.max().item()
+    max_row_len = int(row_lengths.max().item())
 
     if max_row_len == 0:
         return (
@@ -1483,28 +1498,31 @@ def _lookup_csr_values_and_found(
             torch.zeros((n,), device=device, dtype=torch.bool),
         )
 
-    # Build offset matrix: (n, max_row_len)
-    offsets = row_starts.unsqueeze(1) + torch.arange(max_row_len, device=device)
-    valid_mask = offsets < row_ends.unsqueeze(1)
-
-    # Safe indexing with clamping
     nnz = col_indices_csr.size(0)
-    offsets_clamped = offsets.clamp(max=max(nnz - 1, 0))
-
-    # Get columns at offsets and find matches
-    cols_at_offsets = col_indices_csr[offsets_clamped]
-    col_matches = (cols_at_offsets == col_indices.unsqueeze(1)) & valid_mask
-
-    # Find which queries have matches
-    found = col_matches.any(dim=1)
-
-    # Initialize output
     result = torch.full((n,), default_value, device=device, dtype=torch.float)
+    found = torch.zeros((n,), device=device, dtype=torch.bool)
+    chunk_rows = max(1, _CSR_LOOKUP_CELLS_PER_CHUNK // max_row_len)
+    row_offsets = torch.arange(max_row_len, device=device)
 
-    if found.any():
-        # Get match positions and retrieve values
-        match_offsets = col_matches.float().argmax(dim=1)
-        value_indices = row_starts[found] + match_offsets[found]
-        result[found] = values_csr[value_indices].float()
+    for chunk_start in range(0, n, chunk_rows):
+        chunk_end = min(chunk_start + chunk_rows, n)
+        chunk_row_starts = row_starts[chunk_start:chunk_end]
+        chunk_row_ends = row_ends[chunk_start:chunk_end]
+
+        offsets = chunk_row_starts.unsqueeze(1) + row_offsets
+        valid_mask = offsets < chunk_row_ends.unsqueeze(1)
+        offsets_clamped = offsets.clamp(max=max(nnz - 1, 0))
+        columns_at_offsets = col_indices_csr[offsets_clamped]
+        column_matches = (
+            columns_at_offsets == col_indices[chunk_start:chunk_end].unsqueeze(1)
+        ) & valid_mask
+
+        chunk_found = column_matches.any(dim=1)
+        found[chunk_start:chunk_end] = chunk_found
+        if chunk_found.any():
+            match_offsets = column_matches.float().argmax(dim=1)
+            value_indices = chunk_row_starts[chunk_found] + match_offsets[chunk_found]
+            result_chunk = result[chunk_start:chunk_end]
+            result_chunk[chunk_found] = values_csr[value_indices].float()
 
     return result, found

@@ -14,6 +14,7 @@ from gigl.common.data.dataloaders import (
     SerializedTFRecordInfo,
     TFDatasetOptions,
     TFRecordDataLoader,
+    _concatenate_tf_tensors_to_torch,
     _get_labels_from_features,
 )
 from gigl.common.data.load_torch_tensors import (
@@ -99,6 +100,36 @@ class TFRecordDataLoaderTest(TestCase):
     def tearDown(self):
         super().tearDown()
         self.temp_dir.cleanup()
+
+    def test_concatenate_tf_tensors_to_torch_preserves_values_and_consumes_inputs(
+        self,
+    ) -> None:
+        tensors = [
+            tf.constant([[1.0, 2.0], [3.0, 4.0]]),
+            tf.constant([[5.0, 6.0]]),
+            tf.constant([[7.0, 8.0], [9.0, 10.0]]),
+        ]
+        result = _concatenate_tf_tensors_to_torch(tensors)
+
+        self.assertEmpty(tensors)
+        self.assertEqual(result.shape, (5, 2))
+        self.assertEqual(result.dtype, torch.float32)
+        assert_close(
+            result,
+            torch.tensor(
+                [
+                    [1.0, 2.0],
+                    [3.0, 4.0],
+                    [5.0, 6.0],
+                    [7.0, 8.0],
+                    [9.0, 10.0],
+                ]
+            ),
+        )
+
+    def test_concatenate_tf_tensors_to_torch_rejects_empty_input(self) -> None:
+        with self.assertRaises(ValueError):
+            _concatenate_tf_tensors_to_torch([])
 
     @parameterized.expand(
         [

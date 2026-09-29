@@ -3,6 +3,7 @@ Tests for heterodata_to_graph_transformer_input transform.
 """
 
 from typing import Literal, cast
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ from torch_geometric.data import HeteroData
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
+    _lookup_csr_values_and_found,
     heterodata_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
@@ -1008,6 +1010,53 @@ def _create_hetero_data_with_relative_pe() -> HeteroData:
 
 
 class TestGraphTransformerRelativeBiasAssembly(TestCase):
+    def test_csr_lookup_is_correct_when_cell_budget_forces_chunks(self) -> None:
+        dense = torch.tensor(
+            [
+                [0.0, 1.0, 0.0, 2.0],
+                [3.0, 0.0, 4.0, 5.0],
+                [0.0, 6.0, 0.0, 0.0],
+            ]
+        )
+        csr_matrix = dense.to_sparse_csr()
+        row_indices = torch.tensor([0, 1, 2, 1, 0])
+        col_indices = torch.tensor([1, 3, 0, 2, 2])
+
+        with patch(
+            "gigl.transforms.graph_transformer._CSR_LOOKUP_CELLS_PER_CHUNK",
+            3,
+        ):
+            values, found = _lookup_csr_values_and_found(
+                csr_matrix=csr_matrix,
+                row_indices=row_indices,
+                col_indices=col_indices,
+                default_value=-1.0,
+            )
+
+        self.assertTrue(torch.equal(values, torch.tensor([1.0, 5.0, -1.0, 4.0, -1.0])))
+        self.assertTrue(
+            torch.equal(found, torch.tensor([True, True, False, True, False]))
+        )
+
+    def test_csr_lookup_aligns_storage_with_cuda_queries(self) -> None:
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA is required to exercise cross-device CSR lookup.")
+
+        csr_matrix = torch.tensor([[0.0, 1.5], [2.5, 0.0]]).to_sparse_csr()
+        row_indices = torch.tensor([0, 1], device="cuda")
+        col_indices = torch.tensor([1, 0], device="cuda")
+
+        values, found = _lookup_csr_values_and_found(
+            csr_matrix=csr_matrix,
+            row_indices=row_indices,
+            col_indices=col_indices,
+        )
+
+        self.assertEqual(values.device.type, "cuda")
+        self.assertEqual(found.device.type, "cuda")
+        self.assertTrue(torch.equal(values.cpu(), torch.tensor([1.5, 2.5])))
+        self.assertTrue(torch.equal(found.cpu(), torch.tensor([True, True])))
+
     def test_transform_returns_base_sequences_and_anchor_relative_bias(self) -> None:
         data = _create_hetero_data_with_relative_pe()
 
