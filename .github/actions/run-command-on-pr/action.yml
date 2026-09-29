@@ -47,6 +47,12 @@ inputs:
     description: "Google Cloud Service Account Email"
     required: false
     default: ""
+  python_version:
+    description: |
+      Python major.minor (e.g. "3.13") to run the command with. With Cloud Run it selects that minor's
+      builder image; otherwise it is exported as PYTHON_VERSION. Empty keeps the default.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -89,7 +95,13 @@ runs:
     - name: Run specified command on the PR branch
       if: ${{ inputs.use_cloud_run == 'false' }}
       shell: bash
-      run: ${{ inputs.command }}
+      env:
+        PYTHON_VERSION_INPUT: ${{ inputs.python_version }}
+      run: |
+        if [[ -n "${PYTHON_VERSION_INPUT}" ]]; then
+          export PYTHON_VERSION="${PYTHON_VERSION_INPUT}"
+        fi
+        ${{ inputs.command }}
 
     - name: Run specified command on the PR branch using Cloud Run
       if: ${{ inputs.use_cloud_run == 'true' }}
@@ -98,6 +110,7 @@ runs:
         cmd: ${{ inputs.command }}
         service_account: ${{ inputs.gcp_service_account_email }}
         project: ${{ inputs.gcp_project_id }}
+        python_version: ${{ inputs.python_version }}
 
     - name: Commment workflow succeeded
       if: ${{ inputs.should_leave_progress_comments == 'true' }}

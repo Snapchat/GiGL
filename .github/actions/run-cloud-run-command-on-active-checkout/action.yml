@@ -17,16 +17,26 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
+  python_version:
+    description: "Python major.minor (e.g. '3.13') whose builder image runs the command. Empty uses the default builder"
+    required: false
+    default: ""
 
 
 runs:
   using: "composite"
   steps:
     - name: Submit Cloud Build job
+      env:
+        PYTHON_VERSION_INPUT: ${{ inputs.python_version }}
       run: |
+        BUILDER_SUBSTITUTION=""
+        if [[ -n "${PYTHON_VERSION_INPUT}" ]]; then
+          BUILDER_SUBSTITUTION=",_BUILDER_SUFFIX=-py${PYTHON_VERSION_INPUT//./}"
+        fi
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${{ inputs.cmd }}" \
+          --substitutions=_CMD="${{ inputs.cmd }}"${BUILDER_SUBSTITUTION} \
           --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
           --project="${{ inputs.project }}" \
           --machine-type="${{ inputs.machine_type }}" \
