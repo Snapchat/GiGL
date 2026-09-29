@@ -30,8 +30,11 @@ runs:
       env:
         PYTHON_VERSION_INPUT: ${{ inputs.python_version }}
       run: |
+        # The .python-version minor sends no _BUILDER_SUFFIX and gets the config's default builder.
+        # Cloud Build rejects a substitution its config does not use, and a PR that has not merged
+        # main since _BUILDER_SUFFIX was added has a config without it.
         BUILDER_SUBSTITUTION=""
-        if [[ -n "${PYTHON_VERSION_INPUT}" ]]; then
+        if [[ -n "${PYTHON_VERSION_INPUT}" && "${PYTHON_VERSION_INPUT}" != "$(cut -d. -f1,2 .python-version)" ]]; then
           BUILDER_SUBSTITUTION=",_BUILDER_SUFFIX=-py${PYTHON_VERSION_INPUT//./}"
         fi
         gcloud builds submit . \
