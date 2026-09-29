@@ -8,8 +8,8 @@ These are the current environments supported by GiGL
 | ----------- | --------------- | --------- | ---------- | ------- | --- |
 | 3.11 – 3.13 | Supported       | Supported | 12.8       | 2.8     | 2.7 |
 
-Python 3.11 is the default: the published Docker images and the full CI suite run on it. See
-[Docker images on other Python versions](#docker-images-on-other-python-versions) if you need images on 3.12 or 3.13.
+Python 3.11 is the default, and the full CI suite runs on it. GiGL's Docker images are published for each supported
+minor; see [Docker images and Python versions](#docker-images-and-python-versions).
 
 ## Available Versions
 
@@ -169,41 +169,26 @@ tooling:
 make install_dev_deps
 ```
 
-### Docker images on other Python versions
+### Docker images and Python versions
 
-The published GiGL images ship one interpreter, Python 3.11. Ray requires every node in a cluster to run the same Python
-version, and Dataflow requires the worker container's Python minor to match the launching environment's, so if you
-launch pipelines from Python 3.12 or 3.13, build all three base images at that minor. The bases read the interpreter
-from `.python-version`, and the Dataflow base also takes a `BEAM_SDK_IMAGE` build argument that must name the same
-minor. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
+GiGL publishes every Docker image and KFP pipeline once per supported Python minor, with a `-py311`, `-py312` or
+`-py313` suffix: for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`. There is no unsuffixed
+ref. The values in `gigl/dep_vars.env` are the stems, and `gigl.common.constants` appends the suffix of the Python
+running it, so the default images and pipeline always match the launching interpreter. That matters because Ray requires
+every node in a cluster to run the same Python version, and Dataflow requires the worker container's Python minor to
+match the launching environment's.
 
-For Python 3.12:
-
-```bash
-# Edits a tracked file: restore it with `git checkout -- .python-version` and do not commit it.
-echo 3.12.14 > .python-version
-CPU_BASE=gigl-cpu-base:py3.12
-CUDA_BASE=gigl-cuda-base:py3.12
-DATAFLOW_BASE=gigl-dataflow-base:py3.12
-docker build --platform linux/amd64 -f containers/Dockerfile.cpu.base -t "${CPU_BASE}" .
-docker build --platform linux/amd64 -f containers/Dockerfile.cuda.base -t "${CUDA_BASE}" .
-docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.base \
-  --build-arg BEAM_SDK_IMAGE=apache/beam_python3.12_sdk:2.76.0 -t "${DATAFLOW_BASE}" .
-```
-
-For Python 3.13, use `3.13.15`, `apache/beam_python3.13_sdk:2.76.0` and `py3.13` tags instead.
-
-The src images must then be built on these bases, not the published ones. `scripts/build_and_push_docker_image.py` takes
-its bases from the `DOCKER_LATEST_BASE_*` lines in `gigl/dep_vars.env`, so either point those lines at your bases (and
-do not commit them), or build the src images directly:
+To build your own base images, pass the minor as `PYTHON_VERSION`; without it, the bases use `.python-version`. The
+images are built for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
 
 ```bash
-docker build --platform linux/amd64 -f containers/Dockerfile.src --build-arg BASE_IMAGE="${CPU_BASE}" \
-  -t gigl-cpu-src:py3.12 .
-docker build --platform linux/amd64 -f containers/Dockerfile.src --build-arg BASE_IMAGE="${CUDA_BASE}" \
-  -t gigl-cuda-src:py3.12 .
-docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.src --build-arg BASE_IMAGE="${DATAFLOW_BASE}" \
-  -t gigl-dataflow-src:py3.12 .
+for image in cpu cuda dataflow; do
+  docker build --platform linux/amd64 -f "containers/Dockerfile.${image}.base" \
+    --build-arg PYTHON_VERSION=3.12 -t "gigl-${image}-base:dev-py312" .
+done
 ```
 
-GiGL's CI does not build or publish images for 3.12 or 3.13 yet.
+Build src images on those bases with `--build-arg BASE_IMAGE=...` to `containers/Dockerfile.src` (CPU and CUDA) or
+`containers/Dockerfile.dataflow.src`. `scripts/build_and_push_docker_image.py` instead reads the `DOCKER_LATEST_BASE_*`
+stems from `gigl/dep_vars.env` and adds the running interpreter's suffix, so it builds on the published base for that
+minor.
