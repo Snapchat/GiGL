@@ -8,9 +8,8 @@ These are the current environments supported by GiGL
 | ----------- | --------------- | --------- | ---------- | ------- | --- |
 | 3.11 – 3.13 | Supported       | Supported | 12.8       | 2.8     | 2.7 |
 
-GiGL is tested and shipped on Python 3.13: the published Docker images and the full CI suite run on it. Python 3.11 and
-3.12 are covered by install-and-import tests. See
-[Docker images on other Python versions](#docker-images-on-other-python-versions) if you need images on 3.11 or 3.12.
+Python 3.11 is the default: the published Docker images and the full CI suite run on it. See
+[Docker images on other Python versions](#docker-images-on-other-python-versions) if you need images on 3.12 or 3.13.
 
 ## Available Versions
 
@@ -172,9 +171,9 @@ make install_dev_deps
 
 ### Docker images on other Python versions
 
-The published GiGL images ship one interpreter, Python 3.13. Ray requires every node in a cluster to run the same Python
+The published GiGL images ship one interpreter, Python 3.11. Ray requires every node in a cluster to run the same Python
 version, and Dataflow requires the worker container's Python minor to match the launching environment's, so if you
-launch pipelines from Python 3.11 or 3.12, build all three base images at that minor. The bases read the interpreter
+launch pipelines from Python 3.12 or 3.13, build all three base images at that minor. The bases read the interpreter
 from `.python-version`; the Dataflow base also takes the Beam SDK image as a build argument, whose name carries the same
 minor. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
 
@@ -192,7 +191,7 @@ docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.base \
   --build-arg BEAM_SDK_IMAGE=apache/beam_python3.12_sdk:2.76.0 -t "${DATAFLOW_BASE}" .
 ```
 
-For Python 3.11, use `3.11.16`, `apache/beam_python3.11_sdk:2.76.0` and `py3.11` tags instead.
+For Python 3.13, use `3.13.15`, `apache/beam_python3.13_sdk:2.76.0` and `py3.13` tags instead.
 
 The src images must then be built on these bases, not the published ones. `scripts/build_and_push_docker_image.py` takes
 its bases from the `DOCKER_LATEST_BASE_*` lines in `gigl/dep_vars.env`, so either point those lines at your bases (and
@@ -207,4 +206,4 @@ docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.src --buil
   -t gigl-dataflow-src:py3.12 .
 ```
 
-GiGL's CI does not build images for 3.11 or 3.12.
+GiGL's CI does not build images for 3.12 or 3.13 yet; published per-minor images follow.
