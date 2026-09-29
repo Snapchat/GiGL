@@ -31,8 +31,8 @@ class ParseUtilsTest(TestCase):
                 self.assertRaises(ValueError, str_to_bool, value)
 
     def test_matches_distutils_strtobool(self) -> None:
-        # The import is dynamic because a static `from distutils.util import ...` fails the
-        # 3.13 pass of `make type_check`. The reference is whichever `distutils` is
+        # The import is dynamic because a static `from distutils.util import ...` fails
+        # `make type_check PYTHON_VERSION=3.13`. The reference is whichever `distutils` is
         # importable: CPython's on 3.11 without `setuptools`, otherwise the copy
         # `setuptools` injects through `distutils-precedence.pth`, which is what GiGL's dev
         # and build environments resolve on every Python version.

@@ -3,6 +3,13 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
+# Python interpreter for every uv command, e.g. `make unit_test PYTHON_VERSION=3.13`.
+# Defaults to .python-version, the same request uv makes without UV_PYTHON.
+PYTHON_VERSION ?= $(shell cat .python-version)
+export UV_PYTHON := $(PYTHON_VERSION)
+# major.minor of PYTHON_VERSION; ty accepts only X.Y.
+PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subst ., ,$(PYTHON_VERSION)))
+
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
 PWD=$(shell pwd)
@@ -173,14 +180,8 @@ format_cpp:
 
 format: format_py format_cpp format_scala format_md
 
-# ty resolves the stdlib against a single Python version per invocation, so each end of
-# the supported range needs its own pass.
 type_check:
-# Floor: 3.11, from [tool.ty.environment] in pyproject.toml. Catches stdlib APIs that do
-# not exist that far back.
-	uv run ty check ${PYTHON_DIRS}
-# Ceiling: catches stdlib modules and signatures 3.13 removed or changed.
-	uv run ty check --python-version 3.13 ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR_VERSION} ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions

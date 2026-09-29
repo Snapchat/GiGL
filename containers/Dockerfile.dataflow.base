@@ -2,13 +2,13 @@
 #   - the tag (`2.76.0`) must match the `apache-beam` pin in pyproject.toml, because Beam
 #     requires a worker's installed apache-beam to be the same version as the submitting
 #     environment's, and the boot harness copied out of this stage is that entrypoint.
-#   - the Python minor in the image *name* (`beam_python3.13_sdk`) is kept equal to
+#   - the Python minor in the image *name* (`beam_python3.11_sdk`) is kept equal to
 #     .python-version by convention. Nothing copied out of this stage depends on it: `boot`
 #     is the same binary in every Python minor's SDK image, and the rest is license files
 #     and an apache-beam sdist that this image does not install.
 # Pinned by digest so that a re-push of the tag upstream cannot change what this stage copies.
 # The tag is a multi-platform index, so this digest is the index's.
-ARG BEAM_SDK_IMAGE=apache/beam_python3.13_sdk:2.76.0@sha256:ca5843866f5f692f3a9ef55193773e8496d73a82e4f5e8528f2b6e157de8054a
+ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.76.0@sha256:e1964c6453c6412ee6228272fc09414a9d782fb8ccb7c475db06239f40e667e0
 FROM ${BEAM_SDK_IMAGE} AS beam_sdk
 
 FROM ubuntu:noble-20251001
