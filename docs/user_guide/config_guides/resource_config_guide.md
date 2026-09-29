@@ -147,6 +147,11 @@ Training.
 - **Local Trainer Config**: The `local_trainer_config` field of the trainer config just requires `num_workers` which can
   be used for data loaders.
 
+### Custom Launcher Config
+
+`custom_trainer_config` and `custom_inferencer_config` delegate component execution to a launcher command. The custom
+launcher owns resource compatibility for its component, including whether its graph store configuration is supported.
+
 **[Inferencer](../overview/components/inferencer.md) Config**
 
 The `inferencer_config` specifies settings for the Dataflow preprocessor component, includes number of workers, machine
