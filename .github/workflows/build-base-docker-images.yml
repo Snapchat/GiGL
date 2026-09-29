@@ -201,4 +201,4 @@ jobs:
           * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
 
           Updated `gigl/dep_vars.env` with the new stems.
-          Updated `.github/cloud_builder/run_command_on_active_checkout.yaml` to the new builder for the default Python minor.
+          Updated `.github/cloud_builder/run_command_on_active_checkout.yaml` to the new builder stem, with a `_BUILDER_SUFFIX` default for the default Python minor.
