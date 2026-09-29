@@ -60,10 +60,10 @@ transform = [
   "tensorflow-data-validation==1.16.1 ; sys_platform != 'darwin'",
   "tensorflow-metadata==1.16.1 ; sys_platform != 'darwin'",
   "tensorflow-transform==1.16.0 ; sys_platform != 'darwin'",
-  # Held one release behind the latest tfx-bsl==1.17.1, which needs glibc 2.39+. All three
-  # base images are Ubuntu 24.04 (glibc 2.39), so the OS floor is met; moving the pin is a
-  # dependency bump, which has to move tensorflow-data-validation, tensorflow-metadata and
-  # tensorflow-transform in step per the compatibility matrix linked above.
+  # Moves in step with tensorflow-data-validation, tensorflow-metadata and
+  # tensorflow-transform per the compatibility matrix linked above. tfx-bsl 1.17.1 needs
+  # glibc 2.39+, which the Ubuntu 24.04 base images meet, so bumping it means moving all
+  # four pins together.
   "tfx-bsl==1.16.1 ; sys_platform != 'darwin'",
 ]
 pyg27-torch28-cpu = [
