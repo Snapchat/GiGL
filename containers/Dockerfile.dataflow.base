@@ -1,4 +1,4 @@
-# This reference is coupled twice over, and the two halves live in different places:
+# This reference has to stay in step with two other files:
 #   - the tag (`2.76.0`) must match the `apache-beam` pin in pyproject.toml, because Beam
 #     requires a worker's installed apache-beam to be the same version as the submitting
 #     environment's, and the boot harness copied out of this stage is that entrypoint.
