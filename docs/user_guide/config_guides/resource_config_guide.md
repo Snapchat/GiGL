@@ -4,6 +4,9 @@ GiGL Resource Config is a yaml file that is passed in at runtime and specifies t
 configurations for each component in the GiGL. The proto definition for GiGL Resource Config can be seen
 [here](https://github.com/Snapchat/GiGL/blob/main/proto/snapchat/research/gbml/gigl_resource_config.proto)
 
+Resource configs can be split into Hydra config groups. See
+[composing task and resource configs with Hydra](./hydra_composition.md).
+
 ## Prerequisites
 
 If you don't have cloud assets already setup i.e. a GCP project. See [guide](../getting_started/cloud_setup_guide.md)
