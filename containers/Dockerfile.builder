@@ -83,9 +83,14 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
-# CI runs `make` in this image, and the Makefile turns PYTHON_VERSION into UV_PYTHON, so this
-# makes every uv command ask for the interpreter the venv above was built on. The Makefile
-# falls back to .python-version when it is empty.
+# Without UV_PYTHON, uv requests .python-version. In an image built on another minor, that
+# request makes `uv run` delete this venv and rebuild it on the .python-version interpreter.
+# Pointing uv at the venv's own interpreter keeps every later uv command on this venv.
+# Under make, the Makefile exports its own UV_PYTHON from PYTHON_VERSION instead.
+ENV UV_PYTHON="${UV_PROJECT_ENVIRONMENT}/bin/python"
+# CI runs `make` in this image. The Makefile turns PYTHON_VERSION into UV_PYTHON and the
+# -pyXY image suffix, so this keeps make's uv commands and image names on the minor the venv
+# above was built on. The Makefile falls back to .python-version when it is empty.
 ENV PYTHON_VERSION=${PYTHON_VERSION}
 RUN bash ./requirements/install_scala_deps.sh
 
