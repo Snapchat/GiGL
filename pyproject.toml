@@ -12,7 +12,7 @@ classifiers = [
 ]
 # Upper bound: TensorFlow publishes no cp314 wheel. The glibc 2.39 floor comes from
 # tensorflow-data-validation's manylinux_2_39 wheels, not from the interpreter.
-# .python-version names the primary interpreter (images and full CI).
+# .python-version names the default interpreter (images and full CI).
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
