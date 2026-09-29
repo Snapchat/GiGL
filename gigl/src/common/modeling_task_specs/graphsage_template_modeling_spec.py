@@ -14,9 +14,7 @@ from gigl.common.utils.torch_training import (
     get_world_size,
     is_distributed_available_and_initialized,
 )
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
 from gigl.src.common.types.graph_data import CondensedEdgeType, CondensedNodeType
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.types.model_eval_metrics import (
     EvalMetric,
     EvalMetricsCollection,
@@ -85,10 +83,6 @@ class GraphSageTemplateTrainerSpec(
         self.random_negative_batch_size = int(
             kwargs.get("random_negative_batch_size", 64)
         )
-        self._graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=GraphBackend("PyG")
-        )
-
         # Prepare dataloader configurations
         dataloader_batch_size_map: dict[DataloaderTypes, int] = {
             DataloaderTypes.train_main: self.main_sample_batch_size,
@@ -129,7 +123,6 @@ class GraphSageTemplateTrainerSpec(
     @model.setter
     def model(self, model: torch.nn.Module) -> None:
         self.__model = model
-        self.__model.graph_backend = GraphBackend.PYG  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
 
     def init_model(
         self,
@@ -174,12 +167,8 @@ class GraphSageTemplateTrainerSpec(
         early_stop_counter = 0
         best_val_loss = float("inf")
 
-        assert hasattr(self.model, "graph_backend")
-        assert isinstance(self.model.graph_backend, GraphBackend)
-        graph_backend = self.model.graph_backend
         data_loaders: Dataloaders = self._dataloaders.get_training_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=graph_backend,
             device=device,
         )
 
@@ -412,12 +401,8 @@ class GraphSageTemplateTrainerSpec(
 
         logger.info("Start testing...")
 
-        assert hasattr(self.model, "graph_backend")
-        assert isinstance(self.model.graph_backend, GraphBackend)
-        graph_backend = self.model.graph_backend
         data_loaders: Dataloaders = self._dataloaders.get_test_dataloaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=graph_backend,
             device=device,
         )
 
