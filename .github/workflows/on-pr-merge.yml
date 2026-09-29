@@ -23,6 +23,10 @@ jobs:
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
@@ -42,6 +46,7 @@ jobs:
         cmd: "make unit_test_py"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        python_version: ${{ matrix.python }}
 
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
@@ -123,6 +128,31 @@ jobs:
         cmd: "make run_all_e2e_tests"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+
+  # The non-default Python minors run only the GLT e2e pipelines, in parallel with ci-integration-e2e-test.
+  ci-integration-e2e-test-nondefault-python:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run GLT E2E Tests
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+      with:
+        cmd: "make run_glt_e2e_tests"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
+        python_version: ${{ matrix.python }}
 
 # TODO(kmonte): Re-enable this once the tests are fixed.
   # ci-integration-example-notebooks-test:
