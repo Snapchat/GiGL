@@ -305,11 +305,6 @@ select = ["F401", "I", "UP005"]
 # Docs: https://docs.astral.sh/ruff/settings/#lint_isort_known-first-party
 known-first-party = ["gigl", "tests", "snapchat", "scripts"]
 
-[tool.ty.environment]
-# The floor of the supported range. The `type_check` Make target covers the ceiling with
-# a second `ty check --python-version 3.13` pass.
-python-version = "3.11"
-
 [tool.ty.src]
 exclude = ["*_pb2.py", "*_pb2.pyi", "**/*.ipynb"]
 
