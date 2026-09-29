@@ -19,15 +19,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three.
-  3.11 stays the default: the published images and the full CI suite run on Python 3.11.14. Ray and Beam require one
-  Python per job, so until the published per-minor images follow, consumers on 3.12 or 3.13 build the CPU, CUDA and
-  Dataflow images from `containers/` at their own minor. The stack moves to TensorFlow 2.21, Apache Beam 2.76.0 and the
-  TFX libraries `tfx-bsl`, `tensorflow-transform` and `tensorflow-data-validation` 1.21.0, tested with protobuf 6,
-  pyarrow 25 and numpy 2; TensorBoard is now a declared dependency. All runtime images require glibc >= 2.39 (Ubuntu
-  24.04), and Dataflow images are published for `linux/amd64` only. The CUDA base image is
-  `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel` and puts the NVIDIA driver paths (`/usr/local/nvidia/lib{,64}`) on
-  `LD_LIBRARY_PATH` explicitly by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+- Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
+  by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+  - 3.11 stays the default: the published images and the full CI suite run on Python 3.11.14. Ray and Beam require one
+    Python per job, so consumers on 3.12 or 3.13 build the CPU, CUDA and Dataflow images from `containers/` at their own
+    minor until published per-minor images are available.
+  - The dependency stack moves to:
+    - TensorFlow 2.21
+    - Apache Beam 2.76.0
+    - `tfx-bsl`, `tensorflow-transform` and `tensorflow-data-validation` 1.21.0
+    - protobuf 6, pyarrow 25 and numpy 2 (tested)
+    - TensorBoard, now a declared dependency
+  - All runtime images require glibc >= 2.39 (Ubuntu 24.04), and Dataflow images are published for `linux/amd64` only.
+  - The CUDA base image is `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel` and puts the NVIDIA driver paths
+    (`/usr/local/nvidia/lib{,64}`) on `LD_LIBRARY_PATH` explicitly.
 
 ### Fixed
 

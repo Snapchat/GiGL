@@ -174,7 +174,7 @@ make install_dev_deps
 The published GiGL images ship one interpreter, Python 3.11. Ray requires every node in a cluster to run the same Python
 version, and Dataflow requires the worker container's Python minor to match the launching environment's, so if you
 launch pipelines from Python 3.12 or 3.13, build all three base images at that minor. The bases read the interpreter
-from `.python-version`; the Dataflow base also takes the Beam SDK image as a build argument, whose name carries the same
+from `.python-version`, and the Dataflow base also takes a `BEAM_SDK_IMAGE` build argument that must name the same
 minor. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
 
 For Python 3.12:
@@ -206,4 +206,4 @@ docker build --platform linux/amd64 -f containers/Dockerfile.dataflow.src --buil
   -t gigl-dataflow-src:py3.12 .
 ```
 
-GiGL's CI does not build images for 3.12 or 3.13 yet; published per-minor images follow.
+GiGL's CI does not build or publish images for 3.12 or 3.13 yet.

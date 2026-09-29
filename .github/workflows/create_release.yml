@@ -82,10 +82,9 @@ jobs:
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ vars.GCP_PROJECT_ID }}
 
-    # bump_version rewrites the gigl and gigl-core versions but not the lockfiles, so they are re-locked here and
-    # the commit step below picks both up. `uv lock` keeps every existing pin the constraints still allow, but this
-    # workflow also runs nightly, and a moved pin would ship a lock CI never tested; the step fails on any movement
-    # instead.
+    # bump_version rewrites the gigl and gigl-core versions but not the lockfiles; this step re-locks both and the
+    # commit step below picks them up. This workflow also runs nightly, and any other pin that moves here would ship
+    # untested, so the step fails on any change beyond the two versions.
     - name: Re-lock after the version bump (versions only)
       run: |
         # Both lockfiles, whole, minus the `version =` line of the gigl and gigl-core entries: the only lines a

@@ -53,10 +53,9 @@ jobs:
         version="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
         test "v${version}" = "${GITHUB_REF_NAME}" || { echo "pyproject.toml version ${version} != tag ${GITHUB_REF_NAME}"; exit 1; }
 
-    # "Re-run failed jobs" publishes this run's artifacts and does not depend on this. A fresh dispatch rebuilds every
-    # wheel, and `uv publish --check-url` skips a rebuilt wheel only if it is byte-identical to the uploaded one; a
-    # differing file with an existing filename fails the publish instead of replacing it. Pinning every archive
-    # timestamp to the commit time is a best-effort way to make such a rebuild match.
+    # Best-effort reproducibility for a fresh dispatch, which rebuilds every wheel: `uv publish --check-url` skips a
+    # rebuilt wheel only if it is byte-identical to the uploaded one, and fails on a differing file with the same
+    # filename. "Re-run failed jobs" reuses this run's artifacts and does not need this.
     - name: Pin wheel timestamps to the commit
       run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "${GITHUB_ENV}"
 
