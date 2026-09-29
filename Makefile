@@ -316,12 +316,19 @@ run_hom_cora_snc_e2e_test:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
 
+# Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
+
+# The in-memory (GLT) e2e tests, i.e. those whose task config sets should_run_glt_backend.
+# CI runs these on the non-default Python minors.
+run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
+run_glt_e2e_tests: run_all_e2e_tests
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path
