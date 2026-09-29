@@ -12,9 +12,8 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.graph_builder.abstract_graph_builder import GraphBuilder
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types.graph_data import NodeType
-from gigl.src.common.types.model import GraphBackend
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.training.v1.lib.data_loaders.common import (
     DataloaderConfig,
@@ -165,14 +164,11 @@ class SupervisedNodeClassificationDatasetDataloaders:
     def _get_data_loaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
         data_loader_types: list[DataloaderTypes],
         should_loop: bool = True,
     ) -> dict[DataloaderTypes, torch.utils.data.DataLoader]:
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=graph_backend
-        )
+        graph_builder: GraphBuilder = PygGraphBuilder()
         uris_prefix_map = self._get_uri_prefix_map(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
             data_loader_types=data_loader_types,
@@ -192,13 +188,11 @@ class SupervisedNodeClassificationDatasetDataloaders:
     def get_training_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
     ) -> Dataloaders:
         data_loader_types = [DataloaderTypes.train_main, DataloaderTypes.val_main]
         dataloaders = self._get_data_loaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=graph_backend,
             device=device,
             data_loader_types=data_loader_types,
             should_loop=False,
@@ -215,13 +209,11 @@ class SupervisedNodeClassificationDatasetDataloaders:
     def get_test_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
     ) -> Dataloaders:
         data_loader_types = [DataloaderTypes.test_main]
         dataloaders = self._get_data_loaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=graph_backend,
             device=device,
             data_loader_types=data_loader_types,
             should_loop=False,
@@ -364,14 +356,11 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def _get_data_loaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
         data_loader_types: list[DataloaderTypes],
         should_loop: bool = True,
     ) -> dict[DataloaderTypes, torch.utils.data.DataLoader]:
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=graph_backend
-        )
+        graph_builder: GraphBuilder = PygGraphBuilder()
         uris_prefix_map = self._get_uri_prefix_map(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
             data_loader_types=data_loader_types,
@@ -392,7 +381,6 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def get_training_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
     ) -> Dataloaders:
         data_loader_types = [
@@ -403,7 +391,6 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         ]
         dataloaders = self._get_data_loaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=graph_backend,
             device=device,
             data_loader_types=data_loader_types,
             should_loop=True,
@@ -421,7 +408,6 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
     def get_test_dataloaders(
         self,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-        graph_backend: GraphBackend,
         device: torch.device,
     ) -> Dataloaders:
         data_loader_types = [
@@ -430,7 +416,6 @@ class NodeAnchorBasedLinkPredictionDatasetDataloaders:
         ]
         dataloaders = self._get_data_loaders(
             gbml_config_pb_wrapper=gbml_config_pb_wrapper,
-            graph_backend=graph_backend,
             device=device,
             data_loader_types=data_loader_types,
             should_loop=True,
