@@ -2,12 +2,23 @@ import sys
 
 from absl.testing import absltest
 
+from gigl.common import constants
 from gigl.common.constants import (
-    DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
-    DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU,
+    PATH_BASE_IMAGES_VARIABLE_FILE,
     add_python_suffix,
+    parse_makefile_vars,
 )
 from tests.test_assets.test_case import TestCase
+
+_IMAGE_CONSTANTS = [
+    "DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG",
+    "DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG",
+    "DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG",
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA",
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU",
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU",
+    "DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE",
+]
 
 
 class AddPythonSuffixTest(TestCase):
@@ -24,10 +35,15 @@ class AddPythonSuffixTest(TestCase):
         )
 
     def test_constants_use_running_python(self) -> None:
+        stems = parse_makefile_vars(PATH_BASE_IMAGES_VARIABLE_FILE)
         suffix = f"-py{sys.version_info.major}{sys.version_info.minor}"
-        self.assertTrue(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU.endswith(suffix))
-        self.assertTrue(
-            DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH.endswith(f"{suffix}.yaml")
+        for name in _IMAGE_CONSTANTS:
+            with self.subTest(name):
+                self.assertEqual(getattr(constants, name), stems[name] + suffix)
+        pipeline_stem = stems["DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH"]
+        self.assertEqual(
+            constants.DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
+            pipeline_stem.removesuffix(".yaml") + suffix + ".yaml",
         )
 
 
