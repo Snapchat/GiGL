@@ -5,7 +5,8 @@
 #   - the Python minor in the image *name* (`beam_python3.11_sdk`) is kept equal to
 #     .python-version by convention. Nothing copied out of this stage depends on it: `boot`
 #     is the same binary in every Python minor's SDK image, and the rest is license files
-#     and an apache-beam sdist that this image does not install.
+#     and an apache-beam sdist that this image does not install. So this one stage serves
+#     the image for every PYTHON_VERSION.
 # Pinned by digest so that a re-push of the tag upstream cannot change what this stage copies.
 # The tag is a multi-platform index, so this digest is the index's.
 ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.76.0@sha256:e1964c6453c6412ee6228272fc09414a9d782fb8ccb7c475db06239f40e667e0
@@ -42,7 +43,11 @@ COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
 
-RUN bash ./requirements/install_py_deps.sh --skip-glt-post-install
+# PYTHON_VERSION (e.g. 3.13) picks the venv's interpreter; empty builds on .python-version.
+# only-managed keeps uv from settling for a system Python that matches the request.
+ARG PYTHON_VERSION
+RUN UV_PYTHON="${PYTHON_VERSION:-$(cat .python-version)}" UV_PYTHON_PREFERENCE=only-managed \
+    bash ./requirements/install_py_deps.sh --skip-glt-post-install
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.

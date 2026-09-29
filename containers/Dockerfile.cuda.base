@@ -7,8 +7,8 @@
 # to the cu128 torch wheels pinned in uv.lock, because those two builds compile against
 # the toolkit here and link the wheels' runtime.
 # The image's own torch 2.10 and Python 3.12 go unused: GiGL pins torch 2.8, so
-# requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on the
-# interpreter named in .python-version, and the ENV PATH below puts that venv's bin ahead
+# requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on a uv-managed
+# interpreter (see PYTHON_VERSION below), and the ENV PATH below puts that venv's bin ahead
 # of the image's Python.
 # Pinned by digest because the version tag is floating: upstream rebuilds it in place.
 # The tag has a single-platform (linux/amd64) manifest, so this digest is that manifest's,
@@ -63,7 +63,11 @@ COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
 
-RUN bash ./requirements/install_py_deps.sh
+# PYTHON_VERSION (e.g. 3.13) picks the venv's interpreter; empty builds on .python-version.
+# only-managed keeps uv from settling for a system Python that matches the request.
+ARG PYTHON_VERSION
+RUN UV_PYTHON="${PYTHON_VERSION:-$(cat .python-version)}" UV_PYTHON_PREFERENCE=only-managed \
+    bash ./requirements/install_py_deps.sh
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.

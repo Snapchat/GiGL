@@ -68,7 +68,11 @@ COPY .python-version .python-version
 COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
-RUN  bash ./requirements/install_py_deps.sh --dev
+# PYTHON_VERSION (e.g. 3.13) picks the venv's interpreter; empty builds on .python-version.
+# only-managed keeps uv from settling for a system Python that matches the request.
+ARG PYTHON_VERSION
+RUN UV_PYTHON="${PYTHON_VERSION:-$(cat .python-version)}" UV_PYTHON_PREFERENCE=only-managed \
+    bash ./requirements/install_py_deps.sh --dev
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.
@@ -79,6 +83,10 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
+# CI runs `make` in this image, and the Makefile turns PYTHON_VERSION into UV_PYTHON, so this
+# makes every uv command ask for the interpreter the venv above was built on. The Makefile
+# falls back to .python-version when it is empty.
+ENV PYTHON_VERSION=${PYTHON_VERSION}
 RUN bash ./requirements/install_scala_deps.sh
 
 WORKDIR /
