@@ -24,9 +24,9 @@ def check_ci_python_matrices() -> None:
         jobs.update(yaml.safe_load(path.read_text())["jobs"])
     for job_name, expected in [
         ("unit-test-python", supported),
-        ("ci-unit-test-python", supported),
+        ("ci-unit-test-python-matrix", supported),
         ("integration-e2e-test-nondefault-python", non_default),
-        ("ci-integration-e2e-test-nondefault-python", non_default),
+        ("ci-integration-e2e-test-nondefault-python-matrix", non_default),
     ]:
         matrix = jobs[job_name]["strategy"]["matrix"]
         actual = matrix.get("python") or [leg["python"] for leg in matrix["include"]]
