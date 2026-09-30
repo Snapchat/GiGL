@@ -157,6 +157,8 @@ def _generate_component_tasks(
         resource_config_uri=resource_config_uri,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
+    # Consume the validator's snapshots so downstream tasks use the values that were validated; rereading sources
+    # could resolve different values.
     composed_task_config_snapshot_uri = validation_check_task.outputs[
         "composed_task_config_snapshot_uri"
     ]
