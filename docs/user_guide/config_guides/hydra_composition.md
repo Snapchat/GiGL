@@ -94,9 +94,39 @@ primary file can then set any fields in that section. Here, `_self_` is last, so
 come from the fragment. Put a setting in the fragment for its protobuf section, and use the primary file for any
 pipeline-specific override.
 
-Resolvers such as `now`, `git_hash`, and `oc.env` are evaluated on each read. Environment variables and installed
-packages referenced by a config must be available in every process that reads it. A dynamic value may differ between
-reads, and this reader does not write a resolved snapshot.
+Outside a KFP pipeline, resolvers such as `now`, `git_hash`, and `oc.env` are evaluated on each read. Environment
+variables and installed packages referenced by a config must be available in the reading process. A dynamic value may
+differ between reads.
+
+## KFP pipeline snapshots
+
+At submission, KFP composes the resource source to select its project, region, service account, and staging bucket.
+ConfigValidator composes both source configs inside the pipeline, resolves any external shared resource config, and
+writes plain protobuf YAML snapshots. It initializes its runtime from those snapshots and validates the same resolved
+protobufs before publishing the snapshot URIs. Every downstream component receives those URIs, and the validator also
+publishes its GLT backend decision from the resolved task config.
+
+The validator accepts `source_task_config_uri` and `source_resource_config_uri`. It publishes:
+
+- `composed_task_config_snapshot_uri`
+- `composed_resource_config_snapshot_uri`
+- `should_use_glt_backend`
+
+Each snapshot starts with a provenance comment naming its source; a container-local source includes the docker image
+name.
+
+### Why compose sources once?
+
+Resolvers that consult time or the environment, and mutable source fragments, can make repeated source reads resolve
+different values. ConfigValidator composes each source once per execution so validation, its GLT backend decision, and
+downstream tasks share the values resolved together. This preserves consistency, not just speed.
+
+This scope is limited to a ConfigValidator execution. Submission separately reads the resource config to determine
+launch infrastructure, and downstream components can safely read the already-resolved snapshots.
+
+KFP cache hits reuse the prior validator outputs and do not compose again. If ConfigValidator reexecutes, it composes
+the sources again. Its snapshot paths are based on `job_name`, so a reexecution with the same name can overwrite those
+paths. Use a distinct job name when a run needs distinct snapshot paths.
 
 The final composed mapping must still be a valid `GbmlConfig` or `GiglResourceConfig`. Protobuf parsing remains the
 schema and type validation boundary.
