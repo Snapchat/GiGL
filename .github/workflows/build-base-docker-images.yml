@@ -175,4 +175,4 @@ jobs:
           * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
 
           Updated `gigl/dep_vars.env` with new image names.
-          Updated `.github/cloud_builder/run_command_on_pr_cloud_build.yaml` with new builder image.
+          Updated `.github/cloud_builder/run_command_on_active_checkout.yaml` with new builder image.
