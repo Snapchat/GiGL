@@ -1,6 +1,5 @@
 from collections import OrderedDict
 from contextlib import ExitStack
-from distutils.util import strtobool
 from time import time
 from typing import Any, Optional, Type
 
@@ -12,6 +11,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from gigl.common.logger import Logger
 from gigl.common.utils import os_utils
+from gigl.common.utils.parse import str_to_bool
 from gigl.common.utils.torch_training import (
     get_rank,
     get_world_size,
@@ -201,7 +201,7 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
         # Retrieval-specific Task Parameters
         softmax_temp = float(kwargs.get("softmax_temp", 0.07))
         should_remove_accidental_hits = bool(
-            strtobool(kwargs.get("should_remove_accidental_hits", "True"))
+            str_to_bool(kwargs.get("should_remove_accidental_hits", "True"))
         )
         task = base_task(
             temperature=softmax_temp,

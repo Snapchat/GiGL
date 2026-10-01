@@ -143,8 +143,15 @@ def _build_quantization_stats(
             _flatten_feature_values,
             quantized_feature_keys=quantization_spec.feature_keys,
         )
+        # ApproximateQuantiles.Globally declares its input as
+        # Union[T, Sequence[T], Tuple[T, float]], so a list[float] input binds T
+        # to both float and list[float] and the inferred output becomes
+        # list[float | list[float]]. With input_batched=True each batch is
+        # unpacked and the output really is a flat list[float].
         | "Compute multi-bit quantization quantiles"
-        >> ApproximateQuantiles.Globally(num_quantiles=1000, input_batched=True)
+        >> ApproximateQuantiles.Globally(
+            num_quantiles=1000, input_batched=True
+        ).with_output_types(list[float])
         | "Build multi-bit quantization stats"
         >> beam.Map(_multi_bit_stats_from_quantiles)
     )
@@ -269,6 +276,26 @@ def _build_feature_matrix(
             raise ValueError(f"Feature key {key} not found in RecordBatch.")
 
         col = batch.column(key_to_idx[key])
+        if (
+            pa.types.is_list(col.type)
+            or pa.types.is_large_list(col.type)
+            or pa.types.is_fixed_size_list(col.type)
+        ):
+            # TFT emits scalar features as list columns holding one value per
+            # row. NumPy 2.4+ refuses to cast the object array of 1-element
+            # arrays that to_numpy() returns for them, so unwrap to the values.
+            if col.null_count:
+                raise ValueError(
+                    f"Quantization expects a value in every row, got {key} with "
+                    f"{col.null_count} null rows."
+                )
+            lengths = col.value_lengths().to_numpy(zero_copy_only=False)
+            if not (lengths == 1).all():
+                raise ValueError(
+                    f"Quantization expects scalar features, got {key} with rows "
+                    "that do not hold exactly one value."
+                )
+            col = col.flatten()
         values = np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float32)
         if values.ndim != 1:
             raise ValueError(
