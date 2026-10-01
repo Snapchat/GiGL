@@ -49,16 +49,20 @@ def _has_per_edge_metadata(
 
     Ids and weights would have to be permuted alongside the columns, the expensive part of
     ``coo_to_csr``. Features are read by edge id, which ``CompactTopology`` leaves unset:
-    ``Graph.lazy_init`` then hands ``torch.empty(0)`` to ``init_cpu_from_csr`` and the first
-    lookup segfaults.
+    ``Graph.lazy_init`` then hands ``torch.empty(0)`` to ``init_cpu_from_csr``, and GLT's compiled
+    sampler would crash (not raise) on the first lookup.
 
-    ``edge_ids`` arrives as a dict of ``None`` when the partitioner declined to materialize ids,
-    so the dict values are what matter.
+    Absent ids arrive as ``None``, or as a ``torch.empty(0)`` placeholder for an edge type with no
+    edges on this rank, which the hash partitioner produces.
     """
+
+    def has_ids(ids: Optional[torch.Tensor]) -> bool:
+        return ids is not None and ids.numel() > 0
+
     if isinstance(edge_ids, Mapping):
-        has_edge_ids = any(ids is not None for ids in edge_ids.values())
+        has_edge_ids = any(has_ids(ids) for ids in edge_ids.values())
     else:
-        has_edge_ids = edge_ids is not None
+        has_edge_ids = has_ids(edge_ids)
     return edge_features_registered or edge_weights is not None or has_edge_ids
 
 
@@ -692,7 +696,7 @@ class DistDataset(glt.distributed.DistDataset):
         Args:
             partitioned_edge_index: Partitioned graph data per edge type (heterogeneous)
                 or a single partition (homogeneous).
-            node_partition_book: Node partition book(s), used to size the topology when the
+            node_partition_book: Node partition book(s), used to size each topology when the
                 memory-lean build applies.
             edge_features_registered: Whether any edge features or quantized edge features were
                 partitioned. They are read by edge id, which the memory-lean build does not
@@ -756,52 +760,46 @@ class DistDataset(glt.distributed.DistDataset):
             edge_weights=edge_weights,
             edge_features_registered=edge_features_registered,
         ):
-            if isinstance(partitioned_edge_index, Mapping):
-                assert isinstance(edge_index, dict)
-                streaming_input = edge_index
+            if isinstance(edge_index, torch.Tensor):
+                # GraphPartitionData is frozen, so its reference to this COO cannot be dropped
+                # here; build() releases the wrapper once this returns. With one edge type there
+                # is no next conversion to free it for anyway.
+                graph = self._build_graph_per_edge_type(
+                    {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}, node_partition_book
+                )
+                # GLT expects a bare Graph for a homogeneous dataset, not a one-entry dict.
+                self.graph = graph[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
+                logger.info("Initialized homogeneous graph to dataset")
+            else:
                 # Drop the GraphPartitionData wrappers so this dict is the only remaining
                 # referrer to each COO tensor; otherwise popping an entry inside the build frees
                 # nothing and converting one edge type at a time buys nothing.
                 if isinstance(partitioned_edge_index, MutableMapping):
                     partitioned_edge_index.clear()
-                self.graph = self._build_graph_per_edge_type(
-                    streaming_input, node_partition_book=node_partition_book
-                )
+                graph = self._build_graph_per_edge_type(edge_index, node_partition_book)
+                self.graph = graph
                 logger.info(
                     f"Initialized heterogeneous graph to dataset with edge types: "
-                    f"{sorted(self.graph.keys())}"
+                    f"{sorted(graph.keys())}"
+                )
+        else:
+            logger.info(
+                "Edges carry ids, weights, or features; using GLT's init_graph for the topology"
+            )
+            self.init_graph(
+                edge_index=edge_index,
+                edge_ids=edge_ids,
+                graph_mode="CPU",
+                directed=True,
+                edge_weights=edge_weights,
+            )
+
+            if isinstance(partitioned_edge_index, Mapping):
+                logger.info(
+                    f"Initialized heterogeneous graph to dataset with edge types: {partitioned_edge_index.keys()}"
                 )
             else:
-                assert isinstance(edge_index, torch.Tensor)
-                streaming_input = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}
-                # GraphPartitionData is frozen, so its reference to this COO cannot be dropped
-                # here; build() releases the wrapper once this returns. With one edge type there
-                # is no next conversion to free it for anyway.
-                built = self._build_graph_per_edge_type(
-                    streaming_input, node_partition_book=node_partition_book
-                )
-                # GLT expects a bare Graph for a homogeneous dataset, not a one-entry dict.
-                self.graph = built[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
                 logger.info("Initialized homogeneous graph to dataset")
-            return
-
-        logger.info(
-            "Edges carry ids, weights, or features; using GLT's init_graph for the topology"
-        )
-        self.init_graph(
-            edge_index=edge_index,
-            edge_ids=edge_ids,
-            graph_mode="CPU",
-            directed=True,
-            edge_weights=edge_weights,
-        )
-
-        if isinstance(partitioned_edge_index, Mapping):
-            logger.info(
-                f"Initialized heterogeneous graph to dataset with edge types: {partitioned_edge_index.keys()}"
-            )
-        else:
-            logger.info("Initialized homogeneous graph to dataset")
 
     def _build_graph_per_edge_type(
         self,
@@ -848,26 +846,31 @@ class DistDataset(glt.distributed.DistDataset):
         ):
             start_time = time.time()
             coo = edge_index.pop(edge_type)
-            # Size indptr from the partition book's global count, not from max(row) + 1: seeds are
-            # global ids, and the highest-id node this rank owns may have no edge in the
-            # compressed direction, which would send the sampler out of bounds.
             node_type = (
                 edge_type.src_node_type
                 if target_layout == "CSR"
                 else edge_type.dst_node_type
             )
-            num_nodes = get_total_ids(
+            book = (
                 node_partition_book[node_type]
                 if isinstance(node_partition_book, Mapping)
                 else node_partition_book
             )
+            # Cover every id this rank is asked about. Edges go to the owner of the compressed
+            # node, so under range partitioning that stops at this rank's range end; a tensor book
+            # has no such bound. GLT's max(row) + 1 is shorter but breaks id-indexed consumers:
+            # label lookups misalign anchors past it, and PPR's degree tensor misses trailing
+            # zero-degree nodes.
+            num_rows = (
+                int(book.partition_bounds[self._rank])
+                if isinstance(book, RangePartitionBook)
+                else get_total_ids(book)
+            )
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
-                f"{num_nodes:,} rows, input dtype {coo.dtype}"
+                f"{num_rows:,} rows, input dtype {coo.dtype}"
             )
-            # Also run for an edge type with no edges on this rank, which both partitioners
-            # produce; the topology then has a zeroed indptr.
-            topology = CompactTopology(coo, num_nodes=num_nodes, layout=target_layout)
+            topology = CompactTopology(coo, layout=target_layout, num_rows=num_rows)
             del coo
             gc.collect()
             graph_for_type = Graph(topology, "CPU", None)

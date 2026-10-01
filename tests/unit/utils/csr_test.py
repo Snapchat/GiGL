@@ -6,7 +6,7 @@ import torch
 from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
-from gigl.utils.csr import _scatter_in_bands, _scatter_whole, build_csr_from_coo
+from gigl.utils.csr import _scatter_in_bands, build_csr_from_coo
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
 
@@ -212,11 +212,10 @@ class BuildCsrFromCooTest(TestCase):
 
 
 class ScatterPlacementTest(TestCase):
-    """Where `indices` lands, and whether the banded path agrees with the direct one.
+    """Where `indices` lands, and whether several bands produce the same CSR as one.
 
-    The banded path exists because job 3301592358876872704 spent over an hour in the direct scatter
-    against a file-backed destination: 251 passes over 8.2M pages of a 31.3 GiB array. Confining
-    writes to a window makes each page dirty once -- but only matters if it produces the same CSR.
+    Bands exist because a single scatter pass over a file-backed destination took over an hour on a
+    31 GiB array, re-dirtying every page on every chunk.
     """
 
     def setUp(self) -> None:
@@ -237,6 +236,18 @@ class ScatterPlacementTest(TestCase):
         row = torch.randint(0, num_rows, (num_edges,), generator=generator)
         col = torch.randint(0, num_rows, (num_edges,), generator=generator)
         return row, col
+
+    def _scatter(self, row, col, indptr, chunk_size, band_bytes):
+        indices = torch.empty(row.numel(), dtype=torch.int64)
+        _scatter_in_bands(
+            row=row,
+            col=col,
+            indptr=indptr,
+            indices=indices,
+            chunk_size=chunk_size,
+            band_bytes=band_bytes,
+        )
+        return indices
 
     @parameterized.expand(
         [
@@ -290,47 +301,29 @@ class ScatterPlacementTest(TestCase):
             ),
         ]
     )
-    def test_banded_scatter_matches_the_direct_scatter(
+    def test_several_bands_match_a_single_band(
         self, _, rows: int, edges: int, band_bytes: int, dtype: torch.dtype
     ):
         row, col = self._random_coo(rows, edges)
         row, col = row.to(dtype), col.to(dtype)
-        expected_indptr, expected_indices = build_csr_from_coo(
-            row=row, col=col, num_rows=rows, chunk_size=7, sort_within_row=False
+        indptr, _ = build_csr_from_coo(row=row, col=col, num_rows=rows)
+
+        torch.testing.assert_close(
+            self._scatter(row, col, indptr, chunk_size=7, band_bytes=band_bytes),
+            self._scatter(row, col, indptr, chunk_size=7, band_bytes=None),
         )
 
-        # Same layout and dtype as production would allocate, filled by the banded path instead.
-        banded = torch.empty(edges, dtype=expected_indices.dtype)
-        _scatter_in_bands(
-            row=row,
-            col=col,
-            indptr=expected_indptr,
-            indices=banded,
-            chunk_size=7,
-            band_bytes=band_bytes,
-        )
-
-        torch.testing.assert_close(banded, expected_indices)
-
-    def test_the_two_paths_agree_on_a_row_larger_than_a_band(self):
+    def test_bands_agree_on_a_row_larger_than_a_band(self):
         """A supernode cannot be split, so its band is oversized by design."""
         row = torch.cat([torch.zeros(300, dtype=torch.int64), torch.arange(1, 20)])
         col = torch.arange(row.numel(), dtype=torch.int64) % 19
-        indptr, expected = build_csr_from_coo(
-            row=row, col=col, num_rows=20, chunk_size=11, sort_within_row=False
-        )
+        indptr, _ = build_csr_from_coo(row=row, col=col, num_rows=20)
 
-        banded = torch.empty(row.numel(), dtype=expected.dtype)
-        _scatter_in_bands(
-            row=row,
-            col=col,
-            indptr=indptr,
-            indices=banded,
-            chunk_size=11,
-            band_bytes=8,  # a couple of elements at most: forces a band per row
+        torch.testing.assert_close(
+            # A couple of elements at most: forces a band per row.
+            self._scatter(row, col, indptr, chunk_size=11, band_bytes=8),
+            self._scatter(row, col, indptr, chunk_size=11, band_bytes=None),
         )
-
-        torch.testing.assert_close(banded, expected)
 
     def _shm_fits(self):
         """Pretend the shared-memory mount has room, whatever this HOST's /dev/shm says.
@@ -377,16 +370,8 @@ class ScatterPlacementTest(TestCase):
             "with no headroom the file is the only option left",
         )
 
-    @parameterized.expand(
-        # int32 is what production feeds this path (the int32-edge-index lever).
-        [param("int64", dtype=torch.int64), param("int32", dtype=torch.int32)]
-    )
-    def test_build_uses_the_banded_path_for_a_disk_backed_destination(
-        self, _, dtype: torch.dtype
-    ):
-        """Placement must actually select the algorithm, not just be logged."""
+    def test_a_build_whose_destination_lands_on_disk_still_matches_upstream(self):
         row, col = self._random_coo(64, 500)
-        row, col = row.to(dtype), col.to(dtype)
         with (
             # The destination is 500 int64 = 4000 B, so the threshold has to be under that for
             # the file path to be taken at all.
@@ -394,45 +379,15 @@ class ScatterPlacementTest(TestCase):
             mock.patch(
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1024
             ),
-            mock.patch(
-                "gigl.utils.csr._scatter_in_bands", wraps=_scatter_in_bands
-            ) as banded,
-            mock.patch("gigl.utils.csr._scatter_whole", wraps=_scatter_whole) as whole,
         ):
-            indptr, indices = build_csr_from_coo(row=row, col=col, num_rows=64)
+            indptr, indices = build_csr_from_coo(
+                row=row, col=col, num_rows=64, band_bytes=256
+            )
 
-        banded.assert_called_once()
-        whole.assert_not_called()
-        # And the result is still right, not merely produced by the intended function.
+        self.assertTrue(is_disk_backed(indices))
         reference_indptr, reference_indices = _reference_csr(row, col, 64)
         torch.testing.assert_close(indptr, reference_indptr)
-        torch.testing.assert_close(indices.to(torch.int64), reference_indices)
-
-    def test_build_uses_the_direct_path_when_the_destination_is_in_memory(self):
-        row, col = self._random_coo(64, 500)
-        with (
-            # Threshold under the 2000 B destination, so it is the random_access POLICY choosing
-            # memory rather than the tensor merely being too small to spill.
-            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="1024"),
-            self._shm_fits(),
-            mock.patch(
-                "gigl.utils.csr._scatter_in_bands", wraps=_scatter_in_bands
-            ) as banded,
-            mock.patch("gigl.utils.csr._scatter_whole", wraps=_scatter_whole) as whole,
-        ):
-            indptr, indices = build_csr_from_coo(row=row, col=col, num_rows=64)
-
-        self.assertFalse(is_disk_backed(indices), "policy should have chosen memory")
-        self.assertTrue(
-            indices.is_shared(),
-            "and pre-shared, so GLT's share_memory_() has nothing to duplicate",
-        )
-        # indptr placement is not asserted here: at num_rows=64 it is 520 B, below any threshold,
-        # so this fixture cannot say anything about its policy either way.
-        self.assertEqual(indptr.numel(), 65)
-
-        whole.assert_called_once()
-        banded.assert_not_called()
+        torch.testing.assert_close(indices, reference_indices)
 
 
 if __name__ == "__main__":

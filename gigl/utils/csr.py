@@ -12,15 +12,15 @@ transients are bounded by chunk size rather than by edge count::
 
     peak = row + col + indices + 2 x (num_rows + 1) + O(chunk + max_degree)
 
-which is 2.0x one int64 array with int32 inputs. The ``max_degree`` term comes from the optional
-within-row sort, which cannot split a single row across blocks; it only matters for a graph whose
-largest row is a meaningful fraction of its edge count.
+which is 2.0x one int64 array with int32 inputs. The ``max_degree`` term comes from the within-row
+sort, which cannot split a single row across blocks; it only matters for a graph whose largest row
+is a meaningful fraction of its edge count.
 
 :class:`CompactTopology` wraps the result as a GLT ``Topology``.
 """
 
 import gc
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 from graphlearn_torch.data import Topology
@@ -35,25 +35,9 @@ DEFAULT_CHUNK_SIZE = 1 << 24
 # Reordering within a row holds four block-sized int64 arrays (expanded row ids, sort key,
 # permutation, gathered result). 32M edges is ~1 GB; larger blocks cost memory for no speed gain.
 DEFAULT_SORT_BLOCK_EDGES = 1 << 25
-# Destination window for the banded scatter, used only when `indices` could not be placed in
-# memory. Small enough that a band's pages stay cached while being written, large enough that the
+# Destination window for the scatter when `indices` could not be placed in memory. Small enough that a band's pages stay cached while being written, large enough that the
 # number of input passes stays low.
 DEFAULT_BAND_BYTES = 4 * 2**30
-
-
-def _compute_degrees_from_coo_rows(
-    row: torch.Tensor, num_rows: int, chunk_size: int
-) -> torch.Tensor:
-    """``[num_rows]`` edge count per row id, chunked so no full-size int64 copy of ``row`` exists.
-
-    The COO counterpart of ``gigl.distributed.utils.degree._compute_degrees_from_indptr``.
-    """
-    degrees = torch.zeros(num_rows, dtype=torch.int64)
-    for start in range(0, row.numel(), chunk_size):
-        chunk = row[start : start + chunk_size].to(torch.int64)
-        degrees.index_add_(0, chunk, torch.ones(chunk.numel(), dtype=torch.int64))
-        del chunk
-    return degrees
 
 
 def _place_chunk(
@@ -99,58 +83,29 @@ def _place_chunk(
     del destination, col_chunk, unique_rows, counts
 
 
-def _scatter_whole(
-    row: torch.Tensor,
-    col: torch.Tensor,
-    indptr: torch.Tensor,
-    indices: torch.Tensor,
-    chunk_size: int,
-) -> None:
-    """One pass over the input, writing each chunk wherever its rows land.
-
-    Correct for any destination and optimal for one in memory. A file-backed destination needs
-    :func:`_scatter_in_bands` instead, since the writes here are spread over the whole array.
-    """
-    num_edges = row.numel()
-    # Where the next edge of each row goes. Advanced as chunks are placed, so the scatter needs no
-    # global sort and stays order-preserving across chunks.
-    cursor = indptr[:-1].clone()
-    for start in range(0, num_edges, chunk_size):
-        _place_chunk(
-            row_chunk=row[start : start + chunk_size].to(torch.int64),
-            col_chunk=col[start : start + chunk_size],
-            cursor=cursor,
-            indices=indices,
-        )
-    if not bool(torch.equal(cursor, indptr[1:])):
-        raise ValueError("CSR scatter did not fill every row exactly; degrees disagree")
-    del cursor
-
-
 def _scatter_in_bands(
     row: torch.Tensor,
     col: torch.Tensor,
     indptr: torch.Tensor,
     indices: torch.Tensor,
     chunk_size: int,
-    band_bytes: int,
+    band_bytes: Optional[int],
 ) -> None:
-    """Fill ``indices`` one contiguous window at a time, for a destination that lives on disk.
+    """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
 
-    A single pass writes to offsets spread across the whole array, which for a file means every
-    page is faulted in, dirtied by a few bytes, written back, and evicted, then faulted again on
-    the next chunk -- billions of page touches at a billion-edge shape, which looks like a hang.
-
-    Instead, take a band of rows whose destination slice fits ``band_bytes`` and scan the whole
-    input once per band, writing only the edges belonging to it. Writes stay inside a window small
-    enough to remain cached, so each page is faulted and written back once. The trade is
-    ``num_bands`` cheap sequential passes over the in-memory input for one pass over the expensive
-    output. ``cursor`` is per band rather than per row, so this holds a slice of ``indptr`` rather
-    than a full clone.
+    ``band_bytes=None`` is a single band, right for an in-memory destination. On disk a single pass
+    writes all over the file, so every page is faulted in, dirtied by a few bytes, written back and
+    evicted, then faulted again on the next chunk -- at a billion-edge shape that looks like a
+    hang. Bands whose destination slice fits ``band_bytes`` keep the writes inside a window that
+    stays cached, trading cheap passes over the in-memory input for one pass over the output.
     """
     num_rows = indptr.numel() - 1
     num_edges = row.numel()
-    band_elements = max(band_bytes // indices.element_size(), 1)
+    band_elements = (
+        num_edges
+        if band_bytes is None
+        else max(band_bytes // indices.element_size(), 1)
+    )
     placed = 0
     bands = 0
     first_row = 0
@@ -181,7 +136,7 @@ def _scatter_in_bands(
                 del row_chunk, in_band, selected_rows
             if not bool(torch.equal(cursor, indptr[first_row + 1 : last_row + 1])):
                 raise ValueError(
-                    f"CSR banded scatter did not fill rows [{first_row}, {last_row}) exactly; "
+                    f"CSR scatter did not fill rows [{first_row}, {last_row}) exactly; "
                     f"degrees disagree"
                 )
             del cursor
@@ -189,10 +144,11 @@ def _scatter_in_bands(
         first_row = last_row
     if placed != num_edges:
         raise ValueError(
-            f"CSR banded scatter placed {placed:,} of {num_edges:,} edges; every edge must land "
-            f"in exactly one band"
+            f"CSR scatter placed {placed:,} of {num_edges:,} edges; every edge must land in "
+            f"exactly one band"
         )
-    logger.info(f"CSR banded scatter used {bands} band(s) over the destination")
+    if band_bytes is not None:
+        logger.info(f"CSR scatter used {bands} bands over the file-backed destination")
 
 
 def _sort_within_rows(
@@ -213,9 +169,7 @@ def _sort_within_rows(
     no arithmetic on ids at all.
 
     ``block_edges`` caps both the edges and the rows in a block, so transients are bounded except
-    for a single row larger than a block, which is sorted whole: O(degree) for that row. Pass
-    ``sort_within_row=False`` to skip this pass entirely if that is not affordable -- GLT's
-    samplers do not require columns to be ordered within a row, only ``coo_to_csr`` parity does.
+    for a single row larger than a block, which is sorted whole: O(degree) for that row.
     """
     num_rows = indptr.numel() - 1
     row_start = 0
@@ -248,9 +202,8 @@ def _sort_within_rows(
 def build_csr_from_coo(
     row: torch.Tensor,
     col: torch.Tensor,
-    num_rows: int,
+    num_rows: Optional[int] = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-    sort_within_row: bool = True,
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -268,13 +221,13 @@ def build_csr_from_coo(
     Args:
         row (torch.Tensor): 1-D row indices, int32 or int64.
         col (torch.Tensor): 1-D column indices, same length as ``row``.
-        num_rows (int): Size of the row dimension. ``indptr`` has ``num_rows + 1`` entries.
+        num_rows (Optional[int]): Size of the row dimension; ``indptr`` has ``num_rows + 1``
+            entries. Defaults to ``max(row) + 1``, as ``coo_to_csr`` does.
         chunk_size (int): Edges per scatter chunk. Bounds the transient working set.
-        sort_within_row (bool): Sort each row's columns ascending, matching ``coo_to_csr``. Costs
-            one extra bounded-memory pass over the output.
-        sort_block_edges (int): Edges per block of the within-row sort.
-        band_bytes (int): Destination window for the banded scatter, used only when ``indices``
-            could not be placed in memory. Ignored otherwise.
+        sort_block_edges (int): Edges per block of the within-row sort, which orders each row's
+            columns ascending as ``coo_to_csr`` does.
+        band_bytes (int): Destination window for the scatter, used only when ``indices`` could
+            not be placed in memory.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: ``indptr`` of shape ``[num_rows + 1]``, always int64,
@@ -291,48 +244,36 @@ def build_csr_from_coo(
             f"row and col must be the same length, got {row.numel()} and {col.numel()}"
         )
     num_edges = row.numel()
-
-    # Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
-    # allocate_preshared. Uninitialised rather than zeroed: element 0 is set below and [1:] is
-    # entirely overwritten by the cumsum.
-    indptr = allocate_preshared((num_rows + 1,), torch.int64)
-    indptr[0] = 0
-    if num_edges == 0:
-        # The one path where the cumsum never runs, so [1:] would stay uninitialised. An all-zero
-        # indptr is the correct CSR for a graph with no edges, and a rank owning no edges of some
-        # edge type is normal under range partitioning.
-        indptr.zero_()
-        return indptr, torch.empty(0, dtype=torch.int64)
-
-    row_max = int(row.max().item())
-    if row_max >= num_rows:
+    row_max = int(row.max().item()) if num_edges else -1
+    if num_rows is None:
+        num_rows = row_max + 1
+    elif row_max >= num_rows:
         raise ValueError(f"Row id {row_max} is out of range for num_rows={num_rows}")
 
-    degrees = _compute_degrees_from_coo_rows(row, num_rows, chunk_size)
-    torch.cumsum(degrees, dim=0, out=indptr[1:])
-    del degrees
+    # Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
+    # allocate_preshared.
+    indptr = allocate_preshared((num_rows + 1,), torch.int64)
+    if num_edges == 0:
+        # A rank can own no edges of some edge type.
+        indptr.zero_()
+        return indptr, torch.empty(0, dtype=torch.int64)
+    indptr[0] = 0
+    torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr[1:])
     gc.collect()
 
-    # random_access=True: the direct scatter writes to offsets spread across the whole array, so
-    # memory is preferred. The banded path below is what runs if it lands on disk anyway.
+    # random_access=True: the scatter writes all over the array, so memory is preferred; bands
+    # take over if it lands on disk anyway.
     indices = allocate_preshared((num_edges,), torch.int64, random_access=True)
-    if is_disk_backed(indices):
-        _scatter_in_bands(
-            row=row,
-            col=col,
-            indptr=indptr,
-            indices=indices,
-            chunk_size=chunk_size,
-            band_bytes=band_bytes,
-        )
-    else:
-        _scatter_whole(
-            row=row, col=col, indptr=indptr, indices=indices, chunk_size=chunk_size
-        )
+    _scatter_in_bands(
+        row=row,
+        col=col,
+        indptr=indptr,
+        indices=indices,
+        chunk_size=chunk_size,
+        band_bytes=band_bytes if is_disk_backed(indices) else None,
+    )
     gc.collect()
-
-    if sort_within_row:
-        _sort_within_rows(indptr, indices, sort_block_edges)
+    _sort_within_rows(indptr, indices, sort_block_edges)
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "
@@ -350,23 +291,27 @@ class CompactTopology(Topology):
     read by edge id, so a graph that has them cannot use this class.
 
     Args:
-        edge_index (torch.Tensor): ``[2, num_edges]`` COO, int32 or int64.
-        num_nodes (int): Size of the compressed dimension -- source nodes for CSR, destination
-            nodes for CSC.
+        edge_index (torch.Tensor): ``[2, num_edges]`` COO. int32 and int64 are used as they are;
+            anything else is cast to int64, as GLT's ``Topology`` does.
         layout (Literal["CSR", "CSC"]): The layout GLT samples from.
+        num_rows (Optional[int]): Size of the compressed dimension. Defaults to the largest
+            compressed id + 1, as GLT's ``Topology`` does.
     """
 
     def __init__(
         self,
         edge_index: torch.Tensor,
-        num_nodes: int,
         layout: Literal["CSR", "CSC"],
+        num_rows: Optional[int] = None,
     ) -> None:
+        # GLT's Topology casts any input to int64; integer inputs keep their width here.
+        if edge_index.is_floating_point():
+            edge_index = edge_index.to(torch.int64)
         # CSC compresses destinations, so it is the CSR of the reversed edges.
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
         self._layout = layout
         self._indptr, self._indices = build_csr_from_coo(
-            row=edge_index[compressed], col=edge_index[other], num_rows=num_nodes
+            row=edge_index[compressed], col=edge_index[other], num_rows=num_rows
         )
         self._edge_ids = None
         self._edge_weights = None
