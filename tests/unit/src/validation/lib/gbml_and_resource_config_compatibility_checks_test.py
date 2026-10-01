@@ -4,6 +4,9 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
     GiglResourceConfigWrapper,
 )
+from gigl.src.validation_check.config_validator import (
+    _run_gbml_and_resource_config_compatibility_checks,
+)
 from gigl.src.validation_check.libs.gbml_and_resource_config_compatibility_checks import (
     check_inferencer_graph_store_compatibility,
     check_trainer_graph_store_compatibility,
@@ -212,6 +215,43 @@ class TestInferencerGraphStoreCompatibility(TestCase):
                 gbml_config_pb_wrapper=gbml_config,
                 resource_config_wrapper=resource_config,
             )
+
+
+class TestGraphStoreCompatibilityDispatcher(TestCase):
+    """Test graph store compatibility through the pipeline dispatcher."""
+
+    def test_custom_launchers_own_graph_store_compatibility(self) -> None:
+        resource_config = _create_resource_config_without_graph_stores()
+        resource_config.resource_config.trainer_resource_config.custom_trainer_config.command = "train"
+        resource_config.resource_config.inferencer_resource_config.custom_inferencer_config.command = "infer"
+        for gbml_config, has_graph_store in (
+            (_create_gbml_config_with_both_graph_stores(), True),
+            (_create_gbml_config_without_graph_stores(), False),
+        ):
+            with self.subTest(has_graph_store=has_graph_store):
+                _run_gbml_and_resource_config_compatibility_checks(
+                    start_at="config_populator",
+                    stop_after=None,
+                    gbml_config_pb_wrapper=gbml_config,
+                    resource_config_wrapper=resource_config,
+                )
+
+    def test_custom_launcher_does_not_skip_other_component_validation(self) -> None:
+        gbml_config = _create_gbml_config_with_both_graph_stores()
+        for component in ("trainer", "inferencer"):
+            with self.subTest(component=component):
+                resource_config = _create_resource_config_without_graph_stores()
+                if component == "trainer":
+                    resource_config.resource_config.trainer_resource_config.custom_trainer_config.command = "train"
+                else:
+                    resource_config.resource_config.inferencer_resource_config.custom_inferencer_config.command = "infer"
+                with self.assertRaises(AssertionError):
+                    _run_gbml_and_resource_config_compatibility_checks(
+                        start_at="config_populator",
+                        stop_after=None,
+                        gbml_config_pb_wrapper=gbml_config,
+                        resource_config_wrapper=resource_config,
+                    )
 
 
 if __name__ == "__main__":
