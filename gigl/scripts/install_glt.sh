@@ -9,6 +9,17 @@ is_running_on_mac() {
 }
 
 has_cuda_driver() {
+    # Callers use this as an `if` condition, which suspends `set -e` for the whole
+    # function body. A missing `whereis` would therefore leave $cuda_location empty and
+    # report "no CUDA" with the build still exiting 0, installing CPU torch and a
+    # WITH_CUDA=OFF GLT into a CUDA image. `exit` is the only way out of a
+    # suspended-errexit context, so fail the build outright instead of returning.
+    if ! command -v whereis &> /dev/null
+    then
+        echo "whereis is unavailable, so CUDA presence cannot be determined." >&2
+        exit 1
+    fi
+
     # Use the whereis command to locate the CUDA driver
     cuda_location=$(whereis cuda)
 

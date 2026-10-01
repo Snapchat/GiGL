@@ -6,12 +6,12 @@ import pathlib
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from distutils.util import strtobool
 from typing import Optional
 
 import yaml
 
 from gigl.common import GcsUri, HttpUri, LocalUri, UriFactory
+from gigl.common.utils.parse import str_to_bool
 from gigl.src.common.utils.file_loader import FileLoader
 
 GIGL_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     print(f"Updated YAML file saved at '{destination_file_path}'")
 
     # Update the user's shell configuration
-    if args.force_shell_config_update and strtobool(args.force_shell_config_update):
+    if args.force_shell_config_update and str_to_bool(args.force_shell_config_update):
         should_update_shell_config = "y"
         print("Forcing shell updated due to --force_shell_config_update flag.")
     else:
