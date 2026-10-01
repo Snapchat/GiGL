@@ -17,16 +17,29 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
+  python_version:
+    description: "Python major.minor (e.g. '3.13') whose builder image runs the command. Empty uses the default builder"
+    required: false
+    default: ""
 
 
 runs:
   using: "composite"
   steps:
     - name: Submit Cloud Build job
+      env:
+        PYTHON_VERSION_INPUT: ${{ inputs.python_version }}
       run: |
+        # The .python-version minor sends no _BUILDER_SUFFIX and gets the config's default builder.
+        # Cloud Build rejects a substitution its config does not use, and a PR that has not merged
+        # main since _BUILDER_SUFFIX was added has a config without it.
+        BUILDER_SUBSTITUTION=""
+        if [[ -n "${PYTHON_VERSION_INPUT}" && "${PYTHON_VERSION_INPUT}" != "$(cut -d. -f1,2 .python-version)" ]]; then
+          BUILDER_SUBSTITUTION=",_BUILDER_SUFFIX=-py${PYTHON_VERSION_INPUT//./}"
+        fi
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${{ inputs.cmd }}" \
+          --substitutions=_CMD="${{ inputs.cmd }}"${BUILDER_SUBSTITUTION} \
           --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
           --project="${{ inputs.project }}" \
           --machine-type="${{ inputs.machine_type }}" \

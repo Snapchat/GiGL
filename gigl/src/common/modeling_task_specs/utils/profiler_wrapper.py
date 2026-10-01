@@ -1,5 +1,4 @@
 import tempfile
-from distutils.util import strtobool
 
 from torch.profiler import (
     ProfilerActivity,
@@ -10,6 +9,7 @@ from torch.profiler import (
 
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
+from gigl.common.utils.parse import str_to_bool
 
 logger = Logger()
 
@@ -33,9 +33,9 @@ class TorchProfiler:
             active=self.active,
             repeat=self.repeat,
         )
-        self.profile_memory = bool(strtobool(kwargs.get("profile_memory", "True")))
-        self.record_shapes = bool(strtobool(kwargs.get("record_shapes", "False")))
-        self.with_stack = bool(strtobool(kwargs.get("with_stack", "False")))
+        self.profile_memory = bool(str_to_bool(kwargs.get("profile_memory", "True")))
+        self.record_shapes = bool(str_to_bool(kwargs.get("record_shapes", "False")))
+        self.with_stack = bool(str_to_bool(kwargs.get("with_stack", "False")))
         logger.info(f"Profiler will be instantiated with {self.__dict__}")
 
     def profiler_context(self) -> profile:

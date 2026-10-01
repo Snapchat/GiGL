@@ -3,6 +3,18 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
+# Python interpreter for every uv command, e.g. `make unit_test PYTHON_VERSION=3.13`.
+# Defaults to .python-version, the same request uv makes without UV_PYTHON. An empty value
+# also falls back, because the builder image sets PYTHON_VERSION from a build arg that may
+# be empty, and an empty UV_PYTHON is not a valid interpreter request.
+override PYTHON_VERSION := $(or $(PYTHON_VERSION),$(shell cat .python-version))
+export UV_PYTHON := $(PYTHON_VERSION)
+# major.minor of PYTHON_VERSION; ty accepts only X.Y.
+PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subst ., ,$(PYTHON_VERSION)))
+# Every GiGL image is published per Python minor under this tag suffix, e.g. -py313;
+# see gigl/dep_vars.env.
+PYTHON_IMAGE_SUFFIX := -py$(subst .,,$(PYTHON_MINOR_VERSION))
+
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
 PWD=$(shell pwd)
@@ -16,18 +28,20 @@ DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
+# The Python suffix keeps images that different minors build in the same minute apart.
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
 
 # Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
 # ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
 # other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
-# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
+# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export. The Python
+# suffix goes after the tag so that minors sharing one CI run ID push different images.
 INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
-INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
+INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}${PYTHON_IMAGE_SUFFIX}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
@@ -179,7 +193,7 @@ format_cpp:
 format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
-	uv run ty check ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR_VERSION} ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
@@ -190,7 +204,7 @@ check_lint_cpp:
 fix_lint_cpp:
 	$(MAKE) -C gigl-core fix_lint_cpp
 
-lint_test: check_format assert_yaml_configs_parse check_lint_cpp
+lint_test: precondition_tests check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
 
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
@@ -226,7 +240,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	@echo "All Docker images compiled and pushed"
 
 push_dev_workbench_docker_image: compile_jars
-	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}${PYTHON_IMAGE_SUFFIX}
 
 # Set compiled_pipeline path so compile_gigl_kubeflow_pipeline knows where to save the pipeline to so
 # that the e2e test can use it.
@@ -302,12 +316,19 @@ run_hom_cora_snc_e2e_test:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
 
+# Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
+
+# The in-memory (GLT) e2e tests, i.e. those whose task config sets should_run_glt_backend.
+# CI runs these on the non-default Python minors.
+run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
+run_glt_e2e_tests: run_all_e2e_tests
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path

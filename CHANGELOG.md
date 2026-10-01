@@ -17,6 +17,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
   build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
 
+### Changed
+
+- Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
+  by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. The `-py311` images use that pinned patch from
+    `.python-version`; the `-py312` and `-py313` images use the newest 3.12 and 3.13 patch that GiGL's pinned uv version
+    installs when the images are built.
+  - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
+    `-py313` suffix (for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`). Starting with this
+    release, unsuffixed refs such as `src-cpu:<version>` are not published; update any hand-written image or pipeline
+    refs. `gigl.common.constants` picks the images and pipeline for the running Python minor, because Ray and Beam
+    require one Python per job.
+  - The dependency stack moves to:
+    - TensorFlow 2.21
+    - Apache Beam 2.76.0
+    - `tfx-bsl`, `tensorflow-transform` and `tensorflow-data-validation` 1.21.0
+    - protobuf 6, pyarrow 25 and numpy 2 (tested)
+    - TensorBoard, now a declared dependency
+  - All runtime images require glibc >= 2.39 (Ubuntu 24.04), and Dataflow images are published for `linux/amd64` only.
+  - The CUDA base image is `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel` and puts the NVIDIA driver paths
+    (`/usr/local/nvidia/lib{,64}`) on `LD_LIBRARY_PATH` explicitly.
+
 ### Fixed
 
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
