@@ -12,6 +12,7 @@ from torch_geometric.data import HeteroData
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
+    _lookup_csr_values_and_found,
     heterodata_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
@@ -154,6 +155,19 @@ def create_directed_chain_data() -> HeteroData:
         [
             [0, 1],
             [1, 2],
+        ]
+    )
+    return data
+
+
+def create_hop_order_priority_data() -> HeteroData:
+    """Create data where node-id ordering conflicts with hop ordering."""
+    data = HeteroData()
+    data["user"].x = torch.arange(6, dtype=torch.float).unsqueeze(1)
+    data["user", "to", "user"].edge_index = torch.tensor(
+        [
+            [3, 3, 4, 5],
+            [4, 5, 0, 1],
         ]
     )
     return data
@@ -422,6 +436,69 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertEqual(valid_mask[0].tolist(), [True, True, True])
         self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 10.0, 11.0])
 
+    def test_prioritize_hop_order_fills_first_hop_before_truncation(self):
+        data = create_hop_order_priority_data()
+
+        default_sequences, _, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            anchor_node_ids=torch.tensor([3]),
+            hop_distance=2,
+        )
+        prioritized_sequences, prioritized_valid_mask, _ = (
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=3,
+                anchor_node_type="user",
+                anchor_node_ids=torch.tensor([3]),
+                hop_distance=2,
+                prioritize_hop_order=True,
+            )
+        )
+
+        self.assertEqual(default_sequences[0, :, 0].tolist(), [3.0, 0.0, 1.0])
+        self.assertEqual(prioritized_valid_mask[0].tolist(), [True, True, True])
+        self.assertEqual(
+            prioritized_sequences[0, :, 0].tolist(),
+            [3.0, 4.0, 5.0],
+        )
+
+    def test_prioritize_hop_order_uses_hop_then_node_id_ordering(self):
+        data = create_hop_order_priority_data()
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=5,
+            anchor_node_type="user",
+            anchor_node_ids=torch.tensor([3]),
+            hop_distance=2,
+            prioritize_hop_order=True,
+        )
+
+        self.assertEqual(valid_mask[0].tolist(), [True, True, True, True, True])
+        self.assertEqual(sequences[0, :, 0].tolist(), [3.0, 4.0, 5.0, 0.0, 1.0])
+
+    def test_prioritize_hop_order_respects_in_sampling_direction(self):
+        data = create_directed_chain_data()
+
+        sequences, valid_mask, _ = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            anchor_node_ids=torch.tensor([2]),
+            hop_distance=2,
+            sampling_direction="in",
+            prioritize_hop_order=True,
+        )
+
+        self.assertEqual(valid_mask[0].tolist(), [True, True, True])
+        self.assertEqual(sequences[0, :, 0].tolist(), [12.0, 11.0, 10.0])
+
     def test_sampling_direction_rejects_invalid_value(self):
         data = create_directed_chain_data()
 
@@ -448,6 +525,19 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 anchor_node_type="user",
                 sequence_construction_method="ppr",
                 sampling_direction="in",
+            )
+
+    def test_prioritize_hop_order_requires_khop(self):
+        data = create_ppr_sequence_hetero_data()
+
+        with self.assertRaisesRegex(ValueError, "prioritize_hop_order"):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=1,
+                max_seq_len=3,
+                anchor_node_type="user",
+                sequence_construction_method="ppr",
+                prioritize_hop_order=True,
             )
 
     def test_different_anchor_types(self):
@@ -1008,6 +1098,25 @@ def _create_hetero_data_with_relative_pe() -> HeteroData:
 
 
 class TestGraphTransformerRelativeBiasAssembly(TestCase):
+    def test_csr_lookup_aligns_storage_with_cuda_queries(self) -> None:
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA is required to exercise cross-device CSR lookup.")
+
+        csr_matrix = torch.tensor([[0.0, 1.5], [2.5, 0.0]]).to_sparse_csr()
+        row_indices = torch.tensor([0, 1], device="cuda")
+        col_indices = torch.tensor([1, 0], device="cuda")
+
+        values, found = _lookup_csr_values_and_found(
+            csr_matrix=csr_matrix,
+            row_indices=row_indices,
+            col_indices=col_indices,
+        )
+
+        self.assertEqual(values.device.type, "cuda")
+        self.assertEqual(found.device.type, "cuda")
+        self.assertTrue(torch.equal(values.cpu(), torch.tensor([1.5, 2.5])))
+        self.assertTrue(torch.equal(found.cpu(), torch.tensor([True, True])))
+
     def test_transform_returns_base_sequences_and_anchor_relative_bias(self) -> None:
         data = _create_hetero_data_with_relative_pe()
 
