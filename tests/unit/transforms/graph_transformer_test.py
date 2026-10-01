@@ -12,6 +12,7 @@ from torch_geometric.data import HeteroData
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
+    _lookup_csr_values_and_found,
     heterodata_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
@@ -1097,6 +1098,25 @@ def _create_hetero_data_with_relative_pe() -> HeteroData:
 
 
 class TestGraphTransformerRelativeBiasAssembly(TestCase):
+    def test_csr_lookup_aligns_storage_with_cuda_queries(self) -> None:
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA is required to exercise cross-device CSR lookup.")
+
+        csr_matrix = torch.tensor([[0.0, 1.5], [2.5, 0.0]]).to_sparse_csr()
+        row_indices = torch.tensor([0, 1], device="cuda")
+        col_indices = torch.tensor([1, 0], device="cuda")
+
+        values, found = _lookup_csr_values_and_found(
+            csr_matrix=csr_matrix,
+            row_indices=row_indices,
+            col_indices=col_indices,
+        )
+
+        self.assertEqual(values.device.type, "cuda")
+        self.assertEqual(found.device.type, "cuda")
+        self.assertTrue(torch.equal(values.cpu(), torch.tensor([1.5, 2.5])))
+        self.assertTrue(torch.equal(found.cpu(), torch.tensor([True, True])))
+
     def test_transform_returns_base_sequences_and_anchor_relative_bias(self) -> None:
         data = _create_hetero_data_with_relative_pe()
 

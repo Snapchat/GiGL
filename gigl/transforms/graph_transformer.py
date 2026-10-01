@@ -1769,6 +1769,16 @@ def _lookup_csr_values_and_found(
     col_indices_csr = csr_matrix.col_indices()
     values_csr = csr_matrix.values()
 
+    # Positional encodings can be constructed on a different device from the
+    # query tensors. Advanced indexing requires the CSR storage and both query
+    # index tensors to live on the same device.
+    if crow_indices.device != device:
+        crow_indices = crow_indices.to(device)
+        col_indices_csr = col_indices_csr.to(device)
+        values_csr = values_csr.to(device)
+    if col_indices.device != device:
+        col_indices = col_indices.to(device)
+
     # Get row start/end pointers
     row_starts = crow_indices[row_indices]
     row_ends = crow_indices[row_indices + 1]
