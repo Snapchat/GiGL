@@ -22,13 +22,13 @@ index cd8b4ba..59694fd 100644
 @@ -16,8 +16,82 @@ limitations under the License.
  #include "graphlearn_torch/include/graph.h"
  #include "graphlearn_torch/include/common.h"
- 
+
 +#include <algorithm>
 +#include <cstdint>
 +#include <vector>
 +
  namespace graphlearn_torch {
- 
+
 +namespace {
 +
 +// Exact distinct-count of the column ids, replacing at::_unique. _unique is sort-based and
@@ -104,7 +104,7 @@ index cd8b4ba..59694fd 100644
      const torch::Tensor& indices,
 @@ -27,10 +101,23 @@ void Graph::InitCPUGraphFromCSR(
    CheckEq<int64_t>(indices.dim(), 1);
- 
+
    row_ptr_ = indptr.data_ptr<int64_t>();
 -  col_idx_ = indices.data_ptr<int64_t>();
    row_count_ = indptr.size(0) - 1;
@@ -125,7 +125,7 @@ index cd8b4ba..59694fd 100644
 +    col_idx32_ = nullptr;
 +  }
 +  col_count_ = CountDistinctCols(indices, edge_count_);
- 
+
    if (edge_ids.numel()) {
      CheckEq<int64_t>(edge_ids.dim(), 1);
 diff --git a/graphlearn_torch/csrc/cpu/random_negative_sampler.cc b/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
@@ -148,9 +148,9 @@ index 4953680..94bd5f9 100644
 --- a/graphlearn_torch/csrc/cpu/random_sampler.cc
 +++ b/graphlearn_torch/csrc/cpu/random_sampler.cc
 @@ -21,6 +21,104 @@ limitations under the License.
- 
+
  namespace graphlearn_torch {
- 
+
 +namespace {
 +
 +// Generic over the column-id storage type ColT (int32 or int64). Neighbor OUTPUTS are always
@@ -254,7 +254,7 @@ index 4953680..94bd5f9 100644
    if (req_num < 0) req_num = std::numeric_limits<int32_t>::max();
 @@ -40,8 +138,13 @@ CPURandomSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
    }
- 
+
    torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
 -  CSRRowWiseSample(nodes_ptr, nbrs_offset, bs, req_num, row_count,
 -    row_ptr, col_idx, nbrs.data_ptr<int64_t>());
@@ -267,9 +267,9 @@ index 4953680..94bd5f9 100644
 +  }
    return std::make_tuple(nbrs, nbrs_num);
  }
- 
+
 @@ -66,9 +169,15 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
- 
+
    torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
    torch::Tensor out_eid = torch::empty(nbrs_offset[bs], nodes.options());
 -  CSRRowWiseSample(nodes_ptr, nbrs_offset, bs, req_num, row_count,
@@ -286,11 +286,11 @@ index 4953680..94bd5f9 100644
 +  }
    return std::make_tuple(nbrs, nbrs_num, out_eid);
  }
- 
+
 @@ -91,89 +200,4 @@ void CPURandomSampler::FillNbrsNum(const int64_t* nodes,
    });
  }
- 
+
 -void CPURandomSampler::CSRRowWiseSample(
 -    const int64_t* nodes,
 -    const int64_t* nbrs_offset,
@@ -385,7 +385,7 @@ index c6ab6b0..e19b173 100644
 @@ -37,21 +37,9 @@ private:
      const int32_t req_num,  const int64_t row_count,
      const int64_t* row_ptr, int64_t* out_nbr_num);
- 
+
 -  void CSRRowWiseSample(const int64_t* nodes, const int64_t* nbrs_offset,
 -    const int32_t bs, const int32_t req_num, const int64_t row_count,
 -    const int64_t* row_ptr, const int64_t* col_idx, int64_t* out_nbrs);
@@ -404,9 +404,9 @@ index c6ab6b0..e19b173 100644
 +  // The row-wise sampling helpers are file-local templates in random_sampler.cc, generic over
 +  // the column-id storage type (int64 or int32; see Graph::ColIsInt32). Outputs are always
 +  // int64 -- the storage dtype is an implementation detail of the graph, not of the API.
- 
+
  };
- 
+
 diff --git a/graphlearn_torch/csrc/cpu/subgraph_op.cc b/graphlearn_torch/csrc/cpu/subgraph_op.cc
 index 168caae..cb903c0 100644
 --- a/graphlearn_torch/csrc/cpu/subgraph_op.cc
@@ -455,7 +455,7 @@ index 85d1fd8..4a24485 100644
 @@ -79,6 +79,18 @@ public:
      return col_idx_;
    }
- 
+
 +  // int32 column-id support, CPU sampling only. Column ids are node ids; when they all fit in
 +  // int32 the CSC indices array halves (node id domain < 2^31, checked at init). Exactly one of
 +  // col_idx_ / col_idx32_ is set. Samplers that have not been taught the int32 layout must call
