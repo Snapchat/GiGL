@@ -17,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
   build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
 
+### Changed
+
+- The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
+  its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/PENDING
+
 ### Fixed
 
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously

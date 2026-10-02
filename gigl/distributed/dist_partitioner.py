@@ -339,6 +339,22 @@ class DistPartitioner:
             self._is_input_homogeneous = False
         return to_heterogeneous_node(input_node_entity)
 
+    def _edge_index_dtype(self, edge_type: EdgeType) -> torch.dtype:
+        """int32 when both endpoint types' ids fit, halving the edge index; int64 otherwise.
+
+        ``_max_node_ids`` is gathered across ranks in ``register_node_ids``, so every rank picks the
+        same width.
+        """
+        int32_max = torch.iinfo(torch.int32).max
+        if self._max_node_ids is None:
+            return torch.int64
+        # A node type that was never registered counts as too large.
+        max_id = max(
+            self._max_node_ids.get(node_type, int32_max + 1)
+            for node_type in (edge_type.src_node_type, edge_type.dst_node_type)
+        )
+        return torch.int32 if max_id <= int32_max else torch.int64
+
     def _convert_edge_entity_to_heterogeneous_format(
         self,
         input_edge_entity: Union[
@@ -469,7 +485,12 @@ class DistPartitioner:
 
         self._edge_types = sorted(input_edge_index.keys())
 
-        self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
+        self._edge_index = {
+            edge_type: convert_to_tensor(
+                edge_index, dtype=self._edge_index_dtype(edge_type)
+            )
+            for edge_type, edge_index in input_edge_index.items()
+        }
 
         # The tuple here represents a (rank, num_edges_on_rank) pair on a given partition, specified by the str key of the dictionary of format `distributed_random_partitoner_{rank}`
         # num_edges_on_rank is a dict[EdgeType, int].
